@@ -72,7 +72,15 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/bench/",
     "tests/alembic/",
     "tests/unified/",
+    "tests/live_llm/",
+    # Pure llm unit tests should stay isolated from the broader app/runtime fixtures.
+    "tests/unit/llm/",
+    # LLM transport tests mock providers directly and don't need database/runtime setup.
+    "tests/utils/test_length_finish_reason.py",
 )
+
+_LIVE_LLM_MARKER = "live_llm"
+_LIVE_LLM_SKIP_REASON = "live LLM tests are disabled; pass --live-llm to run them"
 
 
 def _requires_runtime_mocks(nodeid: str) -> bool:
@@ -85,6 +93,28 @@ def _get_nodeid(request: pytest.FixtureRequest) -> str:
     node = getattr(request, "node", None)
     nodeid = getattr(node, "nodeid", "")
     return nodeid if isinstance(nodeid, str) else ""
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--live-llm",
+        action="store_true",
+        default=False,
+        help="Run opt-in live LLM integration tests that call provider APIs.",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    if config.getoption("--live-llm"):
+        return
+
+    skip_live = pytest.mark.skip(reason=_LIVE_LLM_SKIP_REASON)
+    for item in items:
+        if _LIVE_LLM_MARKER in item.keywords:
+            item.add_marker(skip_live)
 
 
 def _get_test_db_url(worker_id: str) -> URL:

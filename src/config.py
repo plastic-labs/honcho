@@ -4,7 +4,7 @@ from typing import Annotated, Any, ClassVar, Literal, Protocol
 
 import tomllib
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -47,6 +47,149 @@ class LLMComponentSettings(Protocol):
     MODEL: str
     BACKUP_PROVIDER: SupportedProviders | None
     BACKUP_MODEL: str | None
+
+
+class ModelConfig(BaseModel):
+    """Reusable model configuration for any non-embedding LLM caller."""
+
+    model: str
+    transport: Literal["provider_native", "openai_compatible"] = "provider_native"
+
+    fallback_model: str | None = None
+    fallback_transport: Literal["provider_native", "openai_compatible"] | None = None
+
+    api_key: str | None = None
+    base_url: str | None = None
+
+    fallback_api_key: str | None = None
+    fallback_base_url: str | None = None
+
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    seed: int | None = None
+
+    thinking_effort: (
+        Literal[
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ]
+        | None
+    ) = Field(
+        default=None,
+        validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
+    )
+    thinking_budget_tokens: int | None = None
+    provider_params: dict[str, Any] = Field(default_factory=dict)
+
+    max_output_tokens: int | None = None
+    stop_sequences: list[str] | None = None
+
+    @property
+    def reasoning_effort(
+        self,
+    ) -> Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None:
+        """Backward-compatible alias for the generic thinking effort field."""
+        return self.thinking_effort
+
+    @model_validator(mode="after")
+    def _validate_transport(self) -> "ModelConfig":
+        effective_fallback_transport = self.fallback_transport or self.transport
+
+        if self.transport == "openai_compatible" and not self.base_url:
+            raise ValueError("base_url is required when transport='openai_compatible'")
+
+        if self.transport == "provider_native" and self.base_url is not None:
+            raise ValueError(
+                "base_url is only valid when transport='openai_compatible'"
+            )
+
+        if (
+            self.fallback_model is not None
+            and effective_fallback_transport == "openai_compatible"
+            and self.fallback_base_url is None
+        ):
+            raise ValueError(
+                "fallback_base_url is required when fallback_transport is "
+                "'openai_compatible'"
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def _validate_anthropic_thinking_minimum(self) -> "ModelConfig":
+        if (
+            self.transport == "provider_native"
+            and self.model.startswith("anthropic/")
+            and self.thinking_budget_tokens is not None
+            and 0 < self.thinking_budget_tokens < 1024
+        ):
+            raise ValueError(
+                "thinking_budget_tokens must be >= 1024 for Anthropic models"
+            )
+        return self
+
+    def for_model(
+        self,
+        model_override: str,
+        *,
+        transport_override: Literal["provider_native", "openai_compatible"]
+        | None = None,
+    ) -> "ModelConfig":
+        return self.model_copy(
+            update={
+                "model": model_override,
+                "transport": transport_override or self.transport,
+            }
+        )
+
+
+def _qualify_model_name(provider: SupportedProviders, model: str) -> str:
+    if "/" in model:
+        return model
+
+    prefix_map: dict[SupportedProviders, str] = {
+        "anthropic": "anthropic",
+        "openai": "openai",
+        "google": "gemini",
+        "groq": "groq",
+        "custom": "openai",
+        "vllm": "hosted_vllm",
+    }
+    return f"{prefix_map[provider]}/{model}"
+
+
+def _transport_for_provider(
+    provider: SupportedProviders | None,
+) -> Literal["provider_native", "openai_compatible"] | None:
+    if provider is None:
+        return None
+    if provider in {"custom", "vllm"}:
+        return "openai_compatible"
+    return "provider_native"
+
+
+def _credentials_for_provider(
+    provider: SupportedProviders | None,
+) -> tuple[str | None, str | None]:
+    if provider == "custom":
+        return (
+            settings.LLM.OPENAI_COMPATIBLE_API_KEY,
+            settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
+        )
+    if provider == "vllm":
+        return (
+            settings.LLM.VLLM_API_KEY,
+            settings.LLM.VLLM_BASE_URL,
+        )
+    return None, None
 
 
 class TomlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -284,6 +427,27 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
             )
         return self
 
+    def to_model_config(self) -> ModelConfig:
+        fallback_api_key, fallback_base_url = _credentials_for_provider(
+            self.BACKUP_PROVIDER
+        )
+        api_key, base_url = _credentials_for_provider(self.PROVIDER)
+        return ModelConfig(
+            model=_qualify_model_name(self.PROVIDER, self.MODEL),
+            transport=_transport_for_provider(self.PROVIDER) or "provider_native",
+            fallback_model=_qualify_model_name(self.BACKUP_PROVIDER, self.BACKUP_MODEL)
+            if self.BACKUP_PROVIDER and self.BACKUP_MODEL
+            else None,
+            fallback_transport=_transport_for_provider(self.BACKUP_PROVIDER),
+            api_key=api_key,
+            base_url=base_url,
+            fallback_api_key=fallback_api_key,
+            fallback_base_url=fallback_base_url,
+            temperature=self.TEMPERATURE,
+            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
+            max_output_tokens=self.MAX_OUTPUT_TOKENS,
+        )
+
 
 class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
@@ -347,6 +511,26 @@ class DialecticLevelSettings(BaseModel):
                 f"THINKING_BUDGET_TOKENS must be >= 1024 for Anthropic provider when enabled (got {self.THINKING_BUDGET_TOKENS})"
             )
         return self
+
+    def to_model_config(self) -> ModelConfig:
+        fallback_api_key, fallback_base_url = _credentials_for_provider(
+            self.BACKUP_PROVIDER
+        )
+        api_key, base_url = _credentials_for_provider(self.PROVIDER)
+        return ModelConfig(
+            model=_qualify_model_name(self.PROVIDER, self.MODEL),
+            transport=_transport_for_provider(self.PROVIDER) or "provider_native",
+            fallback_model=_qualify_model_name(self.BACKUP_PROVIDER, self.BACKUP_MODEL)
+            if self.BACKUP_PROVIDER and self.BACKUP_MODEL
+            else None,
+            fallback_transport=_transport_for_provider(self.BACKUP_PROVIDER),
+            api_key=api_key,
+            base_url=base_url,
+            fallback_api_key=fallback_api_key,
+            fallback_base_url=fallback_base_url,
+            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
+            max_output_tokens=self.MAX_OUTPUT_TOKENS,
+        )
 
 
 class DialecticSettings(HonchoSettings):
@@ -439,6 +623,25 @@ class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
+
+    def to_model_config(self) -> ModelConfig:
+        fallback_api_key, fallback_base_url = _credentials_for_provider(
+            self.BACKUP_PROVIDER
+        )
+        api_key, base_url = _credentials_for_provider(self.PROVIDER)
+        return ModelConfig(
+            model=_qualify_model_name(self.PROVIDER, self.MODEL),
+            transport=_transport_for_provider(self.PROVIDER) or "provider_native",
+            fallback_model=_qualify_model_name(self.BACKUP_PROVIDER, self.BACKUP_MODEL)
+            if self.BACKUP_PROVIDER and self.BACKUP_MODEL
+            else None,
+            fallback_transport=_transport_for_provider(self.BACKUP_PROVIDER),
+            api_key=api_key,
+            base_url=base_url,
+            fallback_api_key=fallback_api_key,
+            fallback_base_url=fallback_base_url,
+            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
+        )
 
 
 class WebhookSettings(HonchoSettings):
@@ -570,6 +773,26 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
                 "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
             )
         return self
+
+    def to_model_config(self) -> ModelConfig:
+        fallback_api_key, fallback_base_url = _credentials_for_provider(
+            self.BACKUP_PROVIDER
+        )
+        api_key, base_url = _credentials_for_provider(self.PROVIDER)
+        return ModelConfig(
+            model=_qualify_model_name(self.PROVIDER, self.MODEL),
+            transport=_transport_for_provider(self.PROVIDER) or "provider_native",
+            fallback_model=_qualify_model_name(self.BACKUP_PROVIDER, self.BACKUP_MODEL)
+            if self.BACKUP_PROVIDER and self.BACKUP_MODEL
+            else None,
+            fallback_transport=_transport_for_provider(self.BACKUP_PROVIDER),
+            api_key=api_key,
+            base_url=base_url,
+            fallback_api_key=fallback_api_key,
+            fallback_base_url=fallback_base_url,
+            thinking_budget_tokens=self.THINKING_BUDGET_TOKENS,
+            max_output_tokens=self.MAX_OUTPUT_TOKENS,
+        )
 
 
 class VectorStoreSettings(HonchoSettings):

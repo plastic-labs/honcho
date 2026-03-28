@@ -1,0 +1,111 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from src.llm.backends.openai import OpenAIBackend
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_uses_gpt5_params_and_extracts_reasoning() -> None:
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="Hello from GPT-5",
+                        tool_calls=[],
+                        reasoning_details=[
+                            SimpleNamespace(
+                                content="reasoning summary",
+                                model_dump=lambda: {
+                                    "type": "reasoning",
+                                    "content": "reasoning summary",
+                                },
+                            )
+                        ],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=4),
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="openai/gpt-5-mini",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_effort="high",
+    )
+
+    assert result.content == "Hello from GPT-5"
+    assert result.thinking_content == "reasoning summary"
+    assert result.reasoning_details == [
+        {"type": "reasoning", "content": "reasoning summary"}
+    ]
+    assert result.cache_read_input_tokens == 4
+
+    call = client.chat.completions.create.await_args.kwargs
+    assert call["model"] == "gpt-5-mini"
+    assert call["max_completion_tokens"] == 100
+    assert call["reasoning_effort"] == "high"
+    assert "max_tokens" not in call
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models() -> (
+    None
+):
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="Hello from GPT-4.1",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="openai/gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_effort="low",
+    )
+
+    call = client.chat.completions.create.await_args.kwargs
+    assert call["model"] == "gpt-4.1"
+    assert call["max_tokens"] == 100
+    assert call["reasoning_effort"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_rejects_thinking_budget_tokens() -> None:
+    backend = OpenAIBackend(Mock())
+
+    with pytest.raises(ValueError, match="does not support thinking_budget_tokens"):
+        await backend.complete(
+            model="openai/gpt-5-mini",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            thinking_budget_tokens=256,
+        )

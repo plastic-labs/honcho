@@ -6,24 +6,30 @@ from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
-from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
-from anthropic.types.message import Message as AnthropicMessage
-from anthropic.types.usage import Usage
 from google import genai
 from google.genai.types import (
-    ContentListUnionDict,
     GenerateContentConfigDict,
-    GenerateContentResponse,
 )
 from groq import AsyncGroq
-from openai import AsyncOpenAI, LengthFinishReasonError
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionChunk
 from pydantic import BaseModel, Field, ValidationError
 from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import LLMComponentSettings, settings
-from src.exceptions import LLMError
+from src.llm.backend import CompletionResult as BackendCompletionResult
+from src.llm.backend import ToolCallResult
+from src.llm.backends.anthropic import AnthropicBackend
+from src.llm.backends.gemini import GeminiBackend
+from src.llm.backends.groq import GroqBackend
+from src.llm.backends.openai import OpenAIBackend
+from src.llm.backends.openai_compat import OpenAICompatibleBackend
+from src.llm.history_adapters import (
+    AnthropicHistoryAdapter,
+    GeminiHistoryAdapter,
+    OpenAIHistoryAdapter,
+)
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 from src.utils.json_parser import validate_and_repair_json
@@ -571,6 +577,67 @@ class StreamingResponseWithMetadata:
         return await self._stream.__anext__()
 
 
+def _get_backend_for_provider(
+    provider: SupportedProviders,
+    client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
+) -> (
+    AnthropicBackend
+    | OpenAIBackend
+    | GeminiBackend
+    | GroqBackend
+    | OpenAICompatibleBackend
+):
+    if provider == "anthropic":
+        return AnthropicBackend(client)
+    if provider == "openai":
+        return OpenAIBackend(client)
+    if provider == "google":
+        return GeminiBackend(client)
+    if provider == "groq":
+        return GroqBackend(client)
+    if provider in {"custom", "vllm"}:
+        return OpenAICompatibleBackend(client, provider_name=provider)
+    raise ValueError(f"Unsupported provider: {provider}")
+
+
+def _history_adapter_for_provider(
+    provider: SupportedProviders,
+) -> AnthropicHistoryAdapter | GeminiHistoryAdapter | OpenAIHistoryAdapter:
+    if provider == "anthropic":
+        return AnthropicHistoryAdapter()
+    if provider == "google":
+        return GeminiHistoryAdapter()
+    return OpenAIHistoryAdapter()
+
+
+def _tool_call_result_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
+    result = {
+        "id": tool_call.id,
+        "name": tool_call.name,
+        "input": tool_call.input,
+    }
+    if tool_call.thought_signature is not None:
+        result["thought_signature"] = tool_call.thought_signature
+    return result
+
+
+def _completion_result_to_response(
+    result: BackendCompletionResult,
+) -> HonchoLLMCallResponse[Any]:
+    return HonchoLLMCallResponse(
+        content=result.content,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cache_creation_input_tokens=result.cache_creation_input_tokens,
+        cache_read_input_tokens=result.cache_read_input_tokens,
+        finish_reasons=[result.finish_reason] if result.finish_reason else [],
+        tool_calls_made=[_tool_call_result_to_dict(tc) for tc in result.tool_calls],
+        thinking_content=result.thinking_content,
+        thinking_blocks=result.thinking_blocks,
+        reasoning_details=result.reasoning_details,
+    )
+
+
 # Bounds for max_tool_iterations to prevent runaway loops
 MIN_TOOL_ITERATIONS = 1
 MAX_TOOL_ITERATIONS = 100
@@ -1046,82 +1113,22 @@ def _format_assistant_tool_message(
     Returns:
         Provider-formatted assistant message dict
     """
-    if provider == "anthropic":
-        # Anthropic requires content to be a list of blocks including tool use blocks
-        content_blocks: list[dict[str, Any]] = []
-
-        # Add thinking blocks FIRST if present (required by Anthropic when extended thinking is enabled)
-        # These include signatures which are required for multi-turn conversation replay
-        if thinking_blocks:
-            content_blocks.extend(thinking_blocks)
-
-        # Add text content if present
-        if isinstance(content, str) and content:
-            content_blocks.append({"type": "text", "text": content})
-
-        # Add tool use blocks
-        for tool_call in tool_calls:
-            content_blocks.append(
-                {
-                    "type": "tool_use",
-                    "id": tool_call["id"],
-                    "name": tool_call["name"],
-                    "input": tool_call["input"],
-                }
+    adapter = _history_adapter_for_provider(provider)
+    result = BackendCompletionResult(
+        content=content,
+        tool_calls=[
+            ToolCallResult(
+                id=tool_call["id"],
+                name=tool_call["name"],
+                input=tool_call["input"],
+                thought_signature=tool_call.get("thought_signature"),
             )
-
-        return {
-            "role": "assistant",
-            "content": content_blocks,
-        }
-    elif provider == "google":
-        # Google format: model role with function_call parts
-        parts: list[dict[str, Any]] = []
-
-        # Add text content if present
-        if isinstance(content, str) and content:
-            parts.append({"text": content})
-
-        # Add function call parts with thought_signature if present
-        for tool_call in tool_calls:
-            part_data: dict[str, Any] = {
-                "function_call": {
-                    "name": tool_call["name"],
-                    "args": tool_call["input"],
-                }
-            }
-            # Include thought_signature if present (required by Gemini)
-            if "thought_signature" in tool_call:
-                part_data["thought_signature"] = tool_call["thought_signature"]
-            parts.append(part_data)
-
-        return {
-            "role": "model",
-            "parts": parts,
-        }
-    else:
-        # OpenAI format - must include tool_calls in the assistant message
-        openai_tool_calls: list[Any] = []
-        for tool_call in tool_calls:
-            openai_tool_calls.append(
-                {
-                    "id": tool_call["id"],
-                    "type": "function",
-                    "function": {
-                        "name": tool_call["name"],
-                        "arguments": json.dumps(tool_call["input"]),
-                    },
-                }
-            )
-        msg: dict[str, Any] = {
-            "role": "assistant",
-            "content": content if isinstance(content, str) else None,
-            "tool_calls": openai_tool_calls,
-        }
-        # Include reasoning_details for OpenRouter/Gemini (required for multi-turn tool use)
-        if reasoning_details:
-            msg["reasoning_details"] = reasoning_details
-        return msg
+            for tool_call in tool_calls
+        ],
+        thinking_blocks=thinking_blocks or [],
+        reasoning_details=reasoning_details or [],
+    )
+    return adapter.format_assistant_tool_message(result)
 
 
 def _append_tool_results(
@@ -1137,54 +1144,8 @@ def _append_tool_results(
         tool_results: List of tool result dicts with tool_id, tool_name, result, is_error keys
         conversation_messages: The conversation to append to (modified in place)
     """
-    if provider == "anthropic":
-        # Anthropic requires tool results in specific content blocks
-        result_blocks: list[dict[str, Any]] = []
-        for tr in tool_results:
-            result_blocks.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tr["tool_id"],
-                    "content": str(tr["result"]),
-                    "is_error": tr.get("is_error", False),
-                }
-            )
-
-        conversation_messages.append(
-            {
-                "role": "user",
-                "content": result_blocks,
-            }
-        )
-    elif provider == "google":
-        # Google format: user role with function_response parts
-        response_parts: list[dict[str, Any]] = []
-        for tr in tool_results:
-            response_parts.append(
-                {
-                    "function_response": {
-                        "name": tr["tool_name"],
-                        "response": {"result": str(tr["result"])},
-                    }
-                }
-            )
-
-        conversation_messages.append(
-            {
-                "role": "user",
-                "parts": response_parts,
-            }
-        )
-    else:
-        # OpenAI format - add each tool result as a separate message with role="tool"
-        for tr in tool_results:
-            conversation_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tr["tool_id"],
-                    "content": str(tr["result"]),
-                }
-            )
+    adapter = _history_adapter_for_provider(provider)
+    conversation_messages.extend(adapter.format_tool_results(tool_results))
 
 
 @overload
@@ -1708,10 +1669,8 @@ async def honcho_llm_call_inner(
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
-    # has already been validated by honcho_llm_call
     client = CLIENTS[provider]
 
-    # Use messages if provided, otherwise convert prompt to message
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
 
@@ -1721,12 +1680,10 @@ async def honcho_llm_call_inner(
         "messages": messages,
         "stream": stream,
     }
-
     if temperature is not None:
         params["temperature"] = temperature
 
     if stream:
-        # Return async generator for streaming responses
         return handle_streaming_response(
             client,
             params,
@@ -1737,757 +1694,25 @@ async def honcho_llm_call_inner(
             verbosity,
         )
 
-    # Remove stream parameter for non-streaming calls as some providers don't accept it
-    params.pop("stream", None)
-
-    system_messages: list[str] = []
-    non_system_messages: list[dict[str, Any]] = []
-
-    match client:
-        case AsyncAnthropic():
-            # Anthropic requires system messages to be passed as a top-level parameter
-            # Extract system messages and non-system messages
-            for msg in params["messages"]:
-                if msg.get("role") == "system":
-                    system_messages.append(msg["content"])
-                else:
-                    non_system_messages.append(msg)
-
-            anthropic_params: dict[str, Any] = {
-                "model": params["model"],
-                "max_tokens": params["max_tokens"],
-                "messages": non_system_messages,
-            }
-
-            if temperature is not None:
-                anthropic_params["temperature"] = temperature
-
-            # Add system parameter if there are system messages
-            # Use cache_control for prompt caching
-            if system_messages:
-                anthropic_params["system"] = [
-                    {
-                        "type": "text",
-                        "text": "\n\n".join(system_messages),
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ]
-
-            # Add tools if provided
-            if tools:
-                anthropic_params["tools"] = tools
-                if tool_choice:
-                    # Convert tool_choice to Anthropic format
-                    if isinstance(tool_choice, str):
-                        if tool_choice == "auto":
-                            anthropic_params["tool_choice"] = {"type": "auto"}
-                        elif tool_choice in ("any", "required"):
-                            anthropic_params["tool_choice"] = {"type": "any"}
-                        elif tool_choice == "none":
-                            # Don't set tool_choice, let Anthropic default
-                            pass
-                        else:
-                            # Assume it's a tool name
-                            anthropic_params["tool_choice"] = {
-                                "type": "tool",
-                                "name": tool_choice,
-                            }
-                    else:
-                        # Already in dict format, use as-is
-                        anthropic_params["tool_choice"] = tool_choice
-
-            # For response models, we need to request JSON and parse manually
-            # Note: tools and response_model should not be used together
-            if response_model or json_mode:
-                # Add JSON schema instructions to the prompt if using response_model
-                if response_model:
-                    schema_json = json.dumps(
-                        response_model.model_json_schema(), indent=2
-                    )
-                    anthropic_params["messages"][-1]["content"] += (
-                        f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
-                    )
-                anthropic_params["messages"].append(
-                    {"role": "assistant", "content": "{"}
-                )
-
-            if thinking_budget_tokens:
-                anthropic_params["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget_tokens,
-                }
-
-            anthropic_response: AnthropicMessage = cast(
-                AnthropicMessage, await client.messages.create(**anthropic_params)
-            )
-
-            # Extract text content, thinking blocks, and tool use blocks from content blocks
-            text_blocks: list[str] = []
-            thinking_text_blocks: list[str] = []
-            thinking_full_blocks: list[dict[str, Any]] = []
-            tool_calls: list[dict[str, Any]] = []
-            for block in anthropic_response.content:
-                if isinstance(block, TextBlock):
-                    text_blocks.append(block.text)
-                elif isinstance(block, ThinkingBlock):
-                    thinking_text_blocks.append(block.thinking)
-                    # Store full block with signature for multi-turn replay
-                    thinking_full_blocks.append(
-                        {
-                            "type": "thinking",
-                            "thinking": block.thinking,
-                            "signature": block.signature,
-                        }
-                    )
-                elif isinstance(block, ToolUseBlock):
-                    tool_calls.append(
-                        {
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        }
-                    )
-
-            # Safely extract usage and stop_reason
-            usage: Any | Usage = anthropic_response.usage
-            stop_reason = anthropic_response.stop_reason
-
-            text_content = "\n".join(text_blocks)
-            thinking_content = (
-                "\n".join(thinking_text_blocks) if thinking_text_blocks else None
-            )
-
-            # Extract cache token counts from Anthropic usage
-            # Anthropic's input_tokens = uncached tokens only
-            # Total = input_tokens + cache_read + cache_creation
-            cache_creation_tokens = (
-                getattr(usage, "cache_creation_input_tokens", 0) or 0 if usage else 0
-            )
-            cache_read_tokens = (
-                getattr(usage, "cache_read_input_tokens", 0) or 0 if usage else 0
-            )
-            uncached_tokens = usage.input_tokens if usage else 0
-            # Calculate total input tokens for consistent reporting
-            total_input_tokens = (
-                uncached_tokens + cache_read_tokens + cache_creation_tokens
-            )
-
-            # If using response_model, parse the JSON response
-            if response_model:
-                try:
-                    # Add back the opening brace that we prefilled
-                    json_content = "{" + text_content
-                    parsed_json = json.loads(json_content)
-                    parsed_content = response_model.model_validate(parsed_json)
-
-                    return HonchoLLMCallResponse(
-                        content=parsed_content,
-                        input_tokens=total_input_tokens,
-                        output_tokens=usage.output_tokens if usage else 0,
-                        cache_creation_input_tokens=cache_creation_tokens,
-                        cache_read_input_tokens=cache_read_tokens,
-                        finish_reasons=[stop_reason] if stop_reason else [],
-                        tool_calls_made=tool_calls,
-                        thinking_content=thinking_content,
-                        thinking_blocks=thinking_full_blocks,
-                    )
-                except (json.JSONDecodeError, ValidationError, ValueError):
-                    # Attempt JSON repair on truncated/malformed output
-                    logger.warning(
-                        f"Anthropic response_model parse failed for {model}, attempting JSON repair"
-                    )
-                    raw_content = "{" + text_content
-                    repaired_obj = _repair_response_model_json(
-                        raw_content, response_model, model
-                    )
-                    return HonchoLLMCallResponse(
-                        content=repaired_obj,
-                        input_tokens=total_input_tokens,
-                        output_tokens=usage.output_tokens if usage else 0,
-                        cache_creation_input_tokens=cache_creation_tokens,
-                        cache_read_input_tokens=cache_read_tokens,
-                        finish_reasons=[stop_reason] if stop_reason else [],
-                        tool_calls_made=[],
-                        thinking_content=thinking_content,
-                        thinking_blocks=thinking_full_blocks,
-                    )
-
-            return HonchoLLMCallResponse(
-                content=text_content,
-                input_tokens=total_input_tokens,
-                output_tokens=usage.output_tokens if usage else 0,
-                cache_creation_input_tokens=cache_creation_tokens,
-                cache_read_input_tokens=cache_read_tokens,
-                finish_reasons=[stop_reason] if stop_reason else [],
-                tool_calls_made=tool_calls,
-                thinking_content=thinking_content,
-                thinking_blocks=thinking_full_blocks,
-            )
-
-        case AsyncOpenAI():
-            # For custom providers (e.g., OpenRouter), add cache_control to system messages
-            # This enables prompt caching for Anthropic models proxied via OpenAI-compatible APIs
-            processed_messages: list[dict[str, Any]] = params["messages"]
-            if provider == "custom":
-                processed_messages = []
-                for msg in params["messages"]:
-                    if msg.get("role") == "system" and isinstance(
-                        msg.get("content"), str
-                    ):
-                        # Convert system message to content block format with cache_control
-                        processed_messages.append(
-                            {
-                                "role": "system",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": msg["content"],
-                                        "cache_control": {"type": "ephemeral"},
-                                    }
-                                ],
-                            }
-                        )
-                    else:
-                        processed_messages.append(msg)
-
-            openai_params: dict[str, Any] = {
-                "model": params["model"],
-                "messages": processed_messages,
-            }
-
-            if temperature is not None and "gpt-5" not in model:
-                openai_params["temperature"] = temperature
-
-            if "gpt-5" in model:
-                openai_params["max_completion_tokens"] = params["max_tokens"]
-                if reasoning_effort:
-                    openai_params["reasoning_effort"] = reasoning_effort
-                if verbosity:
-                    openai_params["verbosity"] = verbosity
-            else:
-                openai_params["max_tokens"] = params["max_tokens"]
-
-            # Add tools if provided (not compatible with response_model for most cases)
-            if tools and not response_model:
-                openai_params["tools"] = tools
-                if tool_choice:
-                    openai_params["tool_choice"] = tool_choice
-
-            if json_mode and provider != "vllm":
-                openai_params["response_format"] = {"type": "json_object"}
-
-            # custom shim for vLLM response model formatting
-            # NOTE: this is all specific to the Representation model.
-            # Do not call with any other response model.
-            if provider == "vllm" and response_model:
-                if response_model is not PromptRepresentation:
-                    raise NotImplementedError(
-                        "vLLM structured output currently supports only PromptRepresentation"
-                    )
-                openai_params["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_model.__name__,
-                        "schema": response_model.model_json_schema(),
-                    },
-                }
-                if stop_seqs:
-                    openai_params["stop"] = stop_seqs
-                vllm_response: ChatCompletion = cast(
-                    ChatCompletion,
-                    await client.chat.completions.create(**openai_params),
-                )
-
-                usage = vllm_response.usage
-                finish_reason = vllm_response.choices[0].finish_reason
-
-                try:
-                    test_rep = ""
-                    if vllm_response.choices[0].message.content is not None:
-                        test_rep = vllm_response.choices[0].message.content
-
-                    final = validate_and_repair_json(test_rep)
-
-                    # Schema-aware repair: ensure deductive observations have required fields
-
-                    repaired_data = json.loads(final)
-
-                    # Fix deductive observations that might be missing conclusion
-                    if "deductive" in repaired_data and isinstance(
-                        repaired_data["deductive"], list
-                    ):
-                        for i, item in enumerate(repaired_data["deductive"]):
-                            if isinstance(item, dict):
-                                # If conclusion is missing but premises exist, create a placeholder
-                                if "conclusion" not in item and "premises" in item:
-                                    logger.warning(
-                                        f"Deductive observation {i} missing conclusion, adding placeholder"
-                                    )
-                                    # Try to generate a conclusion from premises if possible
-                                    if item["premises"]:
-                                        item["conclusion"] = (
-                                            f"[Incomplete reasoning from premises: {item['premises'][0][:100]}...]"
-                                        )
-                                    else:
-                                        item["conclusion"] = (
-                                            "[Incomplete reasoning - conclusion missing]"
-                                        )
-                                # If premises is missing, add empty list (it's optional with default)
-                                if "premises" not in item:
-                                    item["premises"] = []
-
-                    final = json.dumps(repaired_data)
-                except (json.JSONDecodeError, KeyError, TypeError) as e:
-                    final = ""
-                    logger.warning(f"Could not perform schema-aware repair: {e}")
-                    # Continue with original final value if repair fails
-
-                try:
-                    response_obj = PromptRepresentation.model_validate_json(final)
-                except ValidationError as e:
-                    logger.error(f"Validation error after repair: {e}")
-                    logger.debug(f"Problematic JSON: {final}")
-
-                    # Fallback: return empty response rather than failing
-                    logger.warning(
-                        "Using fallback empty Representation due to validation error"
-                    )
-                    response_obj = PromptRepresentation(explicit=[])  # , deductive=[])
-
-                cache_creation, cache_read = extract_openai_cache_tokens(usage)
-                return HonchoLLMCallResponse(
-                    content=response_obj,
-                    input_tokens=usage.prompt_tokens if usage else 0,
-                    output_tokens=usage.completion_tokens if usage else 0,
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read,
-                    finish_reasons=[finish_reason] if finish_reason else [],
-                    tool_calls_made=[],
-                    thinking_content=extract_openai_reasoning_content(vllm_response),
-                )
-            elif response_model:
-                openai_params["response_format"] = response_model
-                try:
-                    response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
-                        **openai_params
-                    )
-                except LengthFinishReasonError as e:
-                    # The LLM hit the max token limit before completing valid JSON.
-                    # Extract the truncated content and attempt repair.
-                    logger.warning(
-                        f"LengthFinishReasonError for {model}: attempting JSON repair on truncated output"
-                    )
-                    truncated_completion = e.completion
-                    raw_content = truncated_completion.choices[0].message.content or ""
-                    usage = truncated_completion.usage
-                    finish_reason = truncated_completion.choices[0].finish_reason
-
-                    repaired_obj = _repair_response_model_json(
-                        raw_content, response_model, model
-                    )
-
-                    cache_creation, cache_read = extract_openai_cache_tokens(usage)
-                    return HonchoLLMCallResponse(
-                        content=repaired_obj,
-                        input_tokens=usage.prompt_tokens if usage else 0,
-                        output_tokens=usage.completion_tokens if usage else 0,
-                        cache_creation_input_tokens=cache_creation,
-                        cache_read_input_tokens=cache_read,
-                        finish_reasons=[finish_reason] if finish_reason else [],
-                        tool_calls_made=[],
-                        thinking_content=extract_openai_reasoning_content(
-                            truncated_completion
-                        ),
-                    )
-
-                # Extract the parsed object for structured output
-                parsed_content = response.choices[0].message.parsed
-                if parsed_content is None:
-                    raise ValueError("No parsed content in structured response")
-
-                usage = response.usage
-                finish_reason = response.choices[0].finish_reason
-
-                # Validate that parsed content matches the response model
-                if not isinstance(parsed_content, response_model):
-                    raise ValueError(
-                        f"Parsed content does not match the response model: {parsed_content} != {response_model}"
-                    )
-
-                # Extract tool calls if present (though unlikely with structured output)
-                parsed_tool_calls: list[dict[str, Any]] = []
-                if (
-                    hasattr(response.choices[0].message, "tool_calls")
-                    and response.choices[0].message.tool_calls
-                ):
-                    for tool_call in response.choices[0].message.tool_calls:
-                        parsed_tool_calls.append(
-                            {
-                                "id": tool_call.id,
-                                "name": tool_call.function.name,
-                                "input": json.loads(tool_call.function.arguments)
-                                if tool_call.function.arguments
-                                else {},
-                            }
-                        )
-
-                cache_creation, cache_read = extract_openai_cache_tokens(usage)
-                return HonchoLLMCallResponse(
-                    content=parsed_content,
-                    input_tokens=usage.prompt_tokens if usage else 0,
-                    output_tokens=usage.completion_tokens if usage else 0,
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read,
-                    finish_reasons=[finish_reason] if finish_reason else [],
-                    tool_calls_made=parsed_tool_calls,
-                    thinking_content=extract_openai_reasoning_content(response),
-                )
-            else:
-                response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
-                    **openai_params
-                )
-
-                usage = response.usage  # pyright: ignore
-                finish_reason = response.choices[0].finish_reason  # pyright: ignore
-
-                # Extract tool calls if present
-                tool_calls_list: list[dict[str, Any]] = []
-                if response.choices[0].message.tool_calls:  # pyright: ignore
-                    for tool_call in response.choices[0].message.tool_calls:  # pyright: ignore
-                        tool_calls_list.append(
-                            {
-                                "id": tool_call.id,  # pyright: ignore
-                                "name": tool_call.function.name,  # pyright: ignore
-                                "input": json.loads(tool_call.function.arguments)  # pyright: ignore
-                                if tool_call.function.arguments  # pyright: ignore
-                                else {},
-                            }
-                        )
-
-                cache_creation, cache_read = extract_openai_cache_tokens(usage)
-                return HonchoLLMCallResponse(
-                    content=response.choices[0].message.content or "",  # pyright: ignore
-                    input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
-                    output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read,
-                    finish_reasons=[finish_reason] if finish_reason else [],
-                    tool_calls_made=tool_calls_list,
-                    thinking_content=extract_openai_reasoning_content(response),
-                    reasoning_details=extract_openai_reasoning_details(response),
-                )
-
-        case genai.Client():
-            # Build config for Gemini
-            gemini_config: dict[str, Any] = {}
-
-            # Gemini uses max_output_tokens, not max_tokens.
-            gemini_config["max_output_tokens"] = params["max_tokens"]
-
-            if temperature is not None:
-                gemini_config["temperature"] = temperature
-
-            # Add tools if provided
-            if tools:
-                gemini_config["tools"] = tools
-                # Handle tool_choice
-                if tool_choice:
-                    if tool_choice == "auto":
-                        gemini_config["tool_config"] = {
-                            "function_calling_config": {"mode": "AUTO"}
-                        }
-                    elif tool_choice == "any" or tool_choice == "required":
-                        gemini_config["tool_config"] = {
-                            "function_calling_config": {"mode": "ANY"}
-                        }
-                    elif tool_choice == "none":
-                        gemini_config["tool_config"] = {
-                            "function_calling_config": {"mode": "NONE"}
-                        }
-                    elif isinstance(tool_choice, dict) and "name" in tool_choice:
-                        # Specific tool selection
-                        gemini_config["tool_config"] = {
-                            "function_calling_config": {
-                                "mode": "ANY",
-                                "allowed_function_names": [tool_choice["name"]],
-                            }
-                        }
-
-            # Add thinking config for Gemini 2.5 models
-            if thinking_budget_tokens:
-                gemini_config["thinking_config"] = {
-                    "thinking_budget": thinking_budget_tokens,
-                }
-
-            if response_model is None:
-                if json_mode and not tools:
-                    gemini_config["response_mime_type"] = "application/json"
-
-                # Use messages if provided, otherwise use prompt
-                if messages:
-                    # Extract system messages for system_instruction parameter
-                    # Gemini doesn't support system role in contents - it causes
-                    # consecutive user messages which results in empty responses
-                    for msg in messages:
-                        if msg.get("role") == "system":
-                            if isinstance(msg.get("content"), str):
-                                system_messages.append(msg["content"])
-                        else:
-                            non_system_messages.append(msg)
-
-                    # Add system instruction if present
-                    if system_messages:
-                        gemini_config["system_instruction"] = "\n\n".join(
-                            system_messages
-                        )
-
-                    # Convert non-system messages to Google format
-                    gemini_contents: list[dict[str, Any]] = []
-                    for msg in non_system_messages:
-                        # Map roles to Google's expected values (user, model)
-                        role = msg.get("role", "user")
-                        if role == "assistant":
-                            role = "model"
-
-                        # Handle different content formats
-                        if isinstance(msg.get("content"), str):
-                            # Simple string content
-                            gemini_contents.append(
-                                {"role": role, "parts": [{"text": msg["content"]}]}
-                            )
-                        elif isinstance(msg.get("parts"), list):
-                            # Already in Google format (from tool calling loop)
-                            # But still need to ensure role is correct
-                            msg_copy = msg.copy()
-                            msg_copy["role"] = role
-                            gemini_contents.append(msg_copy)
-                        elif isinstance(msg.get("content"), list):
-                            # Content is a list of parts (Anthropic format) - skip for now
-                            # This shouldn't happen with Google provider in tool loop
-                            continue
-                        else:
-                            # Empty or unknown format, skip
-                            continue
-                    contents: ContentListUnionDict = cast(
-                        ContentListUnionDict, gemini_contents
-                    )
-                else:
-                    contents = prompt
-
-                gemini_response: GenerateContentResponse = (
-                    await client.aio.models.generate_content(
-                        model=model,
-                        contents=contents,
-                        config=cast(GenerateContentConfigDict, gemini_config)  # pyright: ignore[reportInvalidCast]
-                        if gemini_config
-                        else None,
-                    )
-                )
-
-                # Extract text content and function calls from response
-                text_parts: list[str] = []
-                gemini_tool_calls: list[dict[str, Any]] = []
-
-                if gemini_response.candidates and gemini_response.candidates[0].content:
-                    for part in gemini_response.candidates[0].content.parts or []:
-                        if hasattr(part, "text") and part.text:
-                            text_parts.append(part.text)
-                        if hasattr(part, "function_call") and part.function_call:
-                            fc = part.function_call
-                            tool_call_data: dict[str, Any] = {
-                                "id": f"call_{fc.name}_{len(gemini_tool_calls)}",
-                                "name": fc.name,
-                                "input": dict(fc.args) if fc.args else {},
-                            }
-                            # Preserve thought_signature if present (required by Gemini)
-                            if (
-                                hasattr(part, "thought_signature")
-                                and part.thought_signature
-                            ):
-                                tool_call_data["thought_signature"] = (
-                                    part.thought_signature
-                                )
-                            gemini_tool_calls.append(tool_call_data)
-
-                text_content = "\n".join(text_parts) if text_parts else ""
-                input_token_count = (
-                    gemini_response.usage_metadata.prompt_token_count or 0
-                    if gemini_response.usage_metadata
-                    else 0
-                )
-                output_token_count = (
-                    gemini_response.usage_metadata.candidates_token_count or 0
-                    if gemini_response.usage_metadata
-                    else 0
-                )
-                finish_reason = (
-                    gemini_response.candidates[0].finish_reason.name
-                    if gemini_response.candidates
-                    and gemini_response.candidates[0].finish_reason
-                    else "stop"
-                )
-
-                # Raise on blocked responses so retry/backup-provider logic kicks in
-                if (
-                    not text_content
-                    and not gemini_tool_calls
-                    and finish_reason in GEMINI_BLOCKED_FINISH_REASONS
-                ):
-                    raise LLMError(
-                        f"Gemini response blocked (finish_reason={finish_reason})",
-                        provider="google",
-                        model=model,
-                        finish_reason=finish_reason,
-                    )
-
-                return HonchoLLMCallResponse(
-                    content=text_content,
-                    input_tokens=input_token_count,
-                    output_tokens=output_token_count,
-                    finish_reasons=[finish_reason],
-                    tool_calls_made=gemini_tool_calls,
-                )
-
-            else:
-                gemini_config["response_mime_type"] = "application/json"
-                gemini_config["response_schema"] = response_model
-
-                gemini_response = await client.aio.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=cast(GenerateContentConfigDict, gemini_config),  # pyright: ignore[reportInvalidCast]
-                )
-
-                input_token_count = (
-                    gemini_response.usage_metadata.prompt_token_count or 0
-                    if gemini_response.usage_metadata
-                    else 0
-                )
-                output_token_count = (
-                    gemini_response.usage_metadata.candidates_token_count or 0
-                    if gemini_response.usage_metadata
-                    else 0
-                )
-                finish_reason = (
-                    gemini_response.candidates[0].finish_reason.name
-                    if gemini_response.candidates
-                    and gemini_response.candidates[0].finish_reason
-                    else "stop"
-                )
-
-                # Raise on blocked responses before checking parsed content
-                if (
-                    not gemini_response.parsed
-                    and finish_reason in GEMINI_BLOCKED_FINISH_REASONS
-                ):
-                    raise LLMError(
-                        f"Gemini response blocked (finish_reason={finish_reason})",
-                        provider="google",
-                        model=model,
-                        finish_reason=finish_reason,
-                    )
-
-                # If parsed content is valid and matches model, return directly
-                if isinstance(gemini_response.parsed, response_model):
-                    return HonchoLLMCallResponse(
-                        content=gemini_response.parsed,
-                        input_tokens=input_token_count,
-                        output_tokens=output_token_count,
-                        finish_reasons=[finish_reason],
-                        tool_calls_made=[],
-                    )
-
-                # Parsed content missing or wrong type — attempt JSON repair on raw text
-                logger.warning(
-                    f"Gemini response_model parse failed for {model} (finish_reason={finish_reason}), attempting JSON repair"
-                )
-                raw_text = ""
-                if gemini_response.candidates and gemini_response.candidates[0].content:
-                    for part in gemini_response.candidates[0].content.parts or []:
-                        if hasattr(part, "text") and part.text:
-                            raw_text += part.text
-
-                repaired_obj = _repair_response_model_json(
-                    raw_text, response_model, model
-                )
-                return HonchoLLMCallResponse(
-                    content=repaired_obj,
-                    input_tokens=input_token_count,
-                    output_tokens=output_token_count,
-                    finish_reasons=[finish_reason],
-                    tool_calls_made=[],
-                )
-
-        case AsyncGroq():
-            groq_params: dict[str, Any] = {
-                "model": params["model"],
-                "max_tokens": params["max_tokens"],
-                "messages": params["messages"],
-            }
-
-            if temperature is not None:
-                groq_params["temperature"] = temperature
-
-            if response_model:
-                groq_params["response_format"] = response_model
-            elif json_mode:
-                groq_params["response_format"] = {"type": "json_object"}
-
-            # TODO: figure out why groq returns unknown type and fix it
-            response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
-                **groq_params
-            )
-            if response.choices[0].message.content is None:  # pyright: ignore
-                raise ValueError("No content in response")
-
-            # Safely extract usage and finish_reason
-            usage = response.usage  # pyright: ignore
-            finish_reason = response.choices[0].finish_reason  # pyright: ignore
-
-            # Handle response model parsing for Groq
-            cache_creation, cache_read = extract_openai_cache_tokens(usage)
-            if response_model:
-                try:
-                    json_content = json.loads(response.choices[0].message.content)  # pyright: ignore
-                    parsed_content = response_model.model_validate(json_content)
-
-                    return HonchoLLMCallResponse(
-                        content=parsed_content,
-                        input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
-                        output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
-                        cache_creation_input_tokens=cache_creation,
-                        cache_read_input_tokens=cache_read,
-                        finish_reasons=[finish_reason] if finish_reason else [],
-                        tool_calls_made=[],
-                    )
-                except (json.JSONDecodeError, ValidationError, ValueError):
-                    # Attempt JSON repair on truncated/malformed output
-                    logger.warning(
-                        f"Groq response_model parse failed for {model}, attempting JSON repair"
-                    )
-                    raw_content = str(response.choices[0].message.content or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-                    repaired_obj = _repair_response_model_json(
-                        raw_content, response_model, model
-                    )
-                    return HonchoLLMCallResponse(
-                        content=repaired_obj,
-                        input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
-                        output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
-                        cache_creation_input_tokens=cache_creation,
-                        cache_read_input_tokens=cache_read,
-                        finish_reasons=[finish_reason] if finish_reason else [],
-                        tool_calls_made=[],
-                    )
-            else:
-                return HonchoLLMCallResponse(
-                    content=response.choices[0].message.content,  # pyright: ignore
-                    input_tokens=usage.prompt_tokens if usage else 0,  # pyright: ignore
-                    output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read,
-                    finish_reasons=[finish_reason] if finish_reason else [],
-                    tool_calls_made=[],
-                )
+    backend = _get_backend_for_provider(provider, client)
+    result = await backend.complete(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        stop=stop_seqs,
+        tools=tools,
+        tool_choice=tool_choice,
+        response_format=response_model,
+        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_effort=reasoning_effort,
+        max_output_tokens=max_tokens,
+        extra_params={
+            "json_mode": json_mode,
+            "verbosity": verbosity,
+        },
+    )
+    return _completion_result_to_response(result)
 
 
 async def handle_streaming_response(
