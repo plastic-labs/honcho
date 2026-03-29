@@ -20,6 +20,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from src.config import ReasoningLevel, settings
 from src.schemas.configuration import (
@@ -40,10 +41,17 @@ _METADATA_MAX_KEYS = 100
 _METADATA_MAX_DEPTH = 5
 
 
+def strip_nul_bytes(value: Any) -> Any:
+    """Strip NUL bytes from string inputs without touching other types."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    return value
+
+
 def _sanitize_value(v: Any) -> Any:
     """Recursively strip NUL bytes from strings in nested data structures."""
     if isinstance(v, str):
-        return v.replace("\x00", "")
+        return strip_nul_bytes(v)
     if isinstance(v, dict):
         d = cast(dict[str, Any], v)
         return {_sanitize_value(k): _sanitize_value(val) for k, val in d.items()}
@@ -54,24 +62,36 @@ def _sanitize_value(v: Any) -> Any:
 
 
 def _check_metadata_limits(
-    data: dict[str, Any],
+    value: Any,
     *,
     _current_depth: int = 1,
 ) -> None:
-    """Validate metadata dict doesn't exceed key count or nesting depth limits."""
+    """Validate metadata doesn't exceed key count or nesting depth limits."""
     if _current_depth > _METADATA_MAX_DEPTH:
         raise ValueError(
             f"Metadata nesting exceeds maximum depth of {_METADATA_MAX_DEPTH}"
         )
-    if _current_depth == 1 and len(data) > _METADATA_MAX_KEYS:
-        raise ValueError(
-            f"Metadata exceeds maximum of {_METADATA_MAX_KEYS} top-level keys"
-        )
-    for v in data.values():
-        if isinstance(v, dict):
-            _check_metadata_limits(
-                cast(dict[str, Any], v), _current_depth=_current_depth + 1
+
+    if isinstance(value, dict):
+        data = cast(dict[str, Any], value)
+        if _current_depth == 1 and len(data) > _METADATA_MAX_KEYS:
+            raise ValueError(
+                f"Metadata exceeds maximum of {_METADATA_MAX_KEYS} top-level keys"
             )
+        for item in data.values():
+            if isinstance(item, (dict, list)):
+                _check_metadata_limits(item, _current_depth=_current_depth + 1)
+        return
+
+    if isinstance(value, list):
+        items = cast(list[Any], value)
+        for item in items:
+            if isinstance(item, (dict, list)):
+                _check_metadata_limits(item, _current_depth=_current_depth + 1)
+        return
+
+    if _current_depth == 1:
+        raise ValueError("Metadata must be a dict")
 
 
 def _validate_metadata(v: Any) -> Any:
@@ -492,7 +512,13 @@ class ConclusionCreate(BaseModel):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        sanitized = cast(str, strip_nul_bytes(v))
+        if not sanitized:
+            raise PydanticCustomError(
+                "string_too_short",
+                "String should have at least 1 character",
+            )
+        return sanitized
 
     @model_validator(mode="after")
     def validate_token_count(self) -> Self:
@@ -526,7 +552,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
-    query: Annotated[str, Field(..., description="Search query")]
+    query: Annotated[str, Field(description="Search query")]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
     )
@@ -537,10 +563,20 @@ class MessageSearchOptions(BaseModel):
         description="Number of results to return",
     )
 
-    @field_validator("query", mode="after")
+    @field_validator("query", mode="before")
     @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
+    def sanitize_query(cls, v: Any) -> Any:
+        if not isinstance(v, str):
+            return v
+
+        sanitized = cast(str, strip_nul_bytes(v))
+        if v != "" and sanitized == "":
+            raise PydanticCustomError(
+                "string_too_short",
+                "String should have at least 1 character",
+            )
+
+        return sanitized
 
 
 # ---------------------------------------------------------------------------
@@ -568,7 +604,13 @@ class DialecticOptions(BaseModel):
     @field_validator("query", mode="after")
     @classmethod
     def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        sanitized = cast(str, strip_nul_bytes(v))
+        if not sanitized:
+            raise PydanticCustomError(
+                "string_too_short",
+                "String should have at least 1 character",
+            )
+        return sanitized
 
 
 class DialecticResponse(BaseModel):

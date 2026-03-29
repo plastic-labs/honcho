@@ -7,8 +7,9 @@ from enum import Enum
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic_core import PydanticCustomError
 
-from src.schemas.api import MessageCreate
+from src.schemas.api import MessageCreate, strip_nul_bytes
 from src.schemas.configuration import SessionPeerConfig
 from src.utils.types import DocumentLevel
 
@@ -99,7 +100,13 @@ class ObservationInput(BaseModel):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+        sanitized = strip_nul_bytes(v)
+        if not sanitized:
+            raise PydanticCustomError(
+                "string_too_short",
+                "String should have at least 1 character",
+            )
+        return sanitized
 
     @model_validator(mode="after")
     def validate_level_fields(self) -> Self:
