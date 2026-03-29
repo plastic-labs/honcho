@@ -552,11 +552,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
-    query: Annotated[
-        str,
-        BeforeValidator(strip_nul_bytes),
-        Field(min_length=1, description="Search query"),
-    ]
+    query: Annotated[str, Field(description="Search query")]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
     )
@@ -567,15 +563,20 @@ class MessageSearchOptions(BaseModel):
         description="Number of results to return",
     )
 
-    @field_validator("query", mode="after")
+    @field_validator("query", mode="before")
     @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        if not v:
+    def sanitize_query(cls, v: Any) -> Any:
+        if not isinstance(v, str):
+            return v
+
+        sanitized = cast(str, strip_nul_bytes(v))
+        if v != "" and sanitized == "":
             raise PydanticCustomError(
                 "string_too_short",
                 "String should have at least 1 character",
             )
-        return v
+
+        return sanitized
 
 
 # ---------------------------------------------------------------------------

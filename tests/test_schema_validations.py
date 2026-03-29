@@ -8,6 +8,7 @@ from src.schemas import (
     DialecticOptions,
     DocumentCreate,
     DocumentMetadata,
+    MessageSearchOptions,
     MessageCreate,
     ObservationInput,
     PeerCreate,
@@ -217,6 +218,19 @@ class TestResolvedConfigurationMigration:
 
 
 class TestSanitizedRequiredFields:
+    def test_message_search_query_allows_literal_empty_string(self):
+        search = MessageSearchOptions.model_validate({"query": ""})
+
+        assert search.query == ""
+
+    def test_message_search_query_rejects_nul_only_input(self):
+        with pytest.raises(ValidationError) as exc_info:
+            MessageSearchOptions.model_validate({"query": "\x00"})
+
+        error_dict = exc_info.value.errors()[0]
+        assert error_dict["loc"] == ("query",)
+        assert error_dict["type"] == "string_too_short"
+
     def test_conclusion_content_rejects_nul_only_input(self):
         with pytest.raises(ValidationError) as exc_info:
             ConclusionCreate(
