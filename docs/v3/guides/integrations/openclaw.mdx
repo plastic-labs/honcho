@@ -11,6 +11,7 @@ sidebarTitle: 'OpenClaw'
 Honcho can run entirely locally with OpenClaw — no external API required. Keep your data on your machine while getting full memory capabilities across all channels. See the [self-hosting guide](/v3/contributing/self-hosting) to get started.
 </Note>
 
+For OpenClaw's own documentation on Honcho, see the [Honcho Memory guide](https://docs.openclaw.ai/concepts/memory-honcho).
 
 ## Install the Plugin
 
@@ -67,7 +68,7 @@ Files are uploaded via `session.uploadFile()`. User/owner files go to the owner 
 Once installed, the plugin runs automatically:
 
 * **Message Observation** — After every AI turn, the conversation is persisted to Honcho. Both user and agent messages are observed, allowing Honcho to build and refine its models.
-* **Tool-Based Context Access** — The AI can query Honcho mid-conversation using tools like `honcho_recall`, `honcho_search`, and `honcho_analyze` to retrieve relevant context. Context is injected during OpenClaw's `before_prompt_build` phase, ensuring accurate turn boundaries.
+* **Tool-Based Context Access** — The AI can query Honcho mid-conversation using tools like `honcho_context`, `honcho_search_conclusions`, `honcho_search_messages`, and `honcho_ask` to retrieve relevant context. Context is injected during OpenClaw's `before_prompt_build` phase, ensuring accurate turn boundaries.
 * **Dual Peer Model** — Honcho maintains separate representations: one for the user (preferences, facts, communication style) and one for the agent (personality, learned behaviors). Each OpenClaw agent gets its own Honcho peer (`agent-{id}`), so multi-agent workspaces maintain isolated memory.
 * **Clean Persistence** — Platform metadata (conversation info, sender headers, thread context, forwarded messages) is stripped before saving to Honcho, ensuring only meaningful content is persisted.
 
@@ -84,17 +85,16 @@ OpenClaw uses a multi-agent architecture where a primary agent can spawn **subag
 
 | Tool | Description |
 | ---- | ----------- |
-| `honcho_session` | Conversation history and summaries from the current session. |
-| `honcho_profile` | User's peer card — key facts (name, preferences, role). |
-| `honcho_search` | Semantic search over stored observations. |
-| `honcho_context` | Full user representation across all sessions. |
+| `honcho_context` | User knowledge across all sessions. `detail='card'` for key facts, `'full'` for broad representation. |
+| `honcho_search_conclusions` | Semantic vector search over stored conclusions ranked by relevance. |
+| `honcho_search_messages` | Find specific messages across all sessions. Filter by sender, date, or metadata. |
+| `honcho_session` | Current session history and summary. Supports semantic search within the session. |
 
 ### Q&A (LLM-powered)
 
 | Tool | Description |
 | ---- | ----------- |
-| `honcho_recall` | Simple factual question — minimal reasoning. |
-| `honcho_analyze` | Complex question requiring synthesis — medium reasoning. |
+| `honcho_ask` | Ask Honcho a question about the user. `depth='quick'` for facts, `'thorough'` for synthesis. |
 
 ## CLI Commands
 
@@ -126,32 +126,27 @@ openclaw honcho setup
 
 ## Local File Search (QMD Integration)
 
-The plugin automatically exposes OpenClaw's `memory_search` and `memory_get` tools when a memory backend is configured, allowing both Honcho cloud memory and local file search together.
+The plugin automatically exposes OpenClaw's `memory_search` and `memory_get` tools when a [memory backend](https://docs.openclaw.ai/concepts/memory) is configured, allowing both Honcho memory and local file search together.
 
 ### Setup
 
 1. Install [QMD](https://github.com/tobi/qmd) on your server
 
-2. Configure OpenClaw in `~/.openclaw/openclaw.json`:
+2. Configure OpenClaw to use QMD as the memory backend in `~/.openclaw/openclaw.json`:
 
 ```json
 {
   "memory": {
-    "backend": "qmd",
-    "qmd": {
-      "limits": {
-        "timeoutMs": 120000
-      }
-    }
+    "backend": "qmd"
   }
 }
 ```
 
-3. Set up QMD collections and restart:
+OpenClaw manages QMD collections automatically from your workspace memory files and any extra paths in `memory.qmd.paths`. See the [QMD Memory Engine docs](https://docs.openclaw.ai/concepts/memory-qmd) for full setup.
+
+3. Restart the gateway:
 
 ```bash
-qmd collection add ~/Documents/notes --name notes
-qmd update
 openclaw gateway restart
 ```
 
@@ -170,6 +165,10 @@ When QMD is configured, you get both Honcho and local file tools:
 <CardGroup cols={2}>
   <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/openclaw-honcho">
     Source code, issues, and README.
+  </Card>
+
+  <Card title="OpenClaw Memory Docs" icon="book" href="https://docs.openclaw.ai/concepts/memory">
+    Memory backends, search, and configuration in the OpenClaw docs.
   </Card>
 
   <Card title="Honcho Architecture" icon="sitemap" href="/v3/documentation/core-concepts/architecture">
