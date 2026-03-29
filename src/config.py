@@ -21,6 +21,8 @@ load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
+OpenAICompatibleProviderName = Literal["generic", "vllm", "openrouter"]
+
 
 def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
     """Load configuration from TOML file if it exists."""
@@ -45,6 +47,7 @@ class ModelOverrideSettings(BaseModel):
     api_key: str | None = None
     api_key_env: str | None = None
     base_url: str | None = None
+    compat_provider: OpenAICompatibleProviderName | None = None
 
     fallback_api_key: str | None = None
     fallback_api_key_env: str | None = None
@@ -123,6 +126,7 @@ class ModelConfig(BaseModel):
 
     api_key: str | None = None
     base_url: str | None = None
+    compat_provider: OpenAICompatibleProviderName | None = None
 
     fallback_api_key: str | None = None
     fallback_base_url: str | None = None
@@ -166,8 +170,10 @@ class ModelConfig(BaseModel):
     def _validate_transport(self) -> "ModelConfig":
         effective_fallback_transport = self.fallback_transport or self.transport
 
-        if self.transport == "openai_compatible" and not self.base_url:
-            raise ValueError("base_url is required when transport='openai_compatible'")
+        if self.transport != "openai_compatible" and self.compat_provider is not None:
+            raise ValueError(
+                "compat_provider is only valid when transport='openai_compatible'"
+            )
 
         if self.transport == "provider_native" and self.base_url is not None:
             raise ValueError(
@@ -176,11 +182,11 @@ class ModelConfig(BaseModel):
 
         if (
             self.fallback_model is not None
-            and effective_fallback_transport == "openai_compatible"
-            and self.fallback_base_url is None
+            and effective_fallback_transport != "openai_compatible"
+            and self.fallback_base_url is not None
         ):
             raise ValueError(
-                "fallback_base_url is required when fallback_transport is 'openai_compatible'"
+                "fallback_base_url is only valid when fallback_transport is 'openai_compatible'"
             )
 
         return self
@@ -234,6 +240,7 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
             configured.overrides.api_key_env,
         ),
         base_url=configured.overrides.base_url,
+        compat_provider=configured.overrides.compat_provider,
         fallback_api_key=_resolve_secret(
             configured.overrides.fallback_api_key,
             configured.overrides.fallback_api_key_env,
@@ -264,6 +271,7 @@ def _merge_override_defaults(
         "api_key",
         "api_key_env",
         "base_url",
+        "compat_provider",
         "fallback_api_key",
         "fallback_api_key_env",
         "fallback_base_url",

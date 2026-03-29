@@ -51,9 +51,13 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
     """Resolve a backend implementation for the effective model config."""
 
     if config.transport == "openai_compatible":
+        credentials = resolve_credentials(config)
         return OpenAICompatibleBackend(
-            _get_compatible_client(config.base_url, config.api_key),
-            provider_name="openai_compatible",
+            _get_compatible_client(
+                credentials.get("api_base"),
+                credentials.get("api_key"),
+            ),
+            provider_name=config.compat_provider or "generic",
         )
 
     prefix = config.model.split("/", 1)[0]
@@ -79,7 +83,7 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
                 settings.LLM.VLLM_BASE_URL,
                 settings.LLM.VLLM_API_KEY,
             ),
-            provider_name="hosted_vllm",
+            provider_name="vllm",
         )
     raise ValueError(f"Unknown model prefix: {prefix}")
 

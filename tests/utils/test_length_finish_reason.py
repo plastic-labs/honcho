@@ -152,16 +152,18 @@ class TestOpenAILengthFinishReasonRepair:
         assert response.finish_reasons == ["length"]
         assert response.output_tokens == 2000
 
-    async def test_truncated_prompt_representation_repaired_custom(self) -> None:
-        """Truncated but repairable PromptRepresentation JSON should be repaired (custom)."""
+    async def test_truncated_prompt_representation_repaired_openai_compatible(
+        self,
+    ) -> None:
+        """Truncated but repairable PromptRepresentation JSON should be repaired."""
         truncated_json = json.dumps(VALID_REPR_JSON)[:-2]
 
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error(truncated_json)
 
-        with patch.dict(CLIENTS, {"custom": mock_client}):
+        with patch.dict(CLIENTS, {"openai_compatible": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="custom",
+                provider="openai_compatible",
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
@@ -200,9 +202,9 @@ class TestOpenAILengthFinishReasonRepair:
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error("")
 
-        with patch.dict(CLIENTS, {"custom": mock_client}):
+        with patch.dict(CLIENTS, {"openai_compatible": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="custom",
+                provider="openai_compatible",
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
@@ -258,9 +260,9 @@ class TestOpenAILengthFinishReasonRepair:
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error(valid_json)
 
-        with patch.dict(CLIENTS, {"custom": mock_client}):
+        with patch.dict(CLIENTS, {"openai_compatible": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="custom",
+                provider="openai_compatible",
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,

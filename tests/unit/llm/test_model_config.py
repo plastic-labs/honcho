@@ -14,12 +14,12 @@ from src.config import (
 )
 
 
-def test_openai_compatible_requires_base_url() -> None:
-    with pytest.raises(ValueError, match="base_url is required"):
+def test_provider_native_rejects_fallback_base_url() -> None:
+    with pytest.raises(ValueError, match="fallback_base_url is only valid"):
         ModelConfig(
-            model="openai/my-local-model",
-            transport="openai_compatible",
-            api_key="test-key",
+            model="anthropic/claude-haiku-4-5",
+            fallback_model="gemini/gemini-2.5-pro",
+            fallback_base_url="https://example.com/v1",
         )
 
 
@@ -32,13 +32,23 @@ def test_provider_native_rejects_base_url() -> None:
         )
 
 
-def test_openai_compatible_fallback_requires_base_url() -> None:
-    with pytest.raises(ValueError, match="fallback_base_url is required"):
+def test_provider_native_rejects_compat_provider() -> None:
+    with pytest.raises(ValueError, match="compat_provider is only valid"):
         ModelConfig(
             model="anthropic/claude-haiku-4-5",
-            fallback_model="openai/my-local-model",
-            fallback_transport="openai_compatible",
+            compat_provider="vllm",
         )
+
+
+def test_openai_compatible_fallback_allows_runtime_default_base_url() -> None:
+    config = ModelConfig(
+        model="anthropic/claude-haiku-4-5",
+        fallback_model="openai/my-local-model",
+        fallback_transport="openai_compatible",
+    )
+
+    assert config.fallback_transport == "openai_compatible"
+    assert config.fallback_base_url is None
 
 
 def test_anthropic_thinking_budget_has_minimum() -> None:
@@ -110,6 +120,7 @@ def test_resolve_model_config_reads_override_env_and_provider_params(
         overrides=ModelOverrideSettings(
             api_key_env="SUMMARY_LOCAL_API_KEY",
             base_url="http://localhost:8000/v1",
+            compat_provider="vllm",
             provider_params={"verbosity": "low"},
         ),
     )
@@ -118,6 +129,7 @@ def test_resolve_model_config_reads_override_env_and_provider_params(
 
     assert resolved.api_key == "test-key"
     assert resolved.base_url == "http://localhost:8000/v1"
+    assert resolved.compat_provider == "vllm"
     assert resolved.provider_params == {"verbosity": "low"}
 
 

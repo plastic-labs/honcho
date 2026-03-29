@@ -12,7 +12,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from src.config import ConfiguredModelSettings, ModelConfig, settings
+from src.config import (
+    ConfiguredModelSettings,
+    ModelConfig,
+    OpenAICompatibleProviderName,
+    settings,
+)
 from src.utils.types import SupportedProviders
 
 
@@ -28,9 +33,7 @@ def _provider_for_model_config(
     transport: str,
 ) -> SupportedProviders:
     if transport == "openai_compatible":
-        if model.startswith("hosted_vllm/"):
-            return "vllm"
-        return "custom"
+        return "openai_compatible"
 
     prefix = model.split("/", 1)[0]
     provider_map: dict[str, SupportedProviders] = {
@@ -38,11 +41,28 @@ def _provider_for_model_config(
         "openai": "openai",
         "gemini": "google",
         "groq": "groq",
-        "hosted_vllm": "vllm",
+        "openrouter": "openai_compatible",
+        "hosted_vllm": "openai_compatible",
     }
     if prefix not in provider_map:
         raise ValueError(f"Unsupported model prefix in reasoning trace: {prefix}")
     return provider_map[prefix]
+
+
+def _compat_provider_for_model_config(
+    model_config: ModelConfig | ConfiguredModelSettings,
+) -> OpenAICompatibleProviderName | None:
+    if model_config.transport == "openai_compatible":
+        if isinstance(model_config, ModelConfig):
+            return model_config.compat_provider or "generic"
+        return model_config.overrides.compat_provider or "generic"
+
+    prefix = model_config.model.split("/", 1)[0]
+    if prefix == "openrouter":
+        return "openrouter"
+    if prefix == "hosted_vllm":
+        return "vllm"
+    return None
 
 
 def log_reasoning_trace(
@@ -110,6 +130,10 @@ def log_reasoning_trace(
             "thinking_content": response.thinking_content,
         },
     }
+
+    compat_provider = _compat_provider_for_model_config(model_config)
+    if compat_provider is not None:
+        trace_entry["compat_provider"] = compat_provider
 
     # Use messages for multi-turn/agentic calls, otherwise use prompt
     if messages is not None:

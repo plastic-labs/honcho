@@ -12,9 +12,9 @@ from .openai import OpenAIBackend, extract_openai_cache_tokens
 
 
 class OpenAICompatibleBackend(OpenAIBackend):
-    """Backend for explicit OpenAI-compatible transports like vLLM/OpenRouter."""
+    """Backend for explicit OpenAI-compatible transports and endpoint flavors."""
 
-    def __init__(self, client: Any, provider_name: str = "openai_compatible") -> None:
+    def __init__(self, client: Any, provider_name: str = "generic") -> None:
         super().__init__(client)
         self._provider_name: str = provider_name
 
@@ -42,10 +42,7 @@ class OpenAICompatibleBackend(OpenAIBackend):
                 "OpenAI-compatible backend does not support thinking_budget_tokens"
             )
 
-        if (
-            self._provider_name in {"vllm", "hosted_vllm"}
-            and response_format is not None
-        ):
+        if self._provider_name == "vllm" and response_format is not None:
             if response_format is not PromptRepresentation:
                 raise NotImplementedError(
                     "vLLM structured output currently supports only PromptRepresentation"
@@ -87,7 +84,7 @@ class OpenAICompatibleBackend(OpenAIBackend):
             )
 
         processed_messages: list[dict[str, Any]] = messages
-        if self._provider_name in {"custom", "openrouter"}:
+        if self._provider_name in {"generic", "openrouter"}:
             processed_messages = []
             for message in messages:
                 if message.get("role") == "system" and isinstance(

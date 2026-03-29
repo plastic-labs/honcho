@@ -63,7 +63,8 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # GROQ_API_KEY = "your-api-key"
 # OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
 
-# Separate vLLM endpoint (for local models)
+# Optional default credentials for the vLLM compat flavor
+# Used when a module sets transport = "openai_compatible" with compat_provider = "vllm"
 # VLLM_API_KEY = "your-api-key"
 # VLLM_BASE_URL = "your-base-url"
 
@@ -89,10 +90,13 @@ thinking_budget_tokens = 1024
 max_output_tokens = 4096
 # fallback_model = "anthropic/claude-haiku-4-5"
 
-# Optional module-level transport overrides for custom routing / hosted OpenAI-compatible endpoints
+# Optional module-level transport overrides for openai_compatible routing
+# transport = "openai_compatible"
+# model = "openai/my-local-model"
 # [deriver.model_config.overrides]
 # base_url = "https://llm.internal.example/v1"
 # api_key_env = "DERIVER_CUSTOM_API_KEY"
+# compat_provider = "vllm"  # Optional: enables vLLM-specific quirks/defaults
 # fallback_base_url = "https://llm-backup.internal.example/v1"
 # fallback_api_key_env = "DERIVER_CUSTOM_BACKUP_API_KEY"
 # [deriver.model_config.overrides.provider_params]
