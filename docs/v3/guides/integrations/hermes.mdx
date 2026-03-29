@@ -1,0 +1,187 @@
+---
+title: "Hermes Agent + Honcho"
+sidebarTitle: "Hermes Agent"
+description: "How Hermes Agent uses Honcho for persistent cross-session memory and user modeling"
+icon: "message-bot"
+---
+
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) is an open-source AI agent from [Nous Research](https://nousresearch.com) with tool-calling, terminal access, a skills system, and multi-platform deployment (Telegram, Discord, Slack, WhatsApp). Honcho gives Hermes persistent cross-session memory and user modeling.
+
+For setup, configuration, and CLI commands, see the [Hermes Agent Honcho docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/honcho).
+
+## What Honcho provides
+
+Honcho acts as a long-term memory and user-model layer alongside Hermes' built-in memory files (`MEMORY.md` and `USER.md`).
+
+It gives Hermes three capabilities:
+
+1. **Prompt-time context injection** -- durable context about a user loaded into the prompt before generating a response.
+2. **Cross-session continuity** -- recall of stable preferences, project history, and working context across conversations.
+3. **Durable writeback** -- stable facts learned during a conversation stored back for future turns.
+
+These sit alongside Hermes' local session history. Session history remembers the current conversation. Honcho remembers what should still matter later.
+
+## Dual-peer architecture
+
+Both the user and the AI agent have peer representations in Honcho:
+
+- **User peer**: observed from user messages. Learns preferences, goals, communication style.
+- **AI peer**: observed from assistant messages. Builds the agent's knowledge representation.
+
+Both representations are injected into the system prompt, giving Hermes awareness of both who it's talking to and what it knows.
+
+## Available tools
+
+Hermes exposes four Honcho tools to the agent:
+
+| Tool | What it does |
+|---|---|
+| `honcho_profile` | Fast peer card retrieval (no LLM). Returns curated key facts about the user. |
+| `honcho_search` | Semantic search over memory. Returns raw excerpts ranked by relevance. |
+| `honcho_context` | Dialectic Q&A powered by Honcho's LLM. Synthesizes answers from conversation history. |
+| `honcho_conclude` | Writes durable facts to Honcho when the user states preferences, corrections, or important context. |
+
+## Two memory layers
+
+When Honcho is enabled, Hermes operates with two layer memory by default (`hybrid`):
+
+**Local session history** -- the immediate transcript for the current chat, thread, or CLI session. Use it for recent turns, short-lived task context, and follow-up questions.
+
+**Honcho memory** -- the semantic, cross-session layer. Use it for user preferences, durable project facts, cross-session continuity, and synthesized peer context.
+
+## Running Honcho locally with Hermes
+
+If you want to point Hermes at a local Honcho instance instead of the hosted API:
+
+### Docker (quickest)
+
+```bash
+git clone https://github.com/plastic-labs/honcho.git
+cd honcho
+cp .env.template .env
+cp docker-compose.yml.example docker-compose.yml
+```
+
+Edit `.env`:
+
+```bash
+OPENAI_API_KEY=your-openai-api-key
+ANTHROPIC_API_KEY=your-anthropic-api-key
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/honcho
+AUTH_USE_AUTH=false
+```
+
+```bash
+docker compose up -d
+curl http://localhost:8000/health
+```
+
+### Manual
+
+```bash
+git clone https://github.com/plastic-labs/honcho.git
+cd honcho
+uv sync
+cp .env.template .env
+```
+
+Edit `.env` with a local or cloud Postgres connection string and API keys, then:
+
+```bash
+uv run alembic upgrade head
+uv run fastapi dev src/main.py
+```
+
+Then update `~/.honcho/config.json` to point at your local instance:
+
+```json
+{
+  "apiKey": "not-needed-with-auth-disabled",
+  "baseUrl": "http://localhost:8000",
+  "hosts": {
+    "hermes": {
+      "workspace": "hermes",
+      "peerName": "your-name",
+      "aiPeer": "hermes",
+      "memoryMode": "hybrid",
+      "enabled": true
+    }
+  }
+}
+```
+
+The `baseUrl` field overrides the default hosted API. With `AUTH_USE_AUTH=false` on the server, the `apiKey` value is ignored but the field must still be present.
+
+See the full [self-hosting guide](/v3/contributing/self-hosting) for database options, cloud setup, and troubleshooting.
+
+## Verifying the integration
+
+Steps to test the integration via CLI and agentically by speaking to Hermes agent in natural language.
+
+### 1. Check configuration
+
+```bash
+hermes honcho status
+```
+
+### 2. Test cross-session recall
+
+In one conversation:
+
+```text
+Remember that my test phrase is velvet circuit.
+```
+
+In a fresh conversation (different thread, new CLI session):
+
+```text
+What is my test phrase?
+```
+
+If Hermes recalls "velvet circuit" after short-term context is gone, Honcho is working.
+
+### 3. Test writeback
+
+Tell Hermes a preference:
+
+```text
+Remember that I prefer terse answers.
+```
+
+Wait briefly if writes are asynchronous. Open a fresh conversation:
+
+```text
+How should you respond to me?
+```
+
+If Hermes answers with the stored preference, writeback is functioning.
+
+
+## Session strategy
+
+| Scope                | When to use                                              |
+|----------------------|---------------------------------------------------------|
+| Per-Session | A honcho session starts fresh each time a new Hermes session is created. Hermes remembers the user across sessions. |
+| Per Directory   | One honcho session per project directory. Context is scoped to each directory. Coding/project memory scoped to each repository/workspace. |
+| Global (per user)    | Continuity across all chats, threads, and projects. One honcho session globally for the user and Hermes agent.      |
+
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Hermes Agent Honcho Docs" icon="book" href="https://hermes-agent.nousresearch.com/docs/user-guide/features/honcho">
+    Setup, configuration, CLI commands, and all config options.
+  </Card>
+
+  <Card title="Hermes Agent Source" icon="github" href="https://github.com/NousResearch/hermes-agent">
+    Source code, installation, and full documentation.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="/v3/documentation/core-concepts/architecture">
+    Peers, sessions, and how reasoning works.
+  </Card>
+
+  <Card title="Self-Hosting Guide" icon="server" href="/v3/contributing/self-hosting">
+    Full local environment setup, database options, and troubleshooting.
+  </Card>
+</CardGroup>
