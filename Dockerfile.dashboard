@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir \
+    fastapi==0.109.0 \
+    uvicorn[standard]==0.27.0 \
+    httpx==0.26.0 \
+    asyncpg==0.29.0 \
+    pyyaml==6.0.1
+
+# Copy application files
+COPY dashboard-backend.py /app/server.py
+COPY dashboard-new.html /app/dashboard.html
+
+# Expose port
+EXPOSE 9000
+
+# Run the application
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "9000"]

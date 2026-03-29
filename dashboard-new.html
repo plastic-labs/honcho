@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KlimaShift Admin Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .refresh-btn:hover {
+            background: #5568d3;
+        }
+        .tabs {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .tab-buttons {
+            display: flex;
+            border-bottom: 2px solid #f0f0f0;
+            background: #f8f9fa;
+        }
+        .tab-button {
+            flex: 1;
+            padding: 15px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+        }
+        .tab-button:hover {
+            background: #e9ecef;
+        }
+        .tab-button.active {
+            background: white;
+            color: #667eea;
+            border-bottom: 3px solid #667eea;
+        }
+        .tab-content {
+            display: none;
+            padding: 30px;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            border-radius: 10px;
+            color: white;
+        }
+        .stat-card h3 {
+            font-size: 12px;
+            text-transform: uppercase;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: bold;
+        }
+        .panel {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .panel h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        .service-status {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        .status-indicator.healthy {
+            background: #10b981;
+        }
+        .status-indicator.unhealthy {
+            background: #ef4444;
+        }
+        .status-indicator.warning {
+            background: #f59e0b;
+        }
+        .table {
+            width: 100%;
+            background: white;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+        .table th {
+            background: #f8f9fa;
+            padding: 12px;
+            text-align: left;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #666;
+        }
+        .table td {
+            padding: 12px;
+            border-top: 1px solid #f0f0f0;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 5px;
+        }
+        .btn:hover {
+            background: #5568d3;
+        }
+        .btn-danger {
+            background: #ef4444;
+        }
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+        .form-group select, .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .template-preview {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .chart-container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .success {
+            background: #d1fae5;
+            color: #065f46;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>KlimaShift Admin Dashboard</h1>
+                <p>Hermes Agent & Honcho Memory Management</p>
+            </div>
+            <button class="refresh-btn" onclick="refreshAllData()">🔄 Refresh</button>
+        </div>
+
+        <div class="tabs">
+            <div class="tab-buttons">
+                <button class="tab-button active" onclick="switchTab('monitoring')">📊 Monitoring</button>
+                <button class="tab-button" onclick="switchTab('cost')">💰 Cost Analytics</button>
+                <button class="tab-button" onclick="switchTab('memory')">🧠 Memory</button>
+                <button class="tab-button" onclick="switchTab('agents')">🤖 Agent Creator</button>
+            </div>
+
+            <!-- Monitoring Tab -->
+            <div id="monitoring" class="tab-content active">
+                <div class="stats-grid" id="stats-grid">
+                    <div class="stat-card">
+                        <h3>Total Peers</h3>
+                        <div class="value" id="stat-peers">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total Sessions</h3>
+                        <div class="value" id="stat-sessions">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total Messages</h3>
+                        <div class="value" id="stat-messages">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Messages (24h)</h3>
+                        <div class="value" id="stat-messages-24h">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Queue Pending</h3>
+                        <div class="value" id="stat-queue-pending">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Queue Completed</h3>
+                        <div class="value" id="stat-queue-completed">-</div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Service Health</h2>
+                    <div id="services-status"></div>
+                </div>
+
+                <div class="panel">
+                    <h2>Recent Queue Items</h2>
+                    <div style="overflow-x: auto;">
+                        <table class="table" id="queue-table">
+                            <thead>
+                                <tr>
+                                    <th>Status</th>
+                                    <th>Type</th>
+                                    <th>Created</th>
+                                    <th>Updated</th>
+                                </tr>
+                            </thead>
+                            <tbody id="queue-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cost Analytics Tab -->
+            <div id="cost" class="tab-content">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Total Tokens (30d)</h3>
+                        <div class="value" id="cost-tokens">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Estimated Cost (30d)</h3>
+                        <div class="value" id="cost-total">$-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Gemini Cost</h3>
+                        <div class="value" id="cost-gemini">$-</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Claude Cost</h3>
+                        <div class="value" id="cost-claude">$-</div>
+                    </div>
+                </div>
+
+                <div class="chart-container">
+                    <h2 style="margin-bottom: 20px; color: #667eea;">Daily Token Usage (30 days)</h2>
+                    <canvas id="dailyUsageChart"></canvas>
+                </div>
+
+                <div class="panel">
+                    <h2>Top Peers by Usage</h2>
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Peer Name</th>
+                                <th>Messages</th>
+                                <th>Tokens</th>
+                            </tr>
+                        </thead>
+                        <tbody id="top-peers-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Memory Management Tab -->
+            <div id="memory" class="tab-content">
+                <div class="panel">
+                    <h2>Peers</h2>
+                    <div style="overflow-x: auto;">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Sessions</th>
+                                    <th>Messages</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="peers-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Observations</h2>
+                    <div class="form-group">
+                        <label>Select Peer</label>
+                        <select id="peer-select" onchange="loadObservations()">
+                            <option value="">-- Select a peer --</option>
+                        </select>
+                    </div>
+                    <div id="observations-container"></div>
+                </div>
+            </div>
+
+            <!-- Agent Creator Tab -->
+            <div id="agents" class="tab-content">
+                <div class="panel">
+                    <h2>Create New Agent</h2>
+                    
+                    <div id="agent-message"></div>
+                    
+                    <div class="form-group">
+                        <label>Select Template</label>
+                        <select id="template-select" onchange="loadTemplate()">
+                            <option value="">-- Select a template --</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Agent Name</label>
+                        <input type="text" id="agent-name" placeholder="e.g., climate-advisor-v2">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Template Preview</label>
+                        <div class="template-preview" id="template-preview">
+                            Select a template to see its configuration
+                        </div>
+                    </div>
+
+                    <button class="btn" onclick="deployAgent()">🚀 Deploy Agent</button>
+                </div>
+
+                <div class="panel">
+                    <h2>Available Templates</h2>
+                    <div id="templates-list"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // API base URL
+        const API_URL = window.location.origin;
+
+        // Tab switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+
+            // Load data for the tab
+            if (tabName === 'monitoring') loadMonitoringData();
+            if (tabName === 'cost') loadCostData();
+            if (tabName === 'memory') loadMemoryData();
+            if (tabName === 'agents') loadAgentData();
+        }
+
+        // Refresh all data
+        function refreshAllData() {
+            const activeTab = document.querySelector('.tab-content.active').id;
+            switchTab(activeTab);
+        }
+
+        // Load monitoring data
+        async function loadMonitoringData() {
+            try {
+                // Load stats
+                const statsRes = await axios.get(`${API_URL}/api/stats`);
+                const stats = statsRes.data;
+                
+                document.getElementById('stat-peers').textContent = stats.total_peers;
+                document.getElementById('stat-sessions').textContent = stats.total_sessions;
+                document.getElementById('stat-messages').textContent = stats.total_messages;
+                document.getElementById('stat-messages-24h').textContent = stats.messages_last_24h;
+                document.getElementById('stat-queue-pending').textContent = stats.queue_pending;
+                document.getElementById('stat-queue-completed').textContent = stats.queue_completed;
+
+                // Load services status
+                const servicesRes = await axios.get(`${API_URL}/api/services/status`);
+                const services = servicesRes.data;
+                
+                const servicesHtml = Object.keys(services).map(name => {
+                    const service = services[name];
+                    const statusClass = service.status === 'healthy' ? 'healthy' : 
+                                       service.status === 'unhealthy' ? 'warning' : 'unhealthy';
+                    return `
+                        <div class="service-status">
+                            <div class="status-indicator ${statusClass}"></div>
+                            <div>
+                                <strong>${name.replace('_', ' ').toUpperCase()}</strong>
+                                <div style="font-size: 12px; color: #666;">${service.status}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                document.getElementById('services-status').innerHTML = servicesHtml;
+
+                // Load queue items
+                const queueRes = await axios.get(`${API_URL}/api/queue/recent`);
+                const queueItems = queueRes.data;
+                
+                const queueHtml = queueItems.map(item => `
+                    <tr>
+                        <td><span style="padding: 4px 8px; background: ${
+                            item.status === 'completed' ? '#d1fae5' :
+                            item.status === 'processing' ? '#fef3c7' : '#e5e7eb'
+                        }; border-radius: 3px; font-size: 11px;">${item.status}</span></td>
+                        <td>${item.task_type || '-'}</td>
+                        <td>${new Date(item.created_at).toLocaleString()}</td>
+                        <td>${new Date(item.updated_at).toLocaleString()}</td>
+                    </tr>
+                `).join('');
+                
+                document.getElementById('queue-tbody').innerHTML = queueHtml;
+
+            } catch (error) {
+                console.error('Error loading monitoring data:', error);
+            }
+        }
+
+        // Load cost analytics
+        let dailyChart = null;
+
+        async function loadCostData() {
+            try {
+                const res = await axios.get(`${API_URL}/api/analytics/cost`);
+                const data = res.data;
+                
+                document.getElementById('cost-tokens').textContent = data.total_tokens_30d.toLocaleString();
+                document.getElementById('cost-total').textContent = `$${data.estimated_cost_30d}`;
+                document.getElementById('cost-gemini').textContent = `$${data.cost_by_provider.gemini}`;
+                document.getElementById('cost-claude').textContent = `$${data.cost_by_provider.claude}`;
+
+                // Daily usage chart
+                const ctx = document.getElementById('dailyUsageChart').getContext('2d');
+                
+                if (dailyChart) {
+                    dailyChart.destroy();
+                }
+                
+                dailyChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: data.daily_usage.reverse().map(d => d.date),
+                        datasets: [{
+                            label: 'Tokens',
+                            data: data.daily_usage.map(d => d.tokens),
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                // Top peers
+                const peersHtml = data.top_peers.map(peer => `
+                    <tr>
+                        <td>${peer.name}</td>
+                        <td>${peer.messages}</td>
+                        <td>${peer.tokens.toLocaleString()}</td>
+                    </tr>
+                `).join('');
+                
+                document.getElementById('top-peers-tbody').innerHTML = peersHtml;
+
+            } catch (error) {
+                console.error('Error loading cost data:', error);
+            }
+        }
+
+        // Load memory management data
+        async function loadMemoryData() {
+            try {
+                const res = await axios.get(`${API_URL}/api/peers`);
+                const peers = res.data;
+                
+                // Populate peers table
+                const peersHtml = peers.map(peer => `
+                    <tr>
+                        <td>${peer.name}</td>
+                        <td>${peer.session_count}</td>
+                        <td>${peer.message_count}</td>
+                        <td>${new Date(peer.created_at).toLocaleDateString()}</td>
+                        <td>
+                            <button class="btn" onclick="triggerDreamer('${peer.id}')">💭 Dream</button>
+                        </td>
+                    </tr>
+                `).join('');
+                
+                document.getElementById('peers-tbody').innerHTML = peersHtml;
+
+                // Populate peer select
+                const selectHtml = '<option value="">-- Select a peer --</option>' +
+                    peers.map(peer => `<option value="${peer.id}">${peer.name}</option>`).join('');
+                
+                document.getElementById('peer-select').innerHTML = selectHtml;
+
+            } catch (error) {
+                console.error('Error loading memory data:', error);
+            }
+        }
+
+        async function loadObservations() {
+            const peerId = document.getElementById('peer-select').value;
+            if (!peerId) return;
+
+            try {
+                const res = await axios.get(`${API_URL}/api/peers/${peerId}/observations`);
+                const observations = res.data;
+                
+                const html = `
+                    <div style="background: white; padding: 15px; border-radius: 5px;">
+                        <strong>Observations: ${observations.length}</strong>
+                        ${observations.map(obs => `
+                            <div style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 5px;">
+                                ${obs.content || obs.text || JSON.stringify(obs)}
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+                
+                document.getElementById('observations-container').innerHTML = html;
+
+            } catch (error) {
+                console.error('Error loading observations:', error);
+                document.getElementById('observations-container').innerHTML = 
+                    '<div class="error">Error loading observations</div>';
+            }
+        }
+
+        async function triggerDreamer(peerId) {
+            if (!confirm('Trigger dreamer for this peer?')) return;
+
+            try {
+                await axios.post(`${API_URL}/api/peers/${peerId}/dream`);
+                alert('Dreamer triggered successfully!');
+            } catch (error) {
+                console.error('Error triggering dreamer:', error);
+                alert('Error triggering dreamer');
+            }
+        }
+
+        // Load agent creator data
+        async function loadAgentData() {
+            try {
+                const res = await axios.get(`${API_URL}/api/agent-templates`);
+                const templates = res.data;
+                
+                // Populate template select
+                const selectHtml = '<option value="">-- Select a template --</option>' +
+                    templates.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
+                
+                document.getElementById('template-select').innerHTML = selectHtml;
+
+                // Show templates list
+                const listHtml = templates.map(t => `
+                    <div style="background: white; padding: 15px; border-radius: 5px; margin-bottom: 10px;">
+                        <strong>${t.name}</strong>
+                        <div style="font-size: 12px; color: #666; margin-top: 5px;">${t.description}</div>
+                        <div style="font-size: 11px; color: #999; margin-top: 5px;">
+                            Parameters: ${t.parameters.join(', ') || 'None'}
+                        </div>
+                    </div>
+                `).join('');
+                
+                document.getElementById('templates-list').innerHTML = listHtml;
+
+            } catch (error) {
+                console.error('Error loading agent data:', error);
+            }
+        }
+
+        async function loadTemplate() {
+            const templateName = document.getElementById('template-select').value;
+            if (!templateName) {
+                document.getElementById('template-preview').textContent = 
+                    'Select a template to see its configuration';
+                return;
+            }
+
+            try {
+                const res = await axios.get(`${API_URL}/api/agent-templates/${templateName}`);
+                const template = res.data;
+                
+                document.getElementById('template-preview').textContent = 
+                    JSON.stringify(template, null, 2);
+
+            } catch (error) {
+                console.error('Error loading template:', error);
+                document.getElementById('template-preview').textContent = 'Error loading template';
+            }
+        }
+
+        async function deployAgent() {
+            const templateName = document.getElementById('template-select').value;
+            const agentName = document.getElementById('agent-name').value;
+
+            if (!templateName || !agentName) {
+                alert('Please select a template and enter an agent name');
+                return;
+            }
+
+            try {
+                const res = await axios.post(`${API_URL}/api/agents/deploy`, {
+                    template_name: templateName,
+                    agent_name: agentName,
+                    parameters: {}
+                });
+
+                document.getElementById('agent-message').innerHTML = 
+                    `<div class="success">✓ ${res.data.message}</div>`;
+
+                setTimeout(() => {
+                    document.getElementById('agent-message').innerHTML = '';
+                }, 5000);
+
+            } catch (error) {
+                console.error('Error deploying agent:', error);
+                document.getElementById('agent-message').innerHTML = 
+                    '<div class="error">Error deploying agent</div>';
+            }
+        }
+
+        // Initial load
+        loadMonitoringData();
+    </script>
+</body>
+</html>

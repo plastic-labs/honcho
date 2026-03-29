@@ -191,3 +191,9 @@ metrics.jsonl
 AGENTS.md
 lancedb_data/
 grafana-data/
+
+# Avrio custom deployment artifacts
+*.pid
+.dashboard-pid
+*.backup
+honcho.toml

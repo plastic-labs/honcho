@@ -1,0 +1,40 @@
+# LiteLLM Configuration for Open WebUI → Hermes-style routing
+model_list:
+  # AWS Bedrock Models (same as Hermes uses)
+  - model_name: klimashift-agent
+    litellm_params:
+      model: bedrock/us.anthropic.claude-3-5-haiku-20241022-v1:0
+      aws_region_name: us-east-1
+    model_info:
+      id: klimashift-agent
+      mode: chat
+      supports_function_calling: true
+      supports_vision: false
+  
+  - model_name: claude-haiku
+    litellm_params:
+      model: bedrock/us.anthropic.claude-3-5-haiku-20241022-v1:0
+      aws_region_name: us-east-1
+    model_info:
+      id: claude-haiku
+      mode: chat
+  
+  - model_name: claude-sonnet
+    litellm_params:
+      model: bedrock/us.anthropic.claude-3-5-sonnet-20241022-v2:0
+      aws_region_name: us-east-1
+    model_info:
+      id: claude-sonnet
+      mode: chat
+      supports_function_calling: true
+
+# General settings
+general_settings:
+  master_key: hermes-litellm-key-12345  # Used by Open WebUI to authenticate
+  database_url: null  # Disable database for simplicity
+  
+litellm_settings:
+  drop_params: true  # Drop unsupported params
+  success_callback: []
+  failure_callback: []
+  cache: false
