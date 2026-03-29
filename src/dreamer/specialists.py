@@ -21,7 +21,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
-from src.config import settings
+from src.config import ConfiguredModelSettings, settings
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DreamSpecialistEvent, emit
@@ -35,6 +35,16 @@ from src.utils.agent_tools import (
 from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 
 logger = logging.getLogger(__name__)
+
+
+def _require_specialist_model_config(
+    model_config: ConfiguredModelSettings | None,
+    *,
+    specialist_name: str,
+) -> ConfiguredModelSettings:
+    if model_config is None:
+        raise ValueError(f"{specialist_name} MODEL_CONFIG must be resolved before use")
+    return model_config
 
 
 @dataclass
@@ -71,8 +81,8 @@ class BaseSpecialist(ABC):
         ...
 
     @abstractmethod
-    def get_model(self) -> str:
-        """Get the model to use for this specialist."""
+    def get_model_config(self) -> ConfiguredModelSettings:
+        """Get the configured model to use for this specialist."""
         ...
 
     def get_max_tokens(self) -> int:
@@ -194,9 +204,7 @@ If you update it, send the full deduplicated list and remove stale entries.
             parent_category="dream",
         )
 
-        # Get model with potential override
-        model = self.get_model()
-        llm_settings = settings.DREAM.model_copy(update={"MODEL": model})
+        model_config = self.get_model_config()
 
         # Track iterations via callback
         iteration_count = 0
@@ -207,7 +215,7 @@ If you update it, send the full deduplicated list and remove stale entries.
 
         # Run the agent loop
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            llm_settings=llm_settings,
+            model_config=model_config,
             prompt="",  # Ignored since we pass messages
             max_tokens=self.get_max_tokens(),
             tools=self.get_tools(peer_card_enabled=peer_card_enabled),
@@ -303,8 +311,11 @@ class DeductionSpecialist(BaseSpecialist):
             if t["name"] not in PEER_CARD_TOOL_NAMES
         ]
 
-    def get_model(self) -> str:
-        return settings.DREAM.DEDUCTION_MODEL
+    def get_model_config(self) -> ConfiguredModelSettings:
+        return _require_specialist_model_config(
+            settings.DREAM.DEDUCTION_MODEL_CONFIG,
+            specialist_name="DREAM DEDUCTION",
+        )
 
     def get_max_tokens(self) -> int:
         return 8192
@@ -446,8 +457,11 @@ class InductionSpecialist(BaseSpecialist):
             if t["name"] not in PEER_CARD_TOOL_NAMES
         ]
 
-    def get_model(self) -> str:
-        return settings.DREAM.INDUCTION_MODEL
+    def get_model_config(self) -> ConfiguredModelSettings:
+        return _require_specialist_model_config(
+            settings.DREAM.INDUCTION_MODEL_CONFIG,
+            specialist_name="DREAM INDUCTION",
+        )
 
     def get_max_tokens(self) -> int:
         return 8192

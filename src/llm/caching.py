@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from threading import Lock
+from typing import Any, Literal
+
+from pydantic import BaseModel
+
+from src.config import ModelConfig
+
+
+class PromptCachePolicy(BaseModel):
+    mode: Literal["none", "prefix", "gemini_cached_content"] = "none"
+    ttl_seconds: int | None = None
+    key_version: str = "v1"
+
+
+class GeminiCacheHandle(BaseModel):
+    key: str
+    cached_content_name: str
+    expires_at: datetime
+
+
+def build_cache_key(
+    *,
+    config: ModelConfig,
+    cache_policy: PromptCachePolicy,
+    cacheable_messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+) -> str:
+    payload = {
+        "transport": config.transport,
+        "model": config.model,
+        "cache_policy": cache_policy.model_dump(mode="json"),
+        "messages": cacheable_messages,
+        "tools": tools,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return f"llm-cache:{cache_policy.key_version}:{digest}"
+
+
+class InMemoryGeminiCacheStore:
+    """Best-effort local cache for Gemini cached-content handles."""
+
+    def __init__(self) -> None:
+        self._handles: dict[str, GeminiCacheHandle] = {}
+        self._lock: Lock = Lock()
+
+    def get(self, key: str) -> GeminiCacheHandle | None:
+        with self._lock:
+            handle = self._handles.get(key)
+            if handle is None:
+                return None
+            if handle.expires_at <= datetime.now(timezone.utc):
+                self._handles.pop(key, None)
+                return None
+            return handle
+
+    def set(self, handle: GeminiCacheHandle) -> GeminiCacheHandle:
+        with self._lock:
+            self._handles[handle.key] = handle
+        return handle
+
+
+gemini_cache_store = InMemoryGeminiCacheStore()

@@ -34,7 +34,13 @@ class GetOrCreateResult(Generic[T]):
             await self.on_commit()
 
 
-SupportedProviders = Literal["anthropic", "openai", "google", "groq", "custom", "vllm"]
+SupportedProviders = Literal[
+    "anthropic",
+    "openai",
+    "google",
+    "groq",
+    "openai_compatible",
+]
 TaskType = Literal[
     "webhook", "summary", "representation", "dream", "deletion", "reconciler"
 ]

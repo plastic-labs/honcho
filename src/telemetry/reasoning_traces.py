@@ -12,7 +12,13 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from src.config import LLMComponentSettings, settings
+from src.config import (
+    ConfiguredModelSettings,
+    ModelConfig,
+    OpenAICompatibleProviderName,
+    settings,
+)
+from src.utils.types import SupportedProviders
 
 
 def get_reasoning_traces_file_path() -> Path | None:
@@ -22,9 +28,46 @@ def get_reasoning_traces_file_path() -> Path | None:
     return None
 
 
+def _provider_for_model_config(
+    model: str,
+    transport: str,
+) -> SupportedProviders:
+    if transport == "openai_compatible":
+        return "openai_compatible"
+
+    prefix = model.split("/", 1)[0]
+    provider_map: dict[str, SupportedProviders] = {
+        "anthropic": "anthropic",
+        "openai": "openai",
+        "gemini": "google",
+        "groq": "groq",
+        "openrouter": "openai_compatible",
+        "hosted_vllm": "openai_compatible",
+    }
+    if prefix not in provider_map:
+        raise ValueError(f"Unsupported model prefix in reasoning trace: {prefix}")
+    return provider_map[prefix]
+
+
+def _compat_provider_for_model_config(
+    model_config: ModelConfig | ConfiguredModelSettings,
+) -> OpenAICompatibleProviderName | None:
+    if model_config.transport == "openai_compatible":
+        if isinstance(model_config, ModelConfig):
+            return model_config.compat_provider or "generic"
+        return model_config.overrides.compat_provider or "generic"
+
+    prefix = model_config.model.split("/", 1)[0]
+    if prefix == "openrouter":
+        return "openrouter"
+    if prefix == "hosted_vllm":
+        return "vllm"
+    return None
+
+
 def log_reasoning_trace(
     task_type: str,
-    llm_settings: LLMComponentSettings,
+    model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     response: Any,
     *,
@@ -40,7 +83,7 @@ def log_reasoning_trace(
 
     Args:
         task_type: Type of task (e.g., "minimal_deriver", "dialectic_chat")
-        llm_settings: LLM settings used for the call
+        model_config: Model configuration used for the call
         prompt: The full prompt text sent to the LLM (used if messages is None)
         response: HonchoLLMCallResponse object with the LLM response
         max_tokens: Max output tokens setting
@@ -59,11 +102,17 @@ def log_reasoning_trace(
     if isinstance(content, BaseModel):
         content = content.model_dump()
 
+    provider = _provider_for_model_config(
+        model_config.model,
+        model_config.transport,
+    )
+    bare_model = model_config.model.split("/", 1)[1]
+
     trace_entry: dict[str, Any] = {
         "timestamp": time.time(),
         "task_type": task_type,
-        "provider": llm_settings.PROVIDER,
-        "model": llm_settings.MODEL,
+        "provider": provider,
+        "model": bare_model,
         "settings": {
             "max_tokens": max_tokens,
             "thinking_budget_tokens": thinking_budget_tokens,
@@ -81,6 +130,10 @@ def log_reasoning_trace(
             "thinking_content": response.thinking_content,
         },
     }
+
+    compat_provider = _compat_provider_for_model_config(model_config)
+    if compat_provider is not None:
+        trace_entry["compat_provider"] = compat_provider
 
     # Use messages for multi-turn/agentic calls, otherwise use prompt
     if messages is not None:

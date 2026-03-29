@@ -10,11 +10,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.config import settings
 from src.utils.clients import HonchoLLMCallResponse
 from src.utils.summarizer import (
     Summary,
     SummaryType,
     _create_summary,  # pyright: ignore[reportPrivateUsage]
+    create_long_summary,
+    create_short_summary,
 )
 
 # Common test arguments for _create_summary
@@ -217,3 +220,61 @@ class TestCreateSummary:
         assert is_fallback is True
         assert summary["content"] == ""
         assert summary["token_count"] == 0
+
+
+@pytest.mark.asyncio
+class TestSummaryCallerMigration:
+    async def test_create_short_summary_uses_model_config(self):
+        mock_response = HonchoLLMCallResponse(
+            content="short summary",
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with patch(
+            "src.utils.summarizer.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_llm_call:
+            await create_short_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                input_tokens=_INPUT_TOKENS,
+                previous_summary=None,
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        kwargs = await_args.kwargs
+        expected_config = settings.SUMMARY.MODEL_CONFIG
+        assert "model_config" in kwargs
+        assert kwargs["model_config"].model == expected_config.model
+        assert "llm_settings" not in kwargs
+
+    async def test_create_long_summary_uses_model_config(self):
+        mock_response = HonchoLLMCallResponse(
+            content="long summary",
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with patch(
+            "src.utils.summarizer.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_llm_call:
+            await create_long_summary(
+                formatted_messages=_FORMATTED_MESSAGES,
+                previous_summary=None,
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected summary LLM call")
+        kwargs = await_args.kwargs
+        expected_config = settings.SUMMARY.MODEL_CONFIG
+        assert "model_config" in kwargs
+        assert kwargs["model_config"].model == expected_config.model
+        assert "llm_settings" not in kwargs
