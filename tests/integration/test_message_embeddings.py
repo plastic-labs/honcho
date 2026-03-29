@@ -239,7 +239,9 @@ async def test_semantic_search_when_embeddings_enabled(
     # Check the call count before search
     initial_call_count: int = mock_openai_embeddings["embed"].call_count
 
-    search_results = await search(
+    from typing import cast
+
+    result = await search(
         db=db_session,
         query=search_query,
         filters={
@@ -247,6 +249,8 @@ async def test_semantic_search_when_embeddings_enabled(
             "session_id": test_session.name,
         },
     )
+    # context_window=0 (default) returns flat list
+    search_results = cast(list[models.Message], result)
 
     # Verify that the embed method was called during search - e.g. we used semantic search
     assert mock_openai_embeddings["embed"].call_count == initial_call_count + 1

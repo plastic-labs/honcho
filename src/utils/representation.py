@@ -678,6 +678,47 @@ class Representation(BaseModel):
         )
 
 
+def format_documents_with_attribution(
+    documents: Sequence[models.Document],
+    include_ids: bool = False,
+) -> str:
+    """
+    Format documents grouped by observer/observed pair with attribution headers.
+
+    Groups documents by their (observer, observed) pair and formats each group
+    as a separate Representation section with a descriptive header.
+
+    Args:
+        documents: Sequence of Document models to format
+        include_ids: Whether to include observation IDs
+
+    Returns:
+        Formatted markdown string with attribution headers
+    """
+    if not documents:
+        return "No observations found."
+
+    # Group documents by (observer, observed)
+    groups: dict[tuple[str, str], list[models.Document]] = {}
+    for doc in documents:
+        key = (doc.observer, doc.observed)
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(doc)
+
+    parts: list[str] = []
+    for (observer, observed), group_docs in groups.items():
+        if observer == observed:
+            parts.append(f"### About {observed}\n")
+        else:
+            parts.append(f"### About {observed} (observed by {observer})\n")
+
+        rep = Representation.from_documents(group_docs)
+        parts.append(rep.format_as_markdown(include_ids=include_ids))
+
+    return "\n".join(parts)
+
+
 def _safe_datetime_from_metadata(
     internal_metadata: dict[str, Any], fallback_datetime: datetime
 ) -> datetime:

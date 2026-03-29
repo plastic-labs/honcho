@@ -1,6 +1,7 @@
 """Tests for search functionality including peer knowledge search."""
 
 import datetime
+from typing import cast
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -65,12 +66,14 @@ async def test_peer_perspective_search_single_session(
     await db_session.flush()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    # context_window=0 (default) returns flat list
+    results = cast(list[models.Message], result)
 
     # peer1 should see both messages
     assert len(results) == 2
@@ -135,12 +138,13 @@ async def test_peer_perspective_search_multiple_sessions(
     await db_session.flush()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should see messages from both sessions
     assert len(results) == 2
@@ -215,12 +219,13 @@ async def test_peer_perspective_search_temporal_constraints(
     await db_session.flush()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should only see the message during their participation
     assert len(results) == 1
@@ -282,12 +287,13 @@ async def test_peer_perspective_search_active_member(
     await db_session.flush()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should see all messages after join time (no left_at limit)
     assert len(results) == 2
@@ -411,12 +417,13 @@ async def test_peer_perspective_search_boundary_timestamps(
     await db_session.flush()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should see both boundary messages (inclusive bounds)
     assert len(results) == 2

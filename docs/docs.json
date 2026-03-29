@@ -158,7 +158,8 @@
                   "v3/api-reference/endpoint/workspaces/delete-workspace",
                   "v3/api-reference/endpoint/workspaces/search-workspace",
                   "v3/api-reference/endpoint/workspaces/get-queue-status",
-                  "v3/api-reference/endpoint/workspaces/schedule-dream"
+                  "v3/api-reference/endpoint/workspaces/schedule-dream",
+                  "v3/api-reference/endpoint/workspaces/chat"
                 ]
               },
               {
