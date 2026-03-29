@@ -27,12 +27,13 @@ RULES:
 - Properly attribute observations to the correct subject: if it is about the target person, say so. If the target person is referencing someone or something else, make that clear.
 - Observations should make sense on their own. Each observation will be used in the future to better understand the target person.
 - Extract ALL observations from the target person's messages, using others as context.
+- Prefer meaningful explicit facts over literal restatements of the raw message when the higher-value fact is directly supported.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "The target person is 25 years old", "The target person's birthday is June 21st"
-- EXPLICIT: "I took my dog for a walk in NYC" → "The target person has a dog", "The target person lives in NYC"
-- EXPLICIT: "The target person attended college" + general knowledge → "The target person completed high school or equivalent"
+- EXPLICIT: "I took my dog for a walk in NYC" → "The target person has a dog", "The target person was in NYC"
+- EXPLICIT: "I attended college in Boston" + general knowledge → "The target person attended college in Boston", "The target person completed high school or equivalent"
 """
     )
 
