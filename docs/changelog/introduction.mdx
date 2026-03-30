@@ -524,7 +524,30 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.0.1 (Current)">
+        <Update label="v2.1.0 (Current)">
+        ### Added
+
+        - `created_at` property on `Peer` and `Session` objects
+        - `is_active` property on `Session` objects
+        - `get_message(message_id)` method on `Session` (sync and async) to fetch a single message by ID
+        - `page`, `size`, and `reverse` pagination parameters on all list methods
+
+        ### Changed
+
+        - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization
+        - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
+
+        ### Fixed
+
+        - Sync and async `Session.get_metadata()`, `get_configuration()`, and `refresh()` now refresh cached `created_at` and `is_active` values along with metadata and configuration
+        - `honcho.__version__` now derives from package metadata, with a source-checkout fallback, so it stays aligned with released package versions
+        </Update>
+        <Update label="v2.0.2">
+        ### Changed
+
+        - All input models now reject unknown fields via strict Pydantic validation (`extra="forbid"`). Previously, misspelled or extraneous fields were silently ignored. Now a `ValidationError` is raised with the unrecognized field name.
+        </Update>
+        <Update label="v2.0.1">
             ### Added
 
         - `set_peer_card` method
@@ -638,7 +661,54 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.0.1 (Current)">
+        <Update label="v2.1.0 (Current)">
+        ### Added
+
+        - `createdAt` property on `Peer` and `Session` wrapper objects
+        - `isActive` property on `Session` wrapper objects
+        - `getMessage(messageId)` method on `Session` to fetch a single message by ID
+        - `Peer.representation()`, `Session.representation()`, and `Session.context()` now accept `Message` objects for `searchQuery`
+        - `page`, `size`, and `reverse` pagination controls on all list methods
+
+        ### Changed
+
+        - **Breaking**: `searchQuery` removed from top-level `context()` options — use `representationOptions.searchQuery` instead:
+          ```typescript
+          // Before (v2.0.x)
+          await session.context({ searchQuery: "..." });
+          // After (v2.1.0)
+          await session.context({ representationOptions: { searchQuery: "..." } });
+          ```
+        - List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) support both the new options object and the legacy raw-filter form
+        - Representation search options now accept strings and content-like objects, including `Message` instances, while rejecting whitespace-only or invalid runtime inputs
+        - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization. If you relied on constructing SDK objects without triggering a network request, note that every `peer()` and `session()` call now hits the API:
+          ```typescript
+          // Before (v2.0.x) — no API call
+          const session = honcho.session("my-session");
+          // After (v2.1.0) — makes a get-or-create API call
+          const session = await honcho.session("my-session");
+          ```
+        - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
+        - Moved `@types/node` from `dependencies` to `devDependencies`
+
+        ### Fixed
+
+        - `uploadFile()` now rejects unsupported top-level binary/object inputs and only validates inputs the serializer can actually upload
+        - `uploadFile()` now serializes message configuration using API field names, matching `addMessages()`
+        - Session fetch methods now refresh cached `createdAt` and `isActive` values alongside metadata and configuration
+        </Update>
+        <Update label="v2.0.2">
+        ### Changed
+
+        - Client constructor now rejects unknown options via `.strict()` Zod validation. Previously, misspelled options (e.g., `baseUrl` instead of `baseURL`) were silently ignored, causing the SDK to fall back to defaults. Now a `ZodError` is thrown with the unrecognized key name.
+        - All input schemas now use `.strict()` validation to reject unknown fields.
+        - `FileUploadSchema.configuration` now uses `MessageConfigurationSchema` instead of open record type.
+
+        ### Fixed
+
+        - README example used `baseUrl` instead of `baseURL`.
+        </Update>
+        <Update label="v2.0.1">
         ### Added
 
         - `setPeerCard` method

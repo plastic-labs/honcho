@@ -168,6 +168,8 @@ class ConclusionScope:
         page: int = 1,
         size: int = 50,
         session: str | SessionBase | None = None,
+        *,
+        reverse: bool = False,
     ) -> SyncPage[ConclusionResponse, Conclusion]:
         """
         List conclusions in this scope.
@@ -176,6 +178,7 @@ class ConclusionScope:
             page: Page number (1-indexed)
             size: Number of results per page
             session: Optional session (ID string or Session object) to filter by
+            reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
             Paginated response containing Conclusion objects
@@ -189,22 +192,28 @@ class ConclusionScope:
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
 
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._honcho._http.post(
             routes.conclusions_list(self.workspace_id),
             body={"filters": filters},
-            query={"page": page, "size": size},
+            query=query,
         )
 
         def transform(response: ConclusionResponse) -> Conclusion:
             return Conclusion.from_api_response(response)
 
         def fetch_next(
-            page: int,
+            next_page: int,
         ) -> SyncPage[ConclusionResponse, Conclusion]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._honcho._http.post(
                 routes.conclusions_list(self.workspace_id),
                 body={"filters": filters},
-                query={"page": page, "size": size},
+                query=next_query,
             )
             return SyncPage(next_data, ConclusionResponse, transform, fetch_next)
 
