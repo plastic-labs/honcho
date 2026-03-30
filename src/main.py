@@ -133,11 +133,10 @@ async def lifespan(_: FastAPI):
             "Error initializing cache in api process; proceeding without cache: %s", e
         )
 
-    # Fail fast if Alembic migration dims diverge from VECTOR_STORE.DIMENSIONS (pgvector only)
-    async with SessionLocal() as session:
-        await check_vector_dimensions(session)
-
     try:
+        # Fail fast if Alembic migration dims diverge from VECTOR_STORE.DIMENSIONS (pgvector only)
+        async with SessionLocal() as session:
+            await check_vector_dimensions(session)
         yield
     finally:
         # Import here to avoid circular import at module load time
