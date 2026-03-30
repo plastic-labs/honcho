@@ -72,6 +72,27 @@ Or if you prefer the [Claude Code Honcho plugin](/v3/guides/integrations/claudec
 /plugin marketplace add plastic-labs/claude-honcho
 ```
 
+### Codex
+
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.honcho]
+command = "npx"
+args = [
+  "mcp-remote",
+  "https://mcp.honcho.dev",
+  "--header",
+  "Authorization:Bearer hch-your-key-here",
+  "--header",
+  "X-Honcho-User-Name:YourName"
+]
+```
+
+<Note>
+Codex only supports stdio transport, so it uses `mcp-remote` as a bridge. Restart both the Codex CLI and VS Code extension after editing.
+</Note>
+
 ### Cursor
 
 Cursor supports MCP servers natively via HTTP. Add to your global config at `~/.cursor/mcp.json` or per-project at `.cursor/mcp.json`:
