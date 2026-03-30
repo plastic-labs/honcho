@@ -583,30 +583,44 @@ class SessionPeer(Base):
 
 async def check_vector_dimensions(session: Any) -> None:
     """
-    Validate that the DB vector column dimension matches VECTOR_STORE.DIMENSIONS.
-    Call this at application startup to fail fast if Alembic migrations and
-    runtime config have diverged.
+    Validate that DB vector column dimensions match VECTOR_STORE.DIMENSIONS.
+    Only runs for pgvector backends. Call at application startup to fail fast
+    if Alembic migrations and runtime config have diverged.
     """
+    if settings.VECTOR_STORE.TYPE != "pgvector":
+        return
+
     logger = getLogger(__name__)
     expected = settings.VECTOR_STORE.DIMENSIONS
-    result = await session.execute(
-        text(
-            "SELECT atttypmod FROM pg_attribute "
-            "JOIN pg_class ON attrelid = pg_class.oid "
-            "JOIN pg_namespace ON relnamespace = pg_namespace.oid "
-            "WHERE relname = 'message_embeddings' AND attname = 'embedding' "
-            "AND nspname = current_schema()"
+
+    tables_columns = [
+        ("message_embeddings", "embedding"),
+        ("documents", "embedding"),
+    ]
+
+    for table, column in tables_columns:
+        result = await session.execute(
+            text(
+                "SELECT atttypmod FROM pg_attribute "
+                "JOIN pg_class ON attrelid = pg_class.oid "
+                "JOIN pg_namespace ON relnamespace = pg_namespace.oid "
+                "WHERE relname = :table AND attname = :column "
+                "AND nspname = current_schema()"
+            ),
+            {"table": table, "column": column},
         )
-    )
-    row = result.fetchone()
-    if row is None:
-        logger.warning("check_vector_dimensions: could not find message_embeddings.embedding column")
-        return
-    # pgvector stores dimensions as atttypmod
-    actual = row[0]
-    if actual != expected:
-        raise RuntimeError(
-            f"Vector dimension mismatch: DB has {actual} but VECTOR_STORE.DIMENSIONS={expected}. "
-            "Run Alembic migrations or update VECTOR_STORE__DIMENSIONS to match."
-        )
-    logger.info(f"check_vector_dimensions: OK ({expected} dims)")
+        row = result.fetchone()
+        if row is None:
+            logger.warning(
+                "check_vector_dimensions: could not find %s.%s", table, column
+            )
+            continue
+        # pgvector stores dimension count directly in atttypmod
+        actual = row[0]
+        if actual != expected:
+            raise RuntimeError(
+                f"Vector dimension mismatch on {table}.{column}: "
+                f"DB has {actual} but VECTOR_STORE.DIMENSIONS={expected}. "
+                "Run Alembic migrations or update VECTOR_STORE__DIMENSIONS to match."
+            )
+        logger.info("check_vector_dimensions: %s.%s OK (%d dims)", table, column, expected)

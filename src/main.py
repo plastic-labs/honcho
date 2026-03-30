@@ -17,7 +17,8 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.db import engine, request_context
+from src.db import SessionLocal, engine, request_context
+from src.models import check_vector_dimensions
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
@@ -131,6 +132,10 @@ async def lifespan(_: FastAPI):
         logger.warning(
             "Error initializing cache in api process; proceeding without cache: %s", e
         )
+
+    # Fail fast if Alembic migration dims diverge from VECTOR_STORE.DIMENSIONS (pgvector only)
+    async with SessionLocal() as session:
+        await check_vector_dimensions(session)
 
     try:
         yield
