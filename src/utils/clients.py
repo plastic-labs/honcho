@@ -1895,7 +1895,7 @@ async def honcho_llm_call_inner(
                 if tool_choice:
                     openai_params["tool_choice"] = tool_choice
 
-            if json_mode and provider not in ("vllm",) and not response_model:
+            if json_mode and not response_model:
                 openai_params["response_format"] = {"type": "json_object"}
 
             # custom shim for vLLM response model formatting
