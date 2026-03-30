@@ -279,7 +279,9 @@ class MessageEmbedding(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(
+        Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True
+    )
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -387,7 +389,9 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(
+        Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True
+    )
     source_ids: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True, server_default=text("NULL")
     )
@@ -575,3 +579,34 @@ class SessionPeer(Base):
     internal_metadata: Mapped[dict[str, Any]]
     joined_at: Mapped[datetime.datetime]
     left_at: Mapped[datetime.datetime | None]
+
+
+async def check_vector_dimensions(session: Any) -> None:
+    """
+    Validate that the DB vector column dimension matches VECTOR_STORE.DIMENSIONS.
+    Call this at application startup to fail fast if Alembic migrations and
+    runtime config have diverged.
+    """
+    logger = getLogger(__name__)
+    expected = settings.VECTOR_STORE.DIMENSIONS
+    result = await session.execute(
+        text(
+            "SELECT atttypmod FROM pg_attribute "
+            "JOIN pg_class ON attrelid = pg_class.oid "
+            "JOIN pg_namespace ON relnamespace = pg_namespace.oid "
+            "WHERE relname = 'message_embeddings' AND attname = 'embedding' "
+            "AND nspname = current_schema()"
+        )
+    )
+    row = result.fetchone()
+    if row is None:
+        logger.warning("check_vector_dimensions: could not find message_embeddings.embedding column")
+        return
+    # pgvector stores dimensions as atttypmod
+    actual = row[0]
+    if actual != expected:
+        raise RuntimeError(
+            f"Vector dimension mismatch: DB has {actual} but VECTOR_STORE.DIMENSIONS={expected}. "
+            "Run Alembic migrations or update VECTOR_STORE__DIMENSIONS to match."
+        )
+    logger.info(f"check_vector_dimensions: OK ({expected} dims)")
