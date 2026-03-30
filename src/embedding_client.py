@@ -60,8 +60,11 @@ class _EmbeddingClient:
                 api_key = settings.LLM.OPENAI_API_KEY
             if not api_key:
                 raise ValueError("OpenAI API key is required")
-            self.client = AsyncOpenAI(api_key=api_key)
-            self.model = "text-embedding-3-small"
+            base_url = settings.LLM.OPENAI_BASE_URL  # None = use default OpenAI endpoint
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            # When using a custom base_url (e.g. Ollama), OPENAI_EMBEDDING_MODEL
+            # can override the default model name
+            self.model = getattr(settings.LLM, "OPENAI_EMBEDDING_MODEL", None) or "text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # OpenAI batch limit
 

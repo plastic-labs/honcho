@@ -204,6 +204,8 @@ class LLMSettings(HonchoSettings):
     # API Keys for LLM providers
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
+    OPENAI_BASE_URL: str | None = None  # Override for OpenAI-compatible endpoints (e.g. Ollama, local inference servers)
+    OPENAI_EMBEDDING_MODEL: str | None = None  # Override embedding model name when using custom OPENAI_BASE_URL (e.g. "nomic-embed-text" for Ollama)
     OPENAI_COMPATIBLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
