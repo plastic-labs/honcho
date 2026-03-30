@@ -49,6 +49,10 @@ Messages to analyze:
 <messages>
 {messages}
 </messages>
+
+Output your response as a JSON object matching this exact schema:
+{{"explicit": [{{"content": "<observation>"}}]}}
+Return ONLY the JSON object. No explanation, no markdown fences.
 """
     )
 
