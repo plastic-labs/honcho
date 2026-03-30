@@ -40,21 +40,6 @@ class _EmbeddingClient:
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
-        elif self.provider == "openrouter":
-            if api_key is None:
-                api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
-            if not api_key:
-                raise ValueError(
-                    "OpenRouter API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
-                )
-            base_url = (
-                settings.LLM.OPENAI_COMPATIBLE_BASE_URL
-                or "https://openrouter.ai/api/v1"
-            )
-            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
-            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
-            self.max_batch_size = 2048  # Same as OpenAI
         else:  # openai
             if api_key is None:
                 api_key = settings.LLM.OPENAI_API_KEY
@@ -262,7 +247,7 @@ class _EmbeddingClient:
                                 result[item.text_id][item.chunk_index] = (
                                     embedding.values
                                 )
-                else:  # openai / openrouter
+                else:  # openai
                     response = await self.client.embeddings.create(
                         model=self.model, input=[item.text for item in batch]
                     )
@@ -380,8 +365,6 @@ class EmbeddingClient:
                     provider = settings.LLM.EMBEDDING_PROVIDER
                     if provider == "gemini":
                         api_key = settings.LLM.GEMINI_API_KEY
-                    elif provider == "openrouter":
-                        api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
 

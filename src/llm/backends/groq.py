@@ -42,7 +42,7 @@ class GroqBackend:
             )
 
         params: dict[str, Any] = {
-            "model": self._strip_prefix(model),
+            "model": model,
             "messages": messages,
             "max_tokens": max_output_tokens or max_tokens,
         }
@@ -72,7 +72,7 @@ class GroqBackend:
                 content = repair_response_model_json(
                     response.choices[0].message.content or "",
                     response_format,
-                    self._strip_prefix(model),
+                    model,
                 )
 
         return CompletionResult(
@@ -110,7 +110,7 @@ class GroqBackend:
             )
 
         params: dict[str, Any] = {
-            "model": self._strip_prefix(model),
+            "model": model,
             "messages": messages,
             "max_tokens": max_output_tokens or max_tokens,
             "stream": True,
@@ -133,7 +133,3 @@ class GroqBackend:
                     is_done=True,
                     finish_reason=chunk.choices[0].finish_reason,
                 )
-
-    @staticmethod
-    def _strip_prefix(model: str) -> str:
-        return model.split("/", 1)[1] if "/" in model else model

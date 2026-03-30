@@ -1139,7 +1139,8 @@ class TestMainLLMCallFunction:
             chunks: list[HonchoLLMCallStreamChunk] = []
             async for chunk in await honcho_llm_call(
                 model_config=ConfiguredModelSettings(
-                    model="anthropic/claude-4-sonnet",
+                    model="claude-4-sonnet",
+                    transport="anthropic",
                 ),
                 prompt="Hello",
                 max_tokens=100,
@@ -1166,7 +1167,8 @@ class TestMainLLMCallFunction:
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
             response = await honcho_llm_call(
                 model_config=ConfiguredModelSettings(
-                    model="anthropic/claude-4-sonnet",
+                    model="claude-4-sonnet",
+                    transport="anthropic",
                 ),
                 prompt="Hello",
                 max_tokens=100,
@@ -1203,7 +1205,10 @@ class TestModelConfigCalls:
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
             response = await honcho_llm_call(
-                model_config=ModelConfig(model="anthropic/claude-haiku-4-5"),
+                model_config=ModelConfig(
+                    model="claude-haiku-4-5",
+                    transport="anthropic",
+                ),
                 prompt="Hello",
                 max_tokens=100,
                 enable_retry=False,
@@ -1229,7 +1234,8 @@ class TestModelConfigCalls:
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
             response = await honcho_llm_call(
                 model_config=ConfiguredModelSettings(
-                    model="anthropic/claude-haiku-4-5",
+                    model="claude-haiku-4-5",
+                    transport="anthropic",
                     thinking_budget_tokens=1024,
                 ),
                 prompt="Hello",

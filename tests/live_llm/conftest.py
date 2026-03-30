@@ -46,7 +46,11 @@ def require_provider_key(model_spec: LiveModelSpec) -> None:
 
 
 def make_model_config(model_spec: LiveModelSpec, **overrides: Any) -> ModelConfig:
-    return ModelConfig(model=model_spec.model, **overrides)
+    return ModelConfig(
+        model=model_spec.model,
+        transport=model_spec.provider,
+        **overrides,
+    )
 
 
 def make_backend(

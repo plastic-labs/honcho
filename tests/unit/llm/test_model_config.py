@@ -14,47 +14,30 @@ from src.config import (
 )
 
 
-def test_provider_native_rejects_fallback_base_url() -> None:
-    with pytest.raises(ValueError, match="fallback_base_url is only valid"):
+def test_fallback_base_url_requires_fallback_model() -> None:
+    with pytest.raises(ValueError, match="fallback_base_url requires fallback_model"):
         ModelConfig(
-            model="anthropic/claude-haiku-4-5",
-            fallback_model="gemini/gemini-2.5-pro",
+            model="claude-haiku-4-5",
+            transport="anthropic",
             fallback_base_url="https://example.com/v1",
         )
 
 
-def test_provider_native_rejects_base_url() -> None:
-    with pytest.raises(ValueError, match="base_url is only valid"):
-        ModelConfig(
-            model="anthropic/claude-haiku-4-5",
-            transport="provider_native",
-            base_url="https://example.com/v1",
-        )
-
-
-def test_provider_native_rejects_compat_provider() -> None:
-    with pytest.raises(ValueError, match="compat_provider is only valid"):
-        ModelConfig(
-            model="anthropic/claude-haiku-4-5",
-            compat_provider="vllm",
-        )
-
-
-def test_openai_compatible_fallback_allows_runtime_default_base_url() -> None:
+def test_base_url_is_allowed_for_any_transport() -> None:
     config = ModelConfig(
-        model="anthropic/claude-haiku-4-5",
-        fallback_model="openai/my-local-model",
-        fallback_transport="openai_compatible",
+        model="claude-haiku-4-5",
+        transport="anthropic",
+        base_url="https://anthropic-proxy.example/v1",
     )
 
-    assert config.fallback_transport == "openai_compatible"
-    assert config.fallback_base_url is None
+    assert config.base_url == "https://anthropic-proxy.example/v1"
 
 
 def test_anthropic_thinking_budget_has_minimum() -> None:
     with pytest.raises(ValueError, match="thinking_budget_tokens must be >= 1024"):
         ModelConfig(
-            model="anthropic/claude-haiku-4-5",
+            model="claude-haiku-4-5",
+            transport="anthropic",
             thinking_budget_tokens=512,
         )
 
@@ -62,7 +45,8 @@ def test_anthropic_thinking_budget_has_minimum() -> None:
 def test_reasoning_effort_alias_populates_generic_thinking_effort() -> None:
     config = ModelConfig.model_validate(
         {
-            "model": "openai/gpt-5",
+            "model": "gpt-5",
+            "transport": "openai",
             "reasoning_effort": "minimal",
         }
     )
@@ -73,24 +57,25 @@ def test_reasoning_effort_alias_populates_generic_thinking_effort() -> None:
 
 def test_for_model_overrides_model_and_transport() -> None:
     config = ModelConfig(
-        model="anthropic/claude-haiku-4-5",
-        transport="provider_native",
+        model="claude-haiku-4-5",
+        transport="anthropic",
     )
 
     updated = config.for_model(
-        "openai/my-local-model",
-        transport_override="openai_compatible",
+        "gpt-5-mini",
+        transport_override="openai",
     )
 
-    assert updated.model == "openai/my-local-model"
-    assert updated.transport == "openai_compatible"
-    assert config.transport == "provider_native"
+    assert updated.model == "gpt-5-mini"
+    assert updated.transport == "openai"
+    assert config.transport == "anthropic"
 
 
 def test_configured_model_settings_validate_like_runtime_model_config() -> None:
     with pytest.raises(ValueError, match="thinking_budget_tokens must be >= 1024"):
         ConfiguredModelSettings(
-            model="anthropic/claude-haiku-4-5",
+            model="claude-haiku-4-5",
+            transport="anthropic",
             thinking_budget_tokens=512,
         )
 
@@ -98,14 +83,18 @@ def test_configured_model_settings_validate_like_runtime_model_config() -> None:
 def test_summary_settings_accept_nested_model_config() -> None:
     settings = SummarySettings(
         MODEL_CONFIG=ConfiguredModelSettings(
-            model="anthropic/claude-haiku-4-5",
-            fallback_model="gemini/gemini-2.5-pro",
+            model="claude-haiku-4-5",
+            transport="anthropic",
+            fallback_model="gemini-2.5-pro",
+            fallback_transport="gemini",
             thinking_budget_tokens=1024,
         ),
     )
 
-    assert settings.MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
-    assert settings.MODEL_CONFIG.fallback_model == "gemini/gemini-2.5-pro"
+    assert settings.MODEL_CONFIG.model == "claude-haiku-4-5"
+    assert settings.MODEL_CONFIG.transport == "anthropic"
+    assert settings.MODEL_CONFIG.fallback_model == "gemini-2.5-pro"
+    assert settings.MODEL_CONFIG.fallback_transport == "gemini"
     assert settings.MODEL_CONFIG.thinking_budget_tokens == 1024
 
 
@@ -115,12 +104,11 @@ def test_resolve_model_config_reads_override_env_and_provider_params(
     monkeypatch.setenv("SUMMARY_LOCAL_API_KEY", "test-key")
 
     configured = ConfiguredModelSettings(
-        model="openai/my-local-model",
-        transport="openai_compatible",
+        model="my-local-model",
+        transport="openai",
         overrides=ModelOverrideSettings(
             api_key_env="SUMMARY_LOCAL_API_KEY",
             base_url="http://localhost:8000/v1",
-            compat_provider="vllm",
             provider_params={"verbosity": "low"},
         ),
     )
@@ -129,24 +117,26 @@ def test_resolve_model_config_reads_override_env_and_provider_params(
 
     assert resolved.api_key == "test-key"
     assert resolved.base_url == "http://localhost:8000/v1"
-    assert resolved.compat_provider == "vllm"
     assert resolved.provider_params == {"verbosity": "low"}
 
 
 def test_dialectic_level_settings_accepts_nested_model_config() -> None:
     settings = DialecticLevelSettings(
         MODEL_CONFIG=ConfiguredModelSettings(
-            model="anthropic/claude-haiku-4-5",
-            fallback_model="gemini/gemini-2.5-pro",
+            model="claude-haiku-4-5",
+            transport="anthropic",
+            fallback_model="gemini-2.5-pro",
+            fallback_transport="gemini",
             thinking_budget_tokens=1024,
         ),
         MAX_TOOL_ITERATIONS=2,
     )
 
     resolved = resolve_model_config(settings.MODEL_CONFIG)
-    assert resolved.model == "anthropic/claude-haiku-4-5"
-    assert resolved.fallback_model == "gemini/gemini-2.5-pro"
-    assert resolved.fallback_transport is None
+    assert resolved.model == "claude-haiku-4-5"
+    assert resolved.transport == "anthropic"
+    assert resolved.fallback_model == "gemini-2.5-pro"
+    assert resolved.fallback_transport == "gemini"
 
 
 def test_dialectic_level_settings_require_nested_model_config() -> None:
@@ -158,18 +148,32 @@ def test_dialectic_level_settings_reject_legacy_flat_model_shape() -> None:
     with pytest.raises(ValueError, match="Field required"):
         DialecticLevelSettings.model_validate(
             {
-                "MODEL": "anthropic/claude-haiku-4-5",
+                "MODEL": "claude-haiku-4-5",
                 "THINKING_BUDGET_TOKENS": 1024,
                 "MAX_TOOL_ITERATIONS": 2,
             }
         )
 
 
+def test_legacy_prefixed_model_strings_are_normalized() -> None:
+    config = ModelConfig.model_validate({"model": "gemini/gemini-2.5-flash"})
+    configured = ConfiguredModelSettings.model_validate(
+        {"model": "anthropic/claude-haiku-4-5"}
+    )
+
+    assert config.transport == "gemini"
+    assert config.model == "gemini-2.5-flash"
+    assert configured.transport == "anthropic"
+    assert configured.model == "claude-haiku-4-5"
+
+
 def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
     settings = DreamSettings(
         MODEL_CONFIG=ConfiguredModelSettings(
-            model="anthropic/claude-sonnet-4-5",
-            fallback_model="gemini/gemini-2.5-pro",
+            model="claude-sonnet-4-5",
+            transport="anthropic",
+            fallback_model="gemini-2.5-pro",
+            fallback_transport="gemini",
             thinking_budget_tokens=4096,
             max_output_tokens=12_000,
             overrides=ModelOverrideSettings(
@@ -177,21 +181,24 @@ def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
             ),
         ),
         DEDUCTION_MODEL_CONFIG=ConfiguredModelSettings(
-            model="anthropic/claude-haiku-4-5",
+            model="claude-haiku-4-5",
+            transport="anthropic",
         ),
         INDUCTION_MODEL_CONFIG=ConfiguredModelSettings(
-            model="anthropic/claude-opus-4-1",
+            model="claude-opus-4-1",
+            transport="anthropic",
         ),
     )
 
-    assert settings.DEDUCTION_MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
-    assert settings.DEDUCTION_MODEL_CONFIG.fallback_model == "gemini/gemini-2.5-pro"
+    assert settings.DEDUCTION_MODEL_CONFIG.model == "claude-haiku-4-5"
+    assert settings.DEDUCTION_MODEL_CONFIG.fallback_model == "gemini-2.5-pro"
+    assert settings.DEDUCTION_MODEL_CONFIG.fallback_transport == "gemini"
     assert settings.DEDUCTION_MODEL_CONFIG.thinking_budget_tokens == 4096
     assert settings.DEDUCTION_MODEL_CONFIG.max_output_tokens == 12_000
     assert settings.DEDUCTION_MODEL_CONFIG.overrides.provider_params == {
         "verbosity": "low"
     }
-    assert settings.INDUCTION_MODEL_CONFIG.model == "anthropic/claude-opus-4-1"
+    assert settings.INDUCTION_MODEL_CONFIG.model == "claude-opus-4-1"
     assert settings.INDUCTION_MODEL_CONFIG.thinking_budget_tokens == 4096
 
 
@@ -228,14 +235,19 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
         }
     )
 
-    assert deriver_config.model == "gemini/gemini-2.5-flash-lite"
+    assert deriver_config.transport == "gemini"
+    assert deriver_config.model == "gemini-2.5-flash-lite"
     assert deriver_config.thinking_budget_tokens == 1024
-    assert minimal_level.MODEL_CONFIG.model == ("gemini/gemini-2.5-flash-lite")
-    assert max_level.MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
+    assert minimal_level.MODEL_CONFIG.model == "gemini-2.5-flash-lite"
+    assert minimal_level.MODEL_CONFIG.transport == "gemini"
+    assert max_level.MODEL_CONFIG.model == "claude-haiku-4-5"
+    assert max_level.MODEL_CONFIG.transport == "anthropic"
     assert max_level.MODEL_CONFIG.thinking_budget_tokens == 2048
-    assert summary_config.model == "gemini/gemini-2.5-flash"
-    assert dream.MODEL_CONFIG.model == "anthropic/claude-sonnet-4-20250514"
-    assert dream.DEDUCTION_MODEL_CONFIG.model == "anthropic/claude-haiku-4-5"
+    assert summary_config.model == "gemini-2.5-flash"
+    assert summary_config.transport == "gemini"
+    assert dream.MODEL_CONFIG.model == "claude-sonnet-4-20250514"
+    assert dream.MODEL_CONFIG.transport == "anthropic"
+    assert dream.DEDUCTION_MODEL_CONFIG.model == "claude-haiku-4-5"
     assert dream.DEDUCTION_MODEL_CONFIG.thinking_budget_tokens == 8192
 
 

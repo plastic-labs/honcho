@@ -7,6 +7,7 @@ from typing import Any, Generic, Literal, TypeVar, assert_never, cast, overload
 
 from anthropic import AsyncAnthropic
 from google import genai
+from google.genai import types as genai_types
 from groq import AsyncGroq
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, ValidationError
@@ -16,7 +17,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from src.config import (
     ConfiguredModelSettings,
     ModelConfig,
-    OpenAICompatibleProviderName,
+    ModelTransport,
     resolve_model_config,
     settings,
 )
@@ -27,7 +28,6 @@ from src.llm.backends.anthropic import AnthropicBackend
 from src.llm.backends.gemini import GeminiBackend
 from src.llm.backends.groq import GroqBackend
 from src.llm.backends.openai import OpenAIBackend
-from src.llm.backends.openai_compat import OpenAICompatibleBackend
 from src.llm.history_adapters import (
     AnthropicHistoryAdapter,
     GeminiHistoryAdapter,
@@ -85,45 +85,16 @@ VerbosityType = Literal["low", "medium", "high"] | None
 ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq
 
 
-def _strip_model_prefix(model: str) -> str:
-    return model.split("/", 1)[1] if "/" in model else model
-
-
 def _provider_for_model_config(
-    model: str,
-    transport: Literal["provider_native", "openai_compatible"],
+    transport: ModelTransport,
 ) -> SupportedProviders:
-    if transport == "openai_compatible":
-        return "openai_compatible"
-
-    prefix = model.split("/", 1)[0]
-    provider_map: dict[str, SupportedProviders] = {
+    provider_map: dict[ModelTransport, SupportedProviders] = {
         "anthropic": "anthropic",
         "openai": "openai",
         "gemini": "google",
         "groq": "groq",
-        "openrouter": "openai_compatible",
-        "hosted_vllm": "openai_compatible",
     }
-    if prefix not in provider_map:
-        raise ValueError(f"Unsupported model prefix for honcho_llm_call: {prefix}")
-    return provider_map[prefix]
-
-
-def _compat_provider_for_model_config(
-    model: str,
-    transport: Literal["provider_native", "openai_compatible"],
-    compat_provider: OpenAICompatibleProviderName | None = None,
-) -> OpenAICompatibleProviderName | None:
-    if transport == "openai_compatible":
-        return compat_provider or "generic"
-
-    prefix = model.split("/", 1)[0]
-    if prefix == "openrouter":
-        return "openrouter"
-    if prefix == "hosted_vllm":
-        return "vllm"
-    return None
+    return provider_map[transport]
 
 
 def _resolve_runtime_model_config(
@@ -312,6 +283,7 @@ CLIENTS: dict[SupportedProviders, ProviderClient] = {}
 if settings.LLM.ANTHROPIC_API_KEY:
     anthropic = AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
+        base_url=settings.LLM.ANTHROPIC_BASE_URL,
         timeout=600.0,  # 10 minutes timeout for long-running operations
     )
     CLIENTS["anthropic"] = anthropic
@@ -319,48 +291,39 @@ if settings.LLM.ANTHROPIC_API_KEY:
 if settings.LLM.OPENAI_API_KEY:
     openai_client = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
+        base_url=settings.LLM.OPENAI_BASE_URL,
     )
     CLIENTS["openai"] = openai_client
 
-if settings.LLM.OPENAI_COMPATIBLE_API_KEY and settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
-    CLIENTS["openai_compatible"] = AsyncOpenAI(
-        api_key=settings.LLM.OPENAI_COMPATIBLE_API_KEY,
-        base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
-    )
-
 if settings.LLM.GEMINI_API_KEY:
-    google = genai.client.Client(api_key=settings.LLM.GEMINI_API_KEY)
+    http_options: genai_types.HttpOptions | None = None
+    if settings.LLM.GEMINI_BASE_URL:
+        http_options = genai_types.HttpOptions(base_url=settings.LLM.GEMINI_BASE_URL)
+    google = genai.client.Client(
+        api_key=settings.LLM.GEMINI_API_KEY,
+        http_options=http_options,
+    )
     CLIENTS["google"] = google
 
 if settings.LLM.GROQ_API_KEY:
-    groq = AsyncGroq(api_key=settings.LLM.GROQ_API_KEY)
+    groq = AsyncGroq(
+        api_key=settings.LLM.GROQ_API_KEY,
+        base_url=settings.LLM.GROQ_BASE_URL,
+    )
     CLIENTS["groq"] = groq
 
 
 def _default_credentials_for_provider(
     provider: SupportedProviders,
-    compat_provider: OpenAICompatibleProviderName | None = None,
 ) -> tuple[str | None, str | None]:
     if provider == "anthropic":
-        return settings.LLM.ANTHROPIC_API_KEY, None
+        return settings.LLM.ANTHROPIC_API_KEY, settings.LLM.ANTHROPIC_BASE_URL
     if provider == "openai":
-        return settings.LLM.OPENAI_API_KEY, None
+        return settings.LLM.OPENAI_API_KEY, settings.LLM.OPENAI_BASE_URL
     if provider == "google":
-        return settings.LLM.GEMINI_API_KEY, None
+        return settings.LLM.GEMINI_API_KEY, settings.LLM.GEMINI_BASE_URL
     if provider == "groq":
-        return settings.LLM.GROQ_API_KEY, None
-    if provider == "openai_compatible":
-        if compat_provider == "vllm":
-            return settings.LLM.VLLM_API_KEY, settings.LLM.VLLM_BASE_URL
-        if compat_provider == "openrouter":
-            return (
-                settings.LLM.OPENAI_COMPATIBLE_API_KEY,
-                "https://openrouter.ai/api/v1",
-            )
-        return (
-            settings.LLM.OPENAI_COMPATIBLE_API_KEY,
-            settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
-        )
+        return settings.LLM.GROQ_API_KEY, settings.LLM.GROQ_BASE_URL
     assert_never(provider)
 
 
@@ -369,38 +332,28 @@ def _build_client(
     *,
     api_key: str | None,
     base_url: str | None,
-    compat_provider: OpenAICompatibleProviderName | None = None,
 ) -> ProviderClient:
     if provider == "anthropic":
         if not api_key:
             raise ValueError("Missing API key for Anthropic model config")
         return AsyncAnthropic(
             api_key=api_key,
+            base_url=base_url,
             timeout=600.0,
         )
     if provider == "openai":
         if not api_key:
             raise ValueError("Missing API key for OpenAI model config")
-        return AsyncOpenAI(api_key=api_key)
+        return AsyncOpenAI(api_key=api_key, base_url=base_url)
     if provider == "google":
         if not api_key:
             raise ValueError("Missing API key for Gemini model config")
-        return genai.client.Client(api_key=api_key)
+        http_options = genai_types.HttpOptions(base_url=base_url) if base_url else None
+        return genai.client.Client(api_key=api_key, http_options=http_options)
     if provider == "groq":
         if not api_key:
             raise ValueError("Missing API key for Groq model config")
-        return AsyncGroq(api_key=api_key)
-    if provider == "openai_compatible":
-        compat_label = compat_provider or "generic"
-        if not api_key:
-            raise ValueError(
-                f"Missing API key for openai_compatible model config ({compat_label})"
-            )
-        if not base_url:
-            raise ValueError(
-                f"Missing base_url for openai_compatible model config ({compat_label})"
-            )
-        return AsyncOpenAI(api_key=api_key, base_url=base_url)
+        return AsyncGroq(api_key=api_key, base_url=base_url)
     assert_never(provider)
 
 
@@ -408,41 +361,18 @@ def _client_for_model_config(
     provider: SupportedProviders,
     model_config: ModelConfig,
 ) -> ProviderClient:
-    compat_provider = _compat_provider_for_model_config(
-        model_config.model,
-        model_config.transport,
-        model_config.compat_provider,
-    )
-
-    if (
-        provider != "openai_compatible"
-        and model_config.api_key is None
-        and model_config.base_url is None
-    ):
+    if model_config.api_key is None and model_config.base_url is None:
         existing_client = CLIENTS.get(provider)
         if existing_client is not None:
             return existing_client
 
-    if (
-        provider == "openai_compatible"
-        and compat_provider == "generic"
-        and model_config.api_key is None
-        and model_config.base_url is None
-    ):
-        existing_client = CLIENTS.get(provider)
-        if existing_client is not None:
-            return existing_client
-
-    default_api_key, default_base_url = _default_credentials_for_provider(
-        provider, compat_provider
-    )
+    default_api_key, default_base_url = _default_credentials_for_provider(provider)
     api_key = model_config.api_key or default_api_key
     base_url = model_config.base_url or default_base_url
     return _build_client(
         provider,
         api_key=api_key,
         base_url=base_url,
-        compat_provider=compat_provider,
     )
 
 
@@ -456,21 +386,11 @@ def _select_model_config_for_attempt(
         return model_config
 
     fallback_transport = model_config.fallback_transport or model_config.transport
-    fallback_provider = _provider_for_model_config(
-        model_config.fallback_model,
-        fallback_transport,
-    )
-    primary_provider = _provider_for_model_config(
-        model_config.model,
-        model_config.transport,
-    )
+    fallback_provider = _provider_for_model_config(fallback_transport)
+    primary_provider = _provider_for_model_config(model_config.transport)
 
     fallback_api_key = model_config.fallback_api_key
-    fallback_base_url = (
-        model_config.fallback_base_url
-        if fallback_transport == "openai_compatible"
-        else None
-    )
+    fallback_base_url = model_config.fallback_base_url
     if fallback_provider == primary_provider:
         if fallback_api_key is None:
             fallback_api_key = model_config.api_key
@@ -696,14 +616,7 @@ class StreamingResponseWithMetadata:
 def _get_backend_for_provider(
     provider: SupportedProviders,
     client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
-    compat_provider: OpenAICompatibleProviderName | None = None,
-) -> (
-    AnthropicBackend
-    | OpenAIBackend
-    | GeminiBackend
-    | GroqBackend
-    | OpenAICompatibleBackend
-):
+) -> AnthropicBackend | OpenAIBackend | GeminiBackend | GroqBackend:
     if provider == "anthropic":
         return AnthropicBackend(client)
     if provider == "openai":
@@ -712,11 +625,6 @@ def _get_backend_for_provider(
         return GeminiBackend(client)
     if provider == "groq":
         return GroqBackend(client)
-    if provider == "openai_compatible":
-        return OpenAICompatibleBackend(
-            client,
-            provider_name=compat_provider or "generic",
-        )
     assert_never(provider)
 
 
@@ -809,13 +717,8 @@ async def _stream_final_response(
     Yields:
         HonchoLLMCallStreamChunk objects containing the streaming response
     """
-    provider = _provider_for_model_config(model_config.model, model_config.transport)
-    compat_provider = _compat_provider_for_model_config(
-        model_config.model,
-        model_config.transport,
-        model_config.compat_provider,
-    )
-    model = _strip_model_prefix(model_config.model)
+    provider = _provider_for_model_config(model_config.transport)
+    model = model_config.model
     client = _client_for_model_config(provider, model_config)
 
     # Make a streaming call without tools
@@ -833,7 +736,6 @@ async def _stream_final_response(
         thinking_budget_tokens,
         stream=True,
         client_override=client,
-        compat_provider=compat_provider,
         tools=None,
         tool_choice=None,
         messages=conversation_messages,
@@ -869,7 +771,6 @@ async def _execute_tool_loop(
             SupportedProviders,
             str,
             ProviderClient,
-            OpenAICompatibleProviderName | None,
         ],
     ],
     before_retry_callback: Callable[[Any], None],
@@ -945,7 +846,7 @@ async def _execute_tool_loop(
             conversation_messages: list[dict[str, Any]] = conversation_messages,
         ) -> HonchoLLMCallResponse[Any]:
             # Use shared provider selection helper
-            provider, model, client, compat_provider = get_provider_and_model()
+            provider, model, client = get_provider_and_model()
 
             return await honcho_llm_call_inner(
                 provider,
@@ -961,7 +862,6 @@ async def _execute_tool_loop(
                 thinking_budget_tokens,
                 stream=False,
                 client_override=client,
-                compat_provider=compat_provider,
                 tools=tools,
                 tool_choice=effective_tool_choice,
                 messages=conversation_messages,
@@ -1045,7 +945,7 @@ async def _execute_tool_loop(
             return response
 
         # Determine which provider we're using (reuse the helper)
-        current_provider, _, _, _ = get_provider_and_model()
+        current_provider, _, _ = get_provider_and_model()
 
         # Add assistant message with tool calls to conversation
         assistant_message = _format_assistant_tool_message(
@@ -1174,7 +1074,7 @@ async def _execute_tool_loop(
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         # Use shared provider selection helper for backup failover support
-        provider, model, client, compat_provider = get_provider_and_model()
+        provider, model, client = get_provider_and_model()
 
         # No tools for final call
         return await honcho_llm_call_inner(
@@ -1191,7 +1091,6 @@ async def _execute_tool_loop(
             thinking_budget_tokens,
             stream=False,
             client_override=client,
-            compat_provider=compat_provider,
             tools=None,
             tool_choice=None,
             messages=conversation_messages,
@@ -1456,7 +1355,6 @@ async def honcho_llm_call(
             SupportedProviders,
             str,
             ProviderClient,
-            OpenAICompatibleProviderName | None,
         ]
     ):
         """
@@ -1471,32 +1369,23 @@ async def honcho_llm_call(
             attempt=attempt,
             retry_attempts=retry_attempts,
         )
-        provider = _provider_for_model_config(
-            selected_model_config.model,
-            selected_model_config.transport,
-        )
-        compat_provider = _compat_provider_for_model_config(
-            selected_model_config.model,
-            selected_model_config.transport,
-            selected_model_config.compat_provider,
-        )
-        model = _strip_model_prefix(selected_model_config.model)
+        provider = _provider_for_model_config(selected_model_config.transport)
+        model = selected_model_config.model
         client = _client_for_model_config(provider, selected_model_config)
         if (
             attempt == retry_attempts
             and runtime_model_config.fallback_model is not None
         ):
             primary_provider = _provider_for_model_config(
-                runtime_model_config.model,
-                runtime_model_config.transport,
+                runtime_model_config.transport
             )
-            primary_model = _strip_model_prefix(runtime_model_config.model)
+            primary_model = runtime_model_config.model
             logger.warning(
                 f"Final retry attempt {attempt}/{retry_attempts}: switching from "
                 + f"{primary_provider}/{primary_model} to "
                 + f"backup {provider}/{model}"
             )
-        return provider, model, client, compat_provider
+        return provider, model, client
 
     async def _call_with_provider_selection() -> (
         HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -1505,7 +1394,7 @@ async def honcho_llm_call(
         Inner function that selects provider/model based on current attempt.
         This function is retried, so provider selection happens on each attempt.
         """
-        provider, model, client, compat_provider = _get_provider_and_model()
+        provider, model, client = _get_provider_and_model()
 
         if stream:
             return await honcho_llm_call_inner(
@@ -1522,7 +1411,6 @@ async def honcho_llm_call(
                 thinking_budget_tokens,
                 stream=True,
                 client_override=client,
-                compat_provider=compat_provider,
                 tools=tools,
                 tool_choice=tool_choice,
             )
@@ -1541,7 +1429,6 @@ async def honcho_llm_call(
                 thinking_budget_tokens,
                 stream=False,
                 client_override=client,
-                compat_provider=compat_provider,
                 tools=tools,
                 tool_choice=tool_choice,
             )
@@ -1564,10 +1451,9 @@ async def honcho_llm_call(
         exc = retry_state.outcome.exception() if retry_state.outcome else None
         if exc:
             primary_provider = _provider_for_model_config(
-                runtime_model_config.model,
-                runtime_model_config.transport,
+                runtime_model_config.transport
             )
-            primary_model = _strip_model_prefix(runtime_model_config.model)
+            primary_model = runtime_model_config.model
             logger.warning(
                 f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
                 + f"{primary_provider}/{primary_model}: {exc}"
@@ -1730,7 +1616,6 @@ async def honcho_llm_call_inner(
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[False] = False,
     client_override: ProviderClient | None = None,
-    compat_provider: OpenAICompatibleProviderName | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
@@ -1752,7 +1637,6 @@ async def honcho_llm_call_inner(
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[False] = False,
     client_override: ProviderClient | None = None,
-    compat_provider: OpenAICompatibleProviderName | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
@@ -1774,7 +1658,6 @@ async def honcho_llm_call_inner(
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: Literal[True] = ...,
     client_override: ProviderClient | None = None,
-    compat_provider: OpenAICompatibleProviderName | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
@@ -1795,7 +1678,6 @@ async def honcho_llm_call_inner(
     thinking_budget_tokens: int | None = None,  # Anthropic / Gemini
     stream: bool = False,
     client_override: ProviderClient | None = None,
-    compat_provider: OpenAICompatibleProviderName | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
@@ -1810,7 +1692,6 @@ async def honcho_llm_call_inner(
     backend = _get_backend_for_provider(
         provider,
         client,
-        compat_provider=compat_provider,
     )
     if stream:
 

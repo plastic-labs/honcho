@@ -50,7 +50,6 @@ class GeminiBackend:
     ) -> CompletionResult:
         del api_key, api_base
 
-        bare_model = self._strip_prefix(model)
         contents, system_instruction = self._convert_messages(messages)
         config = self._build_config(
             max_tokens=max_output_tokens or max_tokens,
@@ -73,7 +72,7 @@ class GeminiBackend:
         )
         if isinstance(cache_policy, PromptCachePolicy):
             await self._attach_cached_content(
-                model=bare_model,
+                model=model,
                 config=config,
                 cache_policy=cache_policy,
                 contents=contents if isinstance(contents, list) else [],
@@ -81,7 +80,7 @@ class GeminiBackend:
             )
 
         response = await self._client.aio.models.generate_content(
-            model=bare_model,
+            model=model,
             contents=contents,
             config=config or None,
         )
@@ -90,7 +89,7 @@ class GeminiBackend:
             response_format=response_format
             if isinstance(response_format, type)
             else None,
-            model_name=bare_model,
+            model_name=model,
         )
 
     async def stream(
@@ -113,7 +112,6 @@ class GeminiBackend:
     ) -> AsyncIterator[StreamChunk]:
         del api_key, api_base
 
-        bare_model = self._strip_prefix(model)
         contents, system_instruction = self._convert_messages(messages)
         config = self._build_config(
             max_tokens=max_output_tokens or max_tokens,
@@ -130,7 +128,7 @@ class GeminiBackend:
             config["system_instruction"] = system_instruction
 
         stream = await self._client.aio.models.generate_content_stream(
-            model=bare_model,
+            model=model,
             contents=contents,
             config=config or None,
         )
@@ -369,11 +367,7 @@ class GeminiBackend:
     def _cache_model_config(model: str):
         from src.config import ModelConfig
 
-        return ModelConfig(model=f"gemini/{model}")
-
-    @staticmethod
-    def _strip_prefix(model: str) -> str:
-        return model.split("/", 1)[1] if "/" in model else model
+        return ModelConfig(transport="gemini", model=model)
 
     @staticmethod
     def _convert_messages(

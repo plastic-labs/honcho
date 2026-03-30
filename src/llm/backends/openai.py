@@ -8,7 +8,10 @@ from openai import LengthFinishReasonError
 from pydantic import BaseModel
 
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
-from src.llm.structured_output import repair_response_model_json
+from src.llm.structured_output import (
+    repair_response_model_json,
+    validate_structured_output,
+)
 
 
 def extract_openai_reasoning_content(response: Any) -> str | None:
@@ -124,8 +127,6 @@ class OpenAIBackend:
             extra_params=extra_params,
         )
 
-        bare_model = self._strip_prefix(model)
-
         if isinstance(response_format, type):
             params["response_format"] = response_format
             try:
@@ -136,16 +137,41 @@ class OpenAIBackend:
                 content = repair_response_model_json(
                     raw_content,
                     response_format,
-                    bare_model,
+                    model,
                 )
                 return self._normalize_response(
                     truncated,
                     content_override=content,
                 )
+            except Exception:
+                fallback_response = await self._create_structured_response(
+                    params=params,
+                    response_format=response_format,
+                )
+                content = self._parse_or_repair_structured_content(
+                    fallback_response,
+                    response_format,
+                    model,
+                )
+                return self._normalize_response(
+                    fallback_response,
+                    content_override=content,
+                )
             parsed = response.choices[0].message.parsed
+            raw_content = response.choices[0].message.content or ""
+            if parsed is None and raw_content:
+                content = repair_response_model_json(
+                    raw_content,
+                    response_format,
+                    model,
+                )
+                return self._normalize_response(response, content_override=content)
             if parsed is None:
                 raise ValueError("No parsed content in structured response")
-            return self._normalize_response(response, content_override=parsed)
+            return self._normalize_response(
+                response,
+                content_override=validate_structured_output(parsed, response_format),
+            )
         if response_format is not None:
             params["response_format"] = response_format
 
@@ -229,13 +255,12 @@ class OpenAIBackend:
         thinking_effort: str | None,
         extra_params: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        bare_model = self._strip_prefix(model)
         params: dict[str, Any] = {
-            "model": bare_model,
+            "model": model,
             "messages": messages,
         }
 
-        if "gpt-5" in bare_model:
+        if "gpt-5" in model:
             params["max_completion_tokens"] = max_tokens
             if extra_params and extra_params.get("verbosity"):
                 params["verbosity"] = extra_params["verbosity"]
@@ -302,9 +327,32 @@ class OpenAIBackend:
             raw_response=response,
         )
 
+    async def _create_structured_response(
+        self,
+        *,
+        params: dict[str, Any],
+        response_format: type[BaseModel],
+    ) -> Any:
+        structured_params = dict(params)
+        structured_params["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_format.__name__,
+                "schema": response_format.model_json_schema(),
+            },
+        }
+        return await self._client.chat.completions.create(**structured_params)
+
     @staticmethod
-    def _strip_prefix(model: str) -> str:
-        return model.split("/", 1)[1] if "/" in model else model
+    def _parse_or_repair_structured_content(
+        response: Any,
+        response_format: type[BaseModel],
+        model: str,
+    ) -> BaseModel:
+        raw_content = response.choices[0].message.content or ""
+        if raw_content:
+            return repair_response_model_json(raw_content, response_format, model)
+        raise ValueError("No raw content available for structured output repair")
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

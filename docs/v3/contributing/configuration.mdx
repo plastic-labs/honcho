@@ -267,33 +267,32 @@ LLM_OPENAI_API_KEY=your-openai-api-key
 LLM_GEMINI_API_KEY=your-gemini-api-key
 LLM_GROQ_API_KEY=your-groq-api-key
 
-# Generic OpenAI-compatible defaults
-LLM_OPENAI_COMPATIBLE_API_KEY=your-api-key
-LLM_OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint.com
-
-# Optional defaults for the vLLM compat flavor
-# These are used when a module opts into transport=openai_compatible and
-# compat_provider=vllm without specifying a module-level base_url.
-LLM_VLLM_API_KEY=your-vllm-api-key
-LLM_VLLM_BASE_URL=http://localhost:8000
+# Optional default base URLs for transport-compatible proxies
+LLM_ANTHROPIC_BASE_URL=https://your-anthropic-compatible-endpoint.com
+LLM_OPENAI_BASE_URL=https://your-openai-compatible-endpoint.com
+LLM_GEMINI_BASE_URL=https://your-gemini-compatible-endpoint.com
+LLM_GROQ_BASE_URL=https://your-groq-compatible-endpoint.com
 ```
 
-For non-native OpenAI-compatible endpoints, configure the feature module with:
+`MODEL_CONFIG.transport` now identifies the API contract directly, and `MODEL_CONFIG.model` is the raw model id passed to that transport. If you want to point a transport at a different endpoint, override `base_url` and `api_key` at the module level.
 
-- `MODEL_CONFIG.transport = "openai_compatible"`
-- `MODEL_CONFIG.overrides.base_url` when the module should target a specific endpoint
-- `MODEL_CONFIG.overrides.compat_provider` only when you need known endpoint quirks, such as `vllm` or `openrouter`
+For example, to use an OpenAI-compatible local endpoint:
+
+- `MODEL_CONFIG.transport = "openai"`
+- `MODEL_CONFIG.model = "my-local-model"`
+- `MODEL_CONFIG.overrides.base_url` for the target endpoint
+- `MODEL_CONFIG.overrides.api_key_env` if the module needs its own credentials
 
 Example:
 
 ```toml
 [deriver.model_config]
-model = "openai/my-local-model"
-transport = "openai_compatible"
+transport = "openai"
+model = "my-local-model"
 
 [deriver.model_config.overrides]
 base_url = "http://localhost:8000/v1"
-compat_provider = "vllm"
+api_key_env = "DERIVER_LOCAL_API_KEY"
 ```
 
 ### General LLM Settings
@@ -303,7 +302,7 @@ compat_provider = "vllm"
 LLM_DEFAULT_MAX_TOKENS=2500
 
 # Embedding provider (used when EMBED_MESSAGES=true)
-LLM_EMBEDDING_PROVIDER=openai  # Options: openai, gemini, openrouter
+LLM_EMBEDDING_PROVIDER=openai  # Options: openai, gemini
 
 # Tool output limits (to prevent token explosion)
 LLM_MAX_TOOL_OUTPUT_CHARS=10000  # ~2500 tokens at 4 chars/token
@@ -338,7 +337,8 @@ MAX_OUTPUT_TOKENS = 250  # Optional: overrides global MAX_OUTPUT_TOKENS
 TOOL_CHOICE = "any"  # Options: null/auto, "any", "required"
 
 [dialectic.levels.minimal.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 thinking_budget_tokens = 0
 
 [dialectic.levels.low]
@@ -346,35 +346,41 @@ MAX_TOOL_ITERATIONS = 5
 TOOL_CHOICE = "any"
 
 [dialectic.levels.low.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 thinking_budget_tokens = 0
 
 [dialectic.levels.medium]
 MAX_TOOL_ITERATIONS = 2
 
 [dialectic.levels.medium.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 1024
 
 [dialectic.levels.high]
 MAX_TOOL_ITERATIONS = 4
 
 [dialectic.levels.high.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 1024
 
 [dialectic.levels.max]
 MAX_TOOL_ITERATIONS = 10
 
 [dialectic.levels.max.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 2048
-# fallback_model = "gemini/gemini-2.5-pro"
+# fallback_model = "gemini-2.5-pro"
+# fallback_transport = "gemini"
 ```
 
 **Environment variables for nested dialectic levels:**
 ```bash
-DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL=gemini/gemini-2.5-flash-lite
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT=gemini
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL=gemini-2.5-flash-lite
 DIALECTIC_LEVELS__minimal__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
 DIALECTIC_LEVELS__minimal__MAX_TOOL_ITERATIONS=1
 ```
@@ -388,14 +394,16 @@ The Deriver is a background processing system that extracts facts from messages 
 DERIVER_ENABLED=true
 
 # LLM settings for deriver
-DERIVER_MODEL_CONFIG__MODEL=gemini/gemini-2.5-flash-lite
+DERIVER_MODEL_CONFIG__TRANSPORT=gemini
+DERIVER_MODEL_CONFIG__MODEL=gemini-2.5-flash-lite
 DERIVER_MODEL_CONFIG__MAX_OUTPUT_TOKENS=4096
 DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 DERIVER_MAX_INPUT_TOKENS=23000  # Maximum input tokens for deriver
 DERIVER_MODEL_CONFIG__TEMPERATURE=  # Optional temperature override (unset by default)
 
 # Backup model (optional)
-# DERIVER_MODEL_CONFIG__FALLBACK_MODEL=anthropic/claude-haiku-4-5
+# DERIVER_MODEL_CONFIG__FALLBACK_MODEL=claude-haiku-4-5
+# DERIVER_MODEL_CONFIG__FALLBACK_TRANSPORT=anthropic
 
 # Worker settings
 DERIVER_WORKERS=1  # Number of background worker processes
@@ -432,13 +440,15 @@ Session summaries provide compressed context for long conversations. Honcho crea
 SUMMARY_ENABLED=true
 
 # LLM settings for summary generation
-SUMMARY_MODEL_CONFIG__MODEL=gemini/gemini-2.5-flash
+SUMMARY_MODEL_CONFIG__TRANSPORT=gemini
+SUMMARY_MODEL_CONFIG__MODEL=gemini-2.5-flash
 SUMMARY_MAX_TOKENS_SHORT=1000  # Max tokens for short summaries
 SUMMARY_MAX_TOKENS_LONG=4000  # Max tokens for long summaries
 SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=512
 
 # Backup model (optional)
-# SUMMARY_MODEL_CONFIG__FALLBACK_MODEL=anthropic/claude-haiku-4-5
+# SUMMARY_MODEL_CONFIG__FALLBACK_MODEL=claude-haiku-4-5
+# SUMMARY_MODEL_CONFIG__FALLBACK_TRANSPORT=anthropic
 
 # Summary frequency thresholds
 SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20  # Create short summary every N messages
@@ -474,18 +484,22 @@ DREAM_MIN_HOURS_BETWEEN_DREAMS=8  # Minimum hours between dreams for a peer
 DREAM_ENABLED_TYPES=["omni"]  # Currently supported: omni
 
 # LLM settings for dream processing
-DREAM_MODEL_CONFIG__MODEL=anthropic/claude-sonnet-4-20250514
+DREAM_MODEL_CONFIG__TRANSPORT=anthropic
+DREAM_MODEL_CONFIG__MODEL=claude-sonnet-4-20250514
 DREAM_MODEL_CONFIG__MAX_OUTPUT_TOKENS=16384
 DREAM_MODEL_CONFIG__THINKING_BUDGET_TOKENS=8192
 DREAM_MAX_TOOL_ITERATIONS=20
 DREAM_HISTORY_TOKEN_LIMIT=16384
 
 # Backup model (optional)
-# DREAM_MODEL_CONFIG__FALLBACK_MODEL=gemini/gemini-2.5-flash
+# DREAM_MODEL_CONFIG__FALLBACK_MODEL=gemini-2.5-flash
+# DREAM_MODEL_CONFIG__FALLBACK_TRANSPORT=gemini
 
 # Specialist model configs inherit omitted values from DREAM_MODEL_CONFIG
-DREAM_DEDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
-DREAM_INDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
+DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=anthropic
+DREAM_DEDUCTION_MODEL_CONFIG__MODEL=claude-haiku-4-5
+DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT=anthropic
+DREAM_INDUCTION_MODEL_CONFIG__MODEL=claude-haiku-4-5
 ```
 
 **Surprisal-Based Sampling (Advanced):**
@@ -645,7 +659,8 @@ ENABLED = true
 WORKERS = 1
 
 [deriver.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 
 [peer_card]
 ENABLED = true
@@ -657,35 +672,40 @@ MAX_OUTPUT_TOKENS = 8192
 MAX_TOOL_ITERATIONS = 1
 
 [dialectic.levels.minimal.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 thinking_budget_tokens = 0
 
 [dialectic.levels.low]
 MAX_TOOL_ITERATIONS = 5
 
 [dialectic.levels.low.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 thinking_budget_tokens = 0
 
 [dialectic.levels.medium]
 MAX_TOOL_ITERATIONS = 2
 
 [dialectic.levels.medium.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 1024
 
 [dialectic.levels.high]
 MAX_TOOL_ITERATIONS = 4
 
 [dialectic.levels.high.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 1024
 
 [dialectic.levels.max]
 MAX_TOOL_ITERATIONS = 10
 
 [dialectic.levels.max.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 2048
 
 [summary]
@@ -694,19 +714,23 @@ MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
 
 [summary.model_config]
-model = "gemini/gemini-2.5-flash"
+transport = "gemini"
+model = "gemini-2.5-flash"
 
 [dream]
 ENABLED = true
 
 [dream.model_config]
-model = "anthropic/claude-sonnet-4-20250514"
+transport = "anthropic"
+model = "claude-sonnet-4-20250514"
 
 [dream.deduction_model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 
 [dream.induction_model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 
 [webhook]
 MAX_WORKSPACE_LIMIT = 10
@@ -766,7 +790,8 @@ ENABLED = true
 WORKERS = 4
 
 [deriver.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 
 [peer_card]
 ENABLED = true
@@ -778,35 +803,40 @@ MAX_OUTPUT_TOKENS = 8192
 MAX_TOOL_ITERATIONS = 1
 
 [dialectic.levels.minimal.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 thinking_budget_tokens = 0
 
 [dialectic.levels.low]
 MAX_TOOL_ITERATIONS = 5
 
 [dialectic.levels.low.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 thinking_budget_tokens = 0
 
 [dialectic.levels.medium]
 MAX_TOOL_ITERATIONS = 2
 
 [dialectic.levels.medium.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 1024
 
 [dialectic.levels.high]
 MAX_TOOL_ITERATIONS = 4
 
 [dialectic.levels.high.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 1024
 
 [dialectic.levels.max]
 MAX_TOOL_ITERATIONS = 10
 
 [dialectic.levels.max.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 2048
 
 [summary]
@@ -815,19 +845,23 @@ MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
 
 [summary.model_config]
-model = "gemini/gemini-2.5-flash"
+transport = "gemini"
+model = "gemini-2.5-flash"
 
 [dream]
 ENABLED = true
 
 [dream.model_config]
-model = "anthropic/claude-sonnet-4-20250514"
+transport = "anthropic"
+model = "claude-sonnet-4-20250514"
 
 [dream.deduction_model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 
 [dream.induction_model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 
 [webhook]
 MAX_WORKSPACE_LIMIT = 10

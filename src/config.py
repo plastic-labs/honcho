@@ -1,7 +1,7 @@
 import logging
 import os
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal
+from typing import Annotated, Any, ClassVar, Literal, cast
 
 import tomllib
 from dotenv import load_dotenv
@@ -17,15 +17,18 @@ from pydantic_settings import (
 
 # Load .env file for local development.
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
-load_dotenv(override=True)
+if not os.getenv("PYTHON_DOTENV_DISABLED"):
+    load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
-OpenAICompatibleProviderName = Literal["generic", "vllm", "openrouter"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "groq"]
 
 
 def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
     """Load configuration from TOML file if it exists."""
+    if config_path == "config.toml" and os.getenv("HONCHO_CONFIG_TOML_DISABLED"):
+        return {}
     config_file = Path(config_path)
     if config_file.exists():
         try:
@@ -47,7 +50,6 @@ class ModelOverrideSettings(BaseModel):
     api_key: str | None = None
     api_key_env: str | None = None
     base_url: str | None = None
-    compat_provider: OpenAICompatibleProviderName | None = None
 
     fallback_api_key: str | None = None
     fallback_api_key_env: str | None = None
@@ -60,10 +62,10 @@ class ConfiguredModelSettings(BaseModel):
     """Operator-configurable persisted model settings."""
 
     model: str
-    transport: Literal["provider_native", "openai_compatible"] = "provider_native"
+    transport: ModelTransport
 
     fallback_model: str | None = None
-    fallback_transport: Literal["provider_native", "openai_compatible"] | None = None
+    fallback_transport: ModelTransport | None = None
 
     temperature: float | None = None
     top_p: float | None = None
@@ -94,6 +96,33 @@ class ConfiguredModelSettings(BaseModel):
 
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        raw_data = cast(dict[Any, Any], data)
+        update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
+        for model_field, transport_field in (
+            ("model", "transport"),
+            ("fallback_model", "fallback_transport"),
+        ):
+            model_value = update.get(model_field)
+            transport_value = update.get(transport_field)
+            if not isinstance(model_value, str) or "/" not in model_value:
+                continue
+            prefix, bare_model = model_value.split("/", 1)
+            if transport_value is None and prefix in {
+                "anthropic",
+                "openai",
+                "gemini",
+                "groq",
+            }:
+                update[transport_field] = prefix
+                update[model_field] = bare_model
+        return update
+
     @property
     def reasoning_effort(
         self,
@@ -104,8 +133,7 @@ class ConfiguredModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
         if (
-            self.transport == "provider_native"
-            and self.model.startswith("anthropic/")
+            self.transport == "anthropic"
             and self.thinking_budget_tokens is not None
             and 0 < self.thinking_budget_tokens < 1024
         ):
@@ -119,14 +147,13 @@ class ModelConfig(BaseModel):
     """Reusable model configuration for any non-embedding LLM caller."""
 
     model: str
-    transport: Literal["provider_native", "openai_compatible"] = "provider_native"
+    transport: ModelTransport
 
     fallback_model: str | None = None
-    fallback_transport: Literal["provider_native", "openai_compatible"] | None = None
+    fallback_transport: ModelTransport | None = None
 
     api_key: str | None = None
     base_url: str | None = None
-    compat_provider: OpenAICompatibleProviderName | None = None
 
     fallback_api_key: str | None = None
     fallback_base_url: str | None = None
@@ -159,6 +186,33 @@ class ModelConfig(BaseModel):
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        raw_data = cast(dict[Any, Any], data)
+        update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
+        for model_field, transport_field in (
+            ("model", "transport"),
+            ("fallback_model", "fallback_transport"),
+        ):
+            model_value = update.get(model_field)
+            transport_value = update.get(transport_field)
+            if not isinstance(model_value, str) or "/" not in model_value:
+                continue
+            prefix, bare_model = model_value.split("/", 1)
+            if transport_value is None and prefix in {
+                "anthropic",
+                "openai",
+                "gemini",
+                "groq",
+            }:
+                update[transport_field] = prefix
+                update[model_field] = bare_model
+        return update
+
     @property
     def reasoning_effort(
         self,
@@ -168,34 +222,14 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_transport(self) -> "ModelConfig":
-        effective_fallback_transport = self.fallback_transport or self.transport
-
-        if self.transport != "openai_compatible" and self.compat_provider is not None:
-            raise ValueError(
-                "compat_provider is only valid when transport='openai_compatible'"
-            )
-
-        if self.transport == "provider_native" and self.base_url is not None:
-            raise ValueError(
-                "base_url is only valid when transport='openai_compatible'"
-            )
-
-        if (
-            self.fallback_model is not None
-            and effective_fallback_transport != "openai_compatible"
-            and self.fallback_base_url is not None
-        ):
-            raise ValueError(
-                "fallback_base_url is only valid when fallback_transport is 'openai_compatible'"
-            )
-
+        if self.fallback_base_url is not None and self.fallback_model is None:
+            raise ValueError("fallback_base_url requires fallback_model to be set")
         return self
 
     @model_validator(mode="after")
     def _validate_anthropic_thinking_minimum(self) -> "ModelConfig":
         if (
-            self.transport == "provider_native"
-            and self.model.startswith("anthropic/")
+            self.transport == "anthropic"
             and self.thinking_budget_tokens is not None
             and 0 < self.thinking_budget_tokens < 1024
         ):
@@ -208,8 +242,7 @@ class ModelConfig(BaseModel):
         self,
         model_override: str,
         *,
-        transport_override: Literal["provider_native", "openai_compatible"]
-        | None = None,
+        transport_override: ModelTransport | None = None,
     ) -> "ModelConfig":
         return self.model_copy(
             update={
@@ -240,7 +273,6 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
             configured.overrides.api_key_env,
         ),
         base_url=configured.overrides.base_url,
-        compat_provider=configured.overrides.compat_provider,
         fallback_api_key=_resolve_secret(
             configured.overrides.fallback_api_key,
             configured.overrides.fallback_api_key_env,
@@ -271,7 +303,6 @@ def _merge_override_defaults(
         "api_key",
         "api_key_env",
         "base_url",
-        "compat_provider",
         "fallback_api_key",
         "fallback_api_key_env",
         "fallback_base_url",
@@ -462,16 +493,14 @@ class LLMSettings(HonchoSettings):
     # API Keys for LLM providers
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
-    OPENAI_COMPATIBLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
-    OPENAI_COMPATIBLE_BASE_URL: str | None = None
+    ANTHROPIC_BASE_URL: str | None = None
+    OPENAI_BASE_URL: str | None = None
+    GEMINI_BASE_URL: str | None = None
+    GROQ_BASE_URL: str | None = None
 
-    # Separate vLLM endpoint (for local models)
-    VLLM_API_KEY: str | None = None
-    VLLM_BASE_URL: str | None = None
-
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    EMBEDDING_PROVIDER: Literal["openai", "gemini"] = "openai"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
@@ -510,7 +539,8 @@ class DeriverSettings(HonchoSettings):
 
     MODEL_CONFIG: ConfiguredModelSettings = Field(
         default_factory=lambda: ConfiguredModelSettings(
-            model="gemini/gemini-2.5-flash-lite",
+            transport="gemini",
+            model="gemini-2.5-flash-lite",
             thinking_budget_tokens=1024,
             max_output_tokens=4096,
         )
@@ -586,7 +616,7 @@ class DialecticLevelSettings(BaseModel):
     def _validate_anthropic_thinking_budget(self) -> "DialecticLevelSettings":
         """Ensure Anthropic thinking budget is >= 1024 when enabled."""
         if (
-            self.MODEL_CONFIG.model.startswith("anthropic/")
+            self.MODEL_CONFIG.transport == "anthropic"
             and self.MODEL_CONFIG.thinking_budget_tokens is not None
             and self.MODEL_CONFIG.thinking_budget_tokens > 0
             and self.MODEL_CONFIG.thinking_budget_tokens < 1024
@@ -610,7 +640,8 @@ class DialecticSettings(HonchoSettings):
         default_factory=lambda: {
             "minimal": DialecticLevelSettings(
                 MODEL_CONFIG=ConfiguredModelSettings(
-                    model="gemini/gemini-2.5-flash-lite",
+                    transport="gemini",
+                    model="gemini-2.5-flash-lite",
                     thinking_budget_tokens=0,
                 ),
                 MAX_TOOL_ITERATIONS=1,
@@ -619,7 +650,8 @@ class DialecticSettings(HonchoSettings):
             ),
             "low": DialecticLevelSettings(
                 MODEL_CONFIG=ConfiguredModelSettings(
-                    model="gemini/gemini-2.5-flash-lite",
+                    transport="gemini",
+                    model="gemini-2.5-flash-lite",
                     thinking_budget_tokens=0,
                 ),
                 MAX_TOOL_ITERATIONS=5,
@@ -627,21 +659,24 @@ class DialecticSettings(HonchoSettings):
             ),
             "medium": DialecticLevelSettings(
                 MODEL_CONFIG=ConfiguredModelSettings(
-                    model="anthropic/claude-haiku-4-5",
+                    transport="anthropic",
+                    model="claude-haiku-4-5",
                     thinking_budget_tokens=1024,
                 ),
                 MAX_TOOL_ITERATIONS=2,
             ),
             "high": DialecticLevelSettings(
                 MODEL_CONFIG=ConfiguredModelSettings(
-                    model="anthropic/claude-haiku-4-5",
+                    transport="anthropic",
+                    model="claude-haiku-4-5",
                     thinking_budget_tokens=1024,
                 ),
                 MAX_TOOL_ITERATIONS=4,
             ),
             "max": DialecticLevelSettings(
                 MODEL_CONFIG=ConfiguredModelSettings(
-                    model="anthropic/claude-haiku-4-5",
+                    transport="anthropic",
+                    model="claude-haiku-4-5",
                     thinking_budget_tokens=2048,
                 ),
                 MAX_TOOL_ITERATIONS=10,
@@ -694,7 +729,8 @@ class SummarySettings(HonchoSettings):
 
     MODEL_CONFIG: ConfiguredModelSettings = Field(
         default_factory=lambda: ConfiguredModelSettings(
-            model="gemini/gemini-2.5-flash",
+            transport="gemini",
+            model="gemini-2.5-flash",
             thinking_budget_tokens=512,
         )
     )
@@ -802,7 +838,8 @@ class DreamSettings(HonchoSettings):
 
     MODEL_CONFIG: ConfiguredModelSettings = Field(
         default_factory=lambda: ConfiguredModelSettings(
-            model="anthropic/claude-sonnet-4-20250514",
+            transport="anthropic",
+            model="claude-sonnet-4-20250514",
             thinking_budget_tokens=8192,
             max_output_tokens=16_384,
         )
@@ -818,12 +855,14 @@ class DreamSettings(HonchoSettings):
 
     DEDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
         default_factory=lambda: ConfiguredModelSettings(
-            model="anthropic/claude-haiku-4-5",
+            transport="anthropic",
+            model="claude-haiku-4-5",
         )
     )
     INDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
         default_factory=lambda: ConfiguredModelSettings(
-            model="anthropic/claude-haiku-4-5",
+            transport="anthropic",
+            model="claude-haiku-4-5",
         )
     )
 

@@ -1,68 +1,25 @@
 from __future__ import annotations
 
-import logging
-
 from src.config import ModelConfig, settings
-
-logger = logging.getLogger(__name__)
-
-_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-
-_PREFIX_MAP: dict[str, tuple[str, str | None]] = {
-    "anthropic/": ("ANTHROPIC_API_KEY", None),
-    "openai/": ("OPENAI_API_KEY", None),
-    "groq/": ("GROQ_API_KEY", None),
-    "gemini/": ("GEMINI_API_KEY", None),
-    "openrouter/": ("OPENAI_COMPATIBLE_API_KEY", None),
-    "hosted_vllm/": ("VLLM_API_KEY", "VLLM_BASE_URL"),
-}
 
 
 def resolve_credentials(config: ModelConfig) -> dict[str, str | None]:
     """Resolve credentials for the effective model transport."""
 
-    if config.transport == "openai_compatible":
-        compat_provider = config.compat_provider or "generic"
-        default_api_key, default_api_base = _default_openai_compatible_credentials(
-            compat_provider
-        )
-        return {
-            "api_key": config.api_key or default_api_key,
-            "api_base": config.base_url or default_api_base,
-        }
-
-    resolved = _resolve_from_global_settings(config.model)
-    if config.api_key is not None:
-        resolved["api_key"] = config.api_key
-    return resolved
+    default_api_key, default_api_base = _default_transport_credentials(config.transport)
+    return {
+        "api_key": config.api_key or default_api_key,
+        "api_base": config.base_url or default_api_base,
+    }
 
 
-def _default_openai_compatible_credentials(
-    compat_provider: str,
-) -> tuple[str | None, str | None]:
-    if compat_provider == "vllm":
-        return settings.LLM.VLLM_API_KEY, settings.LLM.VLLM_BASE_URL
-    if compat_provider == "openrouter":
-        return settings.LLM.OPENAI_COMPATIBLE_API_KEY, _OPENROUTER_BASE_URL
-    return (
-        settings.LLM.OPENAI_COMPATIBLE_API_KEY,
-        settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
-    )
-
-
-def _resolve_from_global_settings(model: str) -> dict[str, str | None]:
-    for prefix, (key_attr, base_url_attr) in _PREFIX_MAP.items():
-        if model.startswith(prefix):
-            result: dict[str, str | None] = {}
-            key_value = getattr(settings.LLM, key_attr, None)
-            if key_value:
-                result["api_key"] = key_value
-            if base_url_attr:
-                base_url_value = getattr(settings.LLM, base_url_attr, None)
-                if base_url_value:
-                    result["api_base"] = base_url_value
-            return result
-
-    logger.warning("No credential mapping for model prefix: %s", model)
-    return {}
+def _default_transport_credentials(transport: str) -> tuple[str | None, str | None]:
+    if transport == "anthropic":
+        return settings.LLM.ANTHROPIC_API_KEY, settings.LLM.ANTHROPIC_BASE_URL
+    if transport == "openai":
+        return settings.LLM.OPENAI_API_KEY, settings.LLM.OPENAI_BASE_URL
+    if transport == "gemini":
+        return settings.LLM.GEMINI_API_KEY, settings.LLM.GEMINI_BASE_URL
+    if transport == "groq":
+        return settings.LLM.GROQ_API_KEY, settings.LLM.GROQ_BASE_URL
+    raise ValueError(f"Unknown transport: {transport}")

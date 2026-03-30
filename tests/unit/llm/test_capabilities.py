@@ -4,10 +4,10 @@ from src.llm.capabilities import get_model_capabilities
 
 def test_anthropic_capabilities() -> None:
     capabilities = get_model_capabilities(
-        ModelConfig(model="anthropic/claude-haiku-4-5")
+        ModelConfig(model="claude-haiku-4-5", transport="anthropic")
     )
 
-    assert capabilities.transport == "provider_native"
+    assert capabilities.transport == "anthropic"
     assert capabilities.history_format == "anthropic"
     assert capabilities.structured_output_mode == "repair_wrapper"
     assert capabilities.reasoning_mode == "budget"
@@ -17,7 +17,9 @@ def test_anthropic_capabilities() -> None:
 
 
 def test_gemini_capabilities() -> None:
-    capabilities = get_model_capabilities(ModelConfig(model="gemini/gemini-2.5-flash"))
+    capabilities = get_model_capabilities(
+        ModelConfig(model="gemini-2.5-flash", transport="gemini")
+    )
 
     assert capabilities.history_format == "gemini"
     assert capabilities.structured_output_mode == "native"
@@ -27,18 +29,16 @@ def test_gemini_capabilities() -> None:
     assert capabilities.shared_reasoning_budget is True
 
 
-def test_openai_compatible_capabilities_are_conservative() -> None:
+def test_openai_capabilities_support_effort_reasoning_and_prefix_cache() -> None:
     capabilities = get_model_capabilities(
         ModelConfig(
-            model="openai/my-local-model",
-            transport="openai_compatible",
-            api_key="test-key",
-            base_url="http://localhost:8000/v1",
+            model="gpt-5",
+            transport="openai",
         )
     )
 
-    assert capabilities.transport == "openai_compatible"
+    assert capabilities.transport == "openai"
     assert capabilities.history_format == "openai"
-    assert capabilities.structured_output_mode == "repair_wrapper"
-    assert capabilities.reasoning_mode == "none"
-    assert capabilities.cache_mode == "none"
+    assert capabilities.structured_output_mode == "native"
+    assert capabilities.reasoning_mode == "effort"
+    assert capabilities.cache_mode == "prefix"

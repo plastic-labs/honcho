@@ -152,7 +152,7 @@ class TestOpenAILengthFinishReasonRepair:
         assert response.finish_reasons == ["length"]
         assert response.output_tokens == 2000
 
-    async def test_truncated_prompt_representation_repaired_openai_compatible(
+    async def test_truncated_prompt_representation_repaired_openai_with_custom_base(
         self,
     ) -> None:
         """Truncated but repairable PromptRepresentation JSON should be repaired."""
@@ -161,9 +161,9 @@ class TestOpenAILengthFinishReasonRepair:
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error(truncated_json)
 
-        with patch.dict(CLIENTS, {"openai_compatible": mock_client}):
+        with patch.dict(CLIENTS, {"openai": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="openai_compatible",
+                provider="openai",
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
@@ -202,9 +202,9 @@ class TestOpenAILengthFinishReasonRepair:
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error("")
 
-        with patch.dict(CLIENTS, {"openai_compatible": mock_client}):
+        with patch.dict(CLIENTS, {"openai": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="openai_compatible",
+                provider="openai",
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,
@@ -260,9 +260,9 @@ class TestOpenAILengthFinishReasonRepair:
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error(valid_json)
 
-        with patch.dict(CLIENTS, {"openai_compatible": mock_client}):
+        with patch.dict(CLIENTS, {"openai": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="openai_compatible",
+                provider="openai",
                 model="test-model",
                 prompt="Analyze messages",
                 max_tokens=2000,

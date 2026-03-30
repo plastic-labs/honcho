@@ -39,7 +39,7 @@ async def test_anthropic_backend_extracts_text_thinking_and_tool_calls() -> None
 
     backend = AnthropicBackend(client)
     result = await backend.complete(
-        model="anthropic/claude-haiku-4-5",
+        model="claude-haiku-4-5",
         messages=[
             {"role": "system", "content": "System prompt"},
             {"role": "user", "content": "Hello"},
@@ -105,7 +105,7 @@ async def test_anthropic_backend_skips_assistant_prefill_for_claude_4_models() -
 
     backend = AnthropicBackend(client)
     result = await backend.complete(
-        model="anthropic/claude-sonnet-4-5",
+        model="claude-sonnet-4-5",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
         response_format=StructuredResponse,
@@ -128,7 +128,7 @@ async def test_anthropic_backend_rejects_thinking_effort() -> None:
 
     with pytest.raises(ValueError, match="does not support thinking_effort"):
         await backend.complete(
-            model="anthropic/claude-haiku-4-5",
+            model="claude-haiku-4-5",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=100,
             thinking_effort="high",

@@ -39,7 +39,7 @@ async def test_openai_backend_uses_gpt5_params_and_extracts_reasoning() -> None:
 
     backend = OpenAIBackend(client)
     result = await backend.complete(
-        model="openai/gpt-5-mini",
+        model="gpt-5-mini",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
         thinking_effort="high",
@@ -89,7 +89,7 @@ async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models
 
     backend = OpenAIBackend(client)
     await backend.complete(
-        model="openai/gpt-4.1",
+        model="gpt-4.1",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
         thinking_effort="low",
@@ -110,7 +110,7 @@ async def test_openai_backend_rejects_thinking_budget_tokens() -> None:
 
     with pytest.raises(ValueError, match="does not support thinking_budget_tokens"):
         await backend.complete(
-            model="openai/gpt-5-mini",
+            model="gpt-5-mini",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=100,
             thinking_budget_tokens=256,
@@ -142,7 +142,7 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
 
     backend = OpenAIBackend(client)
     await backend.complete(
-        model="openai/gpt-4.1",
+        model="gpt-4.1",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
         tools=[

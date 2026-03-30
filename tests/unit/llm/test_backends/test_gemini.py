@@ -42,7 +42,7 @@ async def test_gemini_backend_preserves_thought_signature() -> None:
 
     backend = GeminiBackend(client)
     result = await backend.complete(
-        model="gemini/gemini-2.5-flash",
+        model="gemini-2.5-flash",
         messages=[
             {"role": "system", "content": "System prompt"},
             {"role": "user", "content": "Hello"},
@@ -85,7 +85,7 @@ async def test_gemini_backend_maps_thinking_effort_to_thinking_level() -> None:
 
     backend = GeminiBackend(client)
     await backend.complete(
-        model="gemini/gemini-3-pro-preview",
+        model="gemini-3-pro-preview",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
         thinking_effort="low",
@@ -107,7 +107,7 @@ async def test_gemini_backend_rejects_budget_and_effort_together() -> None:
         match="does not support sending both thinking_budget_tokens and thinking_effort",
     ):
         await backend.complete(
-            model="gemini/gemini-3-pro-preview",
+            model="gemini-3-pro-preview",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=100,
             thinking_budget_tokens=256,
@@ -138,7 +138,7 @@ async def test_gemini_backend_raises_on_blocked_response() -> None:
 
     with pytest.raises(LLMError, match="Gemini response blocked"):
         await backend.complete(
-            model="gemini/gemini-2.5-flash",
+            model="gemini-2.5-flash",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=100,
         )
@@ -171,7 +171,7 @@ async def test_gemini_backend_validates_dict_parsed_payload() -> None:
 
     backend = GeminiBackend(client)
     result = await backend.complete(
-        model="gemini/gemini-2.5-flash",
+        model="gemini-2.5-flash",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
         response_format=StructuredResponse,
@@ -206,7 +206,7 @@ async def test_gemini_backend_falls_back_to_response_text_and_function_calls() -
 
     backend = GeminiBackend(client)
     result = await backend.complete(
-        model="gemini/gemini-2.5-flash",
+        model="gemini-2.5-flash",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
     )
@@ -238,7 +238,7 @@ async def test_gemini_backend_ignores_mock_text_and_function_call_placeholders()
 
     backend = GeminiBackend(client)
     result = await backend.complete(
-        model="gemini/gemini-2.5-flash",
+        model="gemini-2.5-flash",
         messages=[{"role": "user", "content": "Hello"}],
         max_tokens=100,
     )
@@ -279,7 +279,7 @@ async def test_gemini_backend_strips_system_and_tools_when_using_cached_content(
 
     backend = GeminiBackend(client)
     result = await backend.complete(
-        model="gemini/gemini-2.5-flash",
+        model="gemini-2.5-flash",
         messages=[
             {"role": "system", "content": "System prompt"},
             {"role": "user", "content": "Hello"},

@@ -14,7 +14,8 @@ async def test_gemini_explicit_budget_adjusts_transport_max_tokens(
     fake_backend: FakeBackend,
 ) -> None:
     config = ModelConfig(
-        model="gemini/gemini-2.5-flash",
+        model="gemini-2.5-flash",
+        transport="gemini",
         thinking_budget_tokens=256,
     )
 
@@ -35,7 +36,8 @@ async def test_thinking_params_are_passed_through_without_capability_dropping(
     fake_backend: FakeBackend,
 ) -> None:
     config = ModelConfig(
-        model="anthropic/claude-haiku-4-5",
+        model="claude-haiku-4-5",
+        transport="anthropic",
         thinking_effort="high",
         thinking_budget_tokens=1024,
     )
@@ -55,7 +57,7 @@ async def test_thinking_params_are_passed_through_without_capability_dropping(
 async def test_cache_policy_is_passed_through_extra_params(
     fake_backend: FakeBackend,
 ) -> None:
-    config = ModelConfig(model="openai/gpt-4.1-mini")
+    config = ModelConfig(model="gpt-4.1-mini", transport="openai")
     cache_policy = PromptCachePolicy(mode="prefix", ttl_seconds=300)
 
     await execute_completion(
@@ -76,7 +78,8 @@ async def test_provider_params_are_merged_into_extra_params(
     fake_backend: FakeBackend,
 ) -> None:
     config = ModelConfig(
-        model="openai/gpt-4.1-mini",
+        model="gpt-4.1-mini",
+        transport="openai",
         top_p=0.9,
         provider_params={"custom_flag": True},
     )

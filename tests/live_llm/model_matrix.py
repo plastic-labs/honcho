@@ -13,7 +13,6 @@ class LiveModelFamily:
     provider: ProviderName
     family: str
     env_var: str
-    prefix: str
     default_models: tuple[str, ...] = ()
     supports_thinking: bool = False
     supports_structured_output: bool = False
@@ -46,7 +45,6 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         provider="anthropic",
         family="claude_4_5_plus",
         env_var="LIVE_LLM_ANTHROPIC_45_PLUS_MODELS",
-        prefix="anthropic",
         supports_thinking=True,
         supports_structured_output=True,
         supports_caching=True,
@@ -57,7 +55,6 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         provider="openai",
         family="gpt_4_class",
         env_var="LIVE_LLM_OPENAI_GPT4_MODELS",
-        prefix="openai",
         default_models=("gpt-4.1",),
         supports_structured_output=True,
         supports_caching=True,
@@ -67,7 +64,6 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         provider="openai",
         family="gpt_5_class",
         env_var="LIVE_LLM_OPENAI_GPT5_MODELS",
-        prefix="openai",
         default_models=("gpt-5",),
         supports_structured_output=True,
         supports_caching=True,
@@ -78,7 +74,6 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         provider="gemini",
         family="gemini_2_5_class",
         env_var="LIVE_LLM_GEMINI_25_MODELS",
-        prefix="gemini",
         default_models=("gemini-2.5-flash",),
         supports_thinking=True,
         supports_structured_output=True,
@@ -90,7 +85,6 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         provider="gemini",
         family="gemini_3_0_class",
         env_var="LIVE_LLM_GEMINI_30_MODELS",
-        prefix="gemini",
         supports_thinking=True,
         supports_structured_output=True,
         supports_caching=True,
@@ -101,7 +95,6 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         provider="gemini",
         family="gemini_3_1_class",
         env_var="LIVE_LLM_GEMINI_31_MODELS",
-        prefix="gemini",
         supports_thinking=True,
         supports_structured_output=False,
         supports_caching=False,
@@ -118,12 +111,6 @@ def _parse_env_models(value: str | None) -> tuple[str, ...]:
     return tuple(model for model in models if model)
 
 
-def _qualify_model(prefix: str, model: str) -> str:
-    if "/" in model:
-        return model
-    return f"{prefix}/{model}"
-
-
 def iter_live_model_specs() -> tuple[LiveModelSpec, ...]:
     specs: list[LiveModelSpec] = []
     for family in MODEL_FAMILIES:
@@ -134,7 +121,7 @@ def iter_live_model_specs() -> tuple[LiveModelSpec, ...]:
                 LiveModelSpec(
                     provider=family.provider,
                     family=family.family,
-                    model=_qualify_model(family.prefix, model),
+                    model=model,
                     env_var=family.env_var,
                     supports_thinking=family.supports_thinking,
                     supports_structured_output=family.supports_structured_output,

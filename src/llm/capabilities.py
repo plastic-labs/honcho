@@ -8,7 +8,7 @@ from src.config import ModelConfig
 
 @dataclass(frozen=True)
 class ModelCapabilities:
-    transport: Literal["provider_native", "openai_compatible"]
+    transport: Literal["anthropic", "openai", "gemini", "groq"]
     history_format: Literal["anthropic", "gemini", "openai"]
     structured_output_mode: Literal["native", "repair_wrapper"]
     reasoning_mode: Literal["none", "effort", "budget", "adaptive", "always_on"]
@@ -21,21 +21,9 @@ class ModelCapabilities:
 def get_model_capabilities(config: ModelConfig) -> ModelCapabilities:
     """Return runtime capability metadata for the effective model config."""
 
-    if config.transport == "openai_compatible":
+    if config.transport == "anthropic":
         return ModelCapabilities(
-            transport="openai_compatible",
-            history_format="openai",
-            structured_output_mode="repair_wrapper",
-            reasoning_mode="none",
-            cache_mode="none",
-            cache_metrics_mode="openai",
-        )
-
-    prefix = config.model.split("/", 1)[0]
-
-    if prefix == "anthropic":
-        return ModelCapabilities(
-            transport="provider_native",
+            transport="anthropic",
             history_format="anthropic",
             structured_output_mode="repair_wrapper",
             reasoning_mode="budget",
@@ -43,9 +31,9 @@ def get_model_capabilities(config: ModelConfig) -> ModelCapabilities:
             cache_metrics_mode="anthropic",
         )
 
-    if prefix == "gemini":
+    if config.transport == "gemini":
         return ModelCapabilities(
-            transport="provider_native",
+            transport="gemini",
             history_format="gemini",
             structured_output_mode="native",
             reasoning_mode="budget",
@@ -54,9 +42,9 @@ def get_model_capabilities(config: ModelConfig) -> ModelCapabilities:
             shared_reasoning_budget=True,
         )
 
-    if prefix == "openai":
+    if config.transport == "openai":
         return ModelCapabilities(
-            transport="provider_native",
+            transport="openai",
             history_format="openai",
             structured_output_mode="native",
             reasoning_mode="effort",
@@ -64,9 +52,9 @@ def get_model_capabilities(config: ModelConfig) -> ModelCapabilities:
             cache_metrics_mode="openai",
         )
 
-    if prefix == "groq":
+    if config.transport == "groq":
         return ModelCapabilities(
-            transport="provider_native",
+            transport="groq",
             history_format="openai",
             structured_output_mode="repair_wrapper",
             reasoning_mode="none",
@@ -74,14 +62,4 @@ def get_model_capabilities(config: ModelConfig) -> ModelCapabilities:
             cache_metrics_mode="openai",
         )
 
-    if prefix in {"openrouter", "hosted_vllm"}:
-        return ModelCapabilities(
-            transport="provider_native",
-            history_format="openai",
-            structured_output_mode="repair_wrapper",
-            reasoning_mode="none",
-            cache_mode="none",
-            cache_metrics_mode="openai",
-        )
-
-    raise ValueError(f"Unknown model prefix: {prefix}")
+    raise ValueError(f"Unknown transport: {config.transport}")

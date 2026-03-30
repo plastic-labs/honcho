@@ -58,15 +58,12 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # API Keys for LLM providers
 # ANTHROPIC_API_KEY = "your-api-key"
 # OPENAI_API_KEY = "your-api-key"
-# OPENAI_COMPATIBLE_API_KEY = "your-api-key"
 # GEMINI_API_KEY = "your-api-key"
 # GROQ_API_KEY = "your-api-key"
-# OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
-
-# Optional default credentials for the vLLM compat flavor
-# Used when a module sets transport = "openai_compatible" with compat_provider = "vllm"
-# VLLM_API_KEY = "your-api-key"
-# VLLM_BASE_URL = "your-base-url"
+# ANTHROPIC_BASE_URL = "https://anthropic-proxy.example/v1"
+# OPENAI_BASE_URL = "https://openai-compatible.example/v1"
+# GEMINI_BASE_URL = "https://gemini-proxy.example/v1beta"
+# GROQ_BASE_URL = "https://groq-proxy.example/v1"
 
 # Deriver settings
 [deriver]
@@ -83,20 +80,20 @@ REPRESENTATION_BATCH_MAX_TOKENS = 1024
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
 
 [deriver.model_config]
-model = "gemini/gemini-2.5-flash-lite"
-# transport = "provider_native"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 # temperature = 0.0
 thinking_budget_tokens = 1024
 max_output_tokens = 4096
-# fallback_model = "anthropic/claude-haiku-4-5"
+# fallback_model = "claude-haiku-4-5"
+# fallback_transport = "anthropic"
 
-# Optional module-level transport overrides for openai_compatible routing
-# transport = "openai_compatible"
-# model = "openai/my-local-model"
+# Optional module-level endpoint overrides
+# transport = "openai"
+# model = "my-local-model"
 # [deriver.model_config.overrides]
 # base_url = "https://llm.internal.example/v1"
 # api_key_env = "DERIVER_CUSTOM_API_KEY"
-# compat_provider = "vllm"  # Optional: enables vLLM-specific quirks/defaults
 # fallback_base_url = "https://llm-backup.internal.example/v1"
 # fallback_api_key_env = "DERIVER_CUSTOM_BACKUP_API_KEY"
 # [deriver.model_config.overrides.provider_params]
@@ -121,7 +118,8 @@ MAX_OUTPUT_TOKENS = 250
 TOOL_CHOICE = "any"
 
 [dialectic.levels.minimal.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 thinking_budget_tokens = 0
 
 [dialectic.levels.low]
@@ -129,30 +127,35 @@ MAX_TOOL_ITERATIONS = 5
 TOOL_CHOICE = "any"
 
 [dialectic.levels.low.model_config]
-model = "gemini/gemini-2.5-flash-lite"
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 thinking_budget_tokens = 0
 
 [dialectic.levels.medium]
 MAX_TOOL_ITERATIONS = 2
 
 [dialectic.levels.medium.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 1024
 
 [dialectic.levels.high]
 MAX_TOOL_ITERATIONS = 4
 
 [dialectic.levels.high.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 1024
 
 [dialectic.levels.max]
 MAX_TOOL_ITERATIONS = 10
 
 [dialectic.levels.max.model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 thinking_budget_tokens = 2048
-# fallback_model = "gemini/gemini-2.5-pro"
+# fallback_model = "gemini-2.5-pro"
+# fallback_transport = "gemini"
 
 # Summary settings
 [summary]
@@ -163,9 +166,11 @@ MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
 
 [summary.model_config]
-model = "gemini/gemini-2.5-flash"
+transport = "gemini"
+model = "gemini-2.5-flash"
 thinking_budget_tokens = 512
-# fallback_model = "anthropic/claude-haiku-4-5"
+# fallback_model = "claude-haiku-4-5"
+# fallback_transport = "anthropic"
 
 # Dream settings
 [dream]
@@ -178,17 +183,21 @@ MAX_TOOL_ITERATIONS = 20
 HISTORY_TOKEN_LIMIT = 16384
 
 [dream.model_config]
-model = "anthropic/claude-sonnet-4-20250514"
+transport = "anthropic"
+model = "claude-sonnet-4-20250514"
 thinking_budget_tokens = 8192
 max_output_tokens = 16384
-# fallback_model = "gemini/gemini-2.5-flash"
+# fallback_model = "gemini-2.5-flash"
+# fallback_transport = "gemini"
 
 # Specialist model configs inherit omitted settings and overrides from dream.model_config
 [dream.deduction_model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 
 [dream.induction_model_config]
-model = "anthropic/claude-haiku-4-5"
+transport = "anthropic"
+model = "claude-haiku-4-5"
 
 # Surprisal-based sampling subsystem
 [dream.surprisal]

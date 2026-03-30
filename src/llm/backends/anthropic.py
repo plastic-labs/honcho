@@ -42,9 +42,8 @@ class AnthropicBackend:
             )
 
         request_messages, system_messages = self._extract_system(messages)
-        bare_model = self._strip_prefix(model)
         params: dict[str, Any] = {
-            "model": bare_model,
+            "model": model,
             "max_tokens": max_tokens,
             "messages": request_messages,
         }
@@ -75,7 +74,7 @@ class AnthropicBackend:
         use_json_prefill = (
             bool(response_format or self._json_mode(extra_params))
             and not thinking_budget_tokens
-            and self._supports_assistant_prefill(bare_model)
+            and self._supports_assistant_prefill(model)
         )
         if use_json_prefill:
             if response_format and isinstance(response_format, type):
@@ -97,7 +96,7 @@ class AnthropicBackend:
             if isinstance(response_format, type)
             else None,
             prefilled_json=use_json_prefill,
-            model_name=bare_model,
+            model_name=model,
         )
 
     async def stream(
@@ -125,9 +124,8 @@ class AnthropicBackend:
             )
 
         request_messages, system_messages = self._extract_system(messages)
-        bare_model = self._strip_prefix(model)
         params: dict[str, Any] = {
-            "model": bare_model,
+            "model": model,
             "max_tokens": max_tokens,
             "messages": request_messages,
         }
@@ -151,7 +149,7 @@ class AnthropicBackend:
         use_json_prefill = (
             response_format is not None
             and not thinking_budget_tokens
-            and self._supports_assistant_prefill(bare_model)
+            and self._supports_assistant_prefill(model)
         )
         if response_format:
             if isinstance(response_format, type):
@@ -263,10 +261,6 @@ class AnthropicBackend:
             thinking_blocks=thinking_full_blocks,
             raw_response=response,
         )
-
-    @staticmethod
-    def _strip_prefix(model: str) -> str:
-        return model.split("/", 1)[1] if "/" in model else model
 
     @staticmethod
     def _supports_assistant_prefill(model: str) -> bool:
