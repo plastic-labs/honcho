@@ -1,28 +1,79 @@
 ---
-title: "AI-Powered Honcho Setup"
+title: "Agentic Development"
 icon: "wand-magic-sparkles"
-description: "Agent skills and starter prompt for building with Honcho"
-sidebarTitle: 'Vibecoding Setup'
+description: "Agent skills, MCP server, and tools for building with Honcho"
+sidebarTitle: 'Agentic Development'
 ---
 
-These docs are designed to be easily consumable by LLMs. Each page has a button that lets you copy the page as Markdown or paste directly into ChatGPT or Claude.
 
-We follow the llms.txt standard. There are both an llms.txt and llms-full.txt available:
+## MCP Server
 
-- [llms.txt](/llms.txt)
-- [llms-full.txt](/llms-full.txt)
+The fastest way to give any AI tool persistent memory is through the Honcho MCP server. It works with any client that supports the Model Context Protocol.
+
+**Get started in 2 minutes:**
+
+1. Get an API key at [app.honcho.dev](https://app.honcho.dev)
+2. Add the config for your client below
+3. Restart your client
+
+See the [full MCP documentation](/v3/guides/integrations/mcp) for all available tools, advanced configuration, and setup instructions for every supported client.
+
+<CodeGroup>
+```json Claude Desktop
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer hch-your-key-here",
+        "USER_NAME": "YourName"
+      }
+    }
+  }
+}
+```
+
+```json Cursor
+{
+  "mcpServers": {
+    "honcho": {
+      "url": "https://mcp.honcho.dev",
+      "headers": {
+        "Authorization": "Bearer hch-your-key-here",
+        "X-Honcho-User-Name": "YourName"
+      }
+    }
+  }
+}
+```
+
+```bash Claude Code
+claude mcp add honcho \
+  --transport http \
+  --url "https://mcp.honcho.dev" \
+  --header "Authorization: Bearer hch-your-key-here" \
+  --header "X-Honcho-User-Name: YourName"
+```
+</CodeGroup>
 
 ---
 
 ## Claude Code Plugin
 
-
-Use Honcho to build with Honcho! The [plugin](/v3/guides/integrations/claudecode) provides claude code persistent memory that survives context wipes and session restarts.
+Use Honcho to build with Honcho! The [plugin](/v3/guides/integrations/claudecode) provides Claude Code persistent memory that survives context wipes and session restarts.
 
 ```bash
 /plugin marketplace add plastic-labs/claude-honcho
-/plugin install honcho@honcho # Tools for Claude to use Honcho to manage it's own context
-/plugin install honcho-dev@honcho # Skills to teach claude how to integrate Honcho
+/plugin install honcho@honcho # Tools for Claude to use Honcho to manage its own context
+/plugin install honcho-dev@honcho # Skills to teach Claude how to integrate Honcho
 ```
 
 The marketplace also includes all the agent skills below, so you can use `/honcho-dev:integrate` directly after installing.
