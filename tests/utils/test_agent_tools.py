@@ -139,7 +139,6 @@ def make_tool_context(
         session_name: str | None = None,
     ) -> ToolContext:
         return ToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -289,7 +288,6 @@ class TestCreateObservations:
         )
 
         result = await create_observations(
-            db_session,
             observations=[
                 schemas.ObservationInput(content="First obs", level="explicit"),
                 schemas.ObservationInput(content="Second obs", level="explicit"),
@@ -352,7 +350,6 @@ class TestCreateObservations:
         )
 
         result = await create_observations(
-            db_session,
             observations=[
                 schemas.ObservationInput(content="Embeds fine", level="explicit"),
                 schemas.ObservationInput(content="Fails embed", level="explicit"),
@@ -482,7 +479,6 @@ class TestSearchMemory:
         await db_session.flush()
 
         ctx = ToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -662,7 +658,6 @@ class TestGetRecentHistory:
         workspace, peer1, peer2, _, _, _ = tool_test_data
 
         ctx = ToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -915,7 +910,6 @@ class TestGetPeerCard:
         await db_session.flush()
 
         ctx = ToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -1023,7 +1017,6 @@ class TestExtractPreferences:
         )
 
         result = await extract_preferences(
-            db_session,
             workspace_name=workspace.name,
             session_name=session.name,
             observed=observed_peer.name,
@@ -1069,7 +1062,6 @@ class TestToolExecutor:
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
         executor = await create_tool_executor(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -1085,7 +1077,6 @@ class TestToolExecutor:
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
         executor = await create_tool_executor(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -1105,7 +1096,6 @@ class TestToolExecutor:
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
         executor = await create_tool_executor(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -1123,7 +1113,6 @@ class TestToolExecutor:
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
         executor = await create_tool_executor(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -1143,7 +1132,6 @@ class TestToolExecutor:
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
         executor = await create_tool_executor(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,

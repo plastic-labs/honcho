@@ -11,10 +11,9 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from src import crud
 from src.config import ReasoningLevel, settings
+from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.embedding_client import embedding_client
 from src.telemetry import prometheus_metrics
@@ -52,7 +51,6 @@ class DialecticAgent:
 
     def __init__(
         self,
-        db: AsyncSession,
         workspace_name: str,
         session_name: str | None,
         observer: str,
@@ -66,7 +64,6 @@ class DialecticAgent:
         Initialize the dialectic agent.
 
         Args:
-            db: Database session
             workspace_name: Workspace identifier
             session_name: Session identifier (may be None for global queries)
             observer: The peer making the query
@@ -76,7 +73,6 @@ class DialecticAgent:
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
             reasoning_level: Level of reasoning to apply
         """
-        self.db: AsyncSession = db
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
         self.observer: str = observer
@@ -118,19 +114,20 @@ class DialecticAgent:
             token_limit=max_tokens,
             reverse=False,  # chronological order
         )
-        result = await self.db.execute(stmt)
-        messages = result.scalars().all()
+        async with tracked_db("dialectic.session_history") as db:
+            result = await db.execute(stmt)
+            messages = result.scalars().all()
 
-        if not messages:
-            return
+            if not messages:
+                return
 
-        # Format messages for injection
-        formatted_messages: list[str] = []
-        for msg in messages:
-            formatted = format_new_turn_with_timestamp(
-                msg.content, msg.created_at, msg.peer_name
-            )
-            formatted_messages.append(formatted)
+            # Format messages for injection (must access ORM attrs before session closes)
+            formatted_messages: list[str] = []
+            for msg in messages:
+                formatted = format_new_turn_with_timestamp(
+                    msg.content, msg.created_at, msg.peer_name
+                )
+                formatted_messages.append(formatted)
 
         session_history_section = (
             "\n\n## SESSION HISTORY\n\n"
@@ -169,32 +166,34 @@ class DialecticAgent:
         prefetch_limit = 10 if self.reasoning_level == "minimal" else 25
 
         try:
-            # Pre-compute embedding once for both searches
+            # Pre-compute embedding once for both searches (no DB needed)
             query_embedding = await embedding_client.embed(query)
 
-            # Search explicit observations separately
-            explicit_repr = await search_memory(
-                db=self.db,
-                workspace_name=self.workspace_name,
-                observer=self.observer,
-                observed=self.observed,
-                query=query,
-                limit=prefetch_limit,
-                levels=["explicit"],
-                embedding=query_embedding,
-            )
+            # Search observations in a short DB scope
+            async with tracked_db("dialectic.prefetch") as db:
+                # Search explicit observations separately
+                explicit_repr = await search_memory(
+                    db=db,
+                    workspace_name=self.workspace_name,
+                    observer=self.observer,
+                    observed=self.observed,
+                    query=query,
+                    limit=prefetch_limit,
+                    levels=["explicit"],
+                    embedding=query_embedding,
+                )
 
-            # Search derived observations separately
-            derived_repr = await search_memory(
-                db=self.db,
-                workspace_name=self.workspace_name,
-                observer=self.observer,
-                observed=self.observed,
-                query=query,
-                limit=prefetch_limit,
-                levels=["deductive", "inductive", "contradiction"],
-                embedding=query_embedding,
-            )
+                # Search derived observations separately
+                derived_repr = await search_memory(
+                    db=db,
+                    workspace_name=self.workspace_name,
+                    observer=self.observer,
+                    observed=self.observed,
+                    query=query,
+                    limit=prefetch_limit,
+                    levels=["deductive", "inductive", "contradiction"],
+                    embedding=query_embedding,
+                )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
@@ -280,7 +279,6 @@ class DialecticAgent:
         tool_executor: Callable[
             [str, dict[str, Any]], Any
         ] = await create_tool_executor(
-            db=self.db,
             workspace_name=self.workspace_name,
             session_name=self.session_name,
             observer=self.observer,

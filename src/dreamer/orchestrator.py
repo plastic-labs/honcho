@@ -20,7 +20,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import sentry_sdk
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
 from src.config import settings
@@ -64,7 +63,6 @@ class DreamResult:
 
 
 async def run_dream(
-    db: AsyncSession,
     workspace_name: str,
     observer: str,
     observed: str,
@@ -78,8 +76,9 @@ async def run_dream(
     1. Deduction specialist: Creates deductive observations from explicit facts
     2. Induction specialist: Creates inductive observations from patterns
 
+    Uses short-lived DB sessions to avoid holding connections during LLM calls.
+
     Args:
-        db: Database session
         workspace_name: Workspace identifier
         observer: Observer peer name
         observed: Observed peer name
@@ -96,16 +95,17 @@ async def run_dream(
         f"[{run_id}] Starting dream cycle for {workspace_name}/{observer}/{observed}"
     )
 
-    if session_name is not None:
-        session = await crud.get_session(
-            db, workspace_name=workspace_name, session_name=session_name
-        )
-    else:
-        session = None
+    # Short-lived DB session for config resolution
+    async with tracked_db("dream.config") as db:
+        if session_name is not None:
+            session = await crud.get_session(
+                db, workspace_name=workspace_name, session_name=session_name
+            )
+        else:
+            session = None
 
-    workspace = await crud.get_workspace(db, workspace_name=workspace_name)
-
-    configuration = get_configuration(None, session, workspace)
+        workspace = await crud.get_workspace(db, workspace_name=workspace_name)
+        configuration = get_configuration(None, session, workspace)
     if not configuration.dream.enabled:
         logger.info(
             f"[{run_id}] Dreams disabled for {workspace_name}/{session_name}, skipping dream"
@@ -129,7 +129,6 @@ async def run_dream(
             from src.dreamer.surprisal import sample_observations_with_surprisal
 
             high_surprisal_obs = await sample_observations_with_surprisal(
-                db=db,
                 workspace_name=workspace_name,
                 observer=observer,
                 observed=observed,
@@ -164,12 +163,11 @@ async def run_dream(
             accumulate_metric(task_name, "surprisal_error", str(e), "blob")
             # Specialists will explore freely without hints
 
-    # Phase 1: Run deduction specialist
+    # Phase 1: Run deduction specialist (manages its own DB sessions)
     logger.info(f"[{run_id}] Phase 1: Running deduction specialist")
     deduction_specialist = SPECIALISTS["deduction"]
     try:
         deduction_result = await deduction_specialist.run(
-            db=db,
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,
@@ -194,7 +192,6 @@ async def run_dream(
     induction_specialist = SPECIALISTS["induction"]
     try:
         induction_result = await induction_specialist.run(
-            db=db,
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,
@@ -311,14 +308,12 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
     try:
         match payload.dream_type:
             case DreamType.OMNI:
-                async with tracked_db("dream_orchestrator") as db:
-                    result = await run_dream(
-                        db=db,
-                        workspace_name=workspace_name,
-                        observer=payload.observer,
-                        observed=payload.observed,
-                        session_name=payload.session_name,
-                    )
+                result = await run_dream(
+                    workspace_name=workspace_name,
+                    observer=payload.observer,
+                    observed=payload.observed,
+                    session_name=payload.session_name,
+                )
 
                 # Log completion (telemetry event already emitted in run_dream)
                 if result is not None:
