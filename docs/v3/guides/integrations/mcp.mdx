@@ -272,31 +272,15 @@ Example with all headers (Claude Desktop format):
 
 ## Available Tools
 
-The MCP server exposes two sets of tools:
-
-### Bespoke Flow (Recommended)
-
-The simplest way to add memory. Three tools handle the full lifecycle:
-
-| Tool | Description |
-|------|-------------|
-| `start_conversation` | Initialize a new session. Returns a session ID to use in subsequent calls. |
-| `add_turn` | Store a conversation turn (user + assistant messages) for background processing. |
-| `get_personalization_insights` | Query Honcho for insights about the user — communication style, preferences, emotional state, history. |
-
-This is the recommended flow for most integrations. See the [full instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) for a complete example.
-
-### General Tools
-
-For more control, the full API surface is also available:
+The recommended flow for a standard conversation uses `create_session` + `add_messages_to_session` + `chat`. See the [full instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) for a complete walkthrough.
 
 **Workspace** — `inspect_workspace`, `list_workspaces`, `search`, `get_metadata`, `set_metadata`
 
-**Peers** — `create_peer`, `chat`, `get_peer_card`, `get_peer_context`, `get_representation`
+**Peers** — `create_peer`, `list_peers`, `chat`, `get_peer_card`, `set_peer_card`, `get_peer_context`, `get_representation`
 
-**Sessions** — `create_session`, `list_sessions`, `clone_session`, `get_session_context`, `get_session_message`, `delete_session`, `add_peers_to_session`
+**Sessions** — `create_session`, `list_sessions`, `delete_session`, `clone_session`, `add_peers_to_session`, `remove_peers_from_session`, `get_session_peers`, `inspect_session`, `add_messages_to_session`, `get_session_messages`, `get_session_message`, `get_session_context`
 
-**Conclusions** — `list_conclusions`, `query_conclusions`, `create_conclusions`
+**Conclusions** — `list_conclusions`, `query_conclusions`, `create_conclusions`, `delete_conclusion`
 
 **System** — `schedule_dream`, `get_queue_status`
 

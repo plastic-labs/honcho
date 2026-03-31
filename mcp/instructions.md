@@ -1,23 +1,48 @@
 # Honcho MCP Server — Instructions
 
-## Quick Start: Bespoke Flow
+## Quick Start: Recommended Flow
 
-The simplest way to use Honcho is the **bespoke flow** — three tools that handle everything for a standard user/assistant conversation.
+The simplest way to use Honcho for a standard user/assistant conversation. Three steps using the general tools.
 
 ### 1. Start a conversation (once per conversation)
 
+Create a session and set up the user and assistant peers:
+
 ```
-start_conversation
+create_session
+  session_id: "<unique-id>"
 ```
 
-Returns a `session_id`. Store it for the rest of this conversation.
+Then add peers to the session:
+
+```
+create_peer
+  peer_id: "<user-name>"
+
+create_peer
+  peer_id: "Assistant"
+
+add_peers_to_session
+  session_id: "<session_id>"
+  peers:
+    - peer_id: "<user-name>"
+      observe_me: true
+      observe_others: true
+    - peer_id: "Assistant"
+      observe_me: false
+      observe_others: true
+```
+
+Store the `session_id` for the rest of this conversation.
 
 ### 2. Get personalization insights (before responding, when helpful)
 
 ```
-get_personalization_insights
-  session_id: "<session_id>"
+chat
+  peer_id: "Assistant"
   query: "What communication style does this user prefer?"
+  target_peer_id: "<user-name>"
+  session_id: "<session_id>"
 ```
 
 This calls Honcho's reasoning system to answer your question about the user, grounded in everything Honcho has learned across all their conversations. It takes a few seconds, so use it when personalization would genuinely improve your response.
@@ -32,12 +57,12 @@ This calls Honcho's reasoning system to answer your question about the user, gro
 ### 3. Record the turn (after every exchange)
 
 ```
-add_turn
+add_messages_to_session
   session_id: "<session_id>"
   messages:
-    - role: "user"
+    - peer_id: "<user-name>"
       content: "<exact user message>"
-    - role: "assistant"
+    - peer_id: "Assistant"
       content: "<your exact response>"
 ```
 
@@ -47,7 +72,7 @@ add_turn
 
 ## General Tools
 
-Beyond the bespoke flow, Honcho exposes the full API for advanced use cases.
+The full API for advanced use cases.
 
 ### Workspace Tools
 
@@ -55,9 +80,9 @@ Beyond the bespoke flow, Honcho exposes the full API for advanced use cases.
 | --- | --- |
 | `inspect_workspace` | Inspect a single workspace's details |
 | `list_workspaces` | Enumerate available workspaces |
-| `search_workspace` | Find messages across all sessions and peers |
-| `get_workspace_metadata` | Read workspace-level settings |
-| `set_workspace_metadata` | Store workspace-level settings |
+| `search` | Semantic search across messages — scope with optional `peer_id` or `session_id` params |
+| `get_metadata` | Read metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
+| `set_metadata` | Store metadata for workspace, peer, or session (scope with optional `peer_id` or `session_id`) |
 
 ### Peer Tools
 
@@ -70,28 +95,23 @@ Beyond the bespoke flow, Honcho exposes the full API for advanced use cases.
 | `set_peer_card` | Manually set/correct facts about a peer |
 | `get_peer_context` | Get full context (representation + peer card) |
 | `get_representation` | Get the textual representation from conclusions |
-| `get_peer_metadata` / `set_peer_metadata` | Custom attributes on a peer |
-| `search_peer_messages` | Find messages by a specific peer |
 
 ### Session Tools
 
 | Tool | When to use |
 | --- | --- |
-| `create_session` | Create a raw session (use `start_conversation` for the simple flow) |
+| `create_session` | Create or get a session with the given ID |
 | `list_sessions` | Discover existing conversations |
 | `delete_session` | Permanently remove a session |
 | `clone_session` | Fork a conversation (optionally up to a specific message) |
-| `add_peers_to_session` / `remove_peers_from_session` | Manage session participants |
+| `add_peers_to_session` | Add peers to a session with optional per-session config |
+| `remove_peers_from_session` | Remove peers from a session |
 | `get_session_peers` | See who is in a session |
 | `inspect_session` | Inspect detailed session structure/metadata |
 | `add_messages_to_session` | Add messages from specific peers |
-| `get_session_messages` | Read conversation history |
-| `get_session_message` | Get a single message from a session by ID. Use this when you already know the message ID and need the exact record. |
-| `search_session_messages` | Semantic search within a session |
+| `get_session_messages` | Read conversation history (paginated, with optional metadata filters) |
+| `get_session_message` | Get a single message from a session by ID |
 | `get_session_context` | Get LLM-ready context (messages + summary) |
-| `get_session_summaries` | Retrieve session summaries (for overview/search) |
-| `get_session_representation` | Get a peer's session-scoped representation |
-| `get_session_metadata` / `set_session_metadata` | Custom attributes on a session |
 
 ### Conclusion Tools
 

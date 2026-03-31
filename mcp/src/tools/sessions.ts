@@ -16,7 +16,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       description: [
         "Get or create a session with the given ID.",
-        "Use this when you need a raw session (for the bespoke flow, use start_conversation instead).",
+        "Use this to create or get a session with the given ID.",
         "Returns the session ID.",
       ].join("\n"),
       inputSchema: {
@@ -270,7 +270,7 @@ export function register(server: McpServer, ctx: ToolContext) {
       description: [
         "Add messages to a session from specific peers.",
         "Use this to record conversation turns. Each message must specify the peer_id of the author.",
-        "For the bespoke flow, use start_conversation first to get the user_peer_id and assistant_peer_id.",
+        "Each message must specify the peer_id of the author.",
       ].join("\n"),
       inputSchema: {
         session_id: z.string().describe("The session to add messages to."),
