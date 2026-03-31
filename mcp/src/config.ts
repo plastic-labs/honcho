@@ -3,6 +3,7 @@ import { Honcho } from "@honcho-ai/sdk";
 export interface HonchoConfig {
   apiKey: string;
   userName: string;
+  assistantName: string;
   baseUrl: string;
   workspaceId: string;
 }
@@ -35,6 +36,7 @@ export function parseConfig(request: Request): HonchoConfig {
   return {
     apiKey,
     userName,
+    assistantName: request.headers.get("X-Honcho-Assistant-Name")?.trim() || "Assistant",
     baseUrl: "https://api.honcho.dev",
     workspaceId: request.headers.get("X-Honcho-Workspace-ID")?.trim() || "default",
   };
