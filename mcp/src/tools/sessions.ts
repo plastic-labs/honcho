@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { Message } from "@honcho-ai/sdk";
 import type { ToolContext } from "../types.js";
 import {
   textResult,
@@ -26,7 +25,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
     async ({ session_id }) => {
       try {
-        const session = await ctx.honcho.session(session_id, { metadata: {} });
+        const session = await ctx.honcho.session(session_id);
         return textResult({ session_id: session.id });
       } catch (e) {
         return errorResult(
@@ -367,21 +366,8 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
     async ({ session_id, message_id }) => {
       try {
-        // Workaround: the current @honcho-ai/sdk Session API does not expose
-        // a single-message getter, so we fetch the message by ID via raw HTTP.
-        const messageData = await ctx.honcho.http.get<{
-          id: string;
-          content: string;
-          peer_id: string;
-          session_id: string;
-          workspace_id: string;
-          metadata: Record<string, unknown>;
-          created_at: string;
-          token_count: number;
-        }>(
-          `/v3/workspaces/${ctx.honcho.workspaceId}/sessions/${session_id}/messages/${message_id}`,
-        );
-        const message = Message.fromApiResponse(messageData);
+        const session = await ctx.honcho.session(session_id);
+        const message = await session.getMessage(message_id);
         return textResult(formatMessage(message));
       } catch (e) {
         return errorResult(

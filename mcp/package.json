@@ -15,7 +15,7 @@
     "deploy:staging": "wrangler deploy --env staging"
   },
   "dependencies": {
-    "@honcho-ai/sdk": "^2.0.0",
+    "@honcho-ai/sdk": "^2.1.0",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "agents": "^0.4.0",
     "nanoid": "^5.1.7",
