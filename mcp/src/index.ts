@@ -5,7 +5,7 @@ import { createServer } from "./server.js";
 const CORS_ORIGIN = "*";
 const CORS_METHODS = "GET, POST, DELETE, OPTIONS";
 const CORS_ALLOWED_HEADERS =
-  "Content-Type, Authorization, X-Honcho-User-Name, X-Honcho-Base-URL, X-Honcho-Workspace-ID, X-Honcho-Assistant-Name";
+  "Content-Type, Authorization, X-Honcho-User-Name, X-Honcho-Workspace-ID, X-Honcho-Assistant-Name";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": CORS_ORIGIN,

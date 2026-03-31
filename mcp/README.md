@@ -34,7 +34,6 @@ A Cloudflare Worker that implements the [Model Context Protocol (MCP)](https://m
 | Header | Default | Description |
 | --- | --- | --- |
 | `X-Honcho-Workspace-ID` | `"default"` | Workspace to operate in |
-| `X-Honcho-Base-URL` | `https://api.honcho.dev` | Custom API base URL |
 
 ## Available Tools
 
