@@ -140,8 +140,10 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         # Import here to avoid circular import at module load time
+        from src.embedding_client import embedding_client
         from src.vector_store import close_external_vector_store
 
+        await embedding_client.close()
         await close_external_vector_store()
         await close_cache()
         await engine.dispose()

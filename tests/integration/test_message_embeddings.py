@@ -14,11 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.crud import create_messages
-
-DIMS = settings.VECTOR_STORE.DIMENSIONS
 from src.models import Peer, Workspace
 from src.schemas import MessageCreate
 from src.utils.search import search
+
+DIMS = settings.VECTOR_STORE.DIMENSIONS
 
 
 @pytest.mark.asyncio

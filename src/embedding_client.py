@@ -87,6 +87,15 @@ class _EmbeddingClient:
             self.max_batch_size = 2048  # OpenAI batch limit
 
         self.encoding: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
+        self._closed: bool = False
+
+    async def close(self) -> None:
+        """Close any HTTP clients held by this instance."""
+        if self._closed:
+            return
+        self._closed = True
+        if self.provider == "jina" and hasattr(self, "_jina_http"):
+            await self._jina_http.aclose()
         self.max_embedding_tokens_per_request: int = (
             settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
         )
@@ -129,7 +138,9 @@ class _EmbeddingClient:
             return response.embeddings[0].values
         else:  # openai
             response = await self.client.embeddings.create(
-                model=self.model, input=query
+                model=self.model,
+                input=query,
+                dimensions=settings.VECTOR_STORE.DIMENSIONS,
             )
             return response.data[0].embedding
 
@@ -169,6 +180,7 @@ class _EmbeddingClient:
                     response = await self.client.embeddings.create(
                         input=batch,
                         model=self.model,
+                        dimensions=settings.VECTOR_STORE.DIMENSIONS,
                     )
                     embeddings.extend([data.embedding for data in response.data])
             except Exception as e:
@@ -313,7 +325,9 @@ class _EmbeddingClient:
                                 )
                 else:  # openai / openrouter
                     response = await self.client.embeddings.create(
-                        model=self.model, input=[item.text for item in batch]
+                        model=self.model,
+                        input=[item.text for item in batch],
+                        dimensions=settings.VECTOR_STORE.DIMENSIONS,
                     )
                     for item, embedding_data in zip(batch, response.data, strict=True):
                         result[item.text_id][item.chunk_index] = (
@@ -473,6 +487,11 @@ class EmbeddingClient:
     def max_embedding_tokens(self) -> int:
         """Get the maximum embedding tokens."""
         return self._get_client().max_embedding_tokens
+
+    async def close(self) -> None:
+        """Close the underlying client's HTTP resources."""
+        if self._instance is not None:
+            await self._instance.close()
 
     @property
     def encoding(self) -> tiktoken.Encoding:

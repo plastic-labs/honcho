@@ -18,9 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
 from src.config import settings
-
-DIMS = settings.VECTOR_STORE.DIMENSIONS
-
 from src.utils.representation import (
     DeductiveObservation,
     # DeductiveObservationBase,
@@ -29,6 +26,8 @@ from src.utils.representation import (
     PromptRepresentation,
     Representation,
 )
+
+DIMS = settings.VECTOR_STORE.DIMENSIONS
 
 
 @pytest.fixture

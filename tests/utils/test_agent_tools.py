@@ -12,8 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
-DIMS = settings.VECTOR_STORE.DIMENSIONS
-
 from src.utils.agent_tools import (
     MAX_PEER_CARD_FACTS,
     ObservationsCreatedResult,
@@ -36,6 +34,8 @@ from src.utils.agent_tools import (
     create_tool_executor,
     extract_preferences,
 )
+
+DIMS = settings.VECTOR_STORE.DIMENSIONS
 
 # =============================================================================
 # Fixtures

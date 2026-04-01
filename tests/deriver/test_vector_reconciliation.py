@@ -16,8 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-
-DIMS = settings.VECTOR_STORE.DIMENSIONS
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
@@ -33,6 +31,8 @@ from src.vector_store import (
     VectorUpsertResult,
     _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
 )
+
+DIMS = settings.VECTOR_STORE.DIMENSIONS
 
 
 @pytest.mark.asyncio

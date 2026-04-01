@@ -590,7 +590,6 @@ async def check_vector_dimensions(session: Any) -> None:
     if settings.VECTOR_STORE.TYPE != "pgvector":
         return
 
-    logger = getLogger(__name__)
     expected = settings.VECTOR_STORE.DIMENSIONS
 
     tables_columns = [
