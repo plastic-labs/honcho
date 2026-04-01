@@ -56,6 +56,7 @@ class _EmbeddingClient:
                     "Authorization": f"Bearer {api_key}",
                 },
                 timeout=60.0,
+                transport=httpx.AsyncHTTPTransport(retries=2),
             )
             self.client = None  # type: ignore[assignment]
             self.model = settings.LLM.JINA_MODEL
@@ -88,6 +89,9 @@ class _EmbeddingClient:
 
         self.encoding: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
         self._closed: bool = False
+        self.max_embedding_tokens_per_request: int = (
+            settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
+        )
 
     async def close(self) -> None:
         """Close any HTTP clients held by this instance."""
@@ -96,9 +100,6 @@ class _EmbeddingClient:
         self._closed = True
         if self.provider == "jina" and hasattr(self, "_jina_http"):
             await self._jina_http.aclose()
-        self.max_embedding_tokens_per_request: int = (
-            settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
-        )
 
     async def _jina_embed_batch(self, texts: list[str], task: str = "retrieval.passage") -> list[list[float]]:
         """Call Jina embedding API directly with native schema."""
