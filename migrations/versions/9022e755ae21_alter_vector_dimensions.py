@@ -7,7 +7,7 @@ the hardcoded value from previous migrations (1536).
 It drops and recreates the HNSW index on documents.embedding since the
 index is dimension-specific (HNSW parameters include the vector dimension).
 
-Revision ID: Nj-2KD-Cc2XG
+Revision ID: 9022e755ae21
 Revises: e4eba9cfaa6f
 Create Date: 2026-04-01 19:45:00.000000
 
@@ -22,7 +22,7 @@ from sqlalchemy import text
 from migrations.utils import get_schema
 
 # revision identifiers, used by Alembic.
-revision: str = "Nj-2KD-Cc2XG"
+revision: str = "9022e755ae21"
 down_revision: str | None = "e4eba9cfaa6f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
