@@ -118,11 +118,11 @@ The connection URI **must** use the `postgresql+psycopg` prefix:
 
 ```bash
 # Correct
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 
 # Wrong - will fail
-DB_CONNECTION_URI=postgresql://postgres:postgres@localhost:5432/honcho
-DB_CONNECTION_URI=postgres://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql://postgres:postgres@localhost:5432/postgres
+DB_CONNECTION_URI=postgres://postgres:postgres@localhost:5432/postgres
 ```
 
 ### Checking migration status

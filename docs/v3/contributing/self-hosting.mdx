@@ -72,7 +72,7 @@ Edit `.env` and set your API keys (see [Which API Keys Do I Need?](#which-api-ke
 
 ```bash
 # Database (matches docker-compose.yml.example credentials)
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
 
 # LLM API keys (see table above for which features use which provider)
 LLM_GEMINI_API_KEY=your-gemini-api-key
@@ -162,24 +162,21 @@ Download from [postgresql.org](https://www.postgresql.org/download/windows/)
 
 ```bash
 docker run --name honcho-db \
-  -e POSTGRES_DB=honcho \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -p 5432:5432 \
   -d pgvector/pgvector:pg15
 ```
 
-### 3. Create Database and Enable Extensions
+### 3. Enable Extensions
 
-Connect to PostgreSQL and set up the database:
+Connect to PostgreSQL and enable pgvector:
 
 ```bash
 # Connect to PostgreSQL
 psql -U postgres
 
-# Create database and enable extensions
-CREATE DATABASE honcho;
-\c honcho
+# Enable the pgvector extension on the default database
 CREATE EXTENSION IF NOT EXISTS vector;
 \q
 ```
@@ -196,7 +193,7 @@ Edit `.env` with your configuration (see [Which API Keys Do I Need?](#which-api-
 
 ```bash
 # Database connection
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 
 # LLM API keys (see table above for which features use which provider)
 LLM_GEMINI_API_KEY=your-gemini-api-key

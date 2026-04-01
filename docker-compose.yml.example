@@ -48,7 +48,7 @@ services:
       - 5432:5432
     command: ["postgres", "-c", "max_connections=800"]
     environment:
-      - POSTGRES_DB=honcho
+      - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_HOST_AUTH_METHOD=trust
