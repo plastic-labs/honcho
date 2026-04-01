@@ -284,6 +284,13 @@ if settings.LLM.GROQ_API_KEY:
     groq = AsyncGroq(api_key=settings.LLM.GROQ_API_KEY)
     CLIENTS["groq"] = groq
 
+# MiniMax uses the OpenAI-compatible API at api.minimax.io/v1
+if settings.LLM.MINIMAX_API_KEY:
+    CLIENTS["minimax"] = AsyncOpenAI(
+        api_key=settings.LLM.MINIMAX_API_KEY,
+        base_url="https://api.minimax.io/v1",
+    )
+
 SELECTED_PROVIDERS = [
     ("Summary", settings.SUMMARY.PROVIDER),
     ("Deriver", settings.DERIVER.PROVIDER),
@@ -1878,7 +1885,12 @@ async def honcho_llm_call_inner(
             }
 
             if temperature is not None and "gpt-5" not in model:
-                openai_params["temperature"] = temperature
+                # MiniMax requires temperature > 0.0; clamp to 0.01 minimum
+                effective_temp = max(0.01, temperature) if provider == "minimax" else temperature
+                openai_params["temperature"] = effective_temp
+            elif provider == "minimax":
+                # MiniMax does not accept temperature=None; use a safe default
+                openai_params["temperature"] = 0.5
 
             if "gpt-5" in model:
                 openai_params["max_completion_tokens"] = params["max_tokens"]
@@ -1895,7 +1907,7 @@ async def honcho_llm_call_inner(
                 if tool_choice:
                     openai_params["tool_choice"] = tool_choice
 
-            if json_mode and provider != "vllm":
+            if json_mode and provider not in ("vllm", "minimax"):
                 openai_params["response_format"] = {"type": "json_object"}
 
             # custom shim for vLLM response model formatting

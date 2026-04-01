@@ -62,6 +62,7 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # GEMINI_API_KEY = "your-api-key"
 # GROQ_API_KEY = "your-api-key"
 # OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
+# MINIMAX_API_KEY = "your-api-key"  # MiniMax (api.minimax.io) - M2.7 / M2.7-highspeed / M2.5 / M2.5-highspeed
 
 # Separate vLLM endpoint (for local models)
 # VLLM_API_KEY = "your-api-key"

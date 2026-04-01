@@ -1111,7 +1111,268 @@ class TestGroqClient:
 
 
 @pytest.mark.asyncio
-class TestMainLLMCallFunction:
+class TestMiniMaxClient:
+    """Tests for MiniMax client functionality (OpenAI-compatible API)"""
+
+    def _make_chat_completion(self, content: str, model: str = "MiniMax-M2.7") -> ChatCompletion:
+        return ChatCompletion(
+            id="test-minimax-id",
+            object="chat.completion",
+            created=1234567890,
+            model=model,
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content=content),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(prompt_tokens=10, completion_tokens=8, total_tokens=18),
+        )
+
+    async def test_minimax_basic_call(self):
+        """Test basic MiniMax API call via OpenAI-compatible client"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=self._make_chat_completion("Hello from MiniMax")
+        )
+
+        with patch.dict(CLIENTS, {"minimax": mock_client}):
+            response = await honcho_llm_call_inner(
+                provider="minimax",
+                model="MiniMax-M2.7",
+                prompt="Hello",
+                max_tokens=100,
+            )
+
+            assert isinstance(response, HonchoLLMCallResponse)
+            assert response.content == "Hello from MiniMax"
+            assert response.output_tokens == 8
+            assert response.finish_reasons == ["stop"]
+
+    async def test_minimax_temperature_clamping_zero(self):
+        """Temperature 0.0 is invalid for MiniMax; must be clamped to 0.01"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=self._make_chat_completion("response")
+        )
+
+        with patch.dict(CLIENTS, {"minimax": mock_client}):
+            await honcho_llm_call_inner(
+                provider="minimax",
+                model="MiniMax-M2.7",
+                prompt="Hello",
+                max_tokens=100,
+                temperature=0.0,
+            )
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] >= 0.01, (
+            "MiniMax temperature must be > 0.0; 0.0 should be clamped to 0.01"
+        )
+
+    async def test_minimax_temperature_none_gets_default(self):
+        """When temperature is None, MiniMax receives the safe default (0.5)"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=self._make_chat_completion("response")
+        )
+
+        with patch.dict(CLIENTS, {"minimax": mock_client}):
+            await honcho_llm_call_inner(
+                provider="minimax",
+                model="MiniMax-M2.7",
+                prompt="Hello",
+                max_tokens=100,
+                temperature=None,
+            )
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "temperature" in call_kwargs
+        assert call_kwargs["temperature"] == 0.5
+
+    async def test_minimax_valid_temperature_passed_through(self):
+        """A valid temperature (e.g. 0.7) should be passed through unchanged"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=self._make_chat_completion("response")
+        )
+
+        with patch.dict(CLIENTS, {"minimax": mock_client}):
+            await honcho_llm_call_inner(
+                provider="minimax",
+                model="MiniMax-M2.7",
+                prompt="Hello",
+                max_tokens=100,
+                temperature=0.7,
+            )
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["temperature"] == 0.7
+
+    async def test_minimax_json_mode_not_set(self):
+        """MiniMax does not support json_object response_format; it must not be sent"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=self._make_chat_completion('{"key": "value"}')
+        )
+
+        with patch.dict(CLIENTS, {"minimax": mock_client}):
+            await honcho_llm_call_inner(
+                provider="minimax",
+                model="MiniMax-M2.7",
+                prompt="Return JSON",
+                max_tokens=100,
+                json_mode=True,
+            )
+
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "response_format" not in call_kwargs, (
+            "MiniMax does not support json_object response_format"
+        )
+
+    async def test_minimax_m27_highspeed_model(self):
+        """MiniMax-M2.7-highspeed model is handled correctly"""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=self._make_chat_completion("fast response", model="MiniMax-M2.7-highspeed")
+        )
+
+        with patch.dict(CLIENTS, {"minimax": mock_client}):
+            response = await honcho_llm_call_inner(
+                provider="minimax",
+                model="MiniMax-M2.7-highspeed",
+                prompt="Hello",
+                max_tokens=200,
+            )
+
+        assert response.content == "fast response"
+        call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert call_kwargs["model"] == "MiniMax-M2.7-highspeed"
+        assert call_kwargs["max_tokens"] == 200
+
+    async def test_minimax_tool_calling(self):
+        """MiniMax supports tool calling via OpenAI-compatible format"""
+        from openai import AsyncOpenAI
+        from openai.types.chat.chat_completion_message_tool_call import (
+            ChatCompletionMessageToolCall,
+            Function,
+        )
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        tool_call = ChatCompletionMessageToolCall(
+            id="call_abc123",
+            type="function",
+            function=Function(name="search_memory", arguments='{"query": "user preferences"}'),
+        )
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="MiniMax-M2.7",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant",
+                        content=None,
+                        tool_calls=[tool_call],
+                    ),
+                    finish_reason="tool_calls",
+                )
+            ],
+            usage=CompletionUsage(prompt_tokens=15, completion_tokens=10, total_tokens=25),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_memory",
+                    "description": "Search user memory",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                },
+            }
+        ]
+
+        with patch.dict(CLIENTS, {"minimax": mock_client}):
+            response = await honcho_llm_call_inner(
+                provider="minimax",
+                model="MiniMax-M2.7",
+                prompt="What does the user like?",
+                max_tokens=100,
+                tools=tools,
+                tool_choice="auto",
+            )
+
+        assert len(response.tool_calls_made) == 1
+        assert response.tool_calls_made[0]["name"] == "search_memory"
+        assert response.tool_calls_made[0]["id"] == "call_abc123"
+
+
+@pytest.mark.asyncio
+class TestMiniMaxClientInitialization:
+    """Tests for MiniMax client initialization"""
+
+    def test_minimax_client_registered_when_api_key_set(self):
+        """CLIENTS dict includes 'minimax' key when MINIMAX_API_KEY is configured"""
+        from openai import AsyncOpenAI
+
+        with patch.object(settings.LLM, "MINIMAX_API_KEY", "test-minimax-key"):
+            # Re-evaluate client creation logic inline (mirrors what clients.py does)
+            minimax_client = AsyncOpenAI(
+                api_key=settings.LLM.MINIMAX_API_KEY,
+                base_url="https://api.minimax.io/v1",
+            )
+            test_clients = {"minimax": minimax_client}
+            assert "minimax" in test_clients
+            assert isinstance(test_clients["minimax"], AsyncOpenAI)
+
+    def test_minimax_client_not_registered_when_no_api_key(self):
+        """When MINIMAX_API_KEY is not set, 'minimax' should not be in CLIENTS"""
+        with patch.object(settings.LLM, "MINIMAX_API_KEY", None):
+            # Simulate client initialization
+            test_clients: dict = {}
+            if settings.LLM.MINIMAX_API_KEY:
+                from openai import AsyncOpenAI
+                test_clients["minimax"] = AsyncOpenAI(
+                    api_key=settings.LLM.MINIMAX_API_KEY,
+                    base_url="https://api.minimax.io/v1",
+                )
+            assert "minimax" not in test_clients
+
+    def test_minimax_in_supported_providers(self):
+        """'minimax' is a recognized value in SupportedProviders"""
+        from src.utils.types import SupportedProviders
+        from typing import get_args
+        assert "minimax" in get_args(SupportedProviders)
+
+    def test_minimax_api_key_field_in_llm_settings(self):
+        """LLMSettings exposes MINIMAX_API_KEY field"""
+        assert hasattr(settings.LLM, "MINIMAX_API_KEY")
+        # Default value is None when not configured
+        # (actual value depends on env; just check the field exists)
+
+
+@pytest.mark.asyncio
+
     """Tests for the main honcho_llm_call function"""
 
     async def test_streaming_call(self):

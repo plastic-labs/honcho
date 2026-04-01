@@ -208,6 +208,7 @@ class LLMSettings(HonchoSettings):
     GEMINI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
+    MINIMAX_API_KEY: str | None = None
 
     # Separate vLLM endpoint (for local models)
     VLLM_API_KEY: str | None = None
