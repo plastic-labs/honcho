@@ -110,6 +110,39 @@ Messages are stored but no observations, summaries, or representations are being
    DERIVER_WORKERS=4
    ```
 
+## Alternative Provider Issues
+
+### OpenRouter / custom provider not working
+
+If you set `PROVIDER=custom` but calls fail:
+
+1. **Verify the endpoint and key are set:**
+   ```bash
+   LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
+   LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
+   ```
+
+2. **Check model names match the provider's format.** OpenRouter uses `vendor/model` format (e.g., `anthropic/claude-haiku-4-5`), not the raw model ID.
+
+3. **Ensure your model supports tool calling.** The deriver, dialectic, and dream agents require tool use. Check the provider's model page for tool calling support.
+
+4. **Check server logs for the actual error.** API errors from the upstream provider will appear in Honcho's logs with the HTTP status code and message body.
+
+### vLLM / Ollama not responding
+
+1. **Verify the model server is running** and accessible from the Honcho process (or container):
+   ```bash
+   curl http://localhost:8000/v1/models   # vLLM
+   curl http://localhost:11434/v1/models  # Ollama
+   ```
+
+2. **In Docker**, `localhost` inside a container doesn't reach the host. Use `host.docker.internal` (macOS/Windows) or the host's network IP:
+   ```bash
+   LLM_VLLM_BASE_URL=http://host.docker.internal:8000/v1
+   ```
+
+3. **Structured output failures** — vLLM's structured output support is limited to certain response formats. If you see JSON parsing errors, check the deriver/dream logs for the raw response.
+
 ## Database Issues
 
 ### Connection string format

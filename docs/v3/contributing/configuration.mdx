@@ -188,16 +188,18 @@ DB_TRACING=false  # Enable query tracing
 services:
   database:
     image: pgvector/pgvector:pg15
+    command: ["postgres", "-c", "max_connections=800"]
     environment:
+      POSTGRES_DB: postgres
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
       POSTGRES_HOST_AUTH_METHOD: trust
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data/
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
@@ -259,27 +261,24 @@ docker run -d -p 6379:6379 redis:latest
 
 ## LLM Provider Configuration
 
-Honcho supports multiple LLM providers for different tasks. API keys are configured in the `[llm]` section, while specific features use their own configuration sections.
+Honcho routes all LLM calls through a single provider type. The recommended setup uses an OpenAI-compatible endpoint (provider `"custom"`) — one base URL, one API key, all features. See the [Self-Hosting Guide](./self-hosting#llm-provider-setup) for quickstart examples.
 
-### API Keys
+### Provider Types
 
-All provider API keys use the `LLM_` prefix:
+| Provider value | What it connects to | Key env var |
+|---|---|---|
+| `custom` | Any OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, Ollama) | `LLM_OPENAI_COMPATIBLE_API_KEY` + `LLM_OPENAI_COMPATIBLE_BASE_URL` |
+| `vllm` | vLLM self-hosted models | `LLM_VLLM_API_KEY` + `LLM_VLLM_BASE_URL` |
+| `google` | Google Gemini (direct) | `LLM_GEMINI_API_KEY` |
+| `anthropic` | Anthropic Claude (direct) | `LLM_ANTHROPIC_API_KEY` |
+| `openai` | OpenAI (direct) | `LLM_OPENAI_API_KEY` |
+| `groq` | Groq (direct) | `LLM_GROQ_API_KEY` |
 
-```bash
-# Provider API Keys
-LLM_ANTHROPIC_API_KEY=your-anthropic-api-key
-LLM_OPENAI_API_KEY=your-openai-api-key
-LLM_GEMINI_API_KEY=your-gemini-api-key
-LLM_GROQ_API_KEY=your-groq-api-key
+Each feature (deriver, summary, dialectic levels, dream) has its own `PROVIDER` and `MODEL` settings. Set them all to `custom` with your chosen models to use a single endpoint, or use direct vendor keys and let the code defaults route per feature.
 
-# OpenAI-compatible endpoints
-LLM_OPENAI_COMPATIBLE_API_KEY=your-api-key
-LLM_OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint.com
-
-# vLLM endpoint (for local models)
-LLM_VLLM_API_KEY=your-vllm-api-key
-LLM_VLLM_BASE_URL=http://localhost:8000
-```
+<Note>
+All Honcho agents (deriver, dialectic, dream) require tool calling support. Verify your models support the OpenAI tool calling format before deploying.
+</Note>
 
 ### General LLM Settings
 
@@ -432,14 +431,14 @@ SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20  # Create short summary every N messages
 SUMMARY_MESSAGES_PER_LONG_SUMMARY=60  # Create long summary every N messages
 ```
 
-### Default Provider Usage
+### Code Defaults (Without Provider Overrides)
 
-By default, Honcho uses:
-- **Google** (Gemini) for dialectic API (minimal/low levels), deriver, and summarization
-- **Anthropic** (Claude) for dialectic API (medium/high/max levels) and dream processing
-- **OpenAI** for embeddings (if `EMBED_MESSAGES=true`)
+If you don't set `PROVIDER` per feature, the code defaults route to:
+- **Google** (Gemini) — deriver, summary, dialectic minimal/low
+- **Anthropic** (Claude) — dialectic medium/high/max, dream
+- **OpenAI** — embeddings (when `EMBED_MESSAGES=true`)
 
-You only need to set the API keys for the providers you plan to use. All providers are configurable per feature.
+These defaults require 3 separate vendor API keys. For a simpler setup, set all features to `PROVIDER=custom` with a single OpenAI-compatible endpoint — see the [Self-Hosting Guide](./self-hosting#llm-provider-setup).
 
 ## Additional Features Configuration
 

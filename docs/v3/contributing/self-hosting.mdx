@@ -32,22 +32,88 @@ You'll need a PostgreSQL database with the pgvector extension. Choose one:
 - **Railway** - Simple cloud PostgreSQL hosting
 - **Your own PostgreSQL server**
 
-## Which API Keys Do I Need?
+## LLM Provider Setup
 
-Honcho uses different LLM providers for different features. The table below shows which keys are needed for the **default** configuration. All providers are configurable per feature (see the [Configuration Guide](./configuration)).
+Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dream consolidation. The server will **fail to start** until a provider is configured — this is intentional so you don't get a running server that silently does no reasoning.
 
-| Feature | Default Provider | Environment Variable | Required? |
-|---------|-----------------|---------------------|-----------|
-| Deriver (memory extraction) | Google Gemini | `LLM_GEMINI_API_KEY` | Yes (core feature) |
-| Summary generation | Google Gemini | `LLM_GEMINI_API_KEY` | Yes (core feature) |
-| Dialectic minimal/low | Google Gemini | `LLM_GEMINI_API_KEY` | If using Chat API |
-| Dialectic medium/high/max | Anthropic Claude | `LLM_ANTHROPIC_API_KEY` | If using Chat API |
-| Dream (memory consolidation) | Anthropic Claude | `LLM_ANTHROPIC_API_KEY` | Optional |
-| Message embeddings | OpenAI | `LLM_OPENAI_API_KEY` | If `EMBED_MESSAGES=true` (default) |
+Each feature needs a `PROVIDER` and `MODEL`. You set these in your `.env` file (see `.env.template` for the full list).
 
-**Minimum for basic usage**: `LLM_GEMINI_API_KEY` + `LLM_OPENAI_API_KEY`
+<Warning>
+All Honcho agents (deriver, dialectic, dream) use tool calling. Your models must support the OpenAI tool calling format.
+</Warning>
 
-**Full functionality**: All three keys (Gemini, Anthropic, OpenAI)
+### Provider Options
+
+| Provider | Endpoint | Use case |
+|---|---|---|
+| `custom` | Any OpenAI-compatible API (OpenRouter, Together, Fireworks, LiteLLM, Ollama) | Single key, many models |
+| `vllm` | vLLM self-hosted models | Local inference |
+| `google` | Google Gemini (direct) | Direct vendor API |
+| `anthropic` | Anthropic Claude (direct) | Direct vendor API |
+| `openai` | OpenAI (direct) | Direct vendor API |
+| `groq` | Groq (direct) | Direct vendor API |
+
+### Example: OpenRouter
+
+```bash
+LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
+LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
+LLM_EMBEDDING_PROVIDER=openrouter
+
+DERIVER_PROVIDER=custom
+DERIVER_MODEL=google/gemini-2.5-flash-lite
+
+SUMMARY_PROVIDER=custom
+SUMMARY_MODEL=google/gemini-2.5-flash
+
+DIALECTIC_LEVELS__minimal__PROVIDER=custom
+DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash-lite
+DIALECTIC_LEVELS__low__PROVIDER=custom
+DIALECTIC_LEVELS__low__MODEL=google/gemini-2.5-flash-lite
+DIALECTIC_LEVELS__medium__PROVIDER=custom
+DIALECTIC_LEVELS__medium__MODEL=anthropic/claude-haiku-4-5
+DIALECTIC_LEVELS__high__PROVIDER=custom
+DIALECTIC_LEVELS__high__MODEL=anthropic/claude-haiku-4-5
+DIALECTIC_LEVELS__max__PROVIDER=custom
+DIALECTIC_LEVELS__max__MODEL=anthropic/claude-haiku-4-5
+
+DREAM_PROVIDER=custom
+DREAM_MODEL=anthropic/claude-sonnet-4-20250514
+DREAM_DEDUCTION_MODEL=anthropic/claude-haiku-4-5
+DREAM_INDUCTION_MODEL=anthropic/claude-haiku-4-5
+```
+
+Model names depend on your endpoint. OpenRouter uses `vendor/model` format. Swap any model for another available on your provider.
+
+### Example: Self-Hosted (vLLM / Ollama)
+
+```bash
+# vLLM
+LLM_VLLM_BASE_URL=http://localhost:8000/v1
+LLM_VLLM_API_KEY=not-needed
+DERIVER_PROVIDER=vllm
+DERIVER_MODEL=your-model-name
+
+# Ollama (uses custom provider)
+LLM_OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
+LLM_OPENAI_COMPATIBLE_API_KEY=ollama
+DERIVER_PROVIDER=custom
+DERIVER_MODEL=llama3.3:70b
+```
+
+Set `PROVIDER` and `MODEL` for each feature the same way.
+
+### Example: Direct Vendor Keys
+
+Leave the provider overrides commented out in `.env`. Set individual API keys and the code defaults will route to the correct vendor per feature:
+
+```bash
+LLM_GEMINI_API_KEY=...       # deriver, summary, dialectic minimal/low
+LLM_ANTHROPIC_API_KEY=...    # dialectic medium/high/max, dream
+LLM_OPENAI_API_KEY=...       # embeddings
+```
+
+See the [Configuration Guide](./configuration) for the full reference.
 
 ## Docker Setup (Recommended)
 
@@ -68,20 +134,7 @@ Copy the example environment file and configure it:
 cp .env.template .env
 ```
 
-Edit `.env` and set your API keys (see [Which API Keys Do I Need?](#which-api-keys-do-i-need) above):
-
-```bash
-# Database (matches docker-compose.yml.example credentials)
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-
-# LLM API keys (see table above for which features use which provider)
-LLM_GEMINI_API_KEY=your-gemini-api-key
-LLM_ANTHROPIC_API_KEY=your-anthropic-api-key
-LLM_OPENAI_API_KEY=your-openai-api-key
-
-# Disable auth for local development
-AUTH_USE_AUTH=false
-```
+Edit `.env` and configure your LLM provider — see [LLM Provider Setup](#llm-provider-setup) above. The database connection is already set in `docker-compose.yml.example`. Auth is disabled by default (`AUTH_USE_AUTH=false`).
 
 ### 3. Start the Services
 
@@ -93,7 +146,7 @@ cp docker-compose.yml.example docker-compose.yml
 docker compose up -d
 ```
 
-> **Note:** The docker-compose file starts both the API server and the deriver (background worker) automatically. It also includes Redis (for caching, disabled by default) and Grafana (for monitoring on port 3000 when `METRICS_ENABLED=true`).
+The compose file starts five services: **api** (port 8000), **deriver** (background worker), **database** (PostgreSQL with pgvector, port 5432), **redis** (port 6379), and **grafana** (port 3000, for monitoring when `METRICS_ENABLED=true`). Redis caching is available but disabled by default (`CACHE_ENABLED=false`).
 
 ### 4. Run Database Migrations
 
@@ -189,18 +242,10 @@ Create a `.env` file with your settings:
 cp .env.template .env
 ```
 
-Edit `.env` with your configuration (see [Which API Keys Do I Need?](#which-api-keys-do-i-need) above):
+Edit `.env` — configure your LLM provider (see [LLM Provider Setup](#llm-provider-setup) above) and set the database connection:
 
 ```bash
-# Database connection
 DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
-
-# LLM API keys (see table above for which features use which provider)
-LLM_GEMINI_API_KEY=your-gemini-api-key
-LLM_ANTHROPIC_API_KEY=your-anthropic-api-key
-LLM_OPENAI_API_KEY=your-openai-api-key
-
-# Development settings
 AUTH_USE_AUTH=false
 LOG_LEVEL=DEBUG
 ```
@@ -356,9 +401,9 @@ When self-hosting for production, consider:
 - Always run `uv run alembic upgrade head` after updating Honcho before starting the server
 - Check current migration status with `uv run alembic current`
 
-### API Keys
-- Ensure you have the correct API keys for your configured providers (see [Which API Keys Do I Need?](#which-api-keys-do-i-need))
-- All providers are configurable — see the [Configuration Guide](./configuration) to use different models or providers
+### LLM Providers
+- Ensure your provider endpoint and API key are configured (see [LLM Provider Setup](#llm-provider-setup))
+- All features are independently configurable — see the [Configuration Guide](./configuration) for per-feature model overrides
 
 ### Monitoring
 - Enable Prometheus metrics with `METRICS_ENABLED=true` (scraped at `/metrics` on port 8000 for API, port 9090 for deriver)
