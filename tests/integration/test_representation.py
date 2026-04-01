@@ -17,6 +17,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.config import settings
+
+DIMS = settings.VECTOR_STORE.DIMENSIONS
+
 from src.utils.representation import (
     DeductiveObservation,
     # DeductiveObservationBase,
@@ -32,12 +36,12 @@ def fixed_embedding_vector() -> list[float]:
     """
     Fixture providing a deterministic embedding vector for hermetic tests.
 
-    Returns a 1536-dimensional vector with predictable values to avoid
+    Returns a DIMS-dimensional vector with predictable values to avoid
     network calls to external embedding services during testing.
     """
-    # Create a deterministic 1536-dimensional embedding vector
+    # Create a deterministic embedding vector matching configured dimensions
     # Using a simple pattern that's easy to verify in tests
-    return [0.1 * (i % 10) for i in range(1536)]
+    return [0.1 * (i % 10) for i in range(DIMS)]
 
 
 @pytest.mark.asyncio

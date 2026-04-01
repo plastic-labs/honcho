@@ -6,7 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.config import settings
 from src.exceptions import ResourceNotFoundException
+
+DIMS = settings.VECTOR_STORE.DIMENSIONS
 
 
 class TestDocumentCRUD:
@@ -104,7 +107,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="User likes pizza",
-                embedding=[0.9] * 1536,
+                embedding=[0.9] * DIMS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[1],
@@ -113,7 +116,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="User dislikes vegetables",
-                embedding=[0.1] * 1536,
+                embedding=[0.1] * DIMS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[2],
@@ -157,7 +160,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="User likes pizza",
-                embedding=[0.9] * 1536,
+                embedding=[0.9] * DIMS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[1],
@@ -166,7 +169,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="User dislikes vegetables",
-                embedding=[0.1] * 1536,
+                embedding=[0.1] * DIMS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[2],
@@ -223,7 +226,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="Observation one",
-                embedding=[0.5] * 1536,
+                embedding=[0.5] * DIMS,
                 session_name=test_session.name,
                 times_derived=1,
                 metadata=schemas.DocumentMetadata(
@@ -233,7 +236,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="Observation two",
-                embedding=[0.5] * 1536,
+                embedding=[0.5] * DIMS,
                 session_name=test_session.name,
                 times_derived=2,
                 metadata=schemas.DocumentMetadata(
@@ -268,7 +271,7 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
             top_k=10,
             filters={"times_derived": 2},
-            embedding=[0.5] * 1536,
+            embedding=[0.5] * DIMS,
         )
 
         assert len(results) == 1
@@ -357,7 +360,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="Observation 1",
-                embedding=[0.1] * 1536,
+                embedding=[0.1] * DIMS,
                 session_name=test_session.name,
                 level="explicit",
                 metadata=schemas.DocumentMetadata(
@@ -367,7 +370,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="Observation 2",
-                embedding=[0.2] * 1536,
+                embedding=[0.2] * DIMS,
                 session_name=test_session.name,
                 level="deductive",
                 metadata=schemas.DocumentMetadata(

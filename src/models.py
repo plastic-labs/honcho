@@ -25,6 +25,7 @@ from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing_extensions import override
 
+from src.config import settings
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
 from .db import Base
@@ -278,7 +279,9 @@ class MessageEmbedding(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(
+        Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True
+    )
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -386,7 +389,9 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(
+        Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True
+    )
     source_ids: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True, server_default=text("NULL")
     )
@@ -574,3 +579,48 @@ class SessionPeer(Base):
     internal_metadata: Mapped[dict[str, Any]]
     joined_at: Mapped[datetime.datetime]
     left_at: Mapped[datetime.datetime | None]
+
+
+async def check_vector_dimensions(session: Any) -> None:
+    """
+    Validate that DB vector column dimensions match VECTOR_STORE.DIMENSIONS.
+    Only runs for pgvector backends. Call at application startup to fail fast
+    if Alembic migrations and runtime config have diverged.
+    """
+    if settings.VECTOR_STORE.TYPE != "pgvector":
+        return
+
+    logger = getLogger(__name__)
+    expected = settings.VECTOR_STORE.DIMENSIONS
+
+    tables_columns = [
+        ("message_embeddings", "embedding"),
+        ("documents", "embedding"),
+    ]
+
+    for table, column in tables_columns:
+        result = await session.execute(
+            text(
+                "SELECT atttypmod FROM pg_attribute "
+                "JOIN pg_class ON attrelid = pg_class.oid "
+                "JOIN pg_namespace ON relnamespace = pg_namespace.oid "
+                "WHERE relname = :table AND attname = :column "
+                "AND nspname = current_schema()"
+            ),
+            {"table": table, "column": column},
+        )
+        row = result.fetchone()
+        if row is None:
+            logger.warning(
+                "check_vector_dimensions: could not find %s.%s", table, column
+            )
+            continue
+        # pgvector stores dimension count directly in atttypmod
+        actual = row[0]
+        if actual != expected:
+            raise RuntimeError(
+                f"Vector dimension mismatch on {table}.{column}: "
+                f"DB has {actual} but VECTOR_STORE.DIMENSIONS={expected}. "
+                "Run Alembic migrations or update VECTOR_STORE__DIMENSIONS to match."
+            )
+        logger.info("check_vector_dimensions: %s.%s OK (%d dims)", table, column, expected)

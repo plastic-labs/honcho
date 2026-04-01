@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+DIMS = settings.VECTOR_STORE.DIMENSIONS
+
 from src.utils.agent_tools import (
     MAX_PEER_CARD_FACTS,
     ObservationsCreatedResult,
@@ -103,7 +105,7 @@ async def tool_test_data(
             observer=peer1.name,
             observed=peer2.name,
             content=content,
-            embedding=[0.1 * (i + 1)] * 1536,
+            embedding=[0.1 * (i + 1)] * DIMS,
             session_name=session.name,
             level="explicit",
             metadata={
