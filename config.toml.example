@@ -49,9 +49,13 @@ TRACES_SAMPLE_RATE = 0.1
 PROFILES_SAMPLE_RATE = 0.1
 
 # LLM settings
+# When using 'custom' provider, all other EMBEDDING variables are required
 [llm]
 DEFAULT_MAX_TOKENS = 2500
 EMBEDDING_PROVIDER = "openai"
+# EMBEDDING_BASE_URL = "your-base-url"
+# EMBEDDING_API_KEY = "your-api-key"
+# EMBEDDING_MODEL = "your-model"
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
