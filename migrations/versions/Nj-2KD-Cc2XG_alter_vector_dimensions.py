@@ -27,11 +27,18 @@ down_revision: str | None = "e4eba9cfaa6f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-schema = get_schema()
 
+def _get_atttypmod(table: str, column: str, schema: str | None) -> int | None:
+    """Return pg_attribute.atttypmod for a vector column, or None if not found.
 
-def _get_atttypmod(table: str, column: str) -> int | None:
-    """Return pg_attribute.atttypmod for a vector column, or None if not found."""
+    Uses the migration's resolved schema rather than current_schema() to handle
+    non-default schema deployments correctly.
+    """
+    schema_filter = "n.nspname = :schema" if schema else "n.nspname = current_schema()"
+    params: dict = {"table": table, "column": column}
+    if schema:
+        params["schema"] = schema
+
     result = op.get_bind().execute(
         text(
             f"""
@@ -41,10 +48,10 @@ def _get_atttypmod(table: str, column: str) -> int | None:
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE c.relname = :table
               AND a.attname = :column
-              AND n.nspname = current_schema()
+              AND {schema_filter}
             """
         ),
-        {"table": table, "column": column},
+        params,
     )
     row = result.fetchone()
     return int(row[0]) if row else None
@@ -55,10 +62,10 @@ def upgrade() -> None:
     # Import settings at runtime so we read the deployed configuration
     from src.config import settings
 
+    schema = get_schema()
     target_dim: int = settings.VECTOR_STORE.DIMENSIONS
 
     inspector = sa.inspect(op.get_bind())
-    conn = op.get_bind()
 
     tables = [
         {
@@ -70,20 +77,21 @@ def upgrade() -> None:
         {
             "name": "message_embeddings",
             "column": "embedding",
-            "ix_name": None,  # no HNSW index on this column in current DB
-            "has_ix": False,
+            "ix_name": "ix_message_embeddings_embedding_hnsw",
+            "has_ix": None,
         },
     ]
 
-    # Check which indexes actually exist in the DB
-    existing_indexes = {r[0] for r in inspector.get_indexes("documents")}
-    existing_indexes |= {r[0] for r in inspector.get_indexes("message_embeddings")}
+    # Check which indexes actually exist in the DB using inspector dict access
+    doc_indexes = {idx["name"] for idx in inspector.get_indexes("documents", schema=schema)}
+    msg_indexes = {idx["name"] for idx in inspector.get_indexes("message_embeddings", schema=schema)}
+    existing_indexes = doc_indexes | msg_indexes
 
     for t in tables:
         t["has_ix"] = t["ix_name"] in existing_indexes if t["ix_name"] else False
 
     for t in tables:
-        current_dim = _get_atttypmod(t["name"], t["column"])
+        current_dim = _get_atttypmod(t["name"], t["column"], schema)
 
         if current_dim is None:
             # Column absent (LanceDB-only backend) — skip
@@ -97,9 +105,10 @@ def upgrade() -> None:
         if t["has_ix"] and t["ix_name"]:
             op.drop_index(t["ix_name"], table_name=t["name"], schema=schema)
 
-        # Alter column type to new vector dimension
-        # The USING clause casts the existing vector to the new dimension
+        # Build fully-qualified ALTER TABLE statement
+        table_ref = f'"{schema}"."{t["name"]}"' if schema else f'"{t["name"]}"'
         op.execute(
+            f"ALTER TABLE {table_ref} "
             f'ALTER COLUMN "embedding" TYPE vector({target_dim}) '
             f'USING "embedding"::vector({target_dim})'
         )
