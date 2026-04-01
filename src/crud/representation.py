@@ -162,7 +162,7 @@ class RepresentationManager:
             )
 
         # Use bulk creation with optional duplicate detection
-        new_documents = await crud.create_documents(
+        new_doc_ids = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,
@@ -170,6 +170,7 @@ class RepresentationManager:
             observed=self.observed,
             deduplicate=settings.DERIVER.DEDUPLICATE,
         )
+        new_documents = len(new_doc_ids)
 
         if message_level_configuration.dream.enabled:
             try:

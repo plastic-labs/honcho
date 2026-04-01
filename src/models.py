@@ -403,6 +403,9 @@ class Document(Base):
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True, default=None
     )
+    superseded_by: Mapped[str | None] = mapped_column(
+        TEXT, nullable=True, default=None
+    )
 
     # Vector sync state tracking
     sync_state: Mapped[VectorSyncState] = mapped_column(

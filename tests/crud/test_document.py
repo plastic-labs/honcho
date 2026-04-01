@@ -379,7 +379,7 @@ class TestDocumentCRUD:
         ]
 
         # Create documents
-        count = await crud.create_documents(
+        created_ids = await crud.create_documents(
             db_session,
             documents=doc_schemas,
             workspace_name=test_workspace.name,
@@ -387,7 +387,8 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
         )
 
-        assert count == 2
+        assert len(created_ids) == 2
+        assert all(isinstance(doc_id, str) for doc_id in created_ids)
 
         # Verify documents were created
         stmt = select(models.Document).where(
@@ -401,3 +402,252 @@ class TestDocumentCRUD:
         assert len(documents) == 2
         assert documents[0].content in ["Observation 1", "Observation 2"]
         assert documents[1].content in ["Observation 1", "Observation 2"]
+
+    @pytest.mark.asyncio
+    async def test_create_documents_returns_empty_list_when_all_deduped(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """create_documents returns [] when all docs are rejected as duplicates."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # Create a more informative original document
+        original_schema = schemas.DocumentCreate(
+            content="User loves pizza and also enjoys pasta with fresh tomato sauce",
+            embedding=[0.5] * 1536,
+            session_name=test_session.name,
+            level="explicit",
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        await crud.create_documents(
+            db_session,
+            documents=[original_schema],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+
+        # Create a less informative near-duplicate (subset of original content).
+        # Dedup rejects the new doc when the existing one has more information.
+        lesser_schema = schemas.DocumentCreate(
+            content="User loves pizza",
+            embedding=[0.5] * 1536,  # Same embedding to trigger similarity match
+            session_name=test_session.name,
+            level="explicit",
+            metadata=schemas.DocumentMetadata(
+                message_ids=[2],
+                message_created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        duplicate_ids = await crud.create_documents(
+            db_session,
+            documents=[lesser_schema],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+
+        assert duplicate_ids == []
+
+    @pytest.mark.asyncio
+    async def test_dedup_sets_superseded_by(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """When a more informative doc replaces an existing one, superseded_by is set."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # Create original (less informative)
+        original_schema = schemas.DocumentCreate(
+            content="User likes pizza",
+            embedding=[0.5] * 1536,
+            session_name=test_session.name,
+            level="explicit",
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        original_ids = await crud.create_documents(
+            db_session,
+            documents=[original_schema],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+        assert len(original_ids) == 1
+        original_id = original_ids[0]
+
+        # Create replacement (more informative, similar embedding triggers dedup)
+        replacement_schema = schemas.DocumentCreate(
+            content="User likes pizza and also enjoys pasta with fresh tomato sauce",
+            embedding=[0.5] * 1536,
+            session_name=test_session.name,
+            level="explicit",
+            metadata=schemas.DocumentMetadata(
+                message_ids=[2],
+                message_created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        replacement_ids = await crud.create_documents(
+            db_session,
+            documents=[replacement_schema],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+        assert len(replacement_ids) == 1
+        replacement_id = replacement_ids[0]
+
+        # Verify the original doc has superseded_by set
+        stmt = select(models.Document).where(models.Document.id == original_id)
+        old_doc = (await db_session.execute(stmt)).scalar_one()
+        assert old_doc.superseded_by == replacement_id
+        assert old_doc.deleted_at is not None
+
+    @pytest.mark.asyncio
+    async def test_dedup_no_supersession_when_rejected(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """When the new doc is rejected (less informative), no supersession link is created."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # Create original (more informative)
+        original_schema = schemas.DocumentCreate(
+            content="User loves pizza and also enjoys pasta with fresh tomato sauce",
+            embedding=[0.5] * 1536,
+            session_name=test_session.name,
+            level="explicit",
+            metadata=schemas.DocumentMetadata(
+                message_ids=[1],
+                message_created_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        original_ids = await crud.create_documents(
+            db_session,
+            documents=[original_schema],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+        original_id = original_ids[0]
+
+        # Create lesser duplicate — should be rejected
+        await crud.create_documents(
+            db_session,
+            documents=[
+                schemas.DocumentCreate(
+                    content="User likes pizza",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    level="explicit",
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2024-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+
+        # Original should be untouched
+        stmt = select(models.Document).where(models.Document.id == original_id)
+        original_doc = (await db_session.execute(stmt)).scalar_one()
+        assert original_doc.superseded_by is None
+        assert original_doc.deleted_at is None
+
+    @pytest.mark.asyncio
+    async def test_dedup_no_supersession_when_no_duplicate(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Unique documents have no supersession field set."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        doc_ids = await crud.create_documents(
+            db_session,
+            documents=[
+                schemas.DocumentCreate(
+                    content="Completely unique observation",
+                    embedding=[0.9] * 1536,
+                    session_name=test_session.name,
+                    level="explicit",
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2024-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+
+        stmt = select(models.Document).where(models.Document.id == doc_ids[0])
+        doc = (await db_session.execute(stmt)).scalar_one()
+        assert doc.superseded_by is None
+
+    @pytest.mark.asyncio
+    async def test_dedup_backward_compatible_without_flag(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """deduplicate=False skips dedup entirely, no supersession field set."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        doc_ids = await crud.create_documents(
+            db_session,
+            documents=[
+                schemas.DocumentCreate(
+                    content="Observation without dedup",
+                    embedding=[0.7] * 1536,
+                    session_name=test_session.name,
+                    level="explicit",
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2024-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=False,
+        )
+
+        stmt = select(models.Document).where(models.Document.id == doc_ids[0])
+        doc = (await db_session.execute(stmt)).scalar_one()
+        assert doc.superseded_by is None
