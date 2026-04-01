@@ -34,24 +34,19 @@ def _get_atttypmod(table: str, column: str, schema: str | None) -> int | None:
     Uses the migration's resolved schema rather than current_schema() to handle
     non-default schema deployments correctly.
     """
-    schema_filter = "n.nspname = :schema" if schema else "n.nspname = current_schema()"
-    params: dict = {"table": table, "column": column}
-    if schema:
-        params["schema"] = schema
-
     result = op.get_bind().execute(
         text(
-            f"""
+            """
             SELECT a.atttypmod
             FROM pg_attribute a
             JOIN pg_class c ON c.oid = a.attrelid
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE c.relname = :table
               AND a.attname = :column
-              AND {schema_filter}
+              AND n.nspname = COALESCE(:schema, current_schema())
             """
         ),
-        params,
+        {"table": table, "column": column, "schema": schema},
     )
     row = result.fetchone()
     return int(row[0]) if row else None
