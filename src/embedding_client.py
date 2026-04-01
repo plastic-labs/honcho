@@ -4,6 +4,7 @@ import threading
 from collections import defaultdict
 from typing import NamedTuple
 
+import httpx
 import tiktoken
 from google import genai
 from openai import AsyncOpenAI
@@ -40,6 +41,26 @@ class _EmbeddingClient:
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
+        elif self.provider == "jina":
+            if api_key is None:
+                api_key = settings.LLM.JINA_API_KEY
+            if not api_key:
+                raise ValueError(
+                    "Jina API key (LLM_JINA_API_KEY) is required"
+                )
+            self._jina_api_key: str = api_key
+            self._jina_http: httpx.AsyncClient = httpx.AsyncClient(
+                base_url="https://api.jina.ai",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                timeout=60.0,
+            )
+            self.client = None  # type: ignore[assignment]
+            self.model = settings.LLM.JINA_MODEL
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 128  # Jina batch limit
         elif self.provider == "openrouter":
             if api_key is None:
                 api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
@@ -70,6 +91,22 @@ class _EmbeddingClient:
             settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
         )
 
+    async def _jina_embed_batch(self, texts: list[str], task: str = "retrieval.passage") -> list[list[float]]:
+        """Call Jina embedding API directly with native schema."""
+        resp = await self._jina_http.post(
+            "/v1/embeddings",
+            json={
+                "model": self.model,
+                "task": task,
+                "dimensions": settings.VECTOR_STORE.DIMENSIONS,
+                "normalized": True,
+                "input": texts,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [item["embedding"] for item in data["data"]]
+
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
 
@@ -78,11 +115,14 @@ class _EmbeddingClient:
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
 
-        if isinstance(self.client, genai.Client):
+        if self.provider == "jina":
+            results = await self._jina_embed_batch([query], task="retrieval.query")
+            return results[0]
+        elif isinstance(self.client, genai.Client):
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
-                config={"output_dimensionality": 1536},
+                config={"output_dimensionality": settings.VECTOR_STORE.DIMENSIONS},
             )
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
@@ -111,12 +151,15 @@ class _EmbeddingClient:
         for i in range(0, len(texts), self.max_batch_size):
             batch = texts[i : i + self.max_batch_size]
             try:
-                if isinstance(self.client, genai.Client):
+                if self.provider == "jina":
+                    embeddings.extend(await self._jina_embed_batch(batch))
+                    continue
+                elif isinstance(self.client, genai.Client):
                     # Type cast needed due to genai type signature complexity
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": settings.VECTOR_STORE.DIMENSIONS},
                     )
                     if response.embeddings:
                         for emb in response.embeddings:
@@ -248,11 +291,17 @@ class _EmbeddingClient:
                 # Organize embeddings by text_id and chunk_index
                 result: dict[str, dict[int, list[float]]] = defaultdict(dict)
 
-                if isinstance(self.client, genai.Client):
+                if self.provider == "jina":
+                    embeddings = await self._jina_embed_batch(
+                        [item.text for item in batch]
+                    )
+                    for item, embedding in zip(batch, embeddings, strict=True):
+                        result[item.text_id][item.chunk_index] = embedding
+                elif isinstance(self.client, genai.Client):
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": settings.VECTOR_STORE.DIMENSIONS},
                     )
                     if response.embeddings:
                         for item, embedding in zip(
@@ -380,6 +429,8 @@ class EmbeddingClient:
                     provider = settings.LLM.EMBEDDING_PROVIDER
                     if provider == "gemini":
                         api_key = settings.LLM.GEMINI_API_KEY
+                    elif provider == "jina":
+                        api_key = settings.LLM.JINA_API_KEY
                     elif provider == "openrouter":
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
                     else:

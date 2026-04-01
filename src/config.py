@@ -213,7 +213,11 @@ class LLMSettings(HonchoSettings):
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter", "jina"] = "openai"
+
+    # Jina AI embedding settings
+    JINA_API_KEY: str | None = None
+    JINA_MODEL: str = "jina-embeddings-v5-text-small"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
