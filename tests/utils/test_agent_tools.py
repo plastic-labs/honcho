@@ -429,6 +429,74 @@ class TestCreateObservations:
 
         assert "[id:" not in result
 
+    async def test_created_levels_matches_created_ids_on_dedup(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """When dedup drops observations, created_levels aligns with created_ids (not input list)."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+
+        # Simulate dedup: 3 docs submitted, middle one (deductive) is deduped,
+        # only first (explicit) and third (inductive) are created.
+        async def fake_create_documents(
+            _db: AsyncSession,
+            documents: list[Any],  # pyright: ignore[reportUnusedParameter]
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            deduplicate: bool = False,
+        ) -> list[str]:
+            _ = (workspace_name, observer, observed, deduplicate)
+            # Skip the second document (simulating dedup rejection)
+            return ["fake_id_0", "fake_id_2"]
+
+        # Return docs with correct levels for the IDs that were "created"
+        fake_doc_0 = type("Doc", (), {"id": "fake_id_0", "level": "explicit"})()
+        fake_doc_2 = type("Doc", (), {"id": "fake_id_2", "level": "inductive"})()
+
+        async def fake_get_documents_by_ids(
+            _db: AsyncSession, _workspace: str, ids: list[str]
+        ) -> list[Any]:
+            lookup = {"fake_id_0": fake_doc_0, "fake_id_2": fake_doc_2}
+            return [lookup[did] for did in ids if did in lookup]
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.get_documents_by_ids",
+            fake_get_documents_by_ids,
+        )
+
+        result = await create_observations(
+            db_session,
+            observations=[
+                schemas.ObservationInput(content="Explicit obs", level="explicit"),
+                schemas.ObservationInput(content="Deductive obs (deduped)", level="deductive",
+                                         source_ids=["s1"], premises=["p1"]),
+                schemas.ObservationInput(content="Inductive obs", level="inductive",
+                                         source_ids=["s2"], sources=["source text"]),
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert isinstance(result, ObservationsCreatedResult)
+        # created_ids has 2 items (deduped one is gone)
+        assert result.created_count == 2
+        assert len(result.created_ids) == 2
+        # Critical: created_levels must match created_ids in length
+        assert len(result.created_levels) == len(result.created_ids)
+        # And the levels must be correct (not shifted)
+        assert result.created_levels == ["explicit", "inductive"]
+
 
 @pytest.mark.asyncio
 class TestDeleteObservations:

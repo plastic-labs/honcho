@@ -745,10 +745,18 @@ async def create_observations(
             observed,
         )
 
+    # Derive levels from actually-persisted documents (not the input list),
+    # since create_documents with deduplicate=True may skip some.
+    created_levels: list[str] = []
+    if created_ids:
+        created_docs = await crud.get_documents_by_ids(db, workspace_name, created_ids)
+        id_to_level = {str(d.id): (d.level or "explicit") for d in created_docs}
+        created_levels = [id_to_level.get(did, "explicit") for did in created_ids]
+
     return ObservationsCreatedResult(
         created_count=len(created_ids),
         created_ids=created_ids,
-        created_levels=[doc.level for doc in documents],
+        created_levels=created_levels,
         failed=failed,
     )
 
