@@ -1618,3 +1618,58 @@ class TestChainTraversalSupersession:
         assert f"[id:{parent.id}]" in result
         assert "A known fact" in result
         assert "superseded" not in result.lower()
+
+    async def test_reasoning_chain_shows_contradiction_sources(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Contradiction observations display their sources with the correct label."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        ctx = make_tool_context(current_messages=None)
+
+        source_a = models.Document(
+            content="User says they love mornings",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.5] * 1536,
+            level="explicit",
+        )
+        source_b = models.Document(
+            content="User says they hate mornings",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.6] * 1536,
+            level="explicit",
+        )
+        db_session.add_all([source_a, source_b])
+        await db_session.flush()
+
+        contradiction = models.Document(
+            content="User has contradictory statements about mornings",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            embedding=[0.7] * 1536,
+            level="contradiction",
+            source_ids=[source_a.id, source_b.id],
+        )
+        db_session.add(contradiction)
+        await db_session.commit()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": contradiction.id, "direction": "premises"}
+        )
+
+        assert "Contradicting sources" in result
+        assert f"[id:{source_a.id}]" in result
+        assert f"[id:{source_b.id}]" in result
+        assert "love mornings" in result
+        assert "hate mornings" in result
+        assert "None recorded" not in result

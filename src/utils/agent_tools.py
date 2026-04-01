@@ -1736,8 +1736,13 @@ async def _handle_get_reasoning_chain(
 
     # Get premises/sources if requested
     if direction in ("premises", "both"):
-        if level in ("deductive", "inductive") and doc.source_ids:
-            label = "Premises" if level == "deductive" else "Sources"
+        if level in ("deductive", "inductive", "contradiction") and doc.source_ids:
+            if level == "deductive":
+                label = "Premises"
+            elif level == "contradiction":
+                label = "Contradicting sources"
+            else:
+                label = "Sources"
             # First try live docs
             live_docs = await crud.get_documents_by_ids(
                 ctx.db, ctx.workspace_name, doc.source_ids
