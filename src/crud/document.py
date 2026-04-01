@@ -904,6 +904,12 @@ async def cleanup_soft_deleted_documents(
         select(models.Document)
         .where(models.Document.deleted_at.is_not(None))
         .where(models.Document.deleted_at < cutoff)
+        # Skip tombstones that have already been preserved (vector deleted, embedding NULLed)
+        .where(
+            ~models.Document.internal_metadata.contains(
+                {"tombstone_preserved": True}
+            )
+        )
         .limit(batch_size)
         .with_for_update(skip_locked=True)
     )
@@ -917,6 +923,7 @@ async def cleanup_soft_deleted_documents(
     # Superseded docs with live dependents are preserved as tombstones (embedding NULLed).
     # Superseded docs without dependents and non-superseded docs are hard-deleted.
     preserve_ids: list[str] = []
+    successfully_preserved_ids: list[str] = []
     delete_candidates: list[models.Document] = []
 
     for doc in documents:
@@ -953,23 +960,32 @@ async def cleanup_soft_deleted_documents(
         for namespace, ids in preserve_by_namespace.items():
             try:
                 await external_vector_store.delete_many(namespace, ids)
+                successfully_preserved_ids.extend(ids)
             except Exception as e:
                 logger.warning(f"Failed to delete vectors for preserved tombstones from {namespace}: {e}")
 
-        await db.execute(
-            update(models.Document)
-            .where(models.Document.id.in_(preserve_ids))
-            .values(embedding=None)
-        )
-        logger.debug(
-            f"Preserved {len(preserve_ids)} superseded tombstones (NULLed embeddings)"
-        )
+        # Only NULL embedding and mark as preserved for tombstones whose vectors
+        # were successfully deleted. Failed ones keep their state for retry.
+        if successfully_preserved_ids:
+            await db.execute(
+                update(models.Document)
+                .where(models.Document.id.in_(successfully_preserved_ids))
+                .values(
+                    embedding=None,
+                    internal_metadata=models.Document.internal_metadata.op("||")(
+                        {"tombstone_preserved": True}
+                    ),
+                )
+            )
+            logger.debug(
+                f"Preserved {len(successfully_preserved_ids)} superseded tombstones (NULLed embeddings)"
+            )
 
     # Phase 2: Hard-delete documents that should be removed
     if not delete_candidates:
-        if preserve_ids:
+        if successfully_preserved_ids:
             await db.commit()
-            return len(preserve_ids)
+            return len(successfully_preserved_ids)
         await db.rollback()
         return 0
 
@@ -1003,11 +1019,11 @@ async def cleanup_soft_deleted_documents(
             )
         )
 
-    total_processed = len(preserve_ids) + len(successfully_deleted_ids)
+    total_processed = len(successfully_preserved_ids) + len(successfully_deleted_ids)
     if total_processed > 0:
         await db.commit()
         logger.debug(
-            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents, preserved {len(preserve_ids)} superseded tombstones"
+            f"Cleaned up {len(successfully_deleted_ids)} soft-deleted documents, preserved {len(successfully_preserved_ids)} superseded tombstones"
         )
         return total_processed
 

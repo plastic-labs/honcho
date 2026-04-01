@@ -826,6 +826,133 @@ class TestSoftDeleteCleanup:
         assert tombstone.superseded_by == "new_fact_id"
         assert tombstone.embedding is None
 
+    async def test_cleanup_skips_already_preserved_tombstone(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """Already-preserved tombstones (flagged in internal_metadata) are skipped by cleanup."""
+        from src.crud.document import cleanup_soft_deleted_documents
+
+        workspace, peer1 = sample_data
+
+        collection = models.Collection(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+        )
+        db_session.add(collection)
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        # Create a tombstone that has already been preserved (flag set, embedding NULLed)
+        preserved = models.Document(
+            content="Already preserved tombstone",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=None,
+            deleted_at=datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=10),
+            superseded_by="replacement_id",
+            internal_metadata={"tombstone_preserved": True},
+        )
+        db_session.add(preserved)
+        await db_session.commit()
+
+        mock_vector_store = MagicMock(spec=VectorStore)
+        mock_vector_store.get_vector_namespace = MagicMock(return_value="test.ns")
+        mock_vector_store.delete_many = AsyncMock()
+
+        count = await cleanup_soft_deleted_documents(
+            db_session, mock_vector_store, older_than_minutes=5
+        )
+
+        assert count == 0
+        mock_vector_store.delete_many.assert_not_called()
+
+        # Doc should be untouched
+        stmt = select(models.Document).where(models.Document.id == preserved.id)
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert doc.superseded_by == "replacement_id"
+        assert doc.internal_metadata.get("tombstone_preserved") is True
+
+    async def test_cleanup_retries_tombstone_on_vector_delete_failure(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """When vector deletion fails for a tombstone, embedding is NOT NULLed so it retries next cycle."""
+        from src.crud.document import cleanup_soft_deleted_documents
+
+        workspace, peer1 = sample_data
+
+        collection = models.Collection(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+        )
+        db_session.add(collection)
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        # Create superseded parent with embedding (not yet preserved)
+        parent = models.Document(
+            content="Tombstone pending preservation",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=[0.1] * 1536,
+            deleted_at=datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=10),
+            superseded_by="replacement_id",
+        )
+        db_session.add(parent)
+        await db_session.flush()
+
+        # Create child that references parent (so parent should be preserved, not deleted)
+        child = models.Document(
+            content="Depends on parent",
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer1.name,
+            session_name=session.name,
+            embedding=[0.2] * 1536,
+            source_ids=[parent.id],
+        )
+        db_session.add(child)
+        await db_session.commit()
+        parent_id = parent.id  # Capture before cleanup rollback invalidates ORM state
+
+        mock_vector_store = MagicMock(spec=VectorStore)
+        mock_vector_store.get_vector_namespace = MagicMock(return_value="test.ns")
+        mock_vector_store.delete_many = AsyncMock(
+            side_effect=Exception("vector service down")
+        )
+
+        count = await cleanup_soft_deleted_documents(
+            db_session, mock_vector_store, older_than_minutes=5
+        )
+
+        # Nothing should be successfully processed
+        assert count == 0
+
+        # Parent should still have its embedding (not NULLed) and no preserved flag
+        stmt = select(models.Document).where(models.Document.id == parent_id)
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert doc.embedding is not None
+        assert doc.internal_metadata.get("tombstone_preserved") is not True
+
 
 @pytest.mark.asyncio
 class TestMetricsTracking:
