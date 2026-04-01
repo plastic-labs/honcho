@@ -115,7 +115,12 @@ class _EmbeddingClient:
         )
         resp.raise_for_status()
         data = resp.json()
-        return [item["embedding"] for item in data["data"]]
+        embeddings = [item["embedding"] for item in data["data"]]
+        if len(embeddings) != len(texts):
+            raise ValueError(
+                f"Jina returned {len(embeddings)} embeddings for {len(texts)} inputs"
+            )
+        return embeddings
 
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
@@ -493,6 +498,7 @@ class EmbeddingClient:
         """Close the underlying client's HTTP resources."""
         if self._instance is not None:
             await self._instance.close()
+            self._instance = None
 
     @property
     def encoding(self) -> tiktoken.Encoding:
