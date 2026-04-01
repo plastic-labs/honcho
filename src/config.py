@@ -218,6 +218,26 @@ class LLMSettings(HonchoSettings):
     EMBEDDING_API_KEY: str | None = None
     EMBEDDING_MODEL: str | None = None
 
+    # Fail early in loading if using a custom embeddings model
+    @model_validator(mode="after")
+    def _validate_custom_embedding_config(self) -> "LLMSettings":
+        if self.EMBEDDING_PROVIDER != "custom":
+            return self
+
+        missing: list[str] = []
+        if not self.EMBEDDING_BASE_URL:
+            missing.append("LLM_EMBEDDING_BASE_URL")
+        if not self.EMBEDDING_API_KEY:
+            missing.append("LLM_EMBEDDING_API_KEY")
+        if not self.EMBEDDING_MODEL:
+            missing.append("LLM_EMBEDDING_MODEL")
+
+        if missing:
+            raise ValueError(
+                "EMBEDDING_PROVIDER='custom' requires: " + ", ".join(missing)
+            )
+        return self
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
