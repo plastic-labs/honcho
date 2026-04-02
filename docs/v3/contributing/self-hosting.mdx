@@ -32,6 +32,23 @@ You'll need a PostgreSQL database with the pgvector extension. Choose one:
 - **Railway** - Simple cloud PostgreSQL hosting
 - **Your own PostgreSQL server**
 
+## Which API Keys Do I Need?
+
+Honcho uses different LLM providers for different features. The table below shows which keys are needed for the **default** configuration. All providers are configurable per feature (see the [Configuration Guide](./configuration)).
+
+| Feature | Default Provider | Environment Variable | Required? |
+|---------|-----------------|---------------------|-----------|
+| Deriver (memory extraction) | Google Gemini | `LLM_GEMINI_API_KEY` | Yes (core feature) |
+| Summary generation | Google Gemini | `LLM_GEMINI_API_KEY` | Yes (core feature) |
+| Dialectic minimal/low | Google Gemini | `LLM_GEMINI_API_KEY` | If using Chat API |
+| Dialectic medium/high/max | Anthropic Claude | `LLM_ANTHROPIC_API_KEY` | If using Chat API |
+| Dream (memory consolidation) | Anthropic Claude | `LLM_ANTHROPIC_API_KEY` | Optional |
+| Message embeddings | OpenAI | `LLM_OPENAI_API_KEY` | If `EMBED_MESSAGES=true` (default) |
+
+**Minimum for basic usage**: `LLM_GEMINI_API_KEY` + `LLM_OPENAI_API_KEY`
+
+**Full functionality**: All three keys (Gemini, Anthropic, OpenAI)
+
 ## Docker Setup (Recommended)
 
 The easiest way to get started is using Docker Compose, which handles both the database and Honcho server.
@@ -51,15 +68,16 @@ Copy the example environment file and configure it:
 cp .env.template .env
 ```
 
-Edit `.env` and set your API keys (if using LLM features):
+Edit `.env` and set your API keys (see [Which API Keys Do I Need?](#which-api-keys-do-i-need) above):
 
 ```bash
-# Optional API keys (required for LLM features)
-OPENAI_API_KEY=your-openai-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
-
-# Database will be created automatically by Docker
+# Database (matches docker-compose.yml.example credentials)
 DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+
+# LLM API keys (see table above for which features use which provider)
+LLM_GEMINI_API_KEY=your-gemini-api-key
+LLM_ANTHROPIC_API_KEY=your-anthropic-api-key
+LLM_OPENAI_API_KEY=your-openai-api-key
 
 # Disable auth for local development
 AUTH_USE_AUTH=false
@@ -71,11 +89,21 @@ AUTH_USE_AUTH=false
 # Copy the example docker-compose file
 cp docker-compose.yml.example docker-compose.yml
 
-# Start PostgreSQL and Honcho
+# Start PostgreSQL, Redis, Honcho API, and the deriver background worker
 docker compose up -d
 ```
 
-### 4. Verify It's Working
+> **Note:** The docker-compose file starts both the API server and the deriver (background worker) automatically. It also includes Redis (for caching, disabled by default) and Grafana (for monitoring on port 3000 when `METRICS_ENABLED=true`).
+
+### 4. Run Database Migrations
+
+After the containers are running, create the database tables:
+
+```bash
+docker compose exec api uv run alembic upgrade head
+```
+
+### 5. Verify It's Working
 
 Check that both services are running:
 
@@ -134,26 +162,22 @@ Download from [postgresql.org](https://www.postgresql.org/download/windows/)
 
 ```bash
 docker run --name honcho-db \
-  -e POSTGRES_DB=honcho \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -p 5432:5432 \
   -d pgvector/pgvector:pg15
 ```
 
-### 3. Create Database and Enable Extensions
+### 3. Enable Extensions
 
-Connect to PostgreSQL and set up the database:
+Connect to PostgreSQL and enable pgvector:
 
 ```bash
 # Connect to PostgreSQL
 psql -U postgres
 
-# Create database and enable extensions
-CREATE DATABASE honcho;
-\c honcho
+# Enable the pgvector extension on the default database
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
 \q
 ```
 
@@ -165,15 +189,16 @@ Create a `.env` file with your settings:
 cp .env.template .env
 ```
 
-Edit `.env` with your configuration:
+Edit `.env` with your configuration (see [Which API Keys Do I Need?](#which-api-keys-do-i-need) above):
 
 ```bash
 # Database connection
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 
-# Optional API keys (required for LLM features)
-OPENAI_API_KEY=your-openai-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
+# LLM API keys (see table above for which features use which provider)
+LLM_GEMINI_API_KEY=your-gemini-api-key
+LLM_ANTHROPIC_API_KEY=your-anthropic-api-key
+LLM_OPENAI_API_KEY=your-openai-api-key
 
 # Development settings
 AUTH_USE_AUTH=false
@@ -191,10 +216,20 @@ uv run alembic upgrade head
 
 ```bash
 # Start the development server
-fastapi dev src/main.py
+uv run fastapi dev src/main.py
 ```
 
 The server will be available at `http://localhost:8000`.
+
+### 7. Start the Background Worker (Deriver)
+
+In a **separate terminal**, start the deriver background worker:
+
+```bash
+uv run python -m src.deriver
+```
+
+The deriver is essential for Honcho's core functionality. It processes incoming messages to extract observations, build peer representations, generate session summaries, and run dream consolidation. Without it, messages will be stored but no memory or reasoning will occur.
 
 ## Cloud Database Setup
 
@@ -206,7 +241,6 @@ If you prefer to use a managed PostgreSQL service:
 2. **Enable pgvector extension** in the SQL editor:
    ```sql
    CREATE EXTENSION IF NOT EXISTS vector;
-   CREATE EXTENSION IF NOT EXISTS pg_trgm;
    ```
 3. **Get your connection string** from Settings > Database
 4. **Update your `.env` file** with the connection string
@@ -241,7 +275,10 @@ Create a simple test script:
 from honcho import Honcho
 
 # Connect to your local instance
-client = Honcho(base_url="http://localhost:8000")
+client = Honcho(
+    base_url="http://localhost:8000",
+    workspace_id="my-app-testing"
+)
 
 # Create a test peer
 peer = client.peer("test-user")
@@ -283,42 +320,51 @@ const client = new Honcho({
 
 ## Troubleshooting
 
-### Common Issues
+Running into issues? See the [Troubleshooting Guide](./troubleshooting) for detailed solutions to common problems including:
 
-**Database Connection Errors**
-- Ensure PostgreSQL is running
-- Verify the connection string format: `postgresql+psycopg://...`
-- Check that pgvector extension is installed
+- Startup failures (missing API keys, database issues)
+- Runtime errors ("An unexpected error occurred" on every request)
+- Deriver not processing messages
+- Database connection and migration issues
+- Docker and Redis problems
 
-**API Key Issues**
-- Verify your OpenAI and Anthropic API keys are valid
-- Check that the keys have sufficient credits/quota
-
-**Port Already in Use**
-- Pass a different port to FastAPI or stop other services using port 8000
-
-**Docker Issues**
-- Ensure Docker is running
-- Check container logs: `docker compose logs`
-- Restart containers: `docker compose down && docker compose up -d`
-
-**Migration Errors**
-- Ensure the database exists and pgvector is enabled
-- Check database permissions
-- Run migrations manually: `uv run alembic upgrade head`
-
-### Getting Help
-
-- **GitHub Issues**: [Report bugs](https://github.com/plastic-labs/honcho/issues)
-- **Discord**: [Join our community](https://discord.gg/plasticlabs)
-- **Documentation**: Check the [Configuration Guide](./configuration) for detailed settings
+**Quick checks:**
+- Verify the server is running: `curl http://localhost:8000/health`
+- Check logs: `docker compose logs api` (Docker) or check terminal output (manual setup)
+- Ensure migrations ran: `uv run alembic upgrade head`
 
 ## Production Considerations
 
 When self-hosting for production, consider:
 
-- **Security**: Enable authentication, use HTTPS, secure your database
-- **Scaling**: Use connection pooling, consider load balancing
-- **Monitoring**: Set up logging, error tracking, health checks
-- **Backups**: Regular database backups, disaster recovery plan
-- **Updates**: Keep Honcho and dependencies updated
+### Security
+- Set `AUTH_USE_AUTH=true` and generate a JWT secret with `python scripts/generate_jwt_secret.py`
+- Use HTTPS via a reverse proxy (e.g., nginx, Caddy) in front of Honcho
+- Secure your database with strong credentials and restrict network access
+
+### Scaling the Deriver
+- Increase `DERIVER_WORKERS` (default: 1) for higher message throughput
+- You can also run multiple deriver processes across machines — they coordinate via the database queue
+- Monitor deriver logs for processing backlog
+
+### Caching
+- Enable Redis caching for high-traffic environments: `CACHE_ENABLED=true`
+- Requires a Redis instance (included in docker-compose, or use a managed Redis service)
+- Configure `CACHE_URL` to point to your Redis instance
+
+### Database Migrations
+- Always run `uv run alembic upgrade head` after updating Honcho before starting the server
+- Check current migration status with `uv run alembic current`
+
+### API Keys
+- Ensure you have the correct API keys for your configured providers (see [Which API Keys Do I Need?](#which-api-keys-do-i-need))
+- All providers are configurable — see the [Configuration Guide](./configuration) to use different models or providers
+
+### Monitoring
+- Enable Prometheus metrics with `METRICS_ENABLED=true` (scraped at `/metrics` on port 8000 for API, port 9090 for deriver)
+- Enable Sentry error tracking with `SENTRY_ENABLED=true`
+- The docker-compose includes Grafana on port 3000 for dashboards
+
+### Backups
+- Set up regular PostgreSQL backups (pg_dump or continuous archiving)
+- Back up your `.env` or `config.toml` configuration files

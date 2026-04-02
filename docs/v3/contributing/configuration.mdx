@@ -101,14 +101,14 @@ If you have this in `config.toml`:
 
 ```toml
 [db]
-CONNECTION_URI = "postgresql://localhost/honcho_dev"
+CONNECTION_URI = "postgresql+psycopg://localhost/honcho_dev"
 POOL_SIZE = 10
 ```
 
 You can override just the connection URI in production:
 
 ```bash
-export DB_CONNECTION_URI="postgresql://prod-server/honcho_prod"
+export DB_CONNECTION_URI="postgresql+psycopg://prod-server/honcho_prod"
 ```
 
 The application will use the production connection URI while keeping the pool size from config.toml.
@@ -161,7 +161,7 @@ REASONING_TRACES_FILE=traces.jsonl
 DB_CONNECTION_URI=postgresql+psycopg://username:password@host:port/database
 
 # Example for local development
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 
 # Example for production
 DB_CONNECTION_URI=postgresql+psycopg://honcho_user:secure_password@db.example.com:5432/honcho_prod
@@ -184,23 +184,28 @@ DB_TRACING=false  # Enable query tracing
 
 **Docker Compose for PostgreSQL:**
 ```yaml
-# docker-compose.yml
-version: '3.8'
+# From docker-compose.yml.example
 services:
   database:
     image: pgvector/pgvector:pg15
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: honcho
+      POSTGRES_DB: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  postgres_data:
+  pgdata:
 ```
 
 ### Authentication Configuration

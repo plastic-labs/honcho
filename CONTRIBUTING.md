@@ -106,7 +106,7 @@ git commit -m "docs(readme): update installation instructions"
 ### Python Code Style
 
 - Follow [PEP 8](https://www.python.org/dev/peps/pep-0008/) style guidelines
-- Use [Black](https://black.readthedocs.io/) for code formatting (we may add this to CI in the future)
+- Use [ruff](https://docs.astral.sh/ruff/) for linting and code formatting
 - Use type hints where possible
 - Write docstrings for functions and classes using Google style docstrings
 

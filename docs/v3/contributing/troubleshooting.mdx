@@ -1,0 +1,200 @@
+---
+title: 'Troubleshooting'
+sidebarTitle: 'Troubleshooting'
+description: 'Common issues and solutions when self-hosting Honcho'
+icon: 'wrench'
+---
+
+This page covers common issues you may encounter when self-hosting Honcho, what causes them, and how to fix them.
+
+## Startup Failures
+
+### Server won't start: "Missing client for ..."
+
+```
+ValueError: Missing client for Deriver: google
+```
+
+**Cause:** The server validates at startup that all configured LLM providers have API keys. If a provider is referenced in your configuration but the corresponding API key isn't set, the server refuses to start.
+
+**Fix:** Set the API keys for your configured providers. With default configuration, you need:
+
+```bash
+LLM_GEMINI_API_KEY=...    # Used by deriver, summary, dialectic minimal/low
+LLM_ANTHROPIC_API_KEY=... # Used by dialectic medium/high/max, dream
+LLM_OPENAI_API_KEY=...    # Used by embeddings (when EMBED_MESSAGES=true)
+```
+
+See the [API Keys table](/v3/contributing/self-hosting#which-api-keys-do-i-need) for a full breakdown. Alternatively, you can change which providers are used in your `config.toml` or environment variables (see [Configuration Guide](./configuration)).
+
+### Server won't start: "JWT_SECRET must be set"
+
+```
+ValueError: JWT_SECRET must be set if USE_AUTH is true
+```
+
+**Cause:** You enabled authentication (`AUTH_USE_AUTH=true`) but didn't provide a JWT secret.
+
+**Fix:** Generate a secret and set it:
+
+```bash
+python scripts/generate_jwt_secret.py
+# Then set the output as:
+AUTH_JWT_SECRET=<generated_secret>
+```
+
+Or disable authentication for local development: `AUTH_USE_AUTH=false`
+
+## Runtime Errors
+
+### API returns "An unexpected error occurred" on every request
+
+**Cause:** This is almost always a database issue. The health endpoint (`/health`) will return `{"status": "ok"}` even when the database is unreachable because it doesn't check the database connection. The actual error appears in the server logs.
+
+**Common causes and fixes:**
+
+1. **Database is unreachable** — Check that PostgreSQL is running and the `DB_CONNECTION_URI` is correct
+2. **Migrations haven't been run** — The server starts successfully without tables, but every API call will fail. Run:
+   ```bash
+   uv run alembic upgrade head
+   ```
+   In Docker:
+   ```bash
+   docker compose exec api uv run alembic upgrade head
+   ```
+3. **pgvector extension not installed** — The `vector` extension must be enabled in your database:
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS vector;
+   ```
+
+**How to diagnose:** Check the server logs for the actual error. Look for:
+- `sqlalchemy.exc.OperationalError` — database connection issue
+- `sqlalchemy.exc.ProgrammingError` with "relation does not exist" — migrations not run
+- `psycopg.OperationalError` — connection refused or authentication failed
+
+### Health check passes but API calls fail
+
+The `/health` endpoint is a lightweight check that confirms the server process is running. It does **not** verify:
+- Database connectivity
+- That migrations have been run
+- That LLM providers are reachable
+
+To verify full functionality, try creating a workspace:
+
+```bash
+curl -X POST http://localhost:8000/v3/workspaces \
+  -H "Content-Type: application/json" \
+  -d '{"name": "test"}'
+```
+
+If this succeeds, your database connection and migrations are working.
+
+### Deriver not processing messages
+
+Messages are stored but no observations, summaries, or representations are being generated.
+
+**Common causes:**
+
+1. **Deriver isn't running** — In manual setup, the deriver is a separate process:
+   ```bash
+   uv run python -m src.deriver
+   ```
+   In Docker, it starts automatically via `docker compose up`.
+
+2. **Deriver can't reach the database** — Check deriver logs for connection errors. The deriver uses the same `DB_CONNECTION_URI` as the API server.
+
+3. **Missing LLM API key for deriver provider** — By default the deriver uses Google Gemini (`LLM_GEMINI_API_KEY`). Check deriver logs for API errors.
+
+4. **Processing backlog** — With `DERIVER_WORKERS=1` (default), high message volume can cause a backlog. Increase workers:
+   ```bash
+   DERIVER_WORKERS=4
+   ```
+
+## Database Issues
+
+### Connection string format
+
+The connection URI **must** use the `postgresql+psycopg` prefix:
+
+```bash
+# Correct
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+
+# Wrong - will fail
+DB_CONNECTION_URI=postgresql://postgres:postgres@localhost:5432/postgres
+DB_CONNECTION_URI=postgres://postgres:postgres@localhost:5432/postgres
+```
+
+### Checking migration status
+
+```bash
+# See current migration version
+uv run alembic current
+
+# See migration history
+uv run alembic history
+
+# Upgrade to latest
+uv run alembic upgrade head
+```
+
+## Cache & Redis
+
+### Redis is optional
+
+Redis is used for caching when `CACHE_ENABLED=true` (default: `false`). If Redis is unreachable, Honcho **gracefully falls back to in-memory caching** and logs a warning. This means:
+
+- The server and deriver will still start and function normally
+- Performance may be reduced under high load without Redis
+- You do not need Redis for local development or testing
+
+### Redis connection issues
+
+If you see Redis connection warnings in logs but `CACHE_ENABLED=false`, they can be safely ignored. If you want caching:
+
+```bash
+# Start Redis via Docker
+docker run -d -p 6379:6379 redis:latest
+
+# Configure Honcho
+CACHE_ENABLED=true
+CACHE_URL=redis://localhost:6379/0
+```
+
+## Docker Issues
+
+### Containers start but API fails
+
+1. Check container status: `docker compose ps`
+2. Check API logs: `docker compose logs api`
+3. Check database logs: `docker compose logs database`
+4. Ensure migrations ran: `docker compose exec api uv run alembic upgrade head`
+
+### Port conflicts
+
+If port 8000 is already in use:
+
+```bash
+# Check what's using the port
+lsof -i :8000
+
+# Or change the port mapping in docker-compose.yml
+ports:
+  - "8001:8000"  # Map to a different host port
+```
+
+### Rebuilding after code changes
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+## Getting Help
+
+If your issue isn't covered here:
+
+- **Check the logs** — most issues are diagnosed from server or deriver logs
+- **GitHub Issues** — [Report bugs](https://github.com/plastic-labs/honcho/issues)
+- **Discord** — [Join our community](https://discord.gg/plasticlabs)
+- **Configuration** — See the [Configuration Guide](./configuration) for all available settings
