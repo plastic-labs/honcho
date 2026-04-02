@@ -271,10 +271,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> int:
+        ) -> list[Any]:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return len(documents)
+            return documents
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",
@@ -332,10 +332,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> int:
+        ) -> list[Any]:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return len(documents)
+            return documents
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",
