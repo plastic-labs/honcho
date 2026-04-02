@@ -124,9 +124,7 @@ async def tool_test_data(
 
 
 @pytest.fixture
-def make_tool_context(
-    db_session: AsyncSession, tool_test_data: Any
-) -> Callable[..., ToolContext]:
+def make_tool_context(tool_test_data: Any) -> Callable[..., ToolContext]:
     """Factory fixture to create ToolContext with custom parameters."""
     workspace, peer1, peer2, session, _messages, _ = tool_test_data
     shared_lock = asyncio.Lock()
@@ -247,7 +245,6 @@ class TestCreateObservations:
 
     async def test_batch_embedding_failure_falls_back_to_individual_embeds(
         self,
-        db_session: AsyncSession,
         tool_test_data: Any,
         monkeypatch: pytest.MonkeyPatch,
     ):
@@ -307,7 +304,6 @@ class TestCreateObservations:
 
     async def test_batch_embedding_failure_individual_embed_partial_failure(
         self,
-        db_session: AsyncSession,
         tool_test_data: Any,
         monkeypatch: pytest.MonkeyPatch,
     ):
@@ -651,7 +647,6 @@ class TestGetRecentHistory:
 
     async def test_without_session_uses_observed(
         self,
-        db_session: AsyncSession,
         tool_test_data: Any,
     ):
         """Without session, retrieves messages from observed peer."""
@@ -964,7 +959,6 @@ class TestExtractPreferences:
 
     async def test_falls_back_to_per_query_embedding_when_batch_fails(
         self,
-        db_session: AsyncSession,
         tool_test_data: Any,
         monkeypatch: pytest.MonkeyPatch,
     ):
@@ -1055,9 +1049,7 @@ class TestFinishConsolidation:
 class TestToolExecutor:
     """Tests for create_tool_executor and the executor function."""
 
-    async def test_create_tool_executor_returns_callable(
-        self, db_session: AsyncSession, tool_test_data: Any
-    ):
+    async def test_create_tool_executor_returns_callable(self, tool_test_data: Any):
         """create_tool_executor returns an async callable."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
@@ -1070,9 +1062,7 @@ class TestToolExecutor:
 
         assert callable(executor)
 
-    async def test_executor_routes_to_correct_handler(
-        self, db_session: AsyncSession, tool_test_data: Any
-    ):
+    async def test_executor_routes_to_correct_handler(self, tool_test_data: Any):
         """Executor routes tool calls to correct handlers."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
@@ -1089,9 +1079,7 @@ class TestToolExecutor:
         # Should be from get_peer_card handler
         assert "peer card" in result.lower() or "No peer card" in result
 
-    async def test_executor_unknown_tool_returns_error(
-        self, db_session: AsyncSession, tool_test_data: Any
-    ):
+    async def test_executor_unknown_tool_returns_error(self, tool_test_data: Any):
         """Unknown tool name returns error message."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
@@ -1106,9 +1094,7 @@ class TestToolExecutor:
 
         assert "Unknown tool" in result
 
-    async def test_executor_handles_exceptions_gracefully(
-        self, db_session: AsyncSession, tool_test_data: Any
-    ):
+    async def test_executor_handles_exceptions_gracefully(self, tool_test_data: Any):
         """Executor converts exceptions to error strings instead of raising."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
@@ -1126,7 +1112,7 @@ class TestToolExecutor:
         # Should contain error info, not raise exception
 
     async def test_executor_dreamer_context_includes_observation_ids(
-        self, db_session: AsyncSession, tool_test_data: Any
+        self, tool_test_data: Any
     ):
         """Dreamer context (include_observation_ids=True) shows IDs in output."""
         workspace, peer1, peer2, session, _, _ = tool_test_data

@@ -1176,15 +1176,14 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
         )
         normalized_peer_card = normalized_peer_card[:MAX_PEER_CARD_FACTS]
 
-    async with ctx.db_lock:
-        async with tracked_db("tool.update_peer_card") as db:
-            await crud.set_peer_card(
-                db,
-                workspace_name=ctx.workspace_name,
-                peer_card=normalized_peer_card,
-                observer=ctx.observer,
-                observed=ctx.observed,
-            )
+    async with ctx.db_lock, tracked_db("tool.update_peer_card") as db:
+        await crud.set_peer_card(
+            db,
+            workspace_name=ctx.workspace_name,
+            peer_card=normalized_peer_card,
+            observer=ctx.observer,
+            observed=ctx.observed,
+        )
     logger.info(
         f"Updated peer card for {ctx.workspace_name}/{ctx.observer}/{ctx.observed}"
     )
@@ -1323,6 +1322,9 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
     """Handle search_messages tool."""
     query = tool_input["query"]
     limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
+    # Pre-compute embedding outside DB session to avoid holding a connection
+    # during the external API call (same pattern as _handle_search_memory).
+    query_embedding = await embedding_client.embed(query)
     async with tracked_db("tool.search_messages") as db:
         snippets = await crud.search_messages(
             db,
@@ -1331,6 +1333,7 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
             query=query,
             limit=limit,
             context_window=2,
+            embedding=query_embedding,
         )
         if not snippets:
             return f"No messages found for query '{query}'"
@@ -1476,6 +1479,9 @@ async def _handle_search_messages_temporal(
     if isinstance(before_date, str):
         return before_date
 
+    # Pre-compute embedding outside DB session to avoid holding a connection
+    # during the external API call.
+    query_embedding = await embedding_client.embed(query)
     async with tracked_db("tool.search_messages_temporal") as db:
         snippets = await crud.search_messages_temporal(
             db,
@@ -1486,6 +1492,7 @@ async def _handle_search_messages_temporal(
             before_date=before_date,
             limit=limit,
             context_window=context_window,
+            embedding=query_embedding,
         )
         date_filter: list[str] = []
         if after_date_str:
@@ -1601,20 +1608,19 @@ async def _handle_delete_observations(
         return "ERROR: observation_ids list is empty"
 
     deleted_count = 0
-    async with ctx.db_lock:
-        async with tracked_db("tool.delete_observations") as db:
-            for obs_id in observation_ids:
-                try:
-                    await crud.delete_document(
-                        db,
-                        workspace_name=ctx.workspace_name,
-                        document_id=obs_id,
-                        observer=ctx.observer,
-                        observed=ctx.observed,
-                    )
-                    deleted_count += 1
-                except Exception as e:
-                    logger.warning("Failed to delete observation %s: %s", obs_id, e)
+    async with ctx.db_lock, tracked_db("tool.delete_observations") as db:
+        for obs_id in observation_ids:
+            try:
+                await crud.delete_document(
+                    db,
+                    workspace_name=ctx.workspace_name,
+                    document_id=obs_id,
+                    observer=ctx.observer,
+                    observed=ctx.observed,
+                )
+                deleted_count += 1
+            except Exception as e:
+                logger.warning("Failed to delete observation %s: %s", obs_id, e)
 
     # Emit telemetry event if context is available
     if deleted_count > 0 and ctx.run_id and ctx.agent_type and ctx.parent_category:
