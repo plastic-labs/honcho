@@ -51,6 +51,11 @@ def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
 TOML_CONFIG = load_toml_config()
 
 
+ThinkingEffortLevel = Literal[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max"
+]
+
+
 class ModelOverrideSettings(BaseModel):
     """Advanced module-level transport overrides."""
 
@@ -58,21 +63,41 @@ class ModelOverrideSettings(BaseModel):
     api_key_env: str | None = None
     base_url: str | None = None
 
-    fallback_api_key: str | None = None
-    fallback_api_key_env: str | None = None
-    fallback_base_url: str | None = None
-
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
 
-class ConfiguredModelSettings(BaseModel):
-    """Operator-configurable persisted model settings."""
+def _normalize_model_transport(data: Any) -> Any:
+    """Normalize 'provider/model' shorthand into separate transport + model fields."""
+    if not isinstance(data, dict):
+        return data
+    raw_data = cast(dict[Any, Any], data)
+    update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
+    model_value = update.get("model")
+    transport_value = update.get("transport")
+    if isinstance(model_value, str) and "/" in model_value and transport_value is None:
+        prefix, bare_model = model_value.split("/", 1)
+        if prefix in {"anthropic", "openai", "gemini", "groq"}:
+            update["transport"] = prefix
+            update["model"] = bare_model
+    return update
+
+
+def _validate_anthropic_thinking_minimum(
+    transport: ModelTransport, thinking_budget_tokens: int | None
+) -> None:
+    if (
+        transport == "anthropic"
+        and thinking_budget_tokens is not None
+        and 0 < thinking_budget_tokens < 1024
+    ):
+        raise ValueError("thinking_budget_tokens must be >= 1024 for Anthropic models")
+
+
+class FallbackModelSettings(BaseModel):
+    """Independent fallback model configuration. No inheritance from primary."""
 
     model: str
     transport: ModelTransport
-
-    fallback_model: str | None = None
-    fallback_transport: ModelTransport | None = None
 
     temperature: float | None = None
     top_p: float | None = None
@@ -81,18 +106,7 @@ class ConfiguredModelSettings(BaseModel):
     presence_penalty: float | None = None
     seed: int | None = None
 
-    thinking_effort: (
-        Literal[
-            "none",
-            "minimal",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max",
-        ]
-        | None
-    ) = Field(
+    thinking_effort: ThinkingEffortLevel | None = Field(
         default=None,
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
@@ -106,64 +120,27 @@ class ConfiguredModelSettings(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_model_format(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-
-        raw_data = cast(dict[Any, Any], data)
-        update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
-        for model_field, transport_field in (
-            ("model", "transport"),
-            ("fallback_model", "fallback_transport"),
-        ):
-            model_value = update.get(model_field)
-            transport_value = update.get(transport_field)
-            if not isinstance(model_value, str) or "/" not in model_value:
-                continue
-            prefix, bare_model = model_value.split("/", 1)
-            if transport_value is None and prefix in {
-                "anthropic",
-                "openai",
-                "gemini",
-                "groq",
-            }:
-                update[transport_field] = prefix
-                update[model_field] = bare_model
-        return update
+        return _normalize_model_transport(data)
 
     @property
-    def reasoning_effort(
-        self,
-    ) -> Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None:
-        """Backward-compatible alias for the generic thinking effort field."""
+    def reasoning_effort(self) -> ThinkingEffortLevel | None:
         return self.thinking_effort
 
     @model_validator(mode="after")
-    def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
-        if (
-            self.transport == "anthropic"
-            and self.thinking_budget_tokens is not None
-            and 0 < self.thinking_budget_tokens < 1024
-        ):
-            raise ValueError(
-                "thinking_budget_tokens must be >= 1024 for Anthropic models"
-            )
+    def _validate_runtime_shape(self) -> "FallbackModelSettings":
+        _validate_anthropic_thinking_minimum(
+            self.transport, self.thinking_budget_tokens
+        )
         return self
 
 
-class ModelConfig(BaseModel):
-    """Reusable model configuration for any non-embedding LLM caller."""
+class ConfiguredModelSettings(BaseModel):
+    """Operator-configurable persisted model settings."""
 
     model: str
     transport: ModelTransport
 
-    fallback_model: str | None = None
-    fallback_transport: ModelTransport | None = None
-
-    api_key: str | None = None
-    base_url: str | None = None
-
-    fallback_api_key: str | None = None
-    fallback_base_url: str | None = None
+    fallback: FallbackModelSettings | None = None
 
     temperature: float | None = None
     top_p: float | None = None
@@ -172,18 +149,85 @@ class ModelConfig(BaseModel):
     presence_penalty: float | None = None
     seed: int | None = None
 
-    thinking_effort: (
-        Literal[
-            "none",
-            "minimal",
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max",
-        ]
-        | None
-    ) = Field(
+    thinking_effort: ThinkingEffortLevel | None = Field(
+        default=None,
+        validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
+    )
+    thinking_budget_tokens: int | None = None
+
+    max_output_tokens: int | None = None
+    stop_sequences: list[str] | None = None
+
+    overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        return _normalize_model_transport(data)
+
+    @property
+    def reasoning_effort(self) -> ThinkingEffortLevel | None:
+        """Backward-compatible alias for the generic thinking effort field."""
+        return self.thinking_effort
+
+    @model_validator(mode="after")
+    def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
+        _validate_anthropic_thinking_minimum(
+            self.transport, self.thinking_budget_tokens
+        )
+        return self
+
+
+class ResolvedFallbackConfig(BaseModel):
+    """Runtime-resolved fallback config with credentials already resolved."""
+
+    model: str
+    transport: ModelTransport
+
+    api_key: str | None = None
+    base_url: str | None = None
+
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    seed: int | None = None
+
+    thinking_effort: ThinkingEffortLevel | None = Field(
+        default=None,
+        validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
+    )
+    thinking_budget_tokens: int | None = None
+    provider_params: dict[str, Any] = Field(default_factory=dict)
+
+    max_output_tokens: int | None = None
+    stop_sequences: list[str] | None = None
+
+    @property
+    def reasoning_effort(self) -> ThinkingEffortLevel | None:
+        return self.thinking_effort
+
+
+class ModelConfig(BaseModel):
+    """Reusable model configuration for any non-embedding LLM caller."""
+
+    model: str
+    transport: ModelTransport
+
+    fallback: ResolvedFallbackConfig | None = None
+
+    api_key: str | None = None
+    base_url: str | None = None
+
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    seed: int | None = None
+
+    thinking_effort: ThinkingEffortLevel | None = Field(
         default=None,
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
@@ -196,53 +240,18 @@ class ModelConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_model_format(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-
-        raw_data = cast(dict[Any, Any], data)
-        update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
-        for model_field, transport_field in (
-            ("model", "transport"),
-            ("fallback_model", "fallback_transport"),
-        ):
-            model_value = update.get(model_field)
-            transport_value = update.get(transport_field)
-            if not isinstance(model_value, str) or "/" not in model_value:
-                continue
-            prefix, bare_model = model_value.split("/", 1)
-            if transport_value is None and prefix in {
-                "anthropic",
-                "openai",
-                "gemini",
-                "groq",
-            }:
-                update[transport_field] = prefix
-                update[model_field] = bare_model
-        return update
+        return _normalize_model_transport(data)
 
     @property
-    def reasoning_effort(
-        self,
-    ) -> Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None:
+    def reasoning_effort(self) -> ThinkingEffortLevel | None:
         """Backward-compatible alias for the generic thinking effort field."""
         return self.thinking_effort
 
     @model_validator(mode="after")
-    def _validate_transport(self) -> "ModelConfig":
-        if self.fallback_base_url is not None and self.fallback_model is None:
-            raise ValueError("fallback_base_url requires fallback_model to be set")
-        return self
-
-    @model_validator(mode="after")
     def _validate_anthropic_thinking_minimum(self) -> "ModelConfig":
-        if (
-            self.transport == "anthropic"
-            and self.thinking_budget_tokens is not None
-            and 0 < self.thinking_budget_tokens < 1024
-        ):
-            raise ValueError(
-                "thinking_budget_tokens must be >= 1024 for Anthropic models"
-            )
+        _validate_anthropic_thinking_minimum(
+            self.transport, self.thinking_budget_tokens
+        )
         return self
 
     def for_model(
@@ -338,24 +347,50 @@ def _resolve_secret(value: str | None, env_name: str | None) -> str | None:
     return os.getenv(env_name)
 
 
+def _resolve_fallback_config(
+    fallback: FallbackModelSettings,
+) -> ResolvedFallbackConfig:
+    """Resolve a FallbackModelSettings into a runtime ResolvedFallbackConfig."""
+    return ResolvedFallbackConfig(
+        model=fallback.model,
+        transport=fallback.transport,
+        api_key=_resolve_secret(
+            fallback.overrides.api_key,
+            fallback.overrides.api_key_env,
+        ),
+        base_url=fallback.overrides.base_url,
+        temperature=fallback.temperature,
+        top_p=fallback.top_p,
+        top_k=fallback.top_k,
+        frequency_penalty=fallback.frequency_penalty,
+        presence_penalty=fallback.presence_penalty,
+        seed=fallback.seed,
+        thinking_effort=fallback.thinking_effort,
+        thinking_budget_tokens=fallback.thinking_budget_tokens,
+        provider_params=fallback.overrides.provider_params,
+        max_output_tokens=fallback.max_output_tokens,
+        stop_sequences=fallback.stop_sequences,
+    )
+
+
 def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
     """Resolve persisted model settings into the runtime ModelConfig."""
+
+    resolved_fallback = (
+        _resolve_fallback_config(configured.fallback)
+        if configured.fallback is not None
+        else None
+    )
 
     return ModelConfig(
         model=configured.model,
         transport=configured.transport,
-        fallback_model=configured.fallback_model,
-        fallback_transport=configured.fallback_transport,
+        fallback=resolved_fallback,
         api_key=_resolve_secret(
             configured.overrides.api_key,
             configured.overrides.api_key_env,
         ),
         base_url=configured.overrides.base_url,
-        fallback_api_key=_resolve_secret(
-            configured.overrides.fallback_api_key,
-            configured.overrides.fallback_api_key_env,
-        ),
-        fallback_base_url=configured.overrides.fallback_base_url,
         temperature=configured.temperature,
         top_p=configured.top_p,
         top_k=configured.top_k,
@@ -397,9 +432,6 @@ def _merge_override_defaults(
         "api_key",
         "api_key_env",
         "base_url",
-        "fallback_api_key",
-        "fallback_api_key_env",
-        "fallback_base_url",
     ):
         if field not in configured_fields:
             default_value = getattr(defaults, field)
@@ -425,8 +457,6 @@ def _merge_configured_model_defaults(
 
     for field in (
         "transport",
-        "fallback_model",
-        "fallback_transport",
         "temperature",
         "top_p",
         "top_k",
@@ -443,6 +473,10 @@ def _merge_configured_model_defaults(
             if default_value != getattr(configured, field):
                 update[field] = default_value
 
+    # Inherit fallback config from defaults if not explicitly set
+    if "fallback" not in configured_fields and defaults.fallback is not None:
+        update["fallback"] = defaults.fallback
+
     merged_overrides = _merge_override_defaults(
         configured.overrides, defaults.overrides
     )
@@ -450,6 +484,37 @@ def _merge_configured_model_defaults(
         update["overrides"] = merged_overrides
 
     return configured.model_copy(update=update) if update else configured
+
+
+def _fill_defaults_for_nested_field(
+    data: dict[str, Any],
+    field_name: str,
+    default_factory: Any,
+) -> dict[str, Any]:
+    """Fill missing keys in a partial nested dict from the field's defaults.
+
+    When Pydantic's env_nested_delimiter splits an env var like
+    ``DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=2048`` it produces
+    ``{"MODEL_CONFIG": {"THINKING_BUDGET_TOKENS": 2048}}``.  Without merging
+    that partial dict would fail validation because required keys like
+    ``model`` and ``transport`` are missing.  This helper fills them from
+    the field's ``default_factory`` so partial overrides work.
+    """
+    raw: Any = data.get(field_name) or data.get(field_name.lower())
+    if not isinstance(raw, dict):
+        return data
+
+    default_obj = default_factory()
+    if isinstance(default_obj, BaseModel):
+        default_dict: dict[str, Any] = default_obj.model_dump(by_alias=True)
+    else:
+        default_dict = dict(default_obj)
+
+    merged: dict[str, Any] = {**default_dict, **cast(dict[str, Any], raw)}
+    # Preserve the key casing used in data
+    key = field_name if field_name in data else field_name.lower()
+    data[key] = merged
+    return data
 
 
 class TomlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -617,15 +682,30 @@ class EmbeddingSettings(HonchoSettings):
         env_prefix="EMBEDDING_", env_nested_delimiter="__", extra="ignore"
     )
 
-    MODEL_CONFIG: ConfiguredEmbeddingModelSettings = Field(
-        default_factory=lambda: ConfiguredEmbeddingModelSettings(
+    @staticmethod
+    def _MODEL_CONFIG_DEFAULT() -> ConfiguredEmbeddingModelSettings:
+        return ConfiguredEmbeddingModelSettings(
             transport="openai",
             model="text-embedding-3-small",
         )
+
+    MODEL_CONFIG: ConfiguredEmbeddingModelSettings = Field(
+        default_factory=_MODEL_CONFIG_DEFAULT
     )
     VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            _fill_defaults_for_nested_field(
+                cast(dict[str, Any], data),
+                "MODEL_CONFIG",
+                cls._MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
 
 
 class DeriverSettings(HonchoSettings):
@@ -646,14 +726,16 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=30 * 24 * 3600, gt=0)
     ] = 30 * 24 * 3600  # 30 days default
 
-    MODEL_CONFIG: ConfiguredModelSettings = Field(
-        default_factory=lambda: ConfiguredModelSettings(
+    @staticmethod
+    def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        return ConfiguredModelSettings(
             transport="gemini",
             model="gemini-2.5-flash-lite",
             thinking_budget_tokens=1024,
             max_output_tokens=4096,
         )
-    )
+
+    MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
@@ -675,6 +757,17 @@ class DeriverSettings(HonchoSettings):
 
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            _fill_defaults_for_nested_field(
+                cast(dict[str, Any], data),
+                "MODEL_CONFIG",
+                cls._MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
@@ -738,59 +831,61 @@ class DialecticLevelSettings(BaseModel):
         return self
 
 
+def _default_dialectic_levels() -> dict[ReasoningLevel, DialecticLevelSettings]:
+    return {
+        "minimal": DialecticLevelSettings(
+            MODEL_CONFIG=ConfiguredModelSettings(
+                transport="gemini",
+                model="gemini-2.5-flash-lite",
+                thinking_budget_tokens=0,
+            ),
+            MAX_TOOL_ITERATIONS=1,
+            MAX_OUTPUT_TOKENS=250,
+            TOOL_CHOICE="any",
+        ),
+        "low": DialecticLevelSettings(
+            MODEL_CONFIG=ConfiguredModelSettings(
+                transport="gemini",
+                model="gemini-2.5-flash-lite",
+                thinking_budget_tokens=0,
+            ),
+            MAX_TOOL_ITERATIONS=5,
+            TOOL_CHOICE="any",
+        ),
+        "medium": DialecticLevelSettings(
+            MODEL_CONFIG=ConfiguredModelSettings(
+                transport="anthropic",
+                model="claude-haiku-4-5",
+                thinking_budget_tokens=1024,
+            ),
+            MAX_TOOL_ITERATIONS=2,
+        ),
+        "high": DialecticLevelSettings(
+            MODEL_CONFIG=ConfiguredModelSettings(
+                transport="anthropic",
+                model="claude-haiku-4-5",
+                thinking_budget_tokens=1024,
+            ),
+            MAX_TOOL_ITERATIONS=4,
+        ),
+        "max": DialecticLevelSettings(
+            MODEL_CONFIG=ConfiguredModelSettings(
+                transport="anthropic",
+                model="claude-haiku-4-5",
+                thinking_budget_tokens=2048,
+            ),
+            MAX_TOOL_ITERATIONS=10,
+        ),
+    }
+
+
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DIALECTIC_", env_nested_delimiter="__", extra="ignore"
     )
 
-    # Per-level settings for provider, model, thinking budget, and tool iterations
-    # TODO: Fill in appropriate values for each reasoning level
     LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(
-        default_factory=lambda: {
-            "minimal": DialecticLevelSettings(
-                MODEL_CONFIG=ConfiguredModelSettings(
-                    transport="gemini",
-                    model="gemini-2.5-flash-lite",
-                    thinking_budget_tokens=0,
-                ),
-                MAX_TOOL_ITERATIONS=1,
-                MAX_OUTPUT_TOKENS=250,
-                TOOL_CHOICE="any",
-            ),
-            "low": DialecticLevelSettings(
-                MODEL_CONFIG=ConfiguredModelSettings(
-                    transport="gemini",
-                    model="gemini-2.5-flash-lite",
-                    thinking_budget_tokens=0,
-                ),
-                MAX_TOOL_ITERATIONS=5,
-                TOOL_CHOICE="any",
-            ),
-            "medium": DialecticLevelSettings(
-                MODEL_CONFIG=ConfiguredModelSettings(
-                    transport="anthropic",
-                    model="claude-haiku-4-5",
-                    thinking_budget_tokens=1024,
-                ),
-                MAX_TOOL_ITERATIONS=2,
-            ),
-            "high": DialecticLevelSettings(
-                MODEL_CONFIG=ConfiguredModelSettings(
-                    transport="anthropic",
-                    model="claude-haiku-4-5",
-                    thinking_budget_tokens=1024,
-                ),
-                MAX_TOOL_ITERATIONS=4,
-            ),
-            "max": DialecticLevelSettings(
-                MODEL_CONFIG=ConfiguredModelSettings(
-                    transport="anthropic",
-                    model="claude-haiku-4-5",
-                    thinking_budget_tokens=2048,
-                ),
-                MAX_TOOL_ITERATIONS=10,
-            ),
-        }
+        default_factory=_default_dialectic_levels
     )
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
@@ -804,6 +899,38 @@ class DialecticSettings(HonchoSettings):
     SESSION_HISTORY_MAX_TOKENS: Annotated[
         int, Field(default=4_096, ge=0, le=16_384)
     ] = 4_096
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_level_defaults(cls, data: Any) -> Any:
+        """Merge partial level overrides with built-in defaults."""
+        if not isinstance(data, dict):
+            return data
+        typed_data = cast(dict[str, Any], data)
+        levels_raw: dict[str, Any] | None = typed_data.get("LEVELS") or typed_data.get(
+            "levels"
+        )
+        if not isinstance(levels_raw, dict):
+            return data  # pyright: ignore[reportUnknownVariableType]
+        defaults = _default_dialectic_levels()
+        for level_name_key, level_override_val in levels_raw.items():
+            level_name = str(level_name_key)
+            if not isinstance(level_override_val, dict):
+                continue
+            level_override = cast(dict[str, Any], level_override_val)
+            if level_name in defaults:
+                base: dict[str, Any] = defaults[level_name].model_dump(by_alias=True)
+                # Recursively merge nested MODEL_CONFIG / model_config too
+                for mc_key in ("MODEL_CONFIG", "model_config"):
+                    if mc_key in level_override and isinstance(
+                        level_override[mc_key], dict
+                    ):
+                        base_mc: dict[str, Any] = base.get(mc_key) or base.get(
+                            "model_config", {}
+                        )
+                        level_override[mc_key] = {**base_mc, **level_override[mc_key]}
+                levels_raw[level_name] = {**base, **level_override}
+        return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":
@@ -836,13 +963,27 @@ class SummarySettings(HonchoSettings):
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    MODEL_CONFIG: ConfiguredModelSettings = Field(
-        default_factory=lambda: ConfiguredModelSettings(
+    @staticmethod
+    def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        return ConfiguredModelSettings(
             transport="gemini",
             model="gemini-2.5-flash",
             thinking_budget_tokens=512,
         )
-    )
+
+    MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            _fill_defaults_for_nested_field(
+                cast(dict[str, Any], data),
+                "MODEL_CONFIG",
+                cls._MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
+
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
@@ -945,14 +1086,16 @@ class DreamSettings(HonchoSettings):
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["omni"]
 
-    MODEL_CONFIG: ConfiguredModelSettings = Field(
-        default_factory=lambda: ConfiguredModelSettings(
+    @staticmethod
+    def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        return ConfiguredModelSettings(
             transport="anthropic",
             model="claude-sonnet-4-20250514",
             thinking_budget_tokens=8192,
             max_output_tokens=16_384,
         )
-    )
+
+    MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
 
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
@@ -962,21 +1105,50 @@ class DreamSettings(HonchoSettings):
         16_384
     )
 
+    @staticmethod
+    def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        return ConfiguredModelSettings(
+            transport="anthropic",
+            model="claude-haiku-4-5",
+        )
+
     DEDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
-        default_factory=lambda: ConfiguredModelSettings(
-            transport="anthropic",
-            model="claude-haiku-4-5",
-        )
+        default_factory=_DEDUCTION_MODEL_CONFIG_DEFAULT
     )
-    INDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
-        default_factory=lambda: ConfiguredModelSettings(
+
+    @staticmethod
+    def _INDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        return ConfiguredModelSettings(
             transport="anthropic",
             model="claude-haiku-4-5",
         )
+
+    INDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
+        default_factory=_INDUCTION_MODEL_CONFIG_DEFAULT
     )
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            typed_data = cast(dict[str, Any], data)
+            _fill_defaults_for_nested_field(
+                typed_data, "MODEL_CONFIG", cls._MODEL_CONFIG_DEFAULT
+            )
+            _fill_defaults_for_nested_field(
+                typed_data,
+                "DEDUCTION_MODEL_CONFIG",
+                cls._DEDUCTION_MODEL_CONFIG_DEFAULT,
+            )
+            _fill_defaults_for_nested_field(
+                typed_data,
+                "INDUCTION_MODEL_CONFIG",
+                cls._INDUCTION_MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")
     def _merge_specialist_model_defaults(self) -> "DreamSettings":

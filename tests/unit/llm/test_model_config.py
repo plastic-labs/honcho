@@ -19,13 +19,24 @@ from src.config import (
 )
 
 
-def test_fallback_base_url_requires_fallback_model() -> None:
-    with pytest.raises(ValueError, match="fallback_base_url requires fallback_model"):
-        ModelConfig(
-            model="claude-haiku-4-5",
-            transport="anthropic",
-            fallback_base_url="https://example.com/v1",
-        )
+def test_fallback_config_is_independent() -> None:
+    """Fallback config has its own transport and reasoning params."""
+    from src.config import ResolvedFallbackConfig
+
+    config = ModelConfig(
+        model="claude-haiku-4-5",
+        transport="anthropic",
+        thinking_budget_tokens=1024,
+        fallback=ResolvedFallbackConfig(
+            model="gpt-4.1-mini",
+            transport="openai",
+            base_url="https://example.com/v1",
+        ),
+    )
+    assert config.fallback is not None
+    assert config.fallback.transport == "openai"
+    assert config.fallback.thinking_budget_tokens is None
+    assert config.fallback.base_url == "https://example.com/v1"
 
 
 def test_base_url_is_allowed_for_any_transport() -> None:
@@ -86,20 +97,25 @@ def test_configured_model_settings_validate_like_runtime_model_config() -> None:
 
 
 def test_summary_settings_accept_nested_model_config() -> None:
+    from src.config import FallbackModelSettings
+
     settings = SummarySettings(
         MODEL_CONFIG=ConfiguredModelSettings(
             model="claude-haiku-4-5",
             transport="anthropic",
-            fallback_model="gemini-2.5-pro",
-            fallback_transport="gemini",
+            fallback=FallbackModelSettings(
+                model="gemini-2.5-pro",
+                transport="gemini",
+            ),
             thinking_budget_tokens=1024,
         ),
     )
 
     assert settings.MODEL_CONFIG.model == "claude-haiku-4-5"
     assert settings.MODEL_CONFIG.transport == "anthropic"
-    assert settings.MODEL_CONFIG.fallback_model == "gemini-2.5-pro"
-    assert settings.MODEL_CONFIG.fallback_transport == "gemini"
+    assert settings.MODEL_CONFIG.fallback is not None
+    assert settings.MODEL_CONFIG.fallback.model == "gemini-2.5-pro"
+    assert settings.MODEL_CONFIG.fallback.transport == "gemini"
     assert settings.MODEL_CONFIG.thinking_budget_tokens == 1024
 
 
@@ -146,12 +162,16 @@ def test_resolve_embedding_model_config_reads_override_env(
 
 
 def test_dialectic_level_settings_accepts_nested_model_config() -> None:
+    from src.config import FallbackModelSettings
+
     settings = DialecticLevelSettings(
         MODEL_CONFIG=ConfiguredModelSettings(
             model="claude-haiku-4-5",
             transport="anthropic",
-            fallback_model="gemini-2.5-pro",
-            fallback_transport="gemini",
+            fallback=FallbackModelSettings(
+                model="gemini-2.5-pro",
+                transport="gemini",
+            ),
             thinking_budget_tokens=1024,
         ),
         MAX_TOOL_ITERATIONS=2,
@@ -160,8 +180,9 @@ def test_dialectic_level_settings_accepts_nested_model_config() -> None:
     resolved = resolve_model_config(settings.MODEL_CONFIG)
     assert resolved.model == "claude-haiku-4-5"
     assert resolved.transport == "anthropic"
-    assert resolved.fallback_model == "gemini-2.5-pro"
-    assert resolved.fallback_transport == "gemini"
+    assert resolved.fallback is not None
+    assert resolved.fallback.model == "gemini-2.5-pro"
+    assert resolved.fallback.transport == "gemini"
 
 
 def test_dialectic_level_settings_require_nested_model_config() -> None:
@@ -193,12 +214,16 @@ def test_legacy_prefixed_model_strings_are_normalized() -> None:
 
 
 def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
+    from src.config import FallbackModelSettings
+
     settings = DreamSettings(
         MODEL_CONFIG=ConfiguredModelSettings(
             model="claude-sonnet-4-5",
             transport="anthropic",
-            fallback_model="gemini-2.5-pro",
-            fallback_transport="gemini",
+            fallback=FallbackModelSettings(
+                model="gemini-2.5-pro",
+                transport="gemini",
+            ),
             thinking_budget_tokens=4096,
             max_output_tokens=12_000,
             overrides=ModelOverrideSettings(
@@ -216,8 +241,9 @@ def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
     )
 
     assert settings.DEDUCTION_MODEL_CONFIG.model == "claude-haiku-4-5"
-    assert settings.DEDUCTION_MODEL_CONFIG.fallback_model == "gemini-2.5-pro"
-    assert settings.DEDUCTION_MODEL_CONFIG.fallback_transport == "gemini"
+    assert settings.DEDUCTION_MODEL_CONFIG.fallback is not None
+    assert settings.DEDUCTION_MODEL_CONFIG.fallback.model == "gemini-2.5-pro"
+    assert settings.DEDUCTION_MODEL_CONFIG.fallback.transport == "gemini"
     assert settings.DEDUCTION_MODEL_CONFIG.thinking_budget_tokens == 4096
     assert settings.DEDUCTION_MODEL_CONFIG.max_output_tokens == 12_000
     assert settings.DEDUCTION_MODEL_CONFIG.overrides.provider_params == {

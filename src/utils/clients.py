@@ -3,7 +3,16 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Generic, Literal, TypeVar, assert_never, cast, overload
+from typing import (
+    Any,
+    Generic,
+    Literal,
+    NamedTuple,
+    TypeVar,
+    assert_never,
+    cast,
+    overload,
+)
 
 from anthropic import AsyncAnthropic
 from google import genai
@@ -83,6 +92,16 @@ ReasoningEffortType = (
 VerbosityType = Literal["low", "medium", "high"] | None
 
 ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq
+
+
+class ProviderSelection(NamedTuple):
+    """Result of selecting a provider for the current attempt."""
+
+    provider: "SupportedProviders"
+    model: str
+    client: ProviderClient
+    thinking_budget_tokens: int | None
+    reasoning_effort: ReasoningEffortType
 
 
 def _provider_for_model_config(
@@ -382,33 +401,27 @@ def _select_model_config_for_attempt(
     attempt: int,
     retry_attempts: int,
 ) -> ModelConfig:
-    if attempt != retry_attempts or model_config.fallback_model is None:
+    if attempt != retry_attempts or model_config.fallback is None:
         return model_config
 
-    fallback_transport = model_config.fallback_transport or model_config.transport
-    fallback_provider = _provider_for_model_config(fallback_transport)
-    primary_provider = _provider_for_model_config(model_config.transport)
-
-    fallback_api_key = model_config.fallback_api_key
-    fallback_base_url = model_config.fallback_base_url
-    if fallback_provider == primary_provider:
-        if fallback_api_key is None:
-            fallback_api_key = model_config.api_key
-        if fallback_base_url is None and fallback_transport == model_config.transport:
-            fallback_base_url = model_config.base_url
-
-    return ModelConfig.model_validate(
-        {
-            **model_config.model_dump(),
-            "model": model_config.fallback_model,
-            "transport": fallback_transport,
-            "api_key": fallback_api_key,
-            "base_url": fallback_base_url,
-            "fallback_model": None,
-            "fallback_transport": None,
-            "fallback_api_key": None,
-            "fallback_base_url": None,
-        }
+    fb = model_config.fallback
+    return ModelConfig(
+        model=fb.model,
+        transport=fb.transport,
+        fallback=None,
+        api_key=fb.api_key,
+        base_url=fb.base_url,
+        temperature=fb.temperature,
+        top_p=fb.top_p,
+        top_k=fb.top_k,
+        frequency_penalty=fb.frequency_penalty,
+        presence_penalty=fb.presence_penalty,
+        seed=fb.seed,
+        thinking_effort=fb.thinking_effort,
+        thinking_budget_tokens=fb.thinking_budget_tokens,
+        provider_params=fb.provider_params,
+        max_output_tokens=fb.max_output_tokens,
+        stop_sequences=fb.stop_sequences,
     )
 
 
@@ -765,14 +778,7 @@ async def _execute_tool_loop(
     enable_retry: bool,
     retry_attempts: int,
     max_input_tokens: int | None,
-    get_provider_and_model: Callable[
-        [],
-        tuple[
-            SupportedProviders,
-            str,
-            ProviderClient,
-        ],
-    ],
+    get_provider_and_model: Callable[[], ProviderSelection],
     before_retry_callback: Callable[[Any], None],
     stream_final: bool = False,
     iteration_callback: IterationCallback | None = None,
@@ -845,23 +851,23 @@ async def _execute_tool_loop(
             effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
             conversation_messages: list[dict[str, Any]] = conversation_messages,
         ) -> HonchoLLMCallResponse[Any]:
-            # Use shared provider selection helper
-            provider, model, client = get_provider_and_model()
+            # Use shared provider selection helper — per-attempt reasoning params
+            sel = get_provider_and_model()
 
             return await honcho_llm_call_inner(
-                provider,
-                model,
+                sel.provider,
+                sel.model,
                 prompt,  # Will be ignored since we pass messages
                 max_tokens,
                 response_model,
                 json_mode,
                 _get_effective_temperature(temperature),
                 stop_seqs,
-                reasoning_effort,
+                sel.reasoning_effort,
                 verbosity,
-                thinking_budget_tokens,
+                sel.thinking_budget_tokens,
                 stream=False,
-                client_override=client,
+                client_override=sel.client,
                 tools=tools,
                 tool_choice=effective_tool_choice,
                 messages=conversation_messages,
@@ -945,7 +951,7 @@ async def _execute_tool_loop(
             return response
 
         # Determine which provider we're using (reuse the helper)
-        current_provider, _, _ = get_provider_and_model()
+        current_provider = get_provider_and_model().provider
 
         # Add assistant message with tool calls to conversation
         assistant_message = _format_assistant_tool_message(
@@ -1074,23 +1080,23 @@ async def _execute_tool_loop(
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         # Use shared provider selection helper for backup failover support
-        provider, model, client = get_provider_and_model()
+        sel = get_provider_and_model()
 
         # No tools for final call
         return await honcho_llm_call_inner(
-            provider,
-            model,
+            sel.provider,
+            sel.model,
             prompt,
             max_tokens,
             response_model,
             json_mode,
             _get_effective_temperature(temperature),
             stop_seqs,
-            reasoning_effort,
+            sel.reasoning_effort,
             verbosity,
-            thinking_budget_tokens,
+            sel.thinking_budget_tokens,
             stream=False,
-            client_override=client,
+            client_override=sel.client,
             tools=None,
             tool_choice=None,
             messages=conversation_messages,
@@ -1350,18 +1356,12 @@ async def honcho_llm_call(
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
     _current_attempt.set(1)
 
-    def _get_provider_and_model() -> (
-        tuple[
-            SupportedProviders,
-            str,
-            ProviderClient,
-        ]
-    ):
+    def _get_provider_and_model() -> ProviderSelection:
         """
-        Get the provider, model, and client to use based on current attempt.
+        Get the provider, model, client, and per-attempt reasoning params.
 
-        Returns:
-            Tuple of (provider, model, client)
+        Reasoning params are resolved from the selected ModelConfig (primary
+        or fallback) so that cross-transport fallbacks get appropriate params.
         """
         attempt = _current_attempt.get()
         selected_model_config = _select_model_config_for_attempt(
@@ -1372,10 +1372,20 @@ async def honcho_llm_call(
         provider = _provider_for_model_config(selected_model_config.transport)
         model = selected_model_config.model
         client = _client_for_model_config(provider, selected_model_config)
-        if (
-            attempt == retry_attempts
-            and runtime_model_config.fallback_model is not None
-        ):
+
+        # Resolve reasoning params from the selected config (not the primary)
+        attempt_thinking_budget = (
+            thinking_budget_tokens
+            if selected_model_config is runtime_model_config
+            else selected_model_config.thinking_budget_tokens
+        )
+        attempt_reasoning_effort: ReasoningEffortType = (
+            reasoning_effort
+            if selected_model_config is runtime_model_config
+            else selected_model_config.thinking_effort
+        )
+
+        if attempt == retry_attempts and runtime_model_config.fallback is not None:
             primary_provider = _provider_for_model_config(
                 runtime_model_config.transport
             )
@@ -1385,7 +1395,13 @@ async def honcho_llm_call(
                 + f"{primary_provider}/{primary_model} to "
                 + f"backup {provider}/{model}"
             )
-        return provider, model, client
+        return ProviderSelection(
+            provider=provider,
+            model=model,
+            client=client,
+            thinking_budget_tokens=attempt_thinking_budget,
+            reasoning_effort=attempt_reasoning_effort,
+        )
 
     async def _call_with_provider_selection() -> (
         HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -1394,41 +1410,41 @@ async def honcho_llm_call(
         Inner function that selects provider/model based on current attempt.
         This function is retried, so provider selection happens on each attempt.
         """
-        provider, model, client = _get_provider_and_model()
+        sel = _get_provider_and_model()
 
         if stream:
             return await honcho_llm_call_inner(
-                provider,
-                model,
+                sel.provider,
+                sel.model,
                 prompt,
                 max_tokens,
                 response_model,
                 json_mode,
                 _get_effective_temperature(temperature),
                 stop_seqs,
-                reasoning_effort,
+                sel.reasoning_effort,
                 verbosity,
-                thinking_budget_tokens,
+                sel.thinking_budget_tokens,
                 stream=True,
-                client_override=client,
+                client_override=sel.client,
                 tools=tools,
                 tool_choice=tool_choice,
             )
         else:
             return await honcho_llm_call_inner(
-                provider,
-                model,
+                sel.provider,
+                sel.model,
                 prompt,
                 max_tokens,
                 response_model,
                 json_mode,
                 _get_effective_temperature(temperature),
                 stop_seqs,
-                reasoning_effort,
+                sel.reasoning_effort,
                 verbosity,
-                thinking_budget_tokens,
+                sel.thinking_budget_tokens,
                 stream=False,
-                client_override=client,
+                client_override=sel.client,
                 tools=tools,
                 tool_choice=tool_choice,
             )

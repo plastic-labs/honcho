@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -117,6 +118,7 @@ class AnthropicBackend:
         api_base: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
+        is_json_mode = self._json_mode(extra_params)
         del max_output_tokens, api_key, api_base, extra_params
         if thinking_effort is not None:
             raise ValueError(
@@ -147,18 +149,22 @@ class AnthropicBackend:
                 }
             ]
         use_json_prefill = (
-            response_format is not None
+            bool(response_format or is_json_mode)
             and not thinking_budget_tokens
             and self._supports_assistant_prefill(model)
         )
-        if response_format:
-            if isinstance(response_format, type):
+        if use_json_prefill:
+            if response_format and isinstance(response_format, type):
                 schema_json = json.dumps(response_format.model_json_schema(), indent=2)
                 params["messages"][-1]["content"] += (
                     f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
                 )
-            if use_json_prefill:
-                params["messages"].append({"role": "assistant", "content": "{"})
+            params["messages"].append({"role": "assistant", "content": "{"})
+        elif response_format and isinstance(response_format, type):
+            schema_json = json.dumps(response_format.model_json_schema(), indent=2)
+            params["messages"][-1]["content"] += (
+                f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+            )
         if thinking_budget_tokens:
             params["thinking"] = {
                 "type": "enabled",
@@ -287,7 +293,7 @@ class AnthropicBackend:
             ):
                 system_messages.append(message["content"])
             else:
-                non_system_messages.append(message)
+                non_system_messages.append(copy.deepcopy(message))
         return non_system_messages, system_messages
 
     @staticmethod

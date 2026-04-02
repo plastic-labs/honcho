@@ -4,8 +4,8 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
-from openai import LengthFinishReasonError
-from pydantic import BaseModel
+from openai import BadRequestError, LengthFinishReasonError
+from pydantic import BaseModel, ValidationError
 
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.structured_output import (
@@ -143,7 +143,7 @@ class OpenAIBackend:
                     truncated,
                     content_override=content,
                 )
-            except Exception:
+            except (BadRequestError, json.JSONDecodeError, ValidationError):
                 fallback_response = await self._create_structured_response(
                     params=params,
                     response_format=response_format,

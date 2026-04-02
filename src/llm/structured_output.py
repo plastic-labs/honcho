@@ -88,7 +88,7 @@ def attempt_structured_output_repair(
         return None
     try:
         return repair_response_model_json(content, response_model, model)
-    except StructuredOutputError:
+    except (StructuredOutputError, ValidationError):
         return None
 
 

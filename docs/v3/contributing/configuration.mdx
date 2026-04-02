@@ -390,8 +390,10 @@ MAX_TOOL_ITERATIONS = 10
 transport = "anthropic"
 model = "claude-haiku-4-5"
 thinking_budget_tokens = 2048
-# fallback_model = "gemini-2.5-pro"
-# fallback_transport = "gemini"
+
+# [dialectic.levels.max.model_config.fallback]
+# transport = "gemini"
+# model = "gemini-2.5-pro"
 ```
 
 **Environment variables for nested dialectic levels:**
@@ -419,8 +421,8 @@ DERIVER_MAX_INPUT_TOKENS=23000  # Maximum input tokens for deriver
 DERIVER_MODEL_CONFIG__TEMPERATURE=  # Optional temperature override (unset by default)
 
 # Backup model (optional)
-# DERIVER_MODEL_CONFIG__FALLBACK_MODEL=claude-haiku-4-5
-# DERIVER_MODEL_CONFIG__FALLBACK_TRANSPORT=anthropic
+# DERIVER_MODEL_CONFIG__FALLBACK__MODEL=claude-haiku-4-5
+# DERIVER_MODEL_CONFIG__FALLBACK__TRANSPORT=anthropic
 
 # Worker settings
 DERIVER_WORKERS=1  # Number of background worker processes
@@ -464,8 +466,8 @@ SUMMARY_MAX_TOKENS_LONG=4000  # Max tokens for long summaries
 SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=512
 
 # Backup model (optional)
-# SUMMARY_MODEL_CONFIG__FALLBACK_MODEL=claude-haiku-4-5
-# SUMMARY_MODEL_CONFIG__FALLBACK_TRANSPORT=anthropic
+# SUMMARY_MODEL_CONFIG__FALLBACK__MODEL=claude-haiku-4-5
+# SUMMARY_MODEL_CONFIG__FALLBACK__TRANSPORT=anthropic
 
 # Summary frequency thresholds
 SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20  # Create short summary every N messages
@@ -509,8 +511,8 @@ DREAM_MAX_TOOL_ITERATIONS=20
 DREAM_HISTORY_TOKEN_LIMIT=16384
 
 # Backup model (optional)
-# DREAM_MODEL_CONFIG__FALLBACK_MODEL=gemini-2.5-flash
-# DREAM_MODEL_CONFIG__FALLBACK_TRANSPORT=gemini
+# DREAM_MODEL_CONFIG__FALLBACK__MODEL=gemini-2.5-flash
+# DREAM_MODEL_CONFIG__FALLBACK__TRANSPORT=gemini
 
 # Specialist model configs inherit omitted values from DREAM_MODEL_CONFIG
 DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=anthropic

@@ -190,7 +190,7 @@ class GeminiBackend:
         elif extra_params and extra_params.get("json_mode") and not tools:
             config["response_mime_type"] = "application/json"
         thinking_config: dict[str, Any] = {}
-        if thinking_budget_tokens:
+        if thinking_budget_tokens is not None:
             thinking_config["thinking_budget"] = thinking_budget_tokens
         if thinking_effort:
             thinking_config["thinking_level"] = thinking_effort
