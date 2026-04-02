@@ -3,13 +3,18 @@ from pathlib import Path
 import pytest
 
 from src.config import (
+    AppSettings,
+    ConfiguredEmbeddingModelSettings,
     ConfiguredModelSettings,
     DialecticLevelSettings,
     DreamSettings,
+    EmbeddingSettings,
     ModelConfig,
     ModelOverrideSettings,
     SummarySettings,
+    VectorStoreSettings,
     load_toml_config,
+    resolve_embedding_model_config,
     resolve_model_config,
 )
 
@@ -120,6 +125,26 @@ def test_resolve_model_config_reads_override_env_and_provider_params(
     assert resolved.provider_params == {"verbosity": "low"}
 
 
+def test_resolve_embedding_model_config_reads_override_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMBEDDING_LOCAL_API_KEY", "embed-key")
+
+    configured = ConfiguredEmbeddingModelSettings(
+        transport="openai",
+        model="text-embedding-3-small",
+        overrides=ModelOverrideSettings(
+            api_key_env="EMBEDDING_LOCAL_API_KEY",
+            base_url="http://localhost:8000/v1",
+        ),
+    )
+
+    resolved = resolve_embedding_model_config(configured)
+
+    assert resolved.api_key == "embed-key"
+    assert resolved.base_url == "http://localhost:8000/v1"
+
+
 def test_dialectic_level_settings_accepts_nested_model_config() -> None:
     settings = DialecticLevelSettings(
         MODEL_CONFIG=ConfiguredModelSettings(
@@ -202,6 +227,53 @@ def test_dream_specialist_model_configs_inherit_main_model_defaults() -> None:
     assert settings.INDUCTION_MODEL_CONFIG.thinking_budget_tokens == 4096
 
 
+def test_app_settings_propagate_embedding_dimensions_to_vector_store() -> None:
+    settings = AppSettings(
+        EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
+        VECTOR_STORE=VectorStoreSettings(TYPE="lancedb", MIGRATED=True),
+    )
+
+    assert settings.EMBEDDING.VECTOR_DIMENSIONS == 2048
+    assert settings.VECTOR_STORE.DIMENSIONS == 2048
+
+
+def test_app_settings_require_matching_embedding_and_vector_store_dimensions() -> None:
+    with pytest.raises(
+        ValueError,
+        match="VECTOR_STORE.DIMENSIONS must match EMBEDDING.VECTOR_DIMENSIONS",
+    ):
+        AppSettings(
+            EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
+            VECTOR_STORE=VectorStoreSettings(
+                TYPE="lancedb",
+                MIGRATED=True,
+                DIMENSIONS=1536,
+            ),
+        )
+
+
+def test_app_settings_reject_non_1536_dimensions_while_pgvector_or_dual_write_active() -> (
+    None
+):
+    with pytest.raises(
+        ValueError,
+        match="EMBEDDING.VECTOR_DIMENSIONS must remain 1536",
+    ):
+        AppSettings(
+            EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
+            VECTOR_STORE=VectorStoreSettings(TYPE="pgvector", MIGRATED=True),
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="EMBEDDING.VECTOR_DIMENSIONS must remain 1536",
+    ):
+        AppSettings(
+            EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
+            VECTOR_STORE=VectorStoreSettings(TYPE="lancedb", MIGRATED=False),
+        )
+
+
 def test_config_toml_example_uses_nested_model_config_sections() -> None:
     config_path = Path(__file__).resolve().parents[3] / "config.toml.example"
     config_data = load_toml_config(str(config_path))
@@ -214,6 +286,9 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
     )
     max_level = DialecticLevelSettings.model_validate(
         config_data["dialectic"]["levels"]["max"]
+    )
+    embedding_config = ConfiguredEmbeddingModelSettings.model_validate(
+        config_data["embedding"]["model_config"]
     )
     summary_config = ConfiguredModelSettings.model_validate(
         config_data["summary"]["model_config"]
@@ -243,6 +318,8 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
     assert max_level.MODEL_CONFIG.model == "claude-haiku-4-5"
     assert max_level.MODEL_CONFIG.transport == "anthropic"
     assert max_level.MODEL_CONFIG.thinking_budget_tokens == 2048
+    assert embedding_config.transport == "openai"
+    assert embedding_config.model == "text-embedding-3-small"
     assert summary_config.model == "gemini-2.5-flash"
     assert summary_config.transport == "gemini"
     assert dream.MODEL_CONFIG.model == "claude-sonnet-4-20250514"
@@ -255,6 +332,8 @@ def test_env_template_uses_nested_model_config_keys() -> None:
     env_template_path = Path(__file__).resolve().parents[3] / ".env.template"
     env_template = env_template_path.read_text()
 
+    assert "EMBEDDING_MODEL_CONFIG__MODEL" in env_template
+    assert "EMBEDDING_VECTOR_DIMENSIONS" in env_template
     assert "DERIVER_MODEL_CONFIG__MODEL" in env_template
     assert "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL" in env_template
     assert "SUMMARY_MODEL_CONFIG__MODEL" in env_template

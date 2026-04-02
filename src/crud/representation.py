@@ -80,7 +80,8 @@ class RepresentationManager:
             embeddings = await embedding_client.simple_batch_embed(observation_texts)
         except ValueError as e:
             raise exceptions.ValidationException(
-                f"Observation content exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+                "Observation content exceeds maximum token limit of "
+                + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000

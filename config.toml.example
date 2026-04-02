@@ -11,8 +11,6 @@ GET_CONTEXT_MAX_TOKENS = 100000
 MAX_FILE_SIZE = 5242880  # 5MB
 MAX_MESSAGE_SIZE = 25000 # Characters
 EMBED_MESSAGES = true
-MAX_EMBEDDING_TOKENS = 8192
-MAX_EMBEDDING_TOKENS_PER_REQUEST = 300000
 # LANGFUSE_HOST = "https://api.langfuse.com"
 # LANGFUSE_PUBLIC_KEY = "your-public-key-here"
 # COLLECT_METRICS_LOCAL = false
@@ -51,7 +49,6 @@ PROFILES_SAMPLE_RATE = 0.1
 # LLM settings
 [llm]
 DEFAULT_MAX_TOKENS = 2500
-EMBEDDING_PROVIDER = "openai"
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
@@ -64,6 +61,23 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # OPENAI_BASE_URL = "https://openai-compatible.example/v1"
 # GEMINI_BASE_URL = "https://gemini-proxy.example/v1beta"
 # GROQ_BASE_URL = "https://groq-proxy.example/v1"
+
+# Embedding settings
+[embedding]
+VECTOR_DIMENSIONS = 1536
+MAX_INPUT_TOKENS = 8192
+MAX_TOKENS_PER_REQUEST = 300000
+
+[embedding.model_config]
+transport = "openai"
+model = "text-embedding-3-small"
+
+# Optional module-level endpoint overrides
+# transport = "gemini"
+# model = "gemini-embedding-001"
+# [embedding.model_config.overrides]
+# base_url = "https://embedding-proxy.internal.example/v1"
+# api_key_env = "EMBEDDING_CUSTOM_API_KEY"
 
 # Deriver settings
 [deriver]
@@ -247,6 +261,8 @@ TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
 NAMESPACE = "honcho"
+# This should match embedding.vector_dimensions. pgvector and dual-write mode
+# currently still require 1536 until a schema migration lands.
 DIMENSIONS = 1536
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"

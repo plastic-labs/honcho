@@ -6,9 +6,10 @@ from typing import NamedTuple
 
 import tiktoken
 from google import genai
+from google.genai import types as genai_types
 from openai import AsyncOpenAI
 
-from .config import settings
+from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,34 +27,58 @@ class _EmbeddingClient:
     Embedding client supporting OpenAI and Gemini with chunking and batching support.
     """
 
-    def __init__(self, api_key: str | None = None, provider: str | None = None):
-        self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+    def __init__(
+        self,
+        config: EmbeddingModelConfig,
+        *,
+        vector_dimensions: int,
+        max_input_tokens: int,
+        max_tokens_per_request: int,
+    ):
+        self.transport: str = config.transport
+        self.model: str = config.model
+        self.vector_dimensions: int = vector_dimensions
 
-        if self.provider == "gemini":
-            if api_key is None:
-                api_key = settings.LLM.GEMINI_API_KEY
-            if not api_key:
+        if self.transport == "gemini":
+            if not config.api_key:
                 raise ValueError("Gemini API key is required")
-            self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
-            self.model: str = "gemini-embedding-001"
+            http_options = (
+                genai_types.HttpOptions(base_url=config.base_url)
+                if config.base_url
+                else None
+            )
+            self.client: genai.Client | AsyncOpenAI = genai.Client(
+                api_key=config.api_key,
+                http_options=http_options,
+            )
             # Gemini has a 2048 token limit
-            self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
+            self.max_embedding_tokens: int = min(max_input_tokens, 2048)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
         else:  # openai
-            if api_key is None:
-                api_key = settings.LLM.OPENAI_API_KEY
-            if not api_key:
+            if not config.api_key:
                 raise ValueError("OpenAI API key is required")
-            self.client = AsyncOpenAI(api_key=api_key)
-            self.model = "text-embedding-3-small"
-            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.client = AsyncOpenAI(
+                api_key=config.api_key,
+                base_url=config.base_url,
+            )
+            self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048  # OpenAI batch limit
 
         self.encoding: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
-        self.max_embedding_tokens_per_request: int = (
-            settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
-        )
+        self.max_embedding_tokens_per_request: int = max_tokens_per_request
+
+    @property
+    def provider(self) -> str:
+        return self.transport
+
+    def _validate_embedding_dimensions(self, embedding: list[float]) -> list[float]:
+        if len(embedding) != self.vector_dimensions:
+            raise ValueError(
+                f"Embedding dimension mismatch for {self.transport}:{self.model}. "
+                + f"Expected {self.vector_dimensions}, got {len(embedding)}."
+            )
+        return embedding
 
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
@@ -67,16 +92,16 @@ class _EmbeddingClient:
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
-                config={"output_dimensionality": 1536},
+                config={"output_dimensionality": self.vector_dimensions},
             )
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
-            return response.embeddings[0].values
+            return self._validate_embedding_dimensions(response.embeddings[0].values)
         else:  # openai
             response = await self.client.embeddings.create(
                 model=self.model, input=query
             )
-            return response.data[0].embedding
+            return self._validate_embedding_dimensions(response.data[0].embedding)
 
     async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
         """
@@ -101,18 +126,25 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": self.vector_dimensions},
                     )
                     if response.embeddings:
                         for emb in response.embeddings:
                             if emb.values:
-                                embeddings.append(emb.values)
+                                embeddings.append(
+                                    self._validate_embedding_dimensions(emb.values)
+                                )
                 else:  # openai
                     response = await self.client.embeddings.create(
                         input=batch,
                         model=self.model,
                     )
-                    embeddings.extend([data.embedding for data in response.data])
+                    embeddings.extend(
+                        [
+                            self._validate_embedding_dimensions(data.embedding)
+                            for data in response.data
+                        ]
+                    )
             except Exception as e:
                 # Check if it's a token limit error and re-raise as ValueError for consistency
                 if "token" in str(e).lower():
@@ -237,7 +269,7 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": self.vector_dimensions},
                     )
                     if response.embeddings:
                         for item, embedding in zip(
@@ -245,7 +277,9 @@ class _EmbeddingClient:
                         ):
                             if embedding.values:
                                 result[item.text_id][item.chunk_index] = (
-                                    embedding.values
+                                    self._validate_embedding_dimensions(
+                                        embedding.values
+                                    )
                                 )
                 else:  # openai
                     response = await self.client.embeddings.create(
@@ -253,7 +287,9 @@ class _EmbeddingClient:
                     )
                     for item, embedding_data in zip(batch, response.data, strict=True):
                         result[item.text_id][item.chunk_index] = (
-                            embedding_data.embedding
+                            self._validate_embedding_dimensions(
+                                embedding_data.embedding
+                            )
                         )
 
                 return dict(result)
@@ -343,6 +379,7 @@ class EmbeddingClient:
     """
 
     _instance: "_EmbeddingClient | None" = None
+    _instance_signature: tuple[object, ...] | None = None
     _lock: threading.Lock = threading.Lock()
     _wrapper_instance: "EmbeddingClient | None" = None
 
@@ -359,23 +396,40 @@ class EmbeddingClient:
 
         Uses double-checked locking for thread-safe lazy initialization.
         """
-        if self._instance is None:
+        signature = self._get_settings_signature()
+        if self._instance is None or self._instance_signature != signature:
             with self._lock:
-                if self._instance is None:
-                    provider = settings.LLM.EMBEDDING_PROVIDER
-                    if provider == "gemini":
-                        api_key = settings.LLM.GEMINI_API_KEY
-                    else:
-                        api_key = settings.LLM.OPENAI_API_KEY
-
+                if self._instance is None or self._instance_signature != signature:
+                    runtime_config = self._resolve_runtime_config()
                     self._instance = _EmbeddingClient(
-                        api_key=api_key, provider=provider
+                        runtime_config,
+                        vector_dimensions=settings.EMBEDDING.VECTOR_DIMENSIONS,
+                        max_input_tokens=settings.EMBEDDING.MAX_INPUT_TOKENS,
+                        max_tokens_per_request=settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
                     )
+                    self._instance_signature = signature
                     logger.debug(
-                        f"Initialized embedding client with provider: {provider}"
+                        "Initialized embedding client with transport: %s model: %s",
+                        runtime_config.transport,
+                        runtime_config.model,
                     )
 
         return self._instance
+
+    def _resolve_runtime_config(self) -> EmbeddingModelConfig:
+        return resolve_embedding_model_config(settings.EMBEDDING.MODEL_CONFIG)
+
+    def _get_settings_signature(self) -> tuple[object, ...]:
+        runtime_config = self._resolve_runtime_config()
+        return (
+            runtime_config.transport,
+            runtime_config.model,
+            runtime_config.api_key,
+            runtime_config.base_url,
+            settings.EMBEDDING.VECTOR_DIMENSIONS,
+            settings.EMBEDDING.MAX_INPUT_TOKENS,
+            settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
+        )
 
     async def embed(self, query: str) -> list[float]:
         """Embed a single query string."""
@@ -402,9 +456,19 @@ class EmbeddingClient:
         return self._get_client().model
 
     @property
+    def transport(self) -> str:
+        """Get the transport name."""
+        return self._get_client().transport
+
+    @property
     def max_embedding_tokens(self) -> int:
         """Get the maximum embedding tokens."""
         return self._get_client().max_embedding_tokens
+
+    @property
+    def vector_dimensions(self) -> int:
+        """Get the configured embedding dimensions."""
+        return self._get_client().vector_dimensions
 
     @property
     def encoding(self) -> tiktoken.Encoding:

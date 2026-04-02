@@ -225,7 +225,8 @@ async def query_documents(
             embedding = await embedding_client.embed(query)
         except ValueError as e:
             raise ValidationException(
-                f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+                "Query exceeds maximum token limit of "
+                + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
 
     # Query Postgres directly when using pgvector OR during migration (not yet migrated)

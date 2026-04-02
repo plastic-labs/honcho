@@ -501,9 +501,10 @@ class ConclusionCreate(BaseModel):
         tokens = encoding.encode(self.content)
         self._token_count = len(tokens)
 
-        if self._token_count > settings.MAX_EMBEDDING_TOKENS:
+        if self._token_count > settings.EMBEDDING.MAX_INPUT_TOKENS:
             raise ValueError(
-                f"Content exceeds maximum embedding token limit of {settings.MAX_EMBEDDING_TOKENS} "
+                "Content exceeds maximum embedding token limit of "
+                + f"{settings.EMBEDDING.MAX_INPUT_TOKENS} "
                 + f"(got {self._token_count} tokens)"
             )
         return self

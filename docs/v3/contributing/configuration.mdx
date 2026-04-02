@@ -132,8 +132,6 @@ MAX_FILE_SIZE=5242880  # Maximum file size in bytes (5MB)
 
 # Embedding settings
 EMBED_MESSAGES=true  # Enable vector embeddings for messages
-MAX_EMBEDDING_TOKENS=8192  # Maximum tokens per embedding
-MAX_EMBEDDING_TOKENS_PER_REQUEST=300000  # Batch embedding limit
 
 # Global namespace (propagated to nested settings if not explicitly set)
 NAMESPACE=honcho
@@ -301,13 +299,32 @@ api_key_env = "DERIVER_LOCAL_API_KEY"
 # Default settings for all LLM calls
 LLM_DEFAULT_MAX_TOKENS=2500
 
-# Embedding provider (used when EMBED_MESSAGES=true)
-LLM_EMBEDDING_PROVIDER=openai  # Options: openai, gemini
-
 # Tool output limits (to prevent token explosion)
 LLM_MAX_TOOL_OUTPUT_CHARS=10000  # ~2500 tokens at 4 chars/token
 LLM_MAX_MESSAGE_CONTENT_CHARS=2000  # Max chars per message in tool results
 ```
+
+### Embedding Configuration
+
+Embeddings use their own nested model config, separate from the main text-generation LLM settings.
+
+```bash
+# Embedding vector settings
+EMBEDDING_VECTOR_DIMENSIONS=1536
+EMBEDDING_MAX_INPUT_TOKENS=8192
+EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
+
+# Embedding transport/model selection
+EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
+EMBEDDING_MODEL_CONFIG__MODEL=text-embedding-3-small
+
+# Optional endpoint overrides
+EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
+EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
+```
+
+Current constraint:
+- `EMBEDDING_VECTOR_DIMENSIONS` can be changed for fully migrated external vector stores, but pgvector and dual-write mode still require `1536` until the schema migration lands.
 
 ### Feature-Specific Model Configuration
 
@@ -554,7 +571,7 @@ VECTOR_STORE_MIGRATED=false
 # Global namespace prefix for all vector namespaces
 VECTOR_STORE_NAMESPACE=honcho
 
-# Embedding dimensions (default for OpenAI text-embedding-3-small)
+# Embedding dimensions should match EMBEDDING_VECTOR_DIMENSIONS
 VECTOR_STORE_DIMENSIONS=1536
 
 # Reconciliation interval for syncing
@@ -960,6 +977,7 @@ uv run alembic revision --autogenerate -m "Description of changes"
 
 6. **Vector Store Issues**
    - For Turbopuffer, ensure `VECTOR_STORE_TURBOPUFFER_API_KEY` is set
-   - Check `VECTOR_STORE_DIMENSIONS` matches your embedding model
+   - Check `EMBEDDING_VECTOR_DIMENSIONS` matches your embedding model
+   - If `VECTOR_STORE_DIMENSIONS` is set explicitly, it must match `EMBEDDING_VECTOR_DIMENSIONS`
 
 This configuration guide covers all the settings available in Honcho. Always use environment-specific configuration files and never commit sensitive values like API keys or JWT secrets to version control.

@@ -23,6 +23,13 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 logger = logging.getLogger(__name__)
 
 ModelTransport = Literal["anthropic", "openai", "gemini", "groq"]
+EmbeddingTransport = Literal["openai", "gemini"]
+
+
+def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
+    if transport == "gemini":
+        return "gemini-embedding-001"
+    return "text-embedding-3-small"
 
 
 def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
@@ -252,6 +259,77 @@ class ModelConfig(BaseModel):
         )
 
 
+class ConfiguredEmbeddingModelSettings(BaseModel):
+    """Operator-configurable persisted embedding settings."""
+
+    model: str = "text-embedding-3-small"
+    transport: EmbeddingTransport = "openai"
+    overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        raw_data = cast(dict[Any, Any], data)
+        update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
+        model_value = update.get("model")
+        transport_value = update.get("transport")
+        if (
+            isinstance(model_value, str)
+            and "/" in model_value
+            and transport_value is None
+        ):
+            prefix, bare_model = model_value.split("/", 1)
+            if prefix in {"openai", "gemini"}:
+                update["transport"] = prefix
+                update["model"] = bare_model
+        return update
+
+    @model_validator(mode="after")
+    def _default_model_for_transport(self) -> "ConfiguredEmbeddingModelSettings":
+        if "model" not in self.model_fields_set:
+            self.model = _default_embedding_model_for_transport(self.transport)
+        return self
+
+
+class EmbeddingModelConfig(BaseModel):
+    """Runtime embedding configuration with resolved credentials."""
+
+    model: str = "text-embedding-3-small"
+    transport: EmbeddingTransport = "openai"
+    api_key: str | None = None
+    base_url: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        raw_data = cast(dict[Any, Any], data)
+        update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
+        model_value = update.get("model")
+        transport_value = update.get("transport")
+        if (
+            isinstance(model_value, str)
+            and "/" in model_value
+            and transport_value is None
+        ):
+            prefix, bare_model = model_value.split("/", 1)
+            if prefix in {"openai", "gemini"}:
+                update["transport"] = prefix
+                update["model"] = bare_model
+        return update
+
+    @model_validator(mode="after")
+    def _default_model_for_transport(self) -> "EmbeddingModelConfig":
+        if "model" not in self.model_fields_set:
+            self.model = _default_embedding_model_for_transport(self.transport)
+        return self
+
+
 def _resolve_secret(value: str | None, env_name: str | None) -> str | None:
     if value is not None:
         return value
@@ -289,6 +367,22 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
         provider_params=configured.overrides.provider_params,
         max_output_tokens=configured.max_output_tokens,
         stop_sequences=configured.stop_sequences,
+    )
+
+
+def resolve_embedding_model_config(
+    configured: ConfiguredEmbeddingModelSettings,
+) -> EmbeddingModelConfig:
+    """Resolve persisted embedding settings into the runtime config."""
+
+    return EmbeddingModelConfig(
+        model=configured.model,
+        transport=configured.transport,
+        api_key=_resolve_secret(
+            configured.overrides.api_key,
+            configured.overrides.api_key_env,
+        ),
+        base_url=configured.overrides.base_url,
     )
 
 
@@ -370,6 +464,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SENTRY": "sentry",
         "CACHE": "cache",
         "LLM": "llm",
+        "EMBEDDING": "embedding",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
         "DIALECTIC": "dialectic",
@@ -500,8 +595,6 @@ class LLMSettings(HonchoSettings):
     GEMINI_BASE_URL: str | None = None
     GROQ_BASE_URL: str | None = None
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini"] = "openai"
-
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
@@ -517,6 +610,22 @@ class LLMSettings(HonchoSettings):
     MAX_MESSAGE_CONTENT_CHARS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = (
         2000
     )
+
+
+class EmbeddingSettings(HonchoSettings):
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="EMBEDDING_", env_nested_delimiter="__", extra="ignore"
+    )
+
+    MODEL_CONFIG: ConfiguredEmbeddingModelSettings = Field(
+        default_factory=lambda: ConfiguredEmbeddingModelSettings(
+            transport="openai",
+            model="text-embedding-3-small",
+        )
+    )
+    VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
+    MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
 
 
 class DeriverSettings(HonchoSettings):
@@ -967,10 +1076,6 @@ class AppSettings(HonchoSettings):
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
     EMBED_MESSAGES: bool = True
-    MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
-    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = (
-        300_000
-    )
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 
@@ -985,6 +1090,7 @@ class AppSettings(HonchoSettings):
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
     SENTRY: SentrySettings = Field(default_factory=SentrySettings)
     LLM: LLMSettings = Field(default_factory=LLMSettings)
+    EMBEDDING: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
@@ -1010,10 +1116,24 @@ class AppSettings(HonchoSettings):
             self.CACHE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
+        if "DIMENSIONS" not in self.VECTOR_STORE.model_fields_set:
+            self.VECTOR_STORE.DIMENSIONS = self.EMBEDDING.VECTOR_DIMENSIONS
+        elif self.VECTOR_STORE.DIMENSIONS != self.EMBEDDING.VECTOR_DIMENSIONS:
+            raise ValueError(
+                "VECTOR_STORE.DIMENSIONS must match EMBEDDING.VECTOR_DIMENSIONS"
+            )
         if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
             self.TELEMETRY.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.METRICS.model_fields_set:
             self.METRICS.NAMESPACE = self.NAMESPACE
+
+        if self.EMBEDDING.VECTOR_DIMENSIONS != 1536 and (
+            self.VECTOR_STORE.TYPE == "pgvector" or not self.VECTOR_STORE.MIGRATED
+        ):
+            raise ValueError(
+                "EMBEDDING.VECTOR_DIMENSIONS must remain 1536 while pgvector is "
+                + "active or vector-store migration is incomplete"
+            )
 
         return self
 
