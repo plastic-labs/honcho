@@ -76,7 +76,8 @@ async def sample_observations_with_surprisal(
                 observer=observer,
                 observed=observed,
             )
-            # Extract plain data from ORM objects before session closes
+            # Extract plain data from ORM objects before session closes,
+            # skipping any with null embeddings (can't compute surprisal).
             observations = [
                 ObservationData(
                     id=obs.id,
@@ -85,7 +86,11 @@ async def sample_observations_with_surprisal(
                     embedding=obs.embedding,
                 )
                 for obs in raw_observations
+                if obs.embedding is not None
             ]
+            skipped = len(raw_observations) - len(observations)
+            if skipped:
+                logger.warning(f"Skipped {skipped} observations with null embeddings")
 
         # Edge case: No observations
         if not observations:

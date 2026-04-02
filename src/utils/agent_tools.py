@@ -802,7 +802,6 @@ async def get_recent_history(
 
 
 async def search_memory(
-    db: AsyncSession,
     workspace_name: str,
     observer: str,
     observed: str,
@@ -814,8 +813,10 @@ async def search_memory(
     """
     Search for observations in memory using semantic similarity.
 
+    Does not require a DB session — ``query_documents`` manages its own
+    short-lived sessions so no connection is held during external calls.
+
     Args:
-        db: Database session
         workspace_name: Workspace identifier
         observer: The peer who made the observations
         observed: The peer who was observed
@@ -834,7 +835,7 @@ async def search_memory(
         filters = {"level": {"in": levels}}
 
     documents = await crud.query_documents(
-        db=db,
+        db=None,
         workspace_name=workspace_name,
         observer=observer,
         observed=observed,

@@ -169,31 +169,27 @@ class DialecticAgent:
             # Pre-compute embedding once for both searches (no DB needed)
             query_embedding = await embedding_client.embed(query)
 
-            # Search observations in a short DB scope
-            async with tracked_db("dialectic.prefetch") as db:
-                # Search explicit observations separately
-                explicit_repr = await search_memory(
-                    db=db,
-                    workspace_name=self.workspace_name,
-                    observer=self.observer,
-                    observed=self.observed,
-                    query=query,
-                    limit=prefetch_limit,
-                    levels=["explicit"],
-                    embedding=query_embedding,
-                )
+            # search_memory manages its own short-lived DB sessions so no
+            # connection is held during external vector-store calls.
+            explicit_repr = await search_memory(
+                workspace_name=self.workspace_name,
+                observer=self.observer,
+                observed=self.observed,
+                query=query,
+                limit=prefetch_limit,
+                levels=["explicit"],
+                embedding=query_embedding,
+            )
 
-                # Search derived observations separately
-                derived_repr = await search_memory(
-                    db=db,
-                    workspace_name=self.workspace_name,
-                    observer=self.observer,
-                    observed=self.observed,
-                    query=query,
-                    limit=prefetch_limit,
-                    levels=["deductive", "inductive", "contradiction"],
-                    embedding=query_embedding,
-                )
+            derived_repr = await search_memory(
+                workspace_name=self.workspace_name,
+                observer=self.observer,
+                observed=self.observed,
+                query=query,
+                limit=prefetch_limit,
+                levels=["deductive", "inductive", "contradiction"],
+                embedding=query_embedding,
+            )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
