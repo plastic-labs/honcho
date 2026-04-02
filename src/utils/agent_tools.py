@@ -1122,7 +1122,7 @@ async def _handle_create_observations(
     if result.created_ids:
         id_details = ", ".join(
             f"[id:{doc_id}] ({level})"
-            for doc_id, level in zip(result.created_ids, result.created_levels)
+            for doc_id, level in zip(result.created_ids, result.created_levels, strict=True)
         )
         response = (
             f"Created {result.created_count} observations for {ctx.observed} by {ctx.observer}: "
