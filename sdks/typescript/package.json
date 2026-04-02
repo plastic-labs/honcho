@@ -1,6 +1,6 @@
 {
   "name": "@honcho-ai/sdk",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Official DX Optimized TypeScript SDK for Honcho",
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "Apache-2.0",
@@ -18,12 +18,12 @@
     "test": "echo 'Error: Tests must be run from the monorepo root via pytest. See tests/README.md' && exit 1"
   },
   "dependencies": {
-    "@types/node": "^24.0.1",
     "zod": "4.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.1.2",
     "@types/bun": "latest",
+    "@types/node": "^24.0.1",
     "typescript": "^5.0.0"
   }
 }

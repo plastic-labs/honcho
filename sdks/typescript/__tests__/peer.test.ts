@@ -52,6 +52,18 @@ describe('Peer', () => {
       expect(peer).toBeInstanceOf(Peer)
       expect(peer.id).toBe('simple-peer')
       expect(peer.workspaceId).toBe(client.workspaceId)
+      expect(peer.createdAt).toBeDefined()
+    })
+
+    test('peer created with metadata exposes createdAt', async () => {
+      const peer = await client.peer('peer-created-at', {
+        metadata: { test: true },
+      })
+
+      expect(peer.createdAt).toBeDefined()
+      expect(typeof peer.createdAt).toBe('string')
+      const createdAt = new Date(peer.createdAt!)
+      expect(Number.isNaN(createdAt.getTime())).toBe(false)
     })
 
     test('creates peer with metadata', async () => {
@@ -116,10 +128,22 @@ describe('Peer', () => {
         metadata: { uniqueTag },
       })
 
-      const page = await client.peers({ metadata: { uniqueTag } })
+      const page = await client.peers({ filters: { metadata: { uniqueTag } } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].id).toBe('filtered-peer')
+    })
+
+    test('peers accept legacy raw filter objects', async () => {
+      const uniqueTag = `legacy-tag-${Date.now()}`
+      await client.peer(`legacy-filtered-peer-${Date.now()}`, {
+        metadata: { uniqueTag },
+      })
+
+      const page = await client.peers({ metadata: { uniqueTag } })
+
+      expect(page.items.length).toBe(1)
+      expect(page.items[0].metadata.uniqueTag).toBe(uniqueTag)
     })
 
     test('Page is async iterable', async () => {
@@ -213,9 +237,23 @@ describe('Peer', () => {
       })
       await session.addPeers([peer.id])
 
-      const sessions = await peer.sessions({ metadata: { category: 'special' } })
+      const sessions = await peer.sessions({ filters: { metadata: { category: 'special' } } })
 
       expect(sessions.items.length).toBeGreaterThanOrEqual(1)
+    })
+
+    test('sessions accept legacy raw filter objects', async () => {
+      const category = `legacy-category-${Date.now()}`
+      const peer = await client.peer(`legacy-filter-sessions-peer-${Date.now()}`)
+      const session = await client.session(`legacy-filterable-session-${Date.now()}`, {
+        metadata: { category },
+      })
+      await session.addPeers([peer.id])
+
+      const sessions = await peer.sessions({ metadata: { category } })
+
+      expect(sessions.items.length).toBeGreaterThanOrEqual(1)
+      expect(sessions.items[0].metadata.category).toBe(category)
     })
   })
 
@@ -635,6 +673,34 @@ describe('Peer', () => {
       const str = peer.toString()
 
       expect(str).toBe("Peer(id='tostring-peer')")
+    })
+  })
+
+  // ===========================================================================
+  // Pagination Controls
+  // ===========================================================================
+
+  describe('Pagination controls', () => {
+    test('peers with custom page size', async () => {
+      // Create peers with unique metadata
+      await client.peer('page-peer-1', { metadata: { group: 'page-test' } })
+      await client.peer('page-peer-2', { metadata: { group: 'page-test' } })
+      await client.peer('page-peer-3', { metadata: { group: 'page-test' } })
+
+      const page = await client.peers({
+        filters: { metadata: { group: 'page-test' } },
+        size: 2,
+      })
+      expect(page.items.length).toBe(2)
+    })
+
+    test('peers with explicit page number', async () => {
+      const page2 = await client.peers({
+        filters: { metadata: { group: 'page-test' } },
+        page: 2,
+        size: 2,
+      })
+      expect(page2.items.length).toBe(1)
     })
   })
 })

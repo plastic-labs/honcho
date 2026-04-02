@@ -114,7 +114,8 @@
               {
                 "group": "Community Integrations",
                 "pages": [
-                  "v3/guides/community/agent0"
+                  "v3/guides/community/agent0",
+                  "v3/guides/community/pi-honcho-memory"
                 ]
               },
               {

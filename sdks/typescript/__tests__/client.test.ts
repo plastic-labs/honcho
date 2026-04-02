@@ -143,6 +143,27 @@ describe('Honcho Client', () => {
         await testClient.deleteWorkspace(testClient.workspaceId)
       }
     })
+
+    test('workspaces with options.filters narrows results', async () => {
+      const uniqueValue = `filter-options-${Date.now()}`
+      const testClient = new Honcho({
+        baseURL: TEST_CONFIG.baseURL,
+        apiKey: TEST_CONFIG.apiKey,
+        workspaceId: generateWorkspaceId('filter-options'),
+      })
+
+      try {
+        await testClient.setMetadata({ filterKey: uniqueValue })
+
+        const page = await client.workspaces({
+          filters: { metadata: { filterKey: uniqueValue } },
+        })
+
+        expect(page.items).toContain(testClient.workspaceId)
+      } finally {
+        await testClient.deleteWorkspace(testClient.workspaceId)
+      }
+    })
   })
 
   // ===========================================================================
@@ -172,11 +193,12 @@ describe('Honcho Client', () => {
   // ===========================================================================
 
   describe('Peer access', () => {
-    test('peer() returns Peer instance without API call', async () => {
+    test('peer() returns Peer instance with cached data', async () => {
       const peer = await client.peer('lazy-peer')
 
       expect(peer.id).toBe('lazy-peer')
       expect(peer.workspaceId).toBe(client.workspaceId)
+      expect(peer.createdAt).toBeDefined()
     })
 
     test('peer() with metadata makes API call', async () => {
@@ -205,11 +227,13 @@ describe('Honcho Client', () => {
   })
 
   describe('Session access', () => {
-    test('session() returns Session instance without API call', async () => {
+    test('session() returns Session instance with cached data', async () => {
       const session = await client.session('lazy-session', { metadata: {} })
 
       expect(session.id).toBe('lazy-session')
       expect(session.workspaceId).toBe(client.workspaceId)
+      expect(session.createdAt).toBeDefined()
+      expect(session.isActive).toBe(true)
     })
 
     test('session() with metadata makes API call', async () => {

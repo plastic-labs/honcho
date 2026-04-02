@@ -366,6 +366,7 @@ class RepresentationManager:
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
+                models.Document.deleted_at.is_(None),
                 *(
                     [models.Document.session_name == session_name]
                     if session_name is not None
@@ -391,6 +392,7 @@ class RepresentationManager:
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
+                models.Document.deleted_at.is_(None),
             )
             .order_by(models.Document.times_derived.desc())
         )

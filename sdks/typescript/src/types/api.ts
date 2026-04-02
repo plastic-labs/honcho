@@ -285,8 +285,9 @@ export interface RepresentationResponse {
 export interface RepresentationOptions {
   /**
    * Semantic search query to filter relevant conclusions.
+   * Accepts a string or any object with a `content` property (e.g., a Message).
    */
-  searchQuery?: string
+  searchQuery?: string | { content: string }
 
   /**
    * Number of semantically relevant conclusions to return.
