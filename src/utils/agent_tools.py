@@ -1242,7 +1242,10 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
     try:
         query_embedding = await embedding_client.embed(query)
     except ValueError:
-        return f"ERROR: Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}. Please use a shorter query."
+        return (
+            "ERROR: Query exceeds maximum token limit of "
+            + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
+        )
 
     documents = await crud.query_documents(
         db=ctx.db,

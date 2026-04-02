@@ -50,7 +50,7 @@ Then modify the values as needed. The TOML file is organized into sections:
 - `[db]` - Database connection and pool settings (connection URI, pool size, timeouts, connection recycling)
 - `[auth]` - Authentication configuration (enable/disable auth, JWT secret)
 - `[cache]` - Redis cache configuration (enable/disable caching, Redis URL, TTL settings, lock configuration for cache stampede prevention)
-- `[llm]` - LLM provider API keys (Anthropic, OpenAI, Gemini, Groq, vLLM, OpenAI-compatible endpoints) and general LLM settings
+- `[llm]` - LLM provider API keys, OpenAI-compatible endpoint defaults, and general LLM settings
 - `[dialectic]` - Dialectic API configuration with per-level reasoning settings (minimal, low, medium, high, max)
 - `[deriver]` - Background worker settings (worker count, polling intervals, queue management) and theory of mind configuration (model, tokens, observation limits)
 - `[peer_card]` - Peer card generation settings (enable/disable)
@@ -75,9 +75,9 @@ Examples:
 - `DB_CONNECTION_URI` → `[db].CONNECTION_URI`
 - `DB_POOL_SIZE`      → `[db].POOL_SIZE`
 - `AUTH_JWT_SECRET`   → `[auth].JWT_SECRET`
-- `DERIVER_MODEL` → `[deriver].MODEL`
+- `DERIVER_MODEL_CONFIG__MODEL` → `[deriver.model_config].model`
 - `LOG_LEVEL` (no section) → `[app].LOG_LEVEL`
-- `DIALECTIC_LEVELS__minimal__PROVIDER` → `[dialectic.levels.minimal].PROVIDER`
+- `DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL` → `[dialectic.levels.minimal.model_config].model`
 - `DREAM_SURPRISAL__ENABLED` → `[dream.surprisal].ENABLED`
 
 ### Configuration Priority
@@ -132,8 +132,6 @@ MAX_FILE_SIZE=5242880  # Maximum file size in bytes (5MB)
 
 # Embedding settings
 EMBED_MESSAGES=true  # Enable vector embeddings for messages
-MAX_EMBEDDING_TOKENS=8192  # Maximum tokens per embedding
-MAX_EMBEDDING_TOKENS_PER_REQUEST=300000  # Batch embedding limit
 
 # Global namespace (propagated to nested settings if not explicitly set)
 NAMESPACE=honcho
@@ -267,13 +265,32 @@ LLM_OPENAI_API_KEY=your-openai-api-key
 LLM_GEMINI_API_KEY=your-gemini-api-key
 LLM_GROQ_API_KEY=your-groq-api-key
 
-# OpenAI-compatible endpoints
-LLM_OPENAI_COMPATIBLE_API_KEY=your-api-key
-LLM_OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint.com
+# Optional default base URLs for transport-compatible proxies
+LLM_ANTHROPIC_BASE_URL=https://your-anthropic-compatible-endpoint.com
+LLM_OPENAI_BASE_URL=https://your-openai-compatible-endpoint.com
+LLM_GEMINI_BASE_URL=https://your-gemini-compatible-endpoint.com
+LLM_GROQ_BASE_URL=https://your-groq-compatible-endpoint.com
+```
 
-# vLLM endpoint (for local models)
-LLM_VLLM_API_KEY=your-vllm-api-key
-LLM_VLLM_BASE_URL=http://localhost:8000
+`MODEL_CONFIG.transport` now identifies the API contract directly, and `MODEL_CONFIG.model` is the raw model id passed to that transport. If you want to point a transport at a different endpoint, override `base_url` and `api_key` at the module level.
+
+For example, to use an OpenAI-compatible local endpoint:
+
+- `MODEL_CONFIG.transport = "openai"`
+- `MODEL_CONFIG.model = "my-local-model"`
+- `MODEL_CONFIG.overrides.base_url` for the target endpoint
+- `MODEL_CONFIG.overrides.api_key_env` if the module needs its own credentials
+
+Example:
+
+```toml
+[deriver.model_config]
+transport = "openai"
+model = "my-local-model"
+
+[deriver.model_config.overrides]
+base_url = "http://localhost:8000/v1"
+api_key_env = "DERIVER_LOCAL_API_KEY"
 ```
 
 ### General LLM Settings
@@ -282,13 +299,32 @@ LLM_VLLM_BASE_URL=http://localhost:8000
 # Default settings for all LLM calls
 LLM_DEFAULT_MAX_TOKENS=2500
 
-# Embedding provider (used when EMBED_MESSAGES=true)
-LLM_EMBEDDING_PROVIDER=openai  # Options: openai, gemini, openrouter
-
 # Tool output limits (to prevent token explosion)
 LLM_MAX_TOOL_OUTPUT_CHARS=10000  # ~2500 tokens at 4 chars/token
 LLM_MAX_MESSAGE_CONTENT_CHARS=2000  # Max chars per message in tool results
 ```
+
+### Embedding Configuration
+
+Embeddings use their own nested model config, separate from the main text-generation LLM settings.
+
+```bash
+# Embedding vector settings
+EMBEDDING_VECTOR_DIMENSIONS=1536
+EMBEDDING_MAX_INPUT_TOKENS=8192
+EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
+
+# Embedding transport/model selection
+EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
+EMBEDDING_MODEL_CONFIG__MODEL=text-embedding-3-small
+
+# Optional endpoint overrides
+EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
+EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
+```
+
+Current constraint:
+- `EMBEDDING_VECTOR_DIMENSIONS` can be changed for fully migrated external vector stores, but pgvector and dual-write mode still require `1536` until the schema migration lands.
 
 ### Feature-Specific Model Configuration
 
@@ -313,47 +349,58 @@ Each reasoning level (minimal, low, medium, high, max) has its own provider, mod
 ```toml
 # config.toml example
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 MAX_OUTPUT_TOKENS = 250  # Optional: overrides global MAX_OUTPUT_TOKENS
 TOOL_CHOICE = "any"  # Options: null/auto, "any", "required"
 
+[dialectic.levels.minimal.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
 TOOL_CHOICE = "any"
 
+[dialectic.levels.low.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 
+[dialectic.levels.medium.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
 
+[dialectic.levels.high.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
-# Backup provider (optional, must set both or neither)
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-pro"
+
+[dialectic.levels.max.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 2048
+
+# [dialectic.levels.max.model_config.fallback]
+# transport = "gemini"
+# model = "gemini-2.5-pro"
 ```
 
 **Environment variables for nested dialectic levels:**
 ```bash
-DIALECTIC_LEVELS__minimal__PROVIDER=google
-DIALECTIC_LEVELS__minimal__MODEL=gemini-2.5-flash-lite
-DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT=gemini
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL=gemini-2.5-flash-lite
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
 DIALECTIC_LEVELS__minimal__MAX_TOOL_ITERATIONS=1
 ```
 
@@ -366,16 +413,16 @@ The Deriver is a background processing system that extracts facts from messages 
 DERIVER_ENABLED=true
 
 # LLM settings for deriver
-DERIVER_PROVIDER=google
-DERIVER_MODEL=gemini-2.5-flash-lite
-DERIVER_MAX_OUTPUT_TOKENS=4096
-DERIVER_THINKING_BUDGET_TOKENS=1024
+DERIVER_MODEL_CONFIG__TRANSPORT=gemini
+DERIVER_MODEL_CONFIG__MODEL=gemini-2.5-flash-lite
+DERIVER_MODEL_CONFIG__MAX_OUTPUT_TOKENS=4096
+DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 DERIVER_MAX_INPUT_TOKENS=23000  # Maximum input tokens for deriver
-DERIVER_TEMPERATURE=  # Optional temperature override (unset by default)
+DERIVER_MODEL_CONFIG__TEMPERATURE=  # Optional temperature override (unset by default)
 
-# Backup provider (optional, must set both or neither)
-# DERIVER_BACKUP_PROVIDER=anthropic
-# DERIVER_BACKUP_MODEL=claude-haiku-4-5
+# Backup model (optional)
+# DERIVER_MODEL_CONFIG__FALLBACK__MODEL=claude-haiku-4-5
+# DERIVER_MODEL_CONFIG__FALLBACK__TRANSPORT=anthropic
 
 # Worker settings
 DERIVER_WORKERS=1  # Number of background worker processes
@@ -412,15 +459,15 @@ Session summaries provide compressed context for long conversations. Honcho crea
 SUMMARY_ENABLED=true
 
 # LLM settings for summary generation
-SUMMARY_PROVIDER=google
-SUMMARY_MODEL=gemini-2.5-flash
+SUMMARY_MODEL_CONFIG__TRANSPORT=gemini
+SUMMARY_MODEL_CONFIG__MODEL=gemini-2.5-flash
 SUMMARY_MAX_TOKENS_SHORT=1000  # Max tokens for short summaries
 SUMMARY_MAX_TOKENS_LONG=4000  # Max tokens for long summaries
-SUMMARY_THINKING_BUDGET_TOKENS=512
+SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=512
 
-# Backup provider (optional, must set both or neither)
-# SUMMARY_BACKUP_PROVIDER=anthropic
-# SUMMARY_BACKUP_MODEL=claude-haiku-4-5
+# Backup model (optional)
+# SUMMARY_MODEL_CONFIG__FALLBACK__MODEL=claude-haiku-4-5
+# SUMMARY_MODEL_CONFIG__FALLBACK__TRANSPORT=anthropic
 
 # Summary frequency thresholds
 SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20  # Create short summary every N messages
@@ -456,20 +503,22 @@ DREAM_MIN_HOURS_BETWEEN_DREAMS=8  # Minimum hours between dreams for a peer
 DREAM_ENABLED_TYPES=["omni"]  # Currently supported: omni
 
 # LLM settings for dream processing
-DREAM_PROVIDER=anthropic
-DREAM_MODEL=claude-sonnet-4-20250514
-DREAM_MAX_OUTPUT_TOKENS=16384
-DREAM_THINKING_BUDGET_TOKENS=8192
+DREAM_MODEL_CONFIG__TRANSPORT=anthropic
+DREAM_MODEL_CONFIG__MODEL=claude-sonnet-4-20250514
+DREAM_MODEL_CONFIG__MAX_OUTPUT_TOKENS=16384
+DREAM_MODEL_CONFIG__THINKING_BUDGET_TOKENS=8192
 DREAM_MAX_TOOL_ITERATIONS=20
 DREAM_HISTORY_TOKEN_LIMIT=16384
 
-# Backup provider (optional, must set both or neither)
-# DREAM_BACKUP_PROVIDER=google
-# DREAM_BACKUP_MODEL=gemini-2.5-flash
+# Backup model (optional)
+# DREAM_MODEL_CONFIG__FALLBACK__MODEL=gemini-2.5-flash
+# DREAM_MODEL_CONFIG__FALLBACK__TRANSPORT=gemini
 
-# Specialist models (use same provider as main model)
-DREAM_DEDUCTION_MODEL=claude-haiku-4-5
-DREAM_INDUCTION_MODEL=claude-haiku-4-5
+# Specialist model configs inherit omitted values from DREAM_MODEL_CONFIG
+DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=anthropic
+DREAM_DEDUCTION_MODEL_CONFIG__MODEL=claude-haiku-4-5
+DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT=anthropic
+DREAM_INDUCTION_MODEL_CONFIG__MODEL=claude-haiku-4-5
 ```
 
 **Surprisal-Based Sampling (Advanced):**
@@ -524,7 +573,7 @@ VECTOR_STORE_MIGRATED=false
 # Global namespace prefix for all vector namespaces
 VECTOR_STORE_NAMESPACE=honcho
 
-# Embedding dimensions (default for OpenAI text-embedding-3-small)
+# Embedding dimensions should match EMBEDDING_VECTOR_DIMENSIONS
 VECTOR_STORE_DIMENSIONS=1536
 
 # Reconciliation interval for syncing
@@ -627,8 +676,10 @@ ENABLED = false
 [deriver]
 ENABLED = true
 WORKERS = 1
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
+
+[deriver.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 
 [peer_card]
 ENABLED = true
@@ -637,46 +688,68 @@ ENABLED = true
 MAX_OUTPUT_TOKENS = 8192
 
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 
+[dialectic.levels.minimal.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
 
+[dialectic.levels.low.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 
+[dialectic.levels.medium.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
 
+[dialectic.levels.high.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
+
+[dialectic.levels.max.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 2048
 
 [summary]
 ENABLED = true
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash"
 MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
 
+[summary.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash"
+
 [dream]
 ENABLED = true
-PROVIDER = "anthropic"
-MODEL = "claude-sonnet-4-20250514"
+
+[dream.model_config]
+transport = "anthropic"
+model = "claude-sonnet-4-20250514"
+
+[dream.deduction_model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+
+[dream.induction_model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
 
 [webhook]
 MAX_WORKSPACE_LIMIT = 10
@@ -734,8 +807,10 @@ DEFAULT_TTL_SECONDS = 300
 [deriver]
 ENABLED = true
 WORKERS = 4
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
+
+[deriver.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
 
 [peer_card]
 ENABLED = true
@@ -744,46 +819,68 @@ ENABLED = true
 MAX_OUTPUT_TOKENS = 8192
 
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 
+[dialectic.levels.minimal.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
 
+[dialectic.levels.low.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash-lite"
+thinking_budget_tokens = 0
+
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 
+[dialectic.levels.medium.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
 
+[dialectic.levels.high.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 1024
+
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
+
+[dialectic.levels.max.model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+thinking_budget_tokens = 2048
 
 [summary]
 ENABLED = true
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash"
 MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
 
+[summary.model_config]
+transport = "gemini"
+model = "gemini-2.5-flash"
+
 [dream]
 ENABLED = true
-PROVIDER = "anthropic"
-MODEL = "claude-sonnet-4-20250514"
+
+[dream.model_config]
+transport = "anthropic"
+model = "claude-sonnet-4-20250514"
+
+[dream.deduction_model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
+
+[dream.induction_model_config]
+transport = "anthropic"
+model = "claude-haiku-4-5"
 
 [webhook]
 MAX_WORKSPACE_LIMIT = 10
@@ -882,6 +979,7 @@ uv run alembic revision --autogenerate -m "Description of changes"
 
 6. **Vector Store Issues**
    - For Turbopuffer, ensure `VECTOR_STORE_TURBOPUFFER_API_KEY` is set
-   - Check `VECTOR_STORE_DIMENSIONS` matches your embedding model
+   - Check `EMBEDDING_VECTOR_DIMENSIONS` matches your embedding model
+   - If `VECTOR_STORE_DIMENSIONS` is set explicitly, it must match `EMBEDDING_VECTOR_DIMENSIONS`
 
 This configuration guide covers all the settings available in Honcho. Always use environment-specific configuration files and never commit sensitive values like API keys or JWT secrets to version control.
