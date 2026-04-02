@@ -1245,17 +1245,16 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
     except ValueError:
         return f"ERROR: Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}. Please use a shorter query."
 
-    async with tracked_db("tool.search_memory") as db:
-        documents = await crud.query_documents(
-            db=db,
-            workspace_name=ctx.workspace_name,
-            observer=ctx.observer,
-            observed=ctx.observed,
-            query=query,
-            top_k=top_k,
-            embedding=query_embedding,
-        )
-        mem = Representation.from_documents(documents)
+    documents = await crud.query_documents(
+        db=None,
+        workspace_name=ctx.workspace_name,
+        observer=ctx.observer,
+        observed=ctx.observed,
+        query=query,
+        top_k=top_k,
+        embedding=query_embedding,
+    )
+    mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
         # fallback behavior: if the memory is *empty*, that means we're quite

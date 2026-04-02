@@ -753,6 +753,7 @@ def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
         patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
         patch("src.utils.agent_tools.tracked_db", mock_tracked_db_context),
+        patch("src.crud.document.tracked_db", mock_tracked_db_context),
         patch("src.dialectic.core.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.specialists.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.surprisal.tracked_db", mock_tracked_db_context),

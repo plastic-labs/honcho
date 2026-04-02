@@ -365,7 +365,7 @@ async def query_documents(
                 top_k,
             )
         async with tracked_db("query_documents.pgvector") as managed_db:
-            return await _query_documents_pgvector(
+            docs = await _query_documents_pgvector(
                 managed_db,
                 workspace_name,
                 observer,
@@ -375,6 +375,9 @@ async def query_documents(
                 max_distance,
                 top_k,
             )
+            for doc in docs:
+                managed_db.expunge(doc)
+            return docs
 
     # External vector store — network call first, DB only for the ID fetch
     document_ids = await query_external_vector_document_ids(
@@ -400,7 +403,7 @@ async def query_documents(
             filters=filters,
         )
     async with tracked_db("query_documents.fetch") as managed_db:
-        return await fetch_documents_by_ids(
+        docs = await fetch_documents_by_ids(
             db=managed_db,
             workspace_name=workspace_name,
             observer=observer,
@@ -408,6 +411,9 @@ async def query_documents(
             document_ids=document_ids,
             filters=filters,
         )
+        for doc in docs:
+            managed_db.expunge(doc)
+        return docs
 
 
 async def create_documents(
