@@ -135,7 +135,11 @@ export class HonchoHTTPClient {
         }
 
         // Handle fetch errors (network issues)
-        if (error instanceof TypeError && error.message.includes('fetch')) {
+        // Any TypeError thrown inside fetchWithTimeout is a network-level
+        // failure (e.g. "fetch failed", connection reset, DNS errors).
+        // Runtime-specific messages vary, so we match on the type rather
+        // than the message string.
+        if (error instanceof TypeError) {
           const connError = new ConnectionError(error.message)
           if (attempt < this.maxRetries) {
             lastError = connError

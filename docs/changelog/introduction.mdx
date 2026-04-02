@@ -524,7 +524,12 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.1.0 (Current)">
+        <Update label="v2.1.1 (Current)">
+        ### Fixed
+
+        - Broadened HTTP retry logic to cover `httpx.NetworkError` and `httpx.RemoteProtocolError` in addition to `TimeoutException` and `ConnectError`, improving resilience against transient network failures
+        </Update>
+        <Update label="v2.1.0">
         ### Added
 
         - `created_at` property on `Peer` and `Session` objects
@@ -661,7 +666,12 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.1.0 (Current)">
+        <Update label="v2.1.1 (Current)">
+        ### Fixed
+
+        - Broadened fetch error retry logic to catch all `TypeError` network failures (connection resets, DNS errors, etc.) instead of only those with `'fetch'` in the message, improving resilience across runtimes (Node, Bun, browsers)
+        </Update>
+        <Update label="v2.1.0">
         ### Added
 
         - `createdAt` property on `Peer` and `Session` wrapper objects
