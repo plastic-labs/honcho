@@ -39,13 +39,12 @@ async def agentic_chat(
     Returns:
         The synthesized answer string
     """
-    async with tracked_db("dialectic.agentic_chat") as db:
-        # Validate that the peers exist before proceeding
+    # Short-lived DB session for validation + config
+    async with tracked_db("dialectic.preflight") as db:
         await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
         if observer != observed:
             await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
 
-        # Resolve configuration to check if peer cards should be used
         session = None
         if session_name:
             session = await crud.get_session(
@@ -54,7 +53,6 @@ async def agentic_chat(
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
 
-        # Get peer cards for context (if enabled)
         observer_peer_card = None
         observed_peer_card = None
         if configuration.peer_card.use:
@@ -65,22 +63,19 @@ async def agentic_chat(
                 observed_peer_card = await crud.get_peer_card(
                     db, workspace_name, observer=observer, observed=observed
                 )
+    # DB session closed — agent runs without holding a connection
 
-        # Create and run the dialectic agent
-        agent = DialecticAgent(
-            db=db,
-            workspace_name=workspace_name,
-            session_name=session_name,
-            observer=observer,
-            observed=observed,
-            observer_peer_card=observer_peer_card,
-            observed_peer_card=observed_peer_card,
-            reasoning_level=reasoning_level,
-        )
+    agent = DialecticAgent(
+        workspace_name=workspace_name,
+        session_name=session_name,
+        observer=observer,
+        observed=observed,
+        observer_peer_card=observer_peer_card,
+        observed_peer_card=observed_peer_card,
+        reasoning_level=reasoning_level,
+    )
 
-        response = await agent.answer(query)
-
-    return response
+    return await agent.answer(query)
 
 
 async def agentic_chat_stream(
@@ -105,13 +100,12 @@ async def agentic_chat_stream(
     Yields:
         Chunks of the response text as they are generated
     """
-    async with tracked_db("dialectic.agentic_chat_stream") as db:
-        # Validate that the peers exist before proceeding
+    # Short-lived DB session for validation + config
+    async with tracked_db("dialectic.preflight") as db:
         await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
         if observer != observed:
             await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
 
-        # Resolve configuration to check if peer cards should be used
         session = None
         if session_name:
             session = await crud.get_session(
@@ -120,7 +114,6 @@ async def agentic_chat_stream(
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
 
-        # Get peer cards for context (if enabled)
         observer_peer_card = None
         observed_peer_card = None
         if configuration.peer_card.use:
@@ -131,18 +124,17 @@ async def agentic_chat_stream(
                 observed_peer_card = await crud.get_peer_card(
                     db, workspace_name, observer=observer, observed=observed
                 )
+    # DB session closed — agent streams without holding a connection
 
-        # Create and run the dialectic agent
-        agent = DialecticAgent(
-            db=db,
-            workspace_name=workspace_name,
-            session_name=session_name,
-            observer=observer,
-            observed=observed,
-            observer_peer_card=observer_peer_card,
-            observed_peer_card=observed_peer_card,
-            reasoning_level=reasoning_level,
-        )
+    agent = DialecticAgent(
+        workspace_name=workspace_name,
+        session_name=session_name,
+        observer=observer,
+        observed=observed,
+        observer_peer_card=observer_peer_card,
+        observed_peer_card=observed_peer_card,
+        reasoning_level=reasoning_level,
+    )
 
-        async for chunk in agent.answer_stream(query):
-            yield chunk
+    async for chunk in agent.answer_stream(query):
+        yield chunk

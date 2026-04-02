@@ -18,22 +18,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.crud.document import get_all_documents
+from src.dependencies import tracked_db
 from src.dreamer.trees import SurprisalTree, create_tree
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ObservationData:
+    """Plain data extracted from a Document ORM object (session-safe)."""
+
+    id: str
+    content: str
+    level: str | None
+    embedding: np.ndarray | list[float]
+
+
+@dataclass
 class SurprisalScore:
     """Container for observation with surprisal score."""
 
-    observation: models.Document
+    observation: ObservationData
     surprisal: float
     embedding: np.ndarray
 
 
 async def sample_observations_with_surprisal(
-    db: AsyncSession,
     workspace_name: str,
     observer: str,
     observed: str,
@@ -42,15 +52,14 @@ async def sample_observations_with_surprisal(
     Sample observations and compute surprisal scores.
 
     Workflow:
-    1. Fetch observations based on SAMPLING_STRATEGY
-    2. Extract embeddings from DB (already stored)
+    1. Fetch observations based on SAMPLING_STRATEGY (short DB scope)
+    2. Extract embeddings (already stored on objects, no DB needed)
     3. Build tree structure using trees.create_tree()
     4. Compute surprisal for each observation
     5. Rank by surprisal (highest first)
     6. Filter by threshold and take top N
 
     Args:
-        db: Database session
         workspace_name: Workspace identifier
         observer: Observer peer name
         observed: Observed peer name
@@ -59,13 +68,29 @@ async def sample_observations_with_surprisal(
         List of SurprisalScore objects, ranked by surprisal (highest first)
     """
     try:
-        # 1. Fetch observations
-        observations = await _fetch_observations(
-            db=db,
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-        )
+        # 1. Fetch observations (short DB scope, closed before compute)
+        async with tracked_db("dream.surprisal.fetch") as db:
+            raw_observations = await _fetch_observations(
+                db=db,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+            # Extract plain data from ORM objects before session closes,
+            # skipping any with null embeddings (can't compute surprisal).
+            observations = [
+                ObservationData(
+                    id=obs.id,
+                    content=obs.content,
+                    level=obs.level,
+                    embedding=obs.embedding,
+                )
+                for obs in raw_observations
+                if obs.embedding is not None
+            ]
+            skipped = len(raw_observations) - len(observations)
+            if skipped:
+                logger.warning(f"Skipped {skipped} observations with null embeddings")
 
         # Edge case: No observations
         if not observations:
@@ -326,7 +351,7 @@ async def _fetch_all_observations(
     return list(result.scalars().all())
 
 
-def _extract_embeddings(observations: list[models.Document]) -> np.ndarray:
+def _extract_embeddings(observations: list[ObservationData]) -> np.ndarray:
     """
     Extract embeddings from observations as numpy array.
 
@@ -370,7 +395,7 @@ def _build_tree(embeddings: np.ndarray) -> SurprisalTree:
 
 
 def _compute_surprisal_scores(
-    observations: list[models.Document],
+    observations: list[ObservationData],
     embeddings: np.ndarray,
     tree: SurprisalTree,
 ) -> list[SurprisalScore]:
@@ -378,7 +403,7 @@ def _compute_surprisal_scores(
     Compute surprisal score for each observation.
 
     Args:
-        observations: List of Document objects
+        observations: List of ObservationData objects
         embeddings: np.ndarray of embeddings matching observations
         tree: Built SurprisalTree
 

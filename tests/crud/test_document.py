@@ -387,7 +387,7 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
         )
 
-        assert count == 2
+        assert len(count) == 2
 
         # Verify documents were created
         stmt = select(models.Document).where(

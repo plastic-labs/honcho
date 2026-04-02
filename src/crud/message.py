@@ -739,6 +739,7 @@ async def search_messages_temporal(
     before_date: datetime | None = None,
     limit: int = 10,
     context_window: int = 2,
+    embedding: list[float] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity with optional date filtering.
@@ -755,13 +756,16 @@ async def search_messages_temporal(
         before_date: Only return messages before this datetime
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
+        embedding: Optional pre-computed embedding for the query
 
     Returns:
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
-    # Generate embedding for the search query
-    query_embedding = await embedding_client.embed(query)
+    # Use provided embedding or generate one
+    query_embedding = (
+        embedding if embedding is not None else await embedding_client.embed(query)
+    )
 
     # Build query with date filters
     match_stmt = (

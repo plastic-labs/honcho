@@ -162,7 +162,7 @@ class RepresentationManager:
             )
 
         # Use bulk creation with optional duplicate detection
-        new_documents = await crud.create_documents(
+        accepted_documents = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,
@@ -177,7 +177,7 @@ class RepresentationManager:
             except Exception as e:
                 logger.warning(f"Failed to check dream scheduling: {e}")
 
-        return new_documents
+        return len(accepted_documents)
 
     async def get_working_representation(
         self,
