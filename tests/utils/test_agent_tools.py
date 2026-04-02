@@ -118,9 +118,13 @@ async def tool_test_data(
     for doc in documents:
         await db_session.refresh(doc)
 
-    yield workspace, peer1, peer2, session, messages, documents
+    # Commit so data is visible to independent tracked_db sessions.
+    # Tool handlers no longer share the test's db_session — they open
+    # their own short-lived sessions via tracked_db.
+    # _truncate_all_tables handles cleanup between tests.
+    await db_session.commit()
 
-    await db_session.rollback()
+    yield workspace, peer1, peer2, session, messages, documents
 
 
 @pytest.fixture
@@ -386,6 +390,8 @@ class TestDeleteObservations:
 
         assert "Deleted 1 observations" in result
 
+        # Expire the document so the identity map picks up the committed soft-delete
+        db_session.expire(documents[0])
         # Verify soft-deletion (document still exists but has deleted_at timestamp)
         stmt = select(models.Document).where(models.Document.id == doc_id)
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
@@ -769,6 +775,8 @@ class TestUpdatePeerCard:
 
         assert "Updated peer card" in result
 
+        # Refresh the observer so the identity map picks up the committed update
+        await db_session.refresh(peer1)
         # Verify DB state
         peer_card = await crud.get_peer_card(
             db_session,
@@ -794,6 +802,8 @@ class TestUpdatePeerCard:
 
         await _handle_update_peer_card(ctx, {"content": oversized})
 
+        # Refresh the observer so the identity map picks up the committed update
+        await db_session.refresh(peer1)
         peer_card = await crud.get_peer_card(
             db_session,
             workspace_name=workspace.name,
@@ -824,6 +834,8 @@ class TestUpdatePeerCard:
         result = await _handle_update_peer_card(ctx, {"content": None})
         assert "empty" in result.lower()
 
+        # Refresh the observer so the identity map picks up the committed update
+        await db_session.refresh(peer1)
         # Verify original card is preserved
         peer_card = await crud.get_peer_card(
             db_session,
@@ -851,6 +863,8 @@ class TestUpdatePeerCard:
         result = await _handle_update_peer_card(ctx, {"content": []})
         assert "empty" in result.lower()
 
+        # Refresh the observer so the identity map picks up the committed update
+        await db_session.refresh(peer1)
         # Verify original card is preserved
         peer_card = await crud.get_peer_card(
             db_session,
