@@ -196,6 +196,52 @@ CACHE_URL=redis://localhost:6379/0
 
 ## Docker Issues
 
+### Docker build fails with permission errors
+
+The Honcho Dockerfile uses BuildKit mount syntax and creates a non-root `app` user. Common build failures:
+
+**1. BuildKit not enabled**
+
+The Dockerfile uses `RUN --mount=type=cache` which requires Docker BuildKit. If you see syntax errors during build:
+
+```bash
+# Ensure BuildKit is enabled
+DOCKER_BUILDKIT=1 docker compose build
+```
+
+Or add to your Docker daemon config (`/etc/docker/daemon.json`):
+```json
+{ "features": { "buildkit": true } }
+```
+
+**2. Permission denied during build or at runtime (Linux)**
+
+On Linux, AppArmor or SELinux can block Docker build operations and volume mounts. Symptoms include permission denied errors during `COPY`, `RUN`, or when the container tries to access mounted volumes.
+
+```bash
+# Check if AppArmor is blocking Docker
+sudo aa-status | grep docker
+
+# Temporarily test without AppArmor (for diagnosis only)
+docker compose down
+sudo aa-remove-unknown
+docker compose up -d
+```
+
+For SELinux, add `:z` to volume mounts in `docker-compose.yml`:
+```yaml
+volumes:
+  - .:/app:z
+```
+
+**3. Volume mount UID mismatch**
+
+The Dockerfile creates a non-root `app` user, but `docker-compose.yml.example` mounts `.:/app` which overlays the container filesystem with host-owned files. The `app` user inside the container may not have permission to read them.
+
+If you see permission errors at runtime (not build time), you can either:
+- Run without the source mount (remove `- .:/app` from volumes — the image already contains the code)
+- Or fix ownership: `sudo chown -R 100:101 .` (matches the `app` user inside the container)
+
 ### Containers start but API fails
 
 1. Check container status: `docker compose ps`

@@ -117,7 +117,7 @@ See the [Configuration Guide](./configuration) for the full reference.
 
 ## Docker Setup (Recommended)
 
-The easiest way to get started is using Docker Compose, which handles both the database and Honcho server.
+Docker Compose handles the database, Redis, and Honcho server. The compose file **builds the image from source** (there is no pre-built image on Docker Hub). This requires Docker with BuildKit enabled — see [Troubleshooting](./troubleshooting#docker-build-fails-with-permission-errors) if the build fails.
 
 ### 1. Clone the Repository
 
