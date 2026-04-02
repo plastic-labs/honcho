@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
-- Broadened HTTP retry logic to cover `httpx.NetworkError` and `httpx.RemoteProtocolError` in addition to `TimeoutException` and `ConnectError`, improving resilience against transient network failures
+- Broadened HTTP retry logic to cover `httpx.NetworkError` and `httpx.RemoteProtocolError` in addition to `httpx.TimeoutException` and `httpx.ConnectError`, improving resilience against transient network failures
 
 ## [2.1.0] - 2026-03-25
 

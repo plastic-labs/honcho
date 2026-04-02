@@ -268,7 +268,7 @@ peers_page = client.peers(
 
 ### 15. Broader HTTP retry logic (v2.1.1+)
 
-The SDK now retries on `httpx.NetworkError` and `httpx.RemoteProtocolError` in addition to `TimeoutException` and `ConnectError`. No code changes needed — this is transparent.
+The SDK now retries on `httpx.TimeoutException`, `httpx.NetworkError`, and `httpx.RemoteProtocolError` (previously only `httpx.TimeoutException` and `httpx.ConnectError`). These are mapped to the SDK's `TimeoutError` and `ConnectionError` respectively. No code changes needed — this is transparent.
 
 ## Quick Reference Table
 

@@ -134,22 +134,6 @@ export class HonchoHTTPClient {
           throw error
         }
 
-        // Handle fetch errors (network issues)
-        // Any TypeError thrown inside fetchWithTimeout is a network-level
-        // failure (e.g. "fetch failed", connection reset, DNS errors).
-        // Runtime-specific messages vary, so we match on the type rather
-        // than the message string.
-        if (error instanceof TypeError) {
-          const connError = new ConnectionError(error.message)
-          if (attempt < this.maxRetries) {
-            lastError = connError
-            await this.sleep(this.getRetryDelay(attempt))
-            attempt++
-            continue
-          }
-          throw connError
-        }
-
         throw error
       }
     }
@@ -345,6 +329,14 @@ export class HonchoHTTPClient {
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw new TimeoutError(`Request timed out after ${timeout}ms`)
+      }
+      // fetch() throws TypeError for network-level failures (e.g. "fetch
+      // failed", connection reset, DNS errors). Convert these to
+      // ConnectionError so the retry loop can handle them. This mapping
+      // lives here rather than in the outer catch so that TypeErrors from
+      // other sources (e.g. JSON.stringify serialization) propagate as-is.
+      if (error instanceof TypeError) {
+        throw new ConnectionError(error.message)
       }
       throw error
     } finally {
