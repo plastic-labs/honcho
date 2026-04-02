@@ -418,7 +418,7 @@ async def create_documents(
     observer: str,
     observed: str,
     deduplicate: bool = False,
-) -> int:
+) -> list[schemas.DocumentCreate]:
     """
     Create multiple documents with optional duplicate detection.
 
@@ -430,9 +430,11 @@ async def create_documents(
         observed: Name of the observed peer
 
     Returns:
-        Count of new documents
+        List of DocumentCreate schemas that were actually inserted (excludes
+        duplicates and failures).
     """
     honcho_documents: list[models.Document] = []
+    accepted_documents: list[schemas.DocumentCreate] = []
     # Store (document_model, embedding) pairs - IDs aren't available until after commit
     docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
 
@@ -488,6 +490,7 @@ async def create_documents(
             if doc.embedding:
                 new_doc.sync_state = "pending"
             honcho_documents.append(new_doc)
+            accepted_documents.append(doc)
 
             # Track embedding for vector store (ID will be available after commit)
             if doc.embedding:
@@ -586,7 +589,7 @@ async def create_documents(
             "Failed to create documents due to integrity constraint violation"
         ) from e
 
-    return len(honcho_documents)
+    return accepted_documents
 
 
 async def delete_document(

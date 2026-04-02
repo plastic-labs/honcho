@@ -722,9 +722,10 @@ async def create_observations(
         documents.append(doc)
 
     # Phase 3: Bulk create all documents (short DB scope)
+    accepted: list[schemas.DocumentCreate] = []
     if documents:
         async with tracked_db("create_observations.save") as db:
-            await crud.create_documents(
+            accepted = await crud.create_documents(
                 db,
                 documents=documents,
                 workspace_name=workspace_name,
@@ -734,15 +735,15 @@ async def create_observations(
             )
         logger.info(
             "Created %d observations in %s/%s/%s",
-            len(documents),
+            len(accepted),
             workspace_name,
             observer,
             observed,
         )
 
     return ObservationsCreatedResult(
-        created_count=len(documents),
-        created_levels=[doc.level for doc in documents],
+        created_count=len(accepted),
+        created_levels=[doc.level for doc in accepted],
         failed=failed,
     )
 
@@ -956,9 +957,9 @@ async def extract_preferences(
             e,
         )
 
-    async with tracked_db("extract_preferences") as db:
-        for query in semantic_queries:
-            try:
+    for query in semantic_queries:
+        try:
+            async with tracked_db("extract_preferences") as db:
                 snippets = await crud.search_messages(
                     db,
                     workspace_name=workspace_name,
@@ -979,8 +980,8 @@ async def extract_preferences(
                             if content_key not in seen_content:
                                 seen_content.add(content_key)
                                 messages.append(f"'{msg.content.strip()}'")
-            except Exception as e:
-                logger.warning("Error in semantic search for '%s': %s", query, e)
+        except Exception as e:
+            logger.warning("Error in semantic search for '%s': %s", query, e)
 
     return {
         "instructions": [],  # Deprecated - LLM will categorize
