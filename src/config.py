@@ -215,6 +215,11 @@ class LLMSettings(HonchoSettings):
 
     EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
 
+    # Override the default embedding model name for the chosen provider.
+    # When None, provider defaults are used (text-embedding-3-small for OpenAI,
+    # openai/text-embedding-3-small for OpenRouter, gemini-embedding-001 for Gemini).
+    EMBEDDING_MODEL: str | None = None
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 

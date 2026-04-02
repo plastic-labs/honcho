@@ -52,6 +52,10 @@ PROFILES_SAMPLE_RATE = 0.1
 [llm]
 DEFAULT_MAX_TOKENS = 2500
 EMBEDDING_PROVIDER = "openai"
+# Override the default embedding model for the chosen provider.
+# Defaults: "text-embedding-3-small" (openai), "openai/text-embedding-3-small" (openrouter),
+# "gemini-embedding-001" (gemini). Useful for Ollama or other OpenAI-compatible endpoints.
+# EMBEDDING_MODEL = "nomic-embed-text"
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
@@ -220,6 +224,9 @@ TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
 NAMESPACE = "honcho"
+# Embedding vector dimensions. Must match your embedding model's output dimensions.
+# Default 1536 matches OpenAI text-embedding-3-small. Changing this requires a fresh
+# database or manual column alteration + re-indexing.
 DIMENSIONS = 1536
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
