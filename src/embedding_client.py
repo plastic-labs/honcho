@@ -82,7 +82,9 @@ class _EmbeddingClient:
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
-                config={"output_dimensionality": 1536},
+                config={
+                    "output_dimensionality": settings.VECTOR_STORE.DIMENSIONS
+                },
             )
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
@@ -116,7 +118,9 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+                        config={
+                            "output_dimensionality": settings.VECTOR_STORE.DIMENSIONS
+                        },
                     )
                     if response.embeddings:
                         for emb in response.embeddings:
@@ -252,7 +256,9 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
+                        config={
+                            "output_dimensionality": settings.VECTOR_STORE.DIMENSIONS
+                        },
                     )
                     if response.embeddings:
                         for item, embedding in zip(

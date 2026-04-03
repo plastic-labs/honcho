@@ -21,10 +21,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
-from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing_extensions import override
 
+from src.config import settings
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
 from .db import Base
@@ -272,13 +273,32 @@ class Message(Base):
 
 @final
 class MessageEmbedding(Base):
+    """Message embedding vectors for similarity search.
+
+    NOTE: The embedding column width is driven by
+    settings.VECTOR_STORE.DIMENSIONS (env VECTOR_STORE_DIMENSIONS,
+    default 1536).  Existing Alembic migrations create the column as
+    Vector(1536).  If you change the configured dimensions you must
+    also alter the DB column, e.g.:
+
+        ALTER TABLE message_embeddings
+            ALTER COLUMN embedding TYPE vector(<new_dims>);
+        ALTER TABLE documents
+            ALTER COLUMN embedding TYPE vector(<new_dims>);
+
+    This must be done on an empty table or after re-embedding all
+    rows to the new dimensionality.
+    """
+
     __tablename__: str = "message_embeddings"
 
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True
+    )
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -386,7 +406,9 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True
+    )
     source_ids: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True, server_default=text("NULL")
     )
