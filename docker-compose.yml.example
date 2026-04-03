@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: ["sh", "docker/entrypoint.sh"]
+    entrypoint: ["sh", "-lc", "/app/.venv/bin/python scripts/provision_db.py && exec /app/.venv/bin/fastapi run --host 0.0.0.0 src/main.py"]
     depends_on:
       database:
         condition: service_healthy
@@ -12,9 +12,6 @@ services:
         condition: service_healthy
     ports:
       - 8000:8000
-    volumes:
-      - .:/app
-      - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
@@ -26,14 +23,17 @@ services:
       context: .
       dockerfile: Dockerfile
     entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import src.deriver' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
     depends_on:
       database:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - .:/app
-      - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
@@ -100,5 +100,4 @@ services:
         condition: service_started
 volumes:
   pgdata:
-  venv:
   prometheus-data:
