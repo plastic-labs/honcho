@@ -5,18 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [3.0.5] - 2026-04-03
 
 ### Fixed
 
-- Memory leak in deriver: `_observation_locks` dict grew unboundedly with every unique (workspace, observer, observed) combination; replaced with `WeakValueDictionary` so locks are automatically evicted when no longer in use (DEV-1412)
-- SQL injection vector in `dependencies.py`: parameterized `SET application_name` queries using `set_config()` instead of f-string interpolation (DEV-1400)
-- NUL byte (`\x00`) crashes: all user-facing text inputs (message content, metadata, peer cards, queries) are now sanitized at the Pydantic schema level before reaching PostgreSQL (DEV-1400)
+- explicit rollback on all transactions to force connection closed
+
+## [3.0.4] - 2026-04-02
 
 ### Added
 
-- JSONB metadata validation: max 100 top-level keys and max nesting depth of 5 on all metadata input fields (DEV-1400)
-- Filter recursion depth limit: `_build_filter_conditions()` now enforces a max depth of 5 to prevent stack overflow from deeply nested filter dicts (DEV-1400)
+- JSONB metadata validation enforces 100 key limit and max depth of 5 (#419)
+
+### Changed
+
+- Schemas refactored from single `schemas.py` into `schemas/api.py`, `schemas/configuration.py`, and `schemas/internal.py` with backwards-compatible re-exports (#419)
+
+### Fixed
+
+- Missing `deleted_at` filter on `RepresentationManager._query_documents_recent()` and `._query_documents_most_derived()` allowed soft-deleted documents to leak into the deriver's working representation (#456)
+- `CleanupStaleItemsCompletedEvent` emitted spuriously when no queue item was actually deleted (#454)
+- Empty JSON file uploads caused unhandled errors; now returns normalized error responses (#434)
+- Memory leak: `_observation_locks` switched to `WeakValueDictionary` to prevent unbounded growth (#419)
+- SQL injection in `dependencies.py`: parameterized `set_config` calls to prevent injection via request context (#419)
+- NUL byte crashes: string inputs (message content, queries, peer cards) now stripped at schema level (#419)
+- Filter recursion depth capped at 5 to prevent stack overflow (#419)
+- Dedup-skipped observations now correctly reflected in created counts (#477)
+- External vector store support for message search — routes queries through configured external vector store with oversampling and
+  deduplication to handle chunked embeddings (#479)
+- Dialectic agent no longer holds a DB connection during LLM calls — embeddings are pre-computed before tool execution, DB sessions isolated in `extract_preferences`, `query_documents` no longer accepts a DB session parameter (#477)
 
 ## [3.0.3] - 2026-02-25
 
