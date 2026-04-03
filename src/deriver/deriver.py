@@ -134,7 +134,7 @@ async def process_representation_tasks_batch(
         stop_seqs=["   \n", "\n\n\n\n"],
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
         max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
-        reasoning_effort="minimal",
+        reasoning_effort=settings.DERIVER.REASONING_EFFORT or "minimal",
         enable_retry=True,
         retry_attempts=3,
         trace_name="minimal_deriver",

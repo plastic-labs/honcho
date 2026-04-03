@@ -415,6 +415,7 @@ class DialecticAgent:
             messages=self.messages,
             track_name="Dialectic Agent",
             thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
+            reasoning_effort=level_settings.REASONING_EFFORT,
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
             trace_name="dialectic_chat",
         )
@@ -483,6 +484,7 @@ class DialecticAgent:
                 messages=self.messages,
                 track_name="Dialectic Agent Stream",
                 thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
+                reasoning_effort=level_settings.REASONING_EFFORT,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
             ),

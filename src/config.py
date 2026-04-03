@@ -251,6 +251,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
     TEMPERATURE: float | None = None
+    REASONING_EFFORT: Literal["minimal", "none", "low", "medium", "high", "xhigh"] | None = None
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
@@ -325,6 +326,10 @@ class DialecticLevelSettings(BaseModel):
     TOOL_CHOICE: Annotated[str | None, Field(validation_alias="tool_choice")] = (
         None  # None/auto lets model decide, "any"/"required" forces tool use
     )
+    REASONING_EFFORT: Annotated[
+        Literal["minimal", "none", "low", "medium", "high", "xhigh"] | None,
+        Field(validation_alias="reasoning_effort"),
+    ] = None
 
     @model_validator(mode="after")
     def _validate_backup_configuration(self) -> "DialecticLevelSettings":

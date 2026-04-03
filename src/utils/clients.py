@@ -68,7 +68,7 @@ IterationCallback = Callable[[IterationData], None]
 T = TypeVar("T")
 
 # Type aliases for OpenAI GPT-5 specific parameters
-ReasoningEffortType = Literal["low", "medium", "high", "minimal"] | None
+ReasoningEffortType = Literal["minimal", "none", "low", "medium", "high", "xhigh"] | None
 VerbosityType = Literal["low", "medium", "high"] | None
 
 
@@ -1198,7 +1198,7 @@ async def honcho_llm_call(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
@@ -1227,7 +1227,7 @@ async def honcho_llm_call(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
@@ -1256,7 +1256,7 @@ async def honcho_llm_call(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
@@ -1285,7 +1285,7 @@ async def honcho_llm_call(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,
@@ -1575,7 +1575,7 @@ async def honcho_llm_call_inner(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
@@ -1596,7 +1596,7 @@ async def honcho_llm_call_inner(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
@@ -1617,7 +1617,7 @@ async def honcho_llm_call_inner(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
@@ -1637,7 +1637,7 @@ async def honcho_llm_call_inner(
     json_mode: bool = False,
     temperature: float | None = None,
     stop_seqs: list[str] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
@@ -2351,7 +2351,7 @@ async def handle_streaming_response(
     json_mode: bool,
     thinking_budget_tokens: int | None,
     response_model: type[BaseModel] | None = None,
-    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    reasoning_effort: Literal["minimal", "none", "low", "medium", "high", "xhigh"] | None = None,
     verbosity: Literal["low", "medium", "high"] | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
     """
