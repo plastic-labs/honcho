@@ -236,7 +236,7 @@ async def _fetch_recent_observations(
         workspace_name=workspace_name,
         observer=observer,
         observed=observed,
-        filters={"level": levels} if levels else None,
+        filters={"level": {"in": levels}} if levels else None,
         limit=limit,
     )
 
