@@ -882,6 +882,7 @@ uv run alembic revision --autogenerate -m "Description of changes"
 5. **Dialectic Level Configuration**
    - Ensure all five reasoning levels are configured (minimal, low, medium, high, max)
    - For Anthropic provider, `THINKING_BUDGET_TOKENS` must be >= 1024 when enabled
+   - For non-Anthropic providers (OpenRouter with non-Anthropic models, vLLM, Ollama, Groq, Google, OpenAI), set `THINKING_BUDGET_TOKENS=0` for all components — these providers don't support Anthropic-style extended thinking and will error or silently fail
    - `MAX_OUTPUT_TOKENS` must be greater than `THINKING_BUDGET_TOKENS` for all levels
 
 6. **Vector Store Issues**

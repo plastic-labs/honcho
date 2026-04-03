@@ -1,0 +1,87 @@
+# Production deployment — no source mounts, restart policies, locked-down ports.
+#
+# Usage:
+#   cp docker-compose.prod.yml docker-compose.yml
+#   cp .env.template .env  # edit with your provider config
+#   docker compose up -d --build
+#
+# For development (source mounts, exposed ports, monitoring stack),
+# use docker-compose.yml.example instead.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["sh", "docker/entrypoint.sh"]
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://honcho:honcho@database:5432/honcho
+      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - CACHE_ENABLED=true
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  deriver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://honcho:honcho@database:5432/honcho
+      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - CACHE_ENABLED=true
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  database:
+    image: pgvector/pgvector:pg15
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      - POSTGRES_DB=honcho
+      - POSTGRES_USER=honcho
+      - POSTGRES_PASSWORD=honcho
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pgdata:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honcho -d honcho"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:8.2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redis-data:

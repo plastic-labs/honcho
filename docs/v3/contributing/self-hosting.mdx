@@ -42,6 +42,26 @@ Each feature needs a `PROVIDER` and `MODEL`. You set these in your `.env` file (
 All Honcho agents (deriver, dialectic, dream) use tool calling. Your models must support the OpenAI tool calling format.
 </Warning>
 
+<Info>
+**Community quick-start**: [elkimek/honcho-self-hosted](https://github.com/elkimek/honcho-self-hosted) provides an opinionated one-command installer with pre-configured model tiers, interactive provider setup, and Hermes Agent integration. Good starting point if you want to get running fast.
+</Info>
+
+### Choosing Models
+
+Honcho's agents rely heavily on function calling. Model choice matters more for tool-use reliability than raw intelligence. Here are models known to work well, ranked by function-calling benchmarks:
+
+| Tier | Example models | Use case | Notes |
+|---|---|---|---|
+| **Light** | Gemini 2.5 Flash, GLM-4.7-Flash | Deriver, summary, dialectic minimal/low | High throughput, cheap, reliable tool use |
+| **Medium** | Claude Haiku 4.5, Grok 4.1 Fast | Dialectic medium/high | Good reasoning + tool use balance |
+| **Heavy** | Claude Sonnet 4, GLM-5 | Dream, dialectic max | Best quality for rare/complex tasks |
+
+Set `PROVIDER` and `MODEL` per feature — you can mix providers freely. For example, use Gemini for the deriver and Claude for dream.
+
+<Warning>
+**`THINKING_BUDGET_TOKENS` and non-Anthropic providers**: The default config uses thinking budgets tuned for Anthropic models. If you're using a provider that doesn't support Anthropic-style extended thinking (OpenRouter with non-Anthropic models, vLLM, Ollama, Groq, etc.), set `THINKING_BUDGET_TOKENS=0` for all components. Leaving it at the default will cause errors or silent failures. See the [Configuration Guide](./configuration#thinking-budget) for details.
+</Warning>
+
 ### Provider Options
 
 | Provider | Endpoint | Use case |
@@ -119,6 +139,13 @@ See the [Configuration Guide](./configuration) for the full reference.
 
 Docker Compose handles the database, Redis, and Honcho server. The compose file **builds the image from source** (there is no pre-built image on Docker Hub). This requires Docker with BuildKit enabled — see [Troubleshooting](./troubleshooting#docker-build-fails-with-permission-errors) if the build fails.
 
+Two compose files are provided:
+
+| File | Use case |
+|---|---|
+| `docker-compose.prod.yml` | **Production / VM deployment.** No source mounts, restart policies, ports bound to `127.0.0.1`, caching enabled. Use this on a server. |
+| `docker-compose.yml.example` | **Local development.** Source mounts for live reload, all ports exposed, includes Prometheus + Grafana monitoring stack. |
+
 ### 1. Clone the Repository
 
 ```bash
@@ -134,19 +161,24 @@ Copy the example environment file and configure it:
 cp .env.template .env
 ```
 
-Edit `.env` and configure your LLM provider — see [LLM Provider Setup](#llm-provider-setup) above. The database connection is already set in `docker-compose.yml.example`. Auth is disabled by default (`AUTH_USE_AUTH=false`).
+Edit `.env` and configure your LLM provider — see [LLM Provider Setup](#llm-provider-setup) above. The database connection is set in the compose file. Auth is disabled by default (`AUTH_USE_AUTH=false`).
 
 ### 3. Start the Services
 
 ```bash
-# Copy the example docker-compose file
-cp docker-compose.yml.example docker-compose.yml
+# For production / VM deployment:
+cp docker-compose.prod.yml docker-compose.yml
+
+# For local development (includes monitoring stack):
+# cp docker-compose.yml.example docker-compose.yml
 
 # Start PostgreSQL, Redis, Honcho API, and the deriver background worker
 docker compose up -d
 ```
 
-The compose file starts five services: **api** (port 8000), **deriver** (background worker), **database** (PostgreSQL with pgvector, port 5432), **redis** (port 6379), and **grafana** (port 3000, for monitoring when `METRICS_ENABLED=true`). Redis caching is available but disabled by default (`CACHE_ENABLED=false`).
+**Production compose** starts four services: **api** (port 8000), **deriver** (background worker), **database** (PostgreSQL with pgvector, port 5432), and **redis** (port 6379). All ports are bound to `127.0.0.1` — use a reverse proxy (nginx, Caddy) to expose the API externally with TLS. Redis caching is enabled by default.
+
+**Development compose** additionally includes **Prometheus** (port 9090) and **Grafana** (port 3000), and mounts the source directory for live code changes.
 
 ### 4. Run Database Migrations
 
@@ -380,12 +412,34 @@ Running into issues? See the [Troubleshooting Guide](./troubleshooting) for deta
 
 ## Production Considerations
 
-When self-hosting for production, consider:
+When self-hosting for production, start with `docker-compose.prod.yml` — it binds all ports to `127.0.0.1`, enables restart policies, and turns on caching by default.
 
 ### Security
 - Set `AUTH_USE_AUTH=true` and generate a JWT secret with `python scripts/generate_jwt_secret.py`
-- Use HTTPS via a reverse proxy (e.g., nginx, Caddy) in front of Honcho
+- Use HTTPS via a reverse proxy in front of Honcho. Example with Caddy (automatic TLS):
+  ```
+  honcho.example.com {
+      reverse_proxy localhost:8000
+  }
+  ```
+  Or with nginx:
+  ```nginx
+  server {
+      listen 443 ssl;
+      server_name honcho.example.com;
+      ssl_certificate /etc/letsencrypt/live/honcho.example.com/fullchain.pem;
+      ssl_certificate_key /etc/letsencrypt/live/honcho.example.com/privkey.pem;
+      location / {
+          proxy_pass http://127.0.0.1:8000;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+      }
+  }
+  ```
 - Secure your database with strong credentials and restrict network access
+- The production compose binds PostgreSQL and Redis to `127.0.0.1` only — they are not accessible from the network
 
 ### Scaling the Deriver
 - Increase `DERIVER_WORKERS` (default: 1) for higher message throughput
@@ -393,9 +447,9 @@ When self-hosting for production, consider:
 - Monitor deriver logs for processing backlog
 
 ### Caching
-- Enable Redis caching for high-traffic environments: `CACHE_ENABLED=true`
-- Requires a Redis instance (included in docker-compose, or use a managed Redis service)
-- Configure `CACHE_URL` to point to your Redis instance
+- The production compose enables Redis caching by default (`CACHE_ENABLED=true`)
+- For the development compose, enable manually: `CACHE_ENABLED=true`
+- Configure `CACHE_URL` to point to your Redis instance (or use a managed Redis service)
 
 ### Database Migrations
 - Always run `uv run alembic upgrade head` after updating Honcho before starting the server
@@ -408,8 +462,15 @@ When self-hosting for production, consider:
 ### Monitoring
 - Enable Prometheus metrics with `METRICS_ENABLED=true` (scraped at `/metrics` on port 8000 for API, port 9090 for deriver)
 - Enable Sentry error tracking with `SENTRY_ENABLED=true`
-- The docker-compose includes Grafana on port 3000 for dashboards
+- The development compose (`docker-compose.yml.example`) includes Prometheus and Grafana on ports 9090 and 3000. For the production compose, add them separately or use an external monitoring stack.
 
 ### Backups
-- Set up regular PostgreSQL backups (pg_dump or continuous archiving)
+- Set up regular PostgreSQL backups:
+  ```bash
+  # One-off backup
+  docker compose exec database pg_dump -U honcho honcho > backup-$(date +%Y%m%d).sql
+
+  # Restore
+  cat backup.sql | docker compose exec -T database psql -U honcho honcho
+  ```
 - Back up your `.env` or `config.toml` configuration files
