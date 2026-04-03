@@ -21,7 +21,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
-from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing_extensions import override
 
@@ -296,7 +296,7 @@ class MessageEmbedding(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(
+    embedding: Mapped[list[float] | None] = mapped_column(
         Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True
     )
     message_id: Mapped[str] = mapped_column(
@@ -406,7 +406,7 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(
+    embedding: Mapped[list[float] | None] = mapped_column(
         Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True
     )
     source_ids: Mapped[list[str] | None] = mapped_column(
