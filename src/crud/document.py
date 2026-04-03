@@ -557,6 +557,7 @@ async def create_documents(
                                 "observed": observed,
                                 "session_name": doc.session_name,
                                 "level": doc.level,
+                                "category": doc.category,
                             },
                         )
                     )
@@ -845,6 +846,7 @@ async def create_observations(
                                 "observed": observed,
                                 "session_name": doc.session_name,
                                 "level": doc.level,
+                                "category": doc.category,
                             },
                         )
                     )

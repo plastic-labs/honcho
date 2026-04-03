@@ -1288,7 +1288,9 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # this stage, and be efficient with tool calls, and make sure the model
         # doesn't short-circuit and think there's nothing here, we
         # automatically search the message history for relevant information.
-        if ctx.agent_type == "dialectic":
+        # Skip fallback when a category filter is applied — zero results may
+        # simply mean no observations in that category, not an empty memory.
+        if ctx.agent_type == "dialectic" and not category:
             limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
             message_output = None
             async with tracked_db("tool.search_memory.fallback") as db:

@@ -53,5 +53,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove category column and index."""
-    op.drop_index("ix_documents_category", table_name="documents", schema=schema)
-    op.drop_column("documents", "category", schema=schema)
+    connection = op.get_bind()
+    inspector = sa.inspect(connection)
+
+    if index_exists("documents", "ix_documents_category", inspector):
+        op.drop_index("ix_documents_category", table_name="documents", schema=schema)
+    if column_exists("documents", "category", inspector):
+        op.drop_column("documents", "category", schema=schema)

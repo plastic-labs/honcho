@@ -243,6 +243,7 @@ async def _sync_documents(
                         "observed": doc.observed,
                         "session_name": doc.session_name,
                         "level": doc.level,
+                        "category": doc.category,
                     },
                 )
             )
