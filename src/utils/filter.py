@@ -53,6 +53,7 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
     "observer_id": "observer",
     "observed_id": "observed",
     "metadata": "internal_metadata",
+    "category": "category",
 }
 
 

@@ -39,6 +39,7 @@ RULES:
 - Observations should make sense on their own. Each observation will be used in the future to better understand {peer_id}.
 - Extract ALL observations from {peer_id} messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
+- Assign a `category` to each observation to enable scoped retrieval. Use short lowercase labels like: preferences, personal, professional, goals, relationships, health, technical, hobbies, beliefs, habits, or other domain-specific labels as appropriate.
 
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
