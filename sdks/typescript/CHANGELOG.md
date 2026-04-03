@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.1] - 2026-04-01
+
+### Fixed
+
+- Broadened fetch error retry logic to catch all `TypeError` network failures (connection resets, DNS errors, etc.) instead of only those with `'fetch'` in the message, improving resilience across runtimes (Node, Bun, browsers)
+
 ## [2.1.0] - 2026-03-25
 
 ### Added

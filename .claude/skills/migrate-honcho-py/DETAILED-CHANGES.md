@@ -476,3 +476,132 @@ from honcho.api_types import SessionPeerConfig
 ```
 
 **Note:** `MessageCreateParam` (singular) is now `MessageCreateParams` (plural).
+
+---
+
+## 14. Card Method Deprecation and set_card (v2.0.1)
+
+### Before (v2.0.0)
+
+```python
+card: list[str] | None = peer.card()
+```
+
+### After (v2.0.1+)
+
+```python
+# get_card() is the preferred method
+card: list[str] | None = peer.get_card()
+
+# card() still works but emits a deprecation warning
+card = peer.card()  # Deprecated
+
+# New: set_card()
+updated = peer.set_card(["Fact 1", "Fact 2"])
+updated = peer.set_card(["Fact 1"], target="other-peer")
+
+# Async variants
+card = await peer.aio.get_card()
+await peer.aio.set_card(["Fact 1"])
+```
+
+---
+
+## 15. Strict Input Validation (v2.0.2)
+
+All Pydantic input models now use `extra="forbid"`, raising `ValidationError` for unknown fields.
+
+```python
+from honcho.api_types import PeerConfig
+
+# This now raises ValidationError instead of silently ignoring the typo
+PeerConfig(observe_mee=True)  # ValidationError: extra fields not permitted
+```
+
+---
+
+## 16. peer() and session() Always Make API Calls (v2.1.0)
+
+### Before (v2.0.x)
+
+```python
+# Without options: lazy object, no API call
+peer = client.peer("user-123")
+# peer.created_at was None
+
+# With options: made API call
+peer = client.peer("user-123", metadata={"key": "value"})
+```
+
+### After (v2.1.0+)
+
+```python
+# Always makes a get-or-create API call
+peer = client.peer("user-123")
+# peer.created_at is now always populated
+
+# Async
+peer = await client.aio.peer("user-123")
+```
+
+All Peer/Session objects now have `created_at` populated immediately after construction.
+
+---
+
+## 17. New Properties: created_at, is_active (v2.1.0)
+
+```python
+# Peer
+peer = client.peer("user-123")
+print(peer.created_at)  # datetime | None
+
+# Session
+session = client.session("sess-1")
+print(session.created_at)  # datetime | None
+print(session.is_active)   # bool | None
+
+# These are refreshed by get_metadata(), get_configuration(), and refresh()
+peer.refresh()
+session.refresh()
+```
+
+---
+
+## 18. get_message() on Session (v2.1.0)
+
+```python
+# Fetch a single message by ID
+msg = session.get_message("msg-abc123")
+print(msg.content, msg.created_at)
+
+# Async
+msg = await session.aio.get_message("msg-abc123")
+```
+
+---
+
+## 19. Pagination Parameters (v2.1.0)
+
+All list methods now accept `page`, `size`, and `reverse`:
+
+```python
+# Defaults: page=1, size=50, reverse=False
+peers_page = client.peers(page=2, size=25, reverse=True)
+
+# Returns SyncPage / AsyncPage with:
+print(peers_page.total)        # Total items
+print(peers_page.pages)        # Total pages
+print(peers_page.has_next_page())
+
+# Works on:
+# client.peers(), client.sessions()
+# peer.sessions()
+# session.messages()
+# scope.list()
+```
+
+---
+
+## 20. Broader HTTP Retry Logic (v2.1.1)
+
+The SDK now catches `httpx.NetworkError` and `httpx.RemoteProtocolError` for retry in addition to `httpx.TimeoutException` and `httpx.ConnectError`. This is transparent — no code changes needed.
