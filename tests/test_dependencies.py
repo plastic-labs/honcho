@@ -52,7 +52,7 @@ async def test_get_db_sets_application_name_when_tracing_enabled(
         await dep_gen.aclose()
         request_context.reset(context_token)
 
-    assert fake_db.rollback_calls == 0
+    assert fake_db.rollback_calls == 1  # unconditional rollback in finally
     assert fake_db.close_calls == 1
 
 
@@ -70,7 +70,7 @@ async def test_get_db_rolls_back_and_closes_when_consumer_raises(
     with pytest.raises(RuntimeError, match="boom"):
         await dep_gen.athrow(RuntimeError("boom"))
 
-    assert fake_db.rollback_calls == 1
+    assert fake_db.rollback_calls == 2  # once in except, once in finally
     assert fake_db.close_calls == 1
 
 
@@ -99,7 +99,7 @@ async def test_tracked_db_creates_and_resets_task_context(
     stmt, params = fake_db.execute_calls[0]
     assert "set_config" in str(stmt)
     assert params == {"name": "task:cleanup_job:12345678"}
-    assert fake_db.rollback_calls == 0
+    assert fake_db.rollback_calls == 1  # unconditional rollback in finally
     assert fake_db.close_calls == 1
 
 
@@ -122,7 +122,7 @@ async def test_tracked_db_preserves_existing_request_context(
     stmt, params = fake_db.execute_calls[0]
     assert "set_config" in str(stmt)
     assert params == {"name": "request:existing"}
-    assert fake_db.rollback_calls == 0
+    assert fake_db.rollback_calls == 1  # unconditional rollback in finally
     assert fake_db.close_calls == 1
 
 
@@ -138,7 +138,7 @@ async def test_tracked_db_rolls_back_on_error_and_closes(
         async with real_tracked_db("operation"):
             raise ValueError("failed operation")
 
-    assert fake_db.rollback_calls == 1
+    assert fake_db.rollback_calls == 2  # once in except, once in finally
     assert fake_db.close_calls == 1
 
 
