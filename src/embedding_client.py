@@ -56,11 +56,17 @@ class _EmbeddingClient:
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
         else:  # openai
+            base_url = settings.LLM.OPENAI_COMPATIBLE_BASE_URL
             if api_key is None:
                 api_key = settings.LLM.OPENAI_API_KEY
+                if not api_key and base_url:
+                    api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
             if not api_key:
-                raise ValueError("OpenAI API key is required")
-            base_url = settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+                raise ValueError(
+                    "OpenAI API key is required (set LLM_OPENAI_API_KEY,"
+                    + " or LLM_OPENAI_COMPATIBLE_API_KEY when using"
+                    + " LLM_OPENAI_COMPATIBLE_BASE_URL)"
+                )
             if base_url:
                 self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
             else:
