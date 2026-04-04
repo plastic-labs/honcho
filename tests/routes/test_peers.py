@@ -689,6 +689,22 @@ def test_search_peer_empty_query(
     assert isinstance(data, list)
 
 
+def test_search_peer_nul_only_query_rejected(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer search with a query that becomes empty after sanitization."""
+    test_workspace, test_peer = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
+        json={"query": "\x00", "limit": 10},
+    )
+    assert response.status_code == 422
+    error = response.json()["detail"][0]
+    assert error["loc"] == ["body", "query"]
+    assert error["type"] == "string_too_short"
+
+
 def test_search_peer_nonexistent(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
