@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 def start_metrics_server() -> None:
-    """Start the Prometheus metrics HTTP server on port 9090."""
-    start_http_server(9090)
-    logger.info("Prometheus metrics server started on port 9090")
+    """Start the Prometheus metrics HTTP server on localhost port 9090."""
+    start_http_server(9090, addr="127.0.0.1")
+    logger.info("Prometheus metrics server started on 127.0.0.1:9090")
 
 
 def setup_logging():
