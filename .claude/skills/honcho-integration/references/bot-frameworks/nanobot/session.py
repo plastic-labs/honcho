@@ -13,7 +13,7 @@ from nanobot.honcho.client import get_honcho_client
 
 if TYPE_CHECKING:
     from honcho import Honcho
-    from honcho.session import SessionPeerConfig
+    from honcho.api_types import SessionPeerConfig
 
 
 @dataclass
@@ -101,7 +101,7 @@ class HonchoSessionManager:
         """
         Get or create a Honcho peer.
 
-        Peers are lazy -- no API call until first use.
+        As of v2.1.0, peer() always makes a get-or-create API call.
         Observation settings are controlled per-session via SessionPeerConfig.
 
         Args:
@@ -138,7 +138,7 @@ class HonchoSessionManager:
         session = self.honcho.session(session_id)
 
         # Configure peer observation settings
-        from honcho.session import SessionPeerConfig
+        from honcho.api_types import SessionPeerConfig
         user_config = SessionPeerConfig(observe_me=True, observe_others=True)
         ai_config = SessionPeerConfig(observe_me=False, observe_others=True)
 
