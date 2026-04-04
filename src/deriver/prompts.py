@@ -37,13 +37,18 @@ Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
 RULES:
 - Properly attribute observations to the correct subject: if it is about {peer_id}, say so. If {peer_id} is referencing someone or something else, make that clear.
 - Observations should make sense on their own. Each observation will be used in the future to better understand {peer_id}.
-- Extract ALL observations from {peer_id} messages, using others as context.
+- Extract observations that are likely to remain useful beyond the current session.
+- Prefer durable facts, standing instructions, long-lived preferences, relationships, commitments, and ongoing situations that would still matter in a future conversation.
+- Do NOT extract one-off tasks, temporary workflow steps, ephemeral process updates, or short-lived session logistics unless the user clearly states they are an enduring preference, rule, or responsibility.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
 - EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
+- EXPLICIT: "Please always give me the short version first" → "{peer_id} prefers to receive the short version first"
+- SKIP: "I'm going to copy this into a markdown file now" → temporary task for the current session
+- SKIP: "The sync job is at step 1000 of 3000" → transient process status update
 
 Messages to analyze:
 <messages>
