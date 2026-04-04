@@ -1,5 +1,6 @@
 import asyncio
 import signal
+import time
 from asyncio import Task
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
@@ -10,7 +11,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, case, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +63,15 @@ class QueueManager:
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
+        self.last_queue_metrics_refresh_at: float = 0.0
+        self.queue_metrics_refresh_interval_seconds: float = 5.0
+        self.seen_queue_depth_labels: set[tuple[str, str, str]] = set()
+        self.seen_queue_oldest_age_labels: set[tuple[str, str, str]] = set()
+        self.seen_queue_error_backlog_labels: set[tuple[str, str]] = set()
+        self.seen_sessions_active_workspaces: set[str] = set()
+        self.seen_session_last_message_labels: set[tuple[str, str]] = set()
+        self.seen_session_queue_depth_labels: set[tuple[str, str, str]] = set()
+        self.seen_session_queue_oldest_age_labels: set[tuple[str, str, str]] = set()
 
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
@@ -321,6 +331,11 @@ class QueueManager:
         logger.debug("Starting polling loop")
         try:
             while not self.shutdown_event.is_set():
+                if settings.METRICS.ENABLED:
+                    prometheus_metrics.set_deriver_active_workers(
+                        count=self.get_total_owned_work_units()
+                    )
+
                 if self.queue_empty_flag.is_set():
                     # logger.debug("Queue empty flag set, waiting")
                     await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
@@ -335,6 +350,7 @@ class QueueManager:
 
                 try:
                     await self.cleanup_stale_work_units()
+                    await self.refresh_queue_health_metrics()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
                         for work_unit_key, aqs_id in claimed_work_units.items():
@@ -363,6 +379,336 @@ class QueueManager:
                     await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
         finally:
             logger.info("Polling loop stopped")
+
+    async def refresh_queue_health_metrics(self) -> None:
+        """Refresh queue health gauges on a short interval."""
+        now = time.monotonic()
+        if (
+            now - self.last_queue_metrics_refresh_at
+            < self.queue_metrics_refresh_interval_seconds
+        ):
+            return
+
+        self.last_queue_metrics_refresh_at = now
+
+        async with tracked_db("refresh_queue_health_metrics") as db:
+            is_in_progress = (~models.QueueItem.processed) & (
+                models.ActiveQueueSession.id.isnot(None)
+            )
+            is_pending = (~models.QueueItem.processed) & (
+                models.ActiveQueueSession.id.is_(None)
+            )
+
+            stmt = (
+                select(
+                    models.QueueItem.workspace_name,
+                    models.QueueItem.task_type,
+                    func.count(case((is_pending, 1))).label("pending_count"),
+                    func.count(case((is_in_progress, 1))).label("in_progress_count"),
+                    func.count(case((models.QueueItem.error.isnot(None), 1))).label(
+                        "error_backlog_count"
+                    ),
+                    func.min(case((is_pending, models.QueueItem.created_at))).label(
+                        "oldest_pending_at"
+                    ),
+                    func.min(case((is_in_progress, models.QueueItem.created_at))).label(
+                        "oldest_in_progress_at"
+                    ),
+                )
+                .select_from(models.QueueItem)
+                .outerjoin(
+                    models.ActiveQueueSession,
+                    models.QueueItem.work_unit_key
+                    == models.ActiveQueueSession.work_unit_key,
+                )
+                .where(models.QueueItem.workspace_name.isnot(None))
+                .where(
+                    models.QueueItem.task_type.in_(("representation", "summary", "dream"))
+                )
+                .group_by(models.QueueItem.workspace_name, models.QueueItem.task_type)
+            )
+
+            result = await db.execute(stmt)
+            rows = result.all()
+            await db.commit()
+
+        current_depth_labels: set[tuple[str, str, str]] = set()
+        current_oldest_age_labels: set[tuple[str, str, str]] = set()
+        current_error_backlog_labels: set[tuple[str, str]] = set()
+        current_sessions_active_workspaces: set[str] = set()
+        current_session_last_message_labels: set[tuple[str, str]] = set()
+        current_session_queue_depth_labels: set[tuple[str, str, str]] = set()
+        current_session_queue_oldest_age_labels: set[tuple[str, str, str]] = set()
+        now_utc = datetime.now(timezone.utc)
+
+        for row in rows:
+            workspace_name = row.workspace_name
+            task_type = row.task_type
+            if workspace_name is None:
+                continue
+
+            pending_count = int(row.pending_count or 0)
+            in_progress_count = int(row.in_progress_count or 0)
+            error_backlog_count = int(row.error_backlog_count or 0)
+
+            for state, count in (
+                ("pending", pending_count),
+                ("in_progress", in_progress_count),
+            ):
+                label = (workspace_name, task_type, state)
+                current_depth_labels.add(label)
+                prometheus_metrics.set_deriver_queue_depth(
+                    workspace_name=workspace_name,
+                    task_type=task_type,
+                    state=state,
+                    count=count,
+                )
+
+            if row.oldest_pending_at is not None:
+                current_oldest_age_labels.add((workspace_name, task_type, "pending"))
+                prometheus_metrics.set_deriver_queue_oldest_age(
+                    workspace_name=workspace_name,
+                    task_type=task_type,
+                    state="pending",
+                    age_seconds=max(
+                        0.0, (now_utc - row.oldest_pending_at).total_seconds()
+                    ),
+                )
+
+            if row.oldest_in_progress_at is not None:
+                current_oldest_age_labels.add(
+                    (workspace_name, task_type, "in_progress")
+                )
+                prometheus_metrics.set_deriver_queue_oldest_age(
+                    workspace_name=workspace_name,
+                    task_type=task_type,
+                    state="in_progress",
+                    age_seconds=max(
+                        0.0, (now_utc - row.oldest_in_progress_at).total_seconds()
+                    ),
+                )
+
+            backlog_label = (workspace_name, task_type)
+            current_error_backlog_labels.add(backlog_label)
+            prometheus_metrics.set_deriver_queue_error_backlog(
+                workspace_name=workspace_name,
+                task_type=task_type,
+                count=error_backlog_count,
+            )
+
+        async with tracked_db("refresh_session_metrics") as db:
+            active_sessions_stmt = (
+                select(
+                    models.Session.workspace_name,
+                    func.count(models.Session.id).label("active_session_count"),
+                )
+                .where(models.Session.is_active == True)  # noqa: E712
+                .group_by(models.Session.workspace_name)
+            )
+            active_sessions_rows = (await db.execute(active_sessions_stmt)).all()
+
+            session_activity_stmt = (
+                select(
+                    models.Session.workspace_name,
+                    models.Session.name,
+                    func.max(models.Message.created_at).label("last_message_at"),
+                    models.Session.created_at.label("session_created_at"),
+                )
+                .select_from(models.Session)
+                .outerjoin(
+                    models.Message,
+                    and_(
+                        models.Message.workspace_name == models.Session.workspace_name,
+                        models.Message.session_name == models.Session.name,
+                    ),
+                )
+                .where(models.Session.is_active == True)  # noqa: E712
+                .group_by(
+                    models.Session.workspace_name,
+                    models.Session.name,
+                    models.Session.created_at,
+                )
+            )
+            session_activity_rows = (await db.execute(session_activity_stmt)).all()
+
+            session_queue_stmt = (
+                select(
+                    models.QueueItem.workspace_name,
+                    models.Session.name.label("session_name"),
+                    func.count(case((is_pending, 1))).label("pending_count"),
+                    func.count(case((is_in_progress, 1))).label("in_progress_count"),
+                    func.min(case((is_pending, models.QueueItem.created_at))).label(
+                        "oldest_pending_at"
+                    ),
+                    func.min(case((is_in_progress, models.QueueItem.created_at))).label(
+                        "oldest_in_progress_at"
+                    ),
+                )
+                .select_from(models.QueueItem)
+                .join(models.Session, models.QueueItem.session_id == models.Session.id)
+                .outerjoin(
+                    models.ActiveQueueSession,
+                    models.QueueItem.work_unit_key
+                    == models.ActiveQueueSession.work_unit_key,
+                )
+                .where(models.QueueItem.workspace_name.isnot(None))
+                .where(models.Session.is_active == True)  # noqa: E712
+                .where(~models.QueueItem.processed)
+                .where(
+                    models.QueueItem.task_type.in_(("representation", "summary", "dream"))
+                )
+                .group_by(models.QueueItem.workspace_name, models.Session.name)
+            )
+            session_queue_rows = (await db.execute(session_queue_stmt)).all()
+            await db.commit()
+
+        for row in active_sessions_rows:
+            workspace_name = row.workspace_name
+            if workspace_name is None:
+                continue
+            current_sessions_active_workspaces.add(workspace_name)
+            prometheus_metrics.set_sessions_active(
+                workspace_name=workspace_name,
+                count=int(row.active_session_count or 0),
+            )
+
+        for row in session_activity_rows:
+            workspace_name = row.workspace_name
+            session_name = row.name
+            if workspace_name is None or session_name is None:
+                continue
+            current_session_last_message_labels.add((workspace_name, session_name))
+            last_activity_at = row.last_message_at or row.session_created_at
+            prometheus_metrics.set_session_last_message_age(
+                workspace_name=workspace_name,
+                session_name=session_name,
+                age_seconds=max(0.0, (now_utc - last_activity_at).total_seconds()),
+            )
+
+        for row in session_queue_rows:
+            workspace_name = row.workspace_name
+            session_name = row.session_name
+            if workspace_name is None or session_name is None:
+                continue
+
+            pending_count = int(row.pending_count or 0)
+            in_progress_count = int(row.in_progress_count or 0)
+
+            for state, count in (
+                ("pending", pending_count),
+                ("in_progress", in_progress_count),
+            ):
+                label = (workspace_name, session_name, state)
+                current_session_queue_depth_labels.add(label)
+                prometheus_metrics.set_session_queue_depth(
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    state=state,
+                    count=count,
+                )
+
+            if row.oldest_pending_at is not None:
+                current_session_queue_oldest_age_labels.add(
+                    (workspace_name, session_name, "pending")
+                )
+                prometheus_metrics.set_session_queue_oldest_age(
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    state="pending",
+                    age_seconds=max(
+                        0.0, (now_utc - row.oldest_pending_at).total_seconds()
+                    ),
+                )
+
+            if row.oldest_in_progress_at is not None:
+                current_session_queue_oldest_age_labels.add(
+                    (workspace_name, session_name, "in_progress")
+                )
+                prometheus_metrics.set_session_queue_oldest_age(
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    state="in_progress",
+                    age_seconds=max(
+                        0.0, (now_utc - row.oldest_in_progress_at).total_seconds()
+                    ),
+                )
+
+        for workspace_name, task_type, state in (
+            self.seen_queue_depth_labels - current_depth_labels
+        ):
+            prometheus_metrics.set_deriver_queue_depth(
+                workspace_name=workspace_name,
+                task_type=task_type,
+                state=state,
+                count=0,
+            )
+
+        for workspace_name, task_type, state in (
+            self.seen_queue_oldest_age_labels - current_oldest_age_labels
+        ):
+            prometheus_metrics.set_deriver_queue_oldest_age(
+                workspace_name=workspace_name,
+                task_type=task_type,
+                state=state,
+                age_seconds=0.0,
+            )
+
+        for workspace_name, task_type in (
+            self.seen_queue_error_backlog_labels - current_error_backlog_labels
+        ):
+            prometheus_metrics.set_deriver_queue_error_backlog(
+                workspace_name=workspace_name,
+                task_type=task_type,
+                count=0,
+            )
+
+        for workspace_name in (
+            self.seen_sessions_active_workspaces - current_sessions_active_workspaces
+        ):
+            prometheus_metrics.set_sessions_active(
+                workspace_name=workspace_name,
+                count=0,
+            )
+
+        for workspace_name, session_name in (
+            self.seen_session_last_message_labels - current_session_last_message_labels
+        ):
+            prometheus_metrics.set_session_last_message_age(
+                workspace_name=workspace_name,
+                session_name=session_name,
+                age_seconds=0.0,
+            )
+
+        for workspace_name, session_name, state in (
+            self.seen_session_queue_depth_labels - current_session_queue_depth_labels
+        ):
+            prometheus_metrics.set_session_queue_depth(
+                workspace_name=workspace_name,
+                session_name=session_name,
+                state=state,
+                count=0,
+            )
+
+        for workspace_name, session_name, state in (
+            self.seen_session_queue_oldest_age_labels
+            - current_session_queue_oldest_age_labels
+        ):
+            prometheus_metrics.set_session_queue_oldest_age(
+                workspace_name=workspace_name,
+                session_name=session_name,
+                state=state,
+                age_seconds=0.0,
+            )
+
+        self.seen_queue_depth_labels = current_depth_labels
+        self.seen_queue_oldest_age_labels = current_oldest_age_labels
+        self.seen_queue_error_backlog_labels = current_error_backlog_labels
+        self.seen_sessions_active_workspaces = current_sessions_active_workspaces
+        self.seen_session_last_message_labels = current_session_last_message_labels
+        self.seen_session_queue_depth_labels = current_session_queue_depth_labels
+        self.seen_session_queue_oldest_age_labels = (
+            current_session_queue_oldest_age_labels
+        )
 
     ######################
     # Queue Worker Logic #
@@ -794,7 +1140,7 @@ class QueueManager:
             await db.commit()
 
             if (
-                work_unit.task_type in ["representation", "summary"]
+                work_unit.task_type in ["representation", "summary", "dream"]
                 and work_unit.workspace_name is not None
                 and settings.METRICS.ENABLED
             ):
@@ -803,6 +1149,17 @@ class QueueManager:
                     workspace_name=work_unit.workspace_name,
                     task_type=work_unit.task_type,
                 )
+                now_utc = datetime.now(timezone.utc)
+                for item in items:
+                    if item.created_at is not None:
+                        prometheus_metrics.observe_deriver_queue_item_latency(
+                            workspace_name=work_unit.workspace_name,
+                            task_type=work_unit.task_type,
+                            outcome="processed",
+                            latency_seconds=max(
+                                0.0, (now_utc - item.created_at).total_seconds()
+                            ),
+                        )
 
     async def mark_queue_item_as_errored(
         self, item: QueueItem, work_unit_key: str, error: str
@@ -823,6 +1180,29 @@ class QueueManager:
                 .values(last_updated=func.now())
             )
             await db.commit()
+
+            work_unit = parse_work_unit_key(work_unit_key)
+            if (
+                settings.METRICS.ENABLED
+                and work_unit.workspace_name is not None
+                and work_unit.task_type in ["representation", "summary", "dream"]
+            ):
+                prometheus_metrics.record_deriver_queue_error(
+                    workspace_name=work_unit.workspace_name,
+                    task_type=work_unit.task_type,
+                )
+                if item.created_at is not None:
+                    prometheus_metrics.observe_deriver_queue_item_latency(
+                        workspace_name=work_unit.workspace_name,
+                        task_type=work_unit.task_type,
+                        outcome="errored",
+                        latency_seconds=max(
+                            0.0,
+                            (
+                                datetime.now(timezone.utc) - item.created_at
+                            ).total_seconds(),
+                        ),
+                    )
 
     async def _cleanup_work_unit(
         self,

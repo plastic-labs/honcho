@@ -68,7 +68,7 @@ if TYPE_CHECKING:
 
 from .conclusions import ConclusionCreateParams
 from .peer import Peer
-from .session import Session
+from .session import MAX_MESSAGES_PER_BATCH, Session
 
 logger = logging.getLogger(__name__)
 
@@ -1006,18 +1006,36 @@ class SessionAio(AsyncMetadataConfigMixin):
         if not isinstance(messages, list):
             messages = [messages]
 
-        messages_data = [
-            msg.model_dump(mode="json", exclude_none=True) for msg in messages
-        ]
+        created_messages: list[Message] = []
+        total_messages = len(messages)
 
-        data = await self._session._honcho._async_http_client.post(
-            routes.messages(self._session.workspace_id, self._session.id),
-            body={"messages": messages_data},
-        )
-        return [
-            Message.from_api_response(MessageResponse.model_validate(msg))
-            for msg in data
-        ]
+        for batch_start in range(0, total_messages, MAX_MESSAGES_PER_BATCH):
+            batch = messages[batch_start : batch_start + MAX_MESSAGES_PER_BATCH]
+            logger.info(
+                "Sending Honcho message batch",
+                extra={
+                    "session_id": self._session.id,
+                    "workspace_id": self._session.workspace_id,
+                    "batch_size": len(batch),
+                    "batch_start": batch_start,
+                    "total_messages": total_messages,
+                },
+            )
+
+            messages_data = [
+                msg.model_dump(mode="json", exclude_none=True) for msg in batch
+            ]
+
+            data = await self._session._honcho._async_http_client.post(
+                routes.messages(self._session.workspace_id, self._session.id),
+                body={"messages": messages_data},
+            )
+            created_messages.extend(
+                Message.from_api_response(MessageResponse.model_validate(msg))
+                for msg in data
+            )
+
+        return created_messages
 
     async def messages(
         self,

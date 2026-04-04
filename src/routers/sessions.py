@@ -18,6 +18,7 @@ from src.exceptions import (
     ValidationException,
 )
 from src.security import JWTParams, require_auth
+from src.telemetry import prometheus_metrics
 from src.utils import summarizer
 from src.utils.representation import Representation
 from src.utils.search import search
@@ -670,6 +671,12 @@ async def get_session_context(
         tokens if tokens is not None else config.settings.GET_CONTEXT_MAX_TOKENS
     )
 
+    if config.settings.METRICS.ENABLED:
+        prometheus_metrics.record_session_context_request(
+            workspace_name=workspace_id,
+            session_name=session_id,
+        )
+
     if peer_perspective and not peer_target:
         raise ValidationException(
             "peer_target must be provided if peer_perspective is provided"
@@ -803,6 +810,11 @@ async def search_session(
     filters = body.filters or {}
     filters["workspace_id"] = workspace_id
     filters["session_id"] = session_id
+    if config.settings.METRICS.ENABLED:
+        prometheus_metrics.record_session_search_request(
+            workspace_name=workspace_id,
+            session_name=session_id,
+        )
     return await search(
         db,
         body.query,

@@ -52,7 +52,7 @@ class _EmbeddingClient:
                 or "https://openrouter.ai/api/v1"
             )
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
+            self.model = settings.LLM.EMBEDDING_MODEL or "openai/text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
         else:  # openai

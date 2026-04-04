@@ -105,6 +105,7 @@ async def create_messages_for_session(
             prometheus_metrics.record_messages_created(
                 count=len(created_messages),
                 workspace_name=workspace_id,
+                session_name=session_id,
             )
 
         # Enqueue for processing (existing logic)
@@ -204,6 +205,7 @@ async def create_messages_with_file(
         prometheus_metrics.record_messages_created(
             count=len(created_messages),
             workspace_name=workspace_id,
+            session_name=session_id,
         )
 
     return created_messages

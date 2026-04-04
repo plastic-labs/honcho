@@ -1,39 +1,55 @@
 services:
+  traefik:
+    image: traefik:v3.2
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:8000
+      - --ping=true
+    ports:
+      - ${HONCHO_HTTP_PORT:-8000}:8000
+      - ${TRAEFIK_DASHBOARD_PORT:-8080}:8080
+    volumes:
+      - ./docker/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    networks:
+      - honcho
+
   api:
     image: honcho:latest
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: ["sh", "docker/entrypoint.sh"]
+    entrypoint: ["/app/docker/entrypoint.sh"]
     depends_on:
       database:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - 8000:8000
-    volumes:
-      - .:/app
-      - venv:/app/.venv
+      traefik:
+        condition: service_started
+    expose:
+      - 8000
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
     env_file:
       - path: .env
         required: false
+    networks:
+      - honcho
+
   deriver:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    entrypoint: ["python", "-m", "src.deriver"]
     depends_on:
       database:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - .:/app
-      - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
@@ -41,6 +57,9 @@ services:
     env_file:
       - path: .env
         required: false
+    networks:
+      - honcho
+
   database:
     image: pgvector/pgvector:pg15
     restart: always
@@ -56,11 +75,14 @@ services:
     volumes:
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
       - pgdata:/var/lib/postgresql/data/
+    networks:
+      - honcho
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
+
   redis:
     image: redis:8.2
     restart: always
@@ -68,11 +90,14 @@ services:
       - 6379:6379
     volumes:
       - ./redis-data:/data
+    networks:
+      - honcho
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+
   prometheus:
     image: prom/prometheus:v3.2.1
     ports:
@@ -83,6 +108,9 @@ services:
     depends_on:
       api:
         condition: service_started
+    networks:
+      - honcho
+
   grafana:
     image: grafana/grafana:11.4.0
     ports:
@@ -98,7 +126,13 @@ services:
     depends_on:
       prometheus:
         condition: service_started
+    networks:
+      - honcho
+
+networks:
+  honcho:
+    name: honcho
+
 volumes:
   pgdata:
-  venv:
   prometheus-data:

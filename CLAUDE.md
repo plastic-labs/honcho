@@ -84,6 +84,37 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 - Typechecking: `uv run basedpyright`
 - Format code: `uv run ruff format src/`
 
+### Local LM Studio Setup
+
+- Honcho can use LM Studio for generation through the `custom` provider path.
+- Keep `LLM_OPENAI_API_KEY` configured for embeddings unless embedding support is added for local models.
+- For Docker Compose, `LLM_OPENAI_COMPATIBLE_BASE_URL` must be `http://host.docker.internal:1234/v1`, not `http://localhost:1234/v1`.
+- `LLM_OPENAI_COMPATIBLE_API_KEY=lm-studio` is sufficient for local use.
+- Current local default model is `qwen2.5-14b-instruct`.
+- When overriding `DIALECTIC_LEVELS__*` via env vars, each level needs its full required settings, not just `PROVIDER` and `MODEL`. Include `THINKING_BUDGET_TOKENS` and `MAX_TOOL_ITERATIONS`, and optionally `MAX_OUTPUT_TOKENS`.
+- Docker should own the runtime environment completely. Do not mount the repo onto `/app` and do not mount a named volume onto `/app/.venv`, or the image-built environment can be hidden and replaced with incompatible artifacts.
+- If Docker services fail with missing Python modules or incompatible native extensions, rebuild the image instead of trying to repair the environment in-place:
+
+```bash
+docker compose build --no-cache api deriver
+docker compose up -d --force-recreate api deriver
+```
+
+- Verify LM Studio from the host with:
+
+```bash
+curl -sS http://localhost:1234/v1/models
+```
+
+- Verify LM Studio from Docker with:
+
+```bash
+docker compose run --rm --entrypoint sh api -lc 'python - <<\"PY\"
+import urllib.request
+print(urllib.request.urlopen(\"http://host.docker.internal:1234/v1/models\", timeout=5).status)
+PY'
+```
+
 ### SDK Testing
 
 #### TypeScript SDK

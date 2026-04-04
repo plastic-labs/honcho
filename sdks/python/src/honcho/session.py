@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["Session", "SessionPeerConfig"]
 
+MAX_MESSAGES_PER_BATCH = 100
+
 
 class Session(SessionBase, MetadataConfigMixin):
     """
@@ -427,18 +429,36 @@ class Session(SessionBase, MetadataConfigMixin):
         if not isinstance(messages, list):
             messages = [messages]
 
-        messages_data = [
-            msg.model_dump(mode="json", exclude_none=True) for msg in messages
-        ]
+        created_messages: list[Message] = []
+        total_messages = len(messages)
 
-        data = self._honcho._http.post(
-            routes.messages(self.workspace_id, self.id),
-            body={"messages": messages_data},
-        )
-        return [
-            Message.from_api_response(MessageResponse.model_validate(msg))
-            for msg in data
-        ]
+        for batch_start in range(0, total_messages, MAX_MESSAGES_PER_BATCH):
+            batch = messages[batch_start : batch_start + MAX_MESSAGES_PER_BATCH]
+            logger.info(
+                "Sending Honcho message batch",
+                extra={
+                    "session_id": self.id,
+                    "workspace_id": self.workspace_id,
+                    "batch_size": len(batch),
+                    "batch_start": batch_start,
+                    "total_messages": total_messages,
+                },
+            )
+
+            messages_data = [
+                msg.model_dump(mode="json", exclude_none=True) for msg in batch
+            ]
+
+            data = self._honcho._http.post(
+                routes.messages(self.workspace_id, self.id),
+                body={"messages": messages_data},
+            )
+            created_messages.extend(
+                Message.from_api_response(MessageResponse.model_validate(msg))
+                for msg in data
+            )
+
+        return created_messages
 
     @validate_call
     def messages(

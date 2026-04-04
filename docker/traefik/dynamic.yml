@@ -1,0 +1,77 @@
+http:
+  routers:
+    honcho-health:
+      rule: Path(`/health`)
+      entryPoints:
+        - web
+      service: ping@internal
+
+    honcho-api-double-v3:
+      rule: PathPrefix(`/v3/v3`)
+      entryPoints:
+        - web
+      priority: 120
+      middlewares:
+        - honcho-strip-extra-v3
+      service: honcho-api
+
+    honcho-api-v3-docs:
+      rule: Path(`/v3/docs`) || Path(`/v3/openapi.json`)
+      entryPoints:
+        - web
+      priority: 110
+      middlewares:
+        - honcho-v3-docs
+      service: honcho-api
+
+    honcho-api:
+      rule: PathPrefix(`/v3`) || Path(`/docs`) || Path(`/openapi.json`) || Path(`/metrics`)
+      entryPoints:
+        - web
+      priority: 100
+      service: honcho-api
+
+    honcho-api-root-fallback:
+      rule: PathPrefix(`/workspaces`) || PathPrefix(`/keys`)
+      entryPoints:
+        - web
+      priority: 90
+      middlewares:
+        - honcho-add-v3
+      service: honcho-api
+
+    honcho-api-root:
+      rule: Path(`/`)
+      entryPoints:
+        - web
+      priority: 80
+      middlewares:
+        - honcho-root-docs
+      service: honcho-api
+
+  middlewares:
+    honcho-v3-docs:
+      replacePathRegex:
+        regex: ^/v3/(docs|openapi\.json)$
+        replacement: /$1
+
+    honcho-strip-extra-v3:
+      replacePathRegex:
+        regex: ^/v3/v3(?:/(.*))?$
+        replacement: /v3/$1
+
+    honcho-add-v3:
+      replacePathRegex:
+        regex: ^/(workspaces|keys)(.*)$
+        replacement: /v3/$1$2
+
+    honcho-root-docs:
+      replacePathRegex:
+        regex: ^/$
+        replacement: /docs
+
+  services:
+    honcho-api:
+      loadBalancer:
+        servers:
+          - url: http://api:8000

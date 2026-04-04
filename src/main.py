@@ -1,6 +1,7 @@
 import logging
 import re
 import uuid
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -232,6 +233,7 @@ async def track_request(
     # Store in request state and context var
     request.state.request_id = request_id
     token = request_context.set(f"api:{request_id}")
+    started_at = time.perf_counter()
 
     try:
         response = await call_next(request)
@@ -239,10 +241,17 @@ async def track_request(
         # Track metrics if enabled
         if settings.METRICS.ENABLED:
             template = get_route_template(request)
+            duration_seconds = time.perf_counter() - started_at
             prometheus_metrics.record_api_request(
                 method=request.method,
                 endpoint=template,
                 status_code=str(response.status_code),
+            )
+            prometheus_metrics.record_api_request_duration(
+                method=request.method,
+                endpoint=template,
+                status_code=str(response.status_code),
+                duration_seconds=duration_seconds,
             )
 
         return response

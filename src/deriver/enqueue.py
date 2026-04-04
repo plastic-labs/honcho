@@ -12,6 +12,7 @@ from src.dreamer.dream_scheduler import get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
 from src.schemas import MessageConfiguration, ResolvedConfiguration
+from src.telemetry import prometheus_metrics
 from src.utils.config_helpers import get_configuration
 from src.utils.queue_payload import (
     create_deletion_payload,
@@ -70,6 +71,19 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 stmt = insert(QueueItem).returning(QueueItem)
                 await db_session.execute(stmt, queue_records)
                 await db_session.commit()
+                if settings.METRICS.ENABLED:
+                    enqueued_by_task_type: dict[str, int] = {}
+                    for queue_record in queue_records:
+                        task_type = queue_record["task_type"]
+                        enqueued_by_task_type[task_type] = (
+                            enqueued_by_task_type.get(task_type, 0) + 1
+                        )
+                    for task_type, count in enqueued_by_task_type.items():
+                        prometheus_metrics.record_deriver_queue_item_enqueued(
+                            count=count,
+                            workspace_name=workspace_name,
+                            task_type=task_type,
+                        )
 
         except Exception as e:
             logger.exception("Failed to enqueue message(s)!")
