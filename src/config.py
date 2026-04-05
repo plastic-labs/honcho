@@ -213,7 +213,19 @@ class LLMSettings(HonchoSettings):
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    # AWS Bedrock settings
+    AWS_REGION: str = "us-east-1"
+    AWS_ACCESS_KEY_ID: str | None = None
+    AWS_SECRET_ACCESS_KEY: str | None = None
+    AWS_SESSION_TOKEN: str | None = None
+    BEDROCK_EMBEDDING_MODEL: str = "amazon.titan-embed-text-v2:0"
+    # Note: The database schema defaults to Vector(1536). When using embedding
+    # models with different dimensions, update the DB columns accordingly.
+    BEDROCK_EMBEDDING_DIMENSIONS: Annotated[
+        int, Field(default=1024, gt=0, le=4096)
+    ] = 1024
+
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter", "bedrock"] = "openai"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500

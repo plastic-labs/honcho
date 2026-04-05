@@ -1,14 +1,16 @@
 import asyncio
+import json
 import logging
 import threading
 from collections import defaultdict
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import tiktoken
 from google import genai
 from openai import AsyncOpenAI
 
 from .config import settings
+from .utils.clients import BedrockClient
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,19 @@ class _EmbeddingClient:
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
+        elif self.provider == "bedrock":
+            self.bedrock_client: BedrockClient = BedrockClient(
+                region_name=settings.LLM.AWS_REGION,
+                aws_access_key_id=settings.LLM.AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.LLM.AWS_SECRET_ACCESS_KEY,
+                aws_session_token=settings.LLM.AWS_SESSION_TOKEN,
+            )
+            # Bedrock calls go through self.bedrock_client, not self.client
+            self.client = None  # pyright: ignore[reportAttributeAccessIssue]
+            self.model = settings.LLM.BEDROCK_EMBEDDING_MODEL
+            # Titan V2 supports up to 8192 tokens
+            self.max_embedding_tokens = min(settings.MAX_EMBEDDING_TOKENS, 8192)
+            self.max_batch_size = 1  # Titan has no batch API; iterate one at a time
         elif self.provider == "openrouter":
             if api_key is None:
                 api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
@@ -78,7 +93,9 @@ class _EmbeddingClient:
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
 
-        if isinstance(self.client, genai.Client):
+        if self.provider == "bedrock":
+            return await self._bedrock_embed(query)
+        elif isinstance(self.client, genai.Client):
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
@@ -87,26 +104,62 @@ class _EmbeddingClient:
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
             return response.embeddings[0].values
-        else:  # openai
+        else:  # openai / openrouter
             response = await self.client.embeddings.create(
                 model=self.model, input=query
             )
             return response.data[0].embedding
 
-    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
-        """
-        Simple batch embedding for a list of text strings.
+    async def _bedrock_embed(self, query: str) -> list[float]:
+        """Embed a single query using Amazon Bedrock Titan embedding model.
 
         Args:
-            texts: List of text strings to embed
+            query: The text to embed.
 
         Returns:
-            List of embedding vectors corresponding to input texts
+            The embedding vector.
 
         Raises:
-            ValueError: If any text exceeds token limits
+            ValueError: If no embedding is returned.
+        """
+        body = json.dumps(
+            {
+                "inputText": query,
+                "dimensions": settings.LLM.BEDROCK_EMBEDDING_DIMENSIONS,
+                "normalize": True,
+            }
+        )
+        response: dict[str, Any] = await self.bedrock_client.invoke_model(
+            modelId=self.model,
+            body=body,
+            contentType="application/json",
+            accept="application/json",
+        )
+        response_body = json.loads(response["body"].read())
+        embedding: list[float] | None = response_body.get("embedding")
+        if embedding is None:
+            raise ValueError("No embedding returned from Bedrock API")
+        return embedding
+
+    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+        """Simple batch embedding for a list of text strings.
+
+        Args:
+            texts: List of text strings to embed.
+
+        Returns:
+            List of embedding vectors corresponding to input texts.
+
+        Raises:
+            ValueError: If any text exceeds token limits.
         """
         embeddings: list[list[float]] = []
+
+        if self.provider == "bedrock":
+            # Titan has no batch API; iterate one at a time
+            for text in texts:
+                embeddings.append(await self._bedrock_embed(text))
+            return embeddings
 
         for i in range(0, len(texts), self.max_batch_size):
             batch = texts[i : i + self.max_batch_size]
@@ -248,7 +301,12 @@ class _EmbeddingClient:
                 # Organize embeddings by text_id and chunk_index
                 result: dict[str, dict[int, list[float]]] = defaultdict(dict)
 
-                if isinstance(self.client, genai.Client):
+                if self.provider == "bedrock":
+                    # Titan has no batch API; embed one at a time
+                    for item in batch:
+                        embedding = await self._bedrock_embed(item.text)
+                        result[item.text_id][item.chunk_index] = embedding
+                elif isinstance(self.client, genai.Client):
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
@@ -378,7 +436,10 @@ class EmbeddingClient:
             with self._lock:
                 if self._instance is None:
                     provider = settings.LLM.EMBEDDING_PROVIDER
-                    if provider == "gemini":
+                    if provider == "bedrock":
+                        # Bedrock uses AWS credentials, not API keys
+                        api_key = None
+                    elif provider == "gemini":
                         api_key = settings.LLM.GEMINI_API_KEY
                     elif provider == "openrouter":
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY

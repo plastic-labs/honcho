@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Callable
@@ -42,6 +43,51 @@ GEMINI_BLOCKED_FINISH_REASONS = {
     "PROHIBITED_CONTENT",
     "BLOCKLIST",
 }
+
+
+class BedrockClient:
+    """Wrapper around boto3 bedrock-runtime client for async compatibility."""
+
+    def __init__(
+        self,
+        region_name: str,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
+    ):
+        self.region_name: str = region_name
+        self.aws_access_key_id: str | None = aws_access_key_id
+        self.aws_secret_access_key: str | None = aws_secret_access_key
+        self.aws_session_token: str | None = aws_session_token
+        self._client: Any = None
+
+    @property
+    def client(self) -> Any:
+        if self._client is None:
+            try:
+                import boto3
+            except ImportError:
+                raise ImportError(
+                    "boto3 is required for Bedrock provider. Install with: pip install honcho[bedrock]"
+                )
+
+            kwargs: dict[str, Any] = {"region_name": self.region_name}
+            if self.aws_access_key_id and self.aws_secret_access_key:
+                kwargs["aws_access_key_id"] = self.aws_access_key_id
+                kwargs["aws_secret_access_key"] = self.aws_secret_access_key
+            if self.aws_session_token:
+                kwargs["aws_session_token"] = self.aws_session_token
+            self._client = boto3.client("bedrock-runtime", **kwargs)
+        return self._client
+
+    async def converse(self, **kwargs: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(self.client.converse, **kwargs)
+
+    async def converse_stream(self, **kwargs: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(self.client.converse_stream, **kwargs)
+
+    async def invoke_model(self, **kwargs: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(self.client.invoke_model, **kwargs)
 
 
 @dataclass
@@ -247,7 +293,7 @@ def _get_effective_temperature(temperature: float | None) -> float | None:
 
 CLIENTS: dict[
     SupportedProviders,
-    AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
+    AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq | BedrockClient,
 ] = {}
 
 if settings.LLM.ANTHROPIC_API_KEY:
@@ -283,6 +329,24 @@ if settings.LLM.GEMINI_API_KEY:
 if settings.LLM.GROQ_API_KEY:
     groq = AsyncGroq(api_key=settings.LLM.GROQ_API_KEY)
     CLIENTS["groq"] = groq
+
+# Bedrock uses AWS credentials - always initialize if any provider references
+# bedrock, or if explicit keys are provided. Supports IAM roles on EC2/ECS/Lambda
+# without explicit keys.
+_bedrock_providers_in_use = (
+    settings.DERIVER.PROVIDER == "bedrock"
+    or settings.SUMMARY.PROVIDER == "bedrock"
+    or settings.DREAM.PROVIDER == "bedrock"
+    or any(lvl.PROVIDER == "bedrock" for lvl in settings.DIALECTIC.LEVELS.values())
+    or settings.LLM.AWS_ACCESS_KEY_ID is not None
+)
+if _bedrock_providers_in_use:
+    CLIENTS["bedrock"] = BedrockClient(
+        region_name=settings.LLM.AWS_REGION,
+        aws_access_key_id=settings.LLM.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.LLM.AWS_SECRET_ACCESS_KEY,
+        aws_session_token=settings.LLM.AWS_SESSION_TOKEN,
+    )
 
 SELECTED_PROVIDERS = [
     ("Summary", settings.SUMMARY.PROVIDER),
@@ -361,6 +425,20 @@ def convert_tools_for_provider(
                     for tool in tools
                 ]
             }
+        ]
+    elif provider == "bedrock":
+        # Bedrock converse API toolSpec format
+        return [
+            {
+                "toolSpec": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "inputSchema": {
+                        "json": tool["input_schema"],
+                    },
+                }
+            }
+            for tool in tools
         ]
     else:
         # For unsupported providers, return as-is (will likely error if tools are used)
@@ -1074,6 +1152,25 @@ def _format_assistant_tool_message(
             "role": "assistant",
             "content": content_blocks,
         }
+    elif provider == "bedrock":
+        # Bedrock converse API format
+        bedrock_content_blocks: list[dict[str, Any]] = []
+        if isinstance(content, str) and content:
+            bedrock_content_blocks.append({"text": content})
+        for tool_call in tool_calls:
+            bedrock_content_blocks.append(
+                {
+                    "toolUse": {
+                        "toolUseId": tool_call["id"],
+                        "name": tool_call["name"],
+                        "input": tool_call["input"],
+                    }
+                }
+            )
+        return {
+            "role": "assistant",
+            "content": bedrock_content_blocks,
+        }
     elif provider == "google":
         # Google format: model role with function_call parts
         parts: list[dict[str, Any]] = []
@@ -1154,6 +1251,25 @@ def _append_tool_results(
             {
                 "role": "user",
                 "content": result_blocks,
+            }
+        )
+    elif provider == "bedrock":
+        # Bedrock converse API toolResult format
+        tool_result_blocks: list[dict[str, Any]] = []
+        for tr in tool_results:
+            result_block: dict[str, Any] = {
+                "toolResult": {
+                    "toolUseId": tr["tool_id"],
+                    "content": [{"text": str(tr["result"])}],
+                }
+            }
+            if tr.get("is_error"):
+                result_block["toolResult"]["status"] = "error"
+            tool_result_blocks.append(result_block)
+        conversation_messages.append(
+            {
+                "role": "user",
+                "content": tool_result_blocks,
             }
         )
     elif provider == "google":
@@ -1351,9 +1467,9 @@ async def honcho_llm_call(
     # Set attempt counter to 1 for first call (tenacity uses 1-indexed attempts)
     _current_attempt.set(1)
 
-    def _get_provider_and_model() -> (
-        tuple[SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType]
-    ):
+    def _get_provider_and_model() -> tuple[
+        SupportedProviders, str, int | None, ReasoningEffortType, VerbosityType
+    ]:
         """
         Get the provider and model to use based on current attempt.
 
@@ -2344,9 +2460,152 @@ async def honcho_llm_call_inner(
                     tool_calls_made=[],
                 )
 
+        case BedrockClient():
+            # Extract system messages and non-system messages
+            for msg in params["messages"]:
+                if msg.get("role") == "system":
+                    system_messages.append(msg["content"])
+                else:
+                    non_system_messages.append(msg)
+
+            # Convert messages to Bedrock converse format
+            bedrock_messages: list[dict[str, Any]] = []
+            for msg in non_system_messages:
+                role = msg.get("role", "user")
+                content = msg.get("content")
+
+                if isinstance(content, str):
+                    bedrock_messages.append(
+                        {"role": role, "content": [{"text": content}]}
+                    )
+                elif isinstance(content, list):
+                    # Already in Bedrock content block format (from tool calling loop)
+                    bedrock_messages.append({"role": role, "content": content})
+                else:
+                    bedrock_messages.append(
+                        {"role": role, "content": [{"text": str(content)}]}
+                    )
+
+            bedrock_params: dict[str, Any] = {
+                "modelId": params["model"],
+                "messages": bedrock_messages,
+                "inferenceConfig": {"maxTokens": params["max_tokens"]},
+            }
+
+            if temperature is not None:
+                bedrock_params["inferenceConfig"]["temperature"] = temperature
+
+            if stop_seqs:
+                bedrock_params["inferenceConfig"]["stopSequences"] = stop_seqs
+
+            # Add system messages in Bedrock format
+            if system_messages:
+                bedrock_params["system"] = [{"text": "\n\n".join(system_messages)}]
+
+            # Add tools if provided
+            if tools:
+                tool_config: dict[str, Any] = {"tools": tools}
+                if tool_choice:
+                    if isinstance(tool_choice, str):
+                        if tool_choice == "auto":
+                            tool_config["toolChoice"] = {"auto": {}}
+                        elif tool_choice in ("any", "required"):
+                            tool_config["toolChoice"] = {"any": {}}
+                        elif tool_choice == "none":
+                            pass
+                        else:
+                            # Specific tool name
+                            tool_config["toolChoice"] = {"tool": {"name": tool_choice}}
+                    else:
+                        tool_config["toolChoice"] = tool_choice
+                bedrock_params["toolConfig"] = tool_config
+
+            # For response models, add JSON schema instruction
+            if response_model or json_mode:
+                if response_model:
+                    schema_json = json.dumps(
+                        response_model.model_json_schema(), indent=2
+                    )
+                    # Append schema instruction to the last user message
+                    last_msg = bedrock_params["messages"][-1]
+                    if (
+                        last_msg["content"]
+                        and isinstance(last_msg["content"][-1], dict)
+                        and "text" in last_msg["content"][-1]
+                    ):
+                        last_msg["content"][-1]["text"] += (
+                            f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                        )
+                    else:
+                        last_msg["content"].append(
+                            {
+                                "text": f"Respond with valid JSON matching this schema:\n{schema_json}"
+                            }
+                        )
+                # Add JSON instruction to system prompt
+                json_instruction = (
+                    "You must respond with valid JSON only. No other text."
+                )
+                if "system" in bedrock_params:
+                    bedrock_params["system"][0]["text"] += f"\n\n{json_instruction}"
+                else:
+                    bedrock_params["system"] = [{"text": json_instruction}]
+
+            bedrock_response = await client.converse(**bedrock_params)
+
+            # Parse response content
+            bedrock_text_blocks: list[str] = []
+            bedrock_tool_calls: list[dict[str, Any]] = []
+            output_message = bedrock_response.get("output", {}).get("message", {})
+            for block in output_message.get("content", []):
+                if "text" in block:
+                    bedrock_text_blocks.append(block["text"])
+                elif "toolUse" in block:
+                    tool_use = block["toolUse"]
+                    bedrock_tool_calls.append(
+                        {
+                            "id": tool_use["toolUseId"],
+                            "name": tool_use["name"],
+                            "input": tool_use["input"],
+                        }
+                    )
+
+            bedrock_usage = bedrock_response.get("usage", {})
+            bedrock_input_tokens = bedrock_usage.get("inputTokens", 0)
+            bedrock_output_tokens = bedrock_usage.get("outputTokens", 0)
+            bedrock_stop_reason = bedrock_response.get("stopReason", "end_turn")
+
+            bedrock_text_content = "\n".join(bedrock_text_blocks)
+
+            # If using response_model, parse the JSON response
+            if response_model:
+                try:
+                    parsed_json = json.loads(bedrock_text_content)
+                    parsed_content = response_model.model_validate(parsed_json)
+
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        input_tokens=bedrock_input_tokens,
+                        output_tokens=bedrock_output_tokens,
+                        finish_reasons=[bedrock_stop_reason],
+                        tool_calls_made=bedrock_tool_calls,
+                    )
+                except (json.JSONDecodeError, ValidationError, ValueError) as e:
+                    raise ValueError(
+                        f"Failed to parse Bedrock response as {response_model}: {e}. Raw content: {bedrock_text_content}"
+                    ) from e
+
+            return HonchoLLMCallResponse(
+                content=bedrock_text_content,
+                input_tokens=bedrock_input_tokens,
+                output_tokens=bedrock_output_tokens,
+                finish_reasons=[bedrock_stop_reason],
+                tool_calls_made=bedrock_tool_calls,
+            )
+
 
 async def handle_streaming_response(
-    client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
+    client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq | BedrockClient,
     params: dict[str, Any],
     json_mode: bool,
     thinking_budget_tokens: int | None,
@@ -2573,3 +2832,107 @@ async def handle_streaming_response(
                         is_done=True,
                         finish_reasons=[chunk.choices[0].finish_reason],
                     )
+
+        case BedrockClient():
+            # Extract system messages and build Bedrock-format messages
+            messages = params["messages"]
+            system_content = "\n\n".join(
+                m["content"] for m in messages if m.get("role") == "system"
+            )
+            bedrock_stream_messages: list[dict[str, Any]] = []
+            for msg in messages:
+                if msg.get("role") == "system":
+                    continue
+                role = msg.get("role", "user")
+                content = msg.get("content")
+                if isinstance(content, str):
+                    bedrock_stream_messages.append(
+                        {"role": role, "content": [{"text": content}]}
+                    )
+                elif isinstance(content, list):
+                    bedrock_stream_messages.append({"role": role, "content": content})
+                else:
+                    bedrock_stream_messages.append(
+                        {"role": role, "content": [{"text": str(content)}]}
+                    )
+
+            bedrock_stream_params: dict[str, Any] = {
+                "modelId": params["model"],
+                "messages": bedrock_stream_messages,
+                "inferenceConfig": {"maxTokens": params["max_tokens"]},
+            }
+
+            if system_content:
+                bedrock_stream_params["system"] = [{"text": system_content}]
+
+            if response_model or json_mode:
+                json_instruction = (
+                    "You must respond with valid JSON only. No other text."
+                )
+                if response_model:
+                    schema_json = json.dumps(
+                        response_model.model_json_schema(), indent=2
+                    )
+                    last_msg = bedrock_stream_messages[-1]
+                    if (
+                        last_msg["content"]
+                        and isinstance(last_msg["content"][-1], dict)
+                        and "text" in last_msg["content"][-1]
+                    ):
+                        last_msg["content"][-1]["text"] += (
+                            f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                        )
+                if "system" in bedrock_stream_params:
+                    bedrock_stream_params["system"][0]["text"] += (
+                        f"\n\n{json_instruction}"
+                    )
+                else:
+                    bedrock_stream_params["system"] = [{"text": json_instruction}]
+
+            stream_response = await client.converse_stream(**bedrock_stream_params)
+            event_stream = stream_response.get("stream", [])
+
+            bedrock_stream_output_tokens: int | None = None
+            bedrock_stream_stop_reason: str | None = None
+
+            # converse_stream returns a sync EventStream; use a queue to
+            # yield chunks as they arrive instead of buffering everything.
+            import queue as _queue_mod
+
+            q: _queue_mod.Queue[dict[str, Any] | object] = _queue_mod.Queue()
+            _SENTINEL = object()
+
+            def _read_bedrock_stream() -> None:
+                try:
+                    for ev in event_stream:
+                        q.put(ev)
+                finally:
+                    q.put(_SENTINEL)
+
+            loop = asyncio.get_event_loop()
+            loop.run_in_executor(None, _read_bedrock_stream)
+
+            while True:
+                event = await asyncio.to_thread(q.get)
+                if event is _SENTINEL:
+                    break
+                if "contentBlockDelta" in event:
+                    delta = event["contentBlockDelta"].get("delta", {})
+                    if "text" in delta:
+                        yield HonchoLLMCallStreamChunk(content=delta["text"])
+                elif "messageStop" in event:
+                    bedrock_stream_stop_reason = event["messageStop"].get(
+                        "stopReason", "end_turn"
+                    )
+                elif "metadata" in event:
+                    meta_usage = event["metadata"].get("usage", {})
+                    bedrock_stream_output_tokens = meta_usage.get("outputTokens", None)
+
+            yield HonchoLLMCallStreamChunk(
+                content="",
+                is_done=True,
+                finish_reasons=[bedrock_stream_stop_reason]
+                if bedrock_stream_stop_reason
+                else [],
+                output_tokens=bedrock_stream_output_tokens,
+            )

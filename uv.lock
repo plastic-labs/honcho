@@ -1320,10 +1320,14 @@ dependencies = [
     { name = "typing-extensions" },
 ]
 
+[package.optional-dependencies]
+bedrock = [
+    { name = "boto3" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
-    { name = "boto3" },
     { name = "coverage" },
     { name = "fakeredis" },
     { name = "honcho-ai" },
@@ -1343,6 +1347,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
+    { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.5" },
     { name = "cashews", extras = ["redis"], specifier = "==7.4.4" },
     { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.131.0" },
@@ -1375,11 +1380,11 @@ requires-dist = [
     { name = "turbopuffer", specifier = ">=1.8.1" },
     { name = "typing-extensions", specifier = ">=4.11.0" },
 ]
+provides-extras = ["bedrock"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = ">=1.29.4" },
-    { name = "boto3", specifier = ">=1.42.5" },
     { name = "coverage", specifier = ">=7.6.0" },
     { name = "fakeredis", specifier = ">=2.32.0" },
     { name = "honcho-ai", editable = "sdks/python" },
