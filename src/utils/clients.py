@@ -289,9 +289,14 @@ SELECTED_PROVIDERS = [
     ("Deriver", settings.DERIVER.PROVIDER),
 ]
 
-# Add all dialectic level providers
+# Add all dialectic level providers (search and synthesis)
 for level, level_settings in settings.DIALECTIC.LEVELS.items():
     SELECTED_PROVIDERS.append((f"Dialectic ({level})", level_settings.PROVIDER))
+    # Also validate synthesis provider if configured
+    if level_settings.SYNTHESIS is not None:
+        SELECTED_PROVIDERS.append(
+            (f"Dialectic ({level}) Synthesis", level_settings.SYNTHESIS.PROVIDER)
+        )
 
 for provider_name, provider_value in SELECTED_PROVIDERS:
     if provider_value not in CLIENTS:
@@ -304,9 +309,14 @@ BACKUP_PROVIDERS: list[tuple[str, SupportedProviders | None]] = [
     ("Dream", settings.DREAM.BACKUP_PROVIDER),
 ]
 
-# Add all dialectic level backup providers
+# Add all dialectic level backup providers (search and synthesis)
 for level, level_settings in settings.DIALECTIC.LEVELS.items():
     BACKUP_PROVIDERS.append((f"Dialectic ({level})", level_settings.BACKUP_PROVIDER))
+    # Also validate synthesis backup provider if configured
+    if level_settings.SYNTHESIS is not None:
+        BACKUP_PROVIDERS.append(
+            (f"Dialectic ({level}) Synthesis", level_settings.SYNTHESIS.BACKUP_PROVIDER)
+        )
 
 for component_name, backup_provider in BACKUP_PROVIDERS:
     if backup_provider is not None and backup_provider not in CLIENTS:
@@ -488,6 +498,7 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
         cache_read_input_tokens: Number of tokens read from cache.
         finish_reasons: List of finish reasons for the response.
         tool_calls_made: Optional list of all tool calls executed during the request.
+        messages: Full conversation history including tool calls and results (for two-phase dialectic).
 
     Note:
         Uncached input tokens = input_tokens - cache_read_input_tokens + cache_creation_input_tokens
@@ -508,6 +519,8 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
     # OpenRouter reasoning_details for Gemini models - must be preserved across turns
     reasoning_details: list[dict[str, Any]] = Field(default_factory=list)
+    # Full conversation history for two-phase dialectic (search -> synthesis)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -543,6 +556,7 @@ class StreamingResponseWithMetadata:
     cache_read_input_tokens: int
     thinking_content: str | None
     iterations: int
+    messages: list[dict[str, Any]]
 
     def __init__(
         self,
@@ -554,6 +568,7 @@ class StreamingResponseWithMetadata:
         cache_read_input_tokens: int,
         thinking_content: str | None = None,
         iterations: int = 0,
+        messages: list[dict[str, Any]] | None = None,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -563,6 +578,7 @@ class StreamingResponseWithMetadata:
         self.cache_read_input_tokens = cache_read_input_tokens
         self.thinking_content = thinking_content
         self.iterations = iterations
+        self.messages = messages or []
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
         return self._stream.__aiter__()
@@ -835,6 +851,7 @@ async def _execute_tool_loop(
                     cache_read_input_tokens=total_cache_read_tokens,
                     thinking_content=response.thinking_content,
                     iterations=iteration + 1,
+                    messages=conversation_messages,
                 )
 
             response.tool_calls_made = all_tool_calls
@@ -843,6 +860,7 @@ async def _execute_tool_loop(
             response.cache_creation_input_tokens = total_cache_creation_tokens
             response.cache_read_input_tokens = total_cache_read_tokens
             response.iterations = iteration + 1
+            response.messages = conversation_messages
             return response
 
         # Determine which provider we're using (reuse the helper)
@@ -968,6 +986,7 @@ async def _execute_tool_loop(
             cache_read_input_tokens=total_cache_read_tokens,
             thinking_content=None,  # No thinking content at max iterations
             iterations=iteration + 1,  # +1 for the synthesis call
+            messages=conversation_messages,
         )
 
     # Make one final call to get a text response
@@ -1023,6 +1042,7 @@ async def _execute_tool_loop(
     final_response.cache_read_input_tokens = (
         total_cache_read_tokens + final_response.cache_read_input_tokens
     )
+    final_response.messages = conversation_messages
     return final_response
 
 
@@ -1444,6 +1464,7 @@ async def honcho_llm_call(
                 True,  # type: ignore[arg-type]
                 converted_tools,
                 tool_choice,
+                messages,
             )
         else:
             return await honcho_llm_call_inner(
@@ -1461,6 +1482,7 @@ async def honcho_llm_call(
                 False,  # type: ignore[arg-type]
                 converted_tools,
                 tool_choice,
+                messages,
             )
 
     decorated = _call_with_provider_selection
