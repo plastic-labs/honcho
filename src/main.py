@@ -16,6 +16,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src.cache.client import close_cache, init_cache
+from src.embedding_client import close_embedding_client
 from src.config import settings
 from src.db import engine, request_context
 from src.exceptions import HonchoException
@@ -140,6 +141,7 @@ async def lifespan(_: FastAPI):
 
         await close_external_vector_store()
         await close_cache()
+        await close_embedding_client()
         await engine.dispose()
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
