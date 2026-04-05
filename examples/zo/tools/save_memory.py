@@ -1,6 +1,6 @@
 """Save a conversation message to Honcho memory."""
 
-from setup import get_client
+from client import get_client
 
 
 def save_memory(user_id: str, content: str, role: str, session_id: str) -> str:

@@ -6,7 +6,7 @@ compatibility: Requires Python 3.9+, honcho-ai>=2.1.1, and a Honcho API key from
 metadata:
   author: plastic-labs
   version: "0.1.0"
-  honcho-sdk: "2.1.1"
+  honcho-sdk: "2.1.0"
 ---
 
 # Honcho Memory Skill

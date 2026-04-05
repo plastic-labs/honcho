@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from setup import get_client
+from client import get_client
 
 
 def query_memory(user_id: str, query: str, session_id: str | None = None) -> str:

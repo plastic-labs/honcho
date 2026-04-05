@@ -124,7 +124,7 @@ To publish this skill to the [Zo Skills Registry](https://github.com/zocomputer/
    └── honcho-memory/
        ├── SKILL.md
        ├── README.md
-       ├── setup.py
+       ├── client.py
        ├── pyproject.toml
        └── tools/
    ```
