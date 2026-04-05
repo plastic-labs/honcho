@@ -2,7 +2,7 @@
 name: honcho-memory
 description: Gives AI agents persistent memory across conversations using Honcho. Automatically saves and retrieves user context so the AI remembers preferences, history, and facts between sessions. Use when you need the AI to remember past conversations, recall what a user has told it, inject relevant context into prompts, or manage separate memory spaces for different topics.
 license: AGPL-3.0
-compatibility: Requires Python 3.9+, honcho-ai>=2.1.1, and a Honcho API key from honcho.dev. Set HONCHO_API_KEY and optionally HONCHO_WORKSPACE_ID in your environment.
+compatibility: Requires Python 3.9+, honcho-ai>=2.1.0, and a Honcho API key from honcho.dev. Set HONCHO_API_KEY and optionally HONCHO_WORKSPACE_ID in your environment.
 metadata:
   author: plastic-labs
   version: "0.1.0"
@@ -17,11 +17,14 @@ This skill provides three tools for storing and retrieving AI memory using [Honc
 
 1. Get a Honcho API key at [honcho.dev](https://honcho.dev).
 2. Set environment variables:
+
    ```
    HONCHO_API_KEY=your-api-key
    HONCHO_WORKSPACE_ID=default   # optional, defaults to "default"
    ```
+
 3. Install dependencies:
+
    ```
    pip install honcho-ai python-dotenv
    ```

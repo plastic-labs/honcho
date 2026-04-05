@@ -1,20 +1,39 @@
 """Functional tests for Honcho Zo skill tools.
 
-These tests require a running Honcho server. Start the server with:
-
-    uv run fastapi dev src/main.py
-
-from the repository root before running these tests.
+These tests require a Honcho API key set in the HONCHO_API_KEY environment
+variable. They run against the Honcho cloud API (honcho.dev) by default.
+Set HONCHO_WORKSPACE_ID to scope tests to a specific workspace.
 """
 
-import sys
 import os
+import sys
+import time
+import uuid
+
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.save_memory import save_memory
-from tools.query_memory import query_memory
 from tools.get_context import get_context
+from tools.query_memory import query_memory
+from tools.save_memory import save_memory
+
+pytestmark = pytest.mark.skipif(
+    not os.getenv("HONCHO_API_KEY"),
+    reason="HONCHO_API_KEY not set — skipping integration tests",
+)
+
+
+@pytest.fixture(autouse=True)
+def rate_limit_delay():
+    """Pause between tests to stay under the Honcho API rate limit (5 req/sec)."""
+    yield
+    time.sleep(0.5)
+
+
+def unique_id(prefix: str) -> str:
+    """Generate a unique ID with a prefix to avoid test state leakage."""
+    return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
 class TestSaveMemory:
@@ -22,29 +41,30 @@ class TestSaveMemory:
 
     def test_returns_confirmation_string(self):
         """Test that save_memory returns a non-empty confirmation string."""
-        result = save_memory("zo_test_user", "Hello, I love hiking!", "user", "zo_test_session")
+        result = save_memory(unique_id("user"), "Hello, I love hiking!", "user", unique_id("session"))
 
         assert isinstance(result, str)
         assert len(result) > 0
 
     def test_saves_user_message(self):
         """Test saving a user-role message."""
-        result = save_memory("zo_test_user2", "I enjoy Python programming", "user", "zo_session2")
+        user_id = unique_id("user")
+        result = save_memory(user_id, "I enjoy Python programming", "user", unique_id("session"))
 
         assert isinstance(result, str)
-        assert "user" in result.lower() or "zo_test_user2" in result
+        assert "user" in result.lower() or user_id in result
 
     def test_saves_assistant_message(self):
         """Test saving an assistant-role message."""
-        result = save_memory("zo_test_user3", "That sounds great!", "assistant", "zo_session3")
+        result = save_memory(unique_id("user"), "That sounds great!", "assistant", unique_id("session"))
 
         assert isinstance(result, str)
         assert len(result) > 0
 
     def test_saves_multiple_turns(self):
         """Test saving multiple turns in the same session."""
-        session_id = "zo_multi_turn_session"
-        user_id = "zo_multi_turn_user"
+        user_id = unique_id("user")
+        session_id = unique_id("session")
 
         result1 = save_memory(user_id, "I love mountains", "user", session_id)
         result2 = save_memory(user_id, "That's wonderful!", "assistant", session_id)
@@ -54,7 +74,16 @@ class TestSaveMemory:
 
     def test_non_assistant_role_treated_as_user(self):
         """Test that any role other than 'assistant' is treated as user."""
-        result = save_memory("zo_role_user", "Testing role fallback", "human", "zo_role_session")
+        result = save_memory(unique_id("user"), "Testing role fallback", "human", unique_id("session"))
+
+        assert isinstance(result, str)
+        assert len(result) > 0
+
+    def test_custom_assistant_id(self):
+        """Test that a custom assistant_id is accepted."""
+        result = save_memory(
+            unique_id("user"), "Hello!", "assistant", unique_id("session"), assistant_id="my-bot"
+        )
 
         assert isinstance(result, str)
         assert len(result) > 0
@@ -65,27 +94,29 @@ class TestQueryMemory:
 
     def test_returns_string(self):
         """Test that query_memory returns a string response."""
-        # Save something first
-        save_memory("zo_query_user", "I love pizza and Italian food", "user", "zo_query_session")
+        user_id = unique_id("user")
+        session_id = unique_id("session")
+        save_memory(user_id, "I love pizza and Italian food", "user", session_id)
 
-        result = query_memory("zo_query_user", "What does the user enjoy?")
+        result = query_memory(user_id, "What does the user enjoy?")
 
         assert isinstance(result, str)
         assert len(result) > 0
 
     def test_returns_string_with_session_scope(self):
         """Test query_memory scoped to a specific session."""
-        session_id = "zo_scoped_session"
-        save_memory("zo_scoped_user", "My favorite color is blue", "user", session_id)
+        user_id = unique_id("user")
+        session_id = unique_id("session")
+        save_memory(user_id, "My favorite color is blue", "user", session_id)
 
-        result = query_memory("zo_scoped_user", "What is the user's favorite color?", session_id)
+        result = query_memory(user_id, "What is the user's favorite color?", session_id)
 
         assert isinstance(result, str)
         assert len(result) > 0
 
     def test_returns_fallback_for_unknown_user(self):
         """Test that query_memory returns a non-empty string even for new users."""
-        result = query_memory("zo_brand_new_user_xyz123", "What do I like?")
+        result = query_memory(unique_id("user"), "What do I like?")
 
         assert isinstance(result, str)
         assert len(result) > 0
@@ -96,19 +127,18 @@ class TestGetContext:
 
     def test_returns_list(self):
         """Test that get_context returns a list."""
-        session_id = "zo_context_session"
-        user_id = "zo_context_user"
-
+        user_id = unique_id("user")
+        session_id = unique_id("session")
         save_memory(user_id, "Hello there!", "user", session_id)
+
         result = get_context(user_id, session_id, "assistant")
 
         assert isinstance(result, list)
 
     def test_returns_openai_format(self):
         """Test that returned messages are in OpenAI format."""
-        session_id = "zo_openai_session"
-        user_id = "zo_openai_user"
-
+        user_id = unique_id("user")
+        session_id = unique_id("session")
         save_memory(user_id, "My name is Alex", "user", session_id)
         save_memory(user_id, "Nice to meet you, Alex!", "assistant", session_id)
 
@@ -123,25 +153,21 @@ class TestGetContext:
 
     def test_respects_token_limit(self):
         """Test that context respects the token limit parameter."""
-        session_id = "zo_token_session"
-        user_id = "zo_token_user"
-
-        # Add several messages
+        user_id = unique_id("user")
+        session_id = unique_id("session")
         for i in range(5):
             save_memory(user_id, f"Message number {i} with some content", "user", session_id)
 
-        # Get context with a small token budget
         result_small = get_context(user_id, session_id, "assistant", tokens=100)
         result_large = get_context(user_id, session_id, "assistant", tokens=8000)
 
-        # Both should be lists; larger budget may return more messages
         assert isinstance(result_small, list)
         assert isinstance(result_large, list)
         assert len(result_large) >= len(result_small)
 
     def test_empty_session_returns_list(self):
         """Test that get_context returns an empty list for a session with no messages."""
-        result = get_context("zo_empty_user_xyz999", "zo_empty_session_xyz999", "assistant")
+        result = get_context(unique_id("user"), unique_id("session"), "assistant")
 
         assert isinstance(result, list)
 
@@ -151,10 +177,10 @@ class TestToolsWorkTogether:
 
     def test_save_query_roundtrip(self):
         """Test saving a message and then querying it."""
-        user_id = "zo_roundtrip_user"
-        session_id = "zo_roundtrip_session"
-
+        user_id = unique_id("user")
+        session_id = unique_id("session")
         save_memory(user_id, "I am a software engineer who loves Rust", "user", session_id)
+
         result = query_memory(user_id, "What is the user's profession?", session_id)
 
         assert isinstance(result, str)
@@ -162,9 +188,8 @@ class TestToolsWorkTogether:
 
     def test_save_then_get_context(self):
         """Test that saved messages appear in context."""
-        user_id = "zo_flow_user"
-        session_id = "zo_flow_session"
-
+        user_id = unique_id("user")
+        session_id = unique_id("session")
         save_memory(user_id, "Hello!", "user", session_id)
         save_memory(user_id, "Hi there!", "assistant", session_id)
 

@@ -119,16 +119,18 @@ To publish this skill to the [Zo Skills Registry](https://github.com/zocomputer/
 
 1. **Fork** the `zocomputer/skills` repository.
 2. **Copy** this directory into the `/Community` folder of your fork, naming it `honcho-memory`:
+
    ```
    Community/
    └── honcho-memory/
        ├── SKILL.md
        ├── README.md
-       ├── client.py
        ├── pyproject.toml
        └── tools/
    ```
+
 3. **Validate** your skill:
+
    ```bash
    bun validate
    ```

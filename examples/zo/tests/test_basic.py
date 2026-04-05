@@ -4,8 +4,10 @@ These tests validate package structure and imports without requiring
 a running Honcho server.
 """
 
-import sys
 import os
+import sys
+
+import pytest
 
 # Add parent directory to path so tools/ can be imported
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -46,14 +48,13 @@ def test_tools_all_exports():
     import tools
 
     assert hasattr(tools, "__all__")
-    expected = ["save_memory", "query_memory", "get_context"]
+    expected = ["get_context", "query_memory", "save_memory"]
     for name in expected:
         assert name in tools.__all__, f"{name} not in __all__"
 
 
 def test_save_memory_raises_on_empty_content():
     """Test that save_memory raises ValueError for empty content."""
-    import pytest
     from tools.save_memory import save_memory
 
     with pytest.raises(ValueError, match="content must not be empty"):
@@ -62,7 +63,6 @@ def test_save_memory_raises_on_empty_content():
 
 def test_query_memory_raises_on_empty_query():
     """Test that query_memory raises ValueError for empty query."""
-    import pytest
     from tools.query_memory import query_memory
 
     with pytest.raises(ValueError, match="query must not be empty"):
