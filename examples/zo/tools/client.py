@@ -21,5 +21,12 @@ def get_client(workspace_id: str | None = None) -> Honcho:
     Returns:
         Configured Honcho client instance.
     """
-    resolved_workspace = workspace_id or os.getenv("HONCHO_WORKSPACE_ID", "default")
-    return Honcho(workspace_id=resolved_workspace)
+    api_key = os.getenv("HONCHO_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "HONCHO_API_KEY is required. Set it in your environment or .env file."
+        )
+
+    env_workspace = os.getenv("HONCHO_WORKSPACE_ID")
+    resolved_workspace = workspace_id or env_workspace or "default"
+    return Honcho(api_key=api_key, workspace_id=resolved_workspace)
