@@ -165,6 +165,14 @@ Honcho is developed using [python](https://www.python.org/) and [uv](https://doc
 The minimum python version is `3.9`
 The minimum uv version is `0.4.9`
 
+### Local development notes
+
+**macOS on Intel (x86_64).** The optional `lancedb` package is not installed on this platform because PyPI does not publish a compatible wheel. The default vector store is **pgvector** (PostgreSQL), which is enough for typical local development. The LanceDB vector backend may require Apple Silicon, Linux, or building LanceDB from source.
+
+**Interactive API documentation.** With the API running, open `http://127.0.0.1:8000/docs` for Swagger UI. OpenAPI lists **local** server URLs first so **Try it out** targets your dev server by default.
+
+**PostgreSQL port conflicts.** If another database already uses port `5432` on your machine, map the Docker database to a different host port in `docker-compose.yml` (for example `5433:5432`) and set `DB_CONNECTION_URI` to match that port.
+
 ### Setup
 
 Once the dependencies are installed on the system run the following steps to get

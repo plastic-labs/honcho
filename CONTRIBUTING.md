@@ -147,7 +147,7 @@ We welcome various types of contributions:
 
 - **Bug fixes** - Help us squash bugs and improve stability
 - **New features** - Add functionality that benefits the community
-- **Documentation** - Improve or expand our documentation
+- **Documentation** - Improve or expand our documentation (README, files under `docs/`, SDK READMEs, and docstrings). When you change setup or configuration steps, validate them with a clean clone and `uv sync` when practical. Larger doc initiatives are worth a quick check-in on [Discord](http://discord.gg/honcho) or GitHub issues so work stays aligned with [docs.honcho.dev](https://docs.honcho.dev).
 - **Tests** - Increase test coverage and reliability
 - **Performance improvements** - Help make Honcho faster and more efficient
 - **Examples and tutorials** - Help other developers use Honcho
