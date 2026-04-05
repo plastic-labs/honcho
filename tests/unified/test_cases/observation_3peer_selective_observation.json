@@ -1,0 +1,86 @@
+{
+  "description": "Test selective observation - Alice observes Bob (observe_me=true) but not Charlie (observe_me=false)",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_selective",
+      "peer_configs": {
+        "alice": {
+          "observe_me": null,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": false
+        },
+        "charlie": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_selective",
+      "messages": [
+        {
+          "peer_id": "bob",
+          "content": "I'm an architect designing skyscrapers."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I'm a spy working undercover."
+        },
+        {
+          "peer_id": "alice",
+          "content": "Interesting professions!"
+        },
+        {
+          "peer_id": "bob",
+          "content": "I just finished designing a 50-story building."
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I'm on a secret mission in Europe."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_selective",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "architect",
+          "case_sensitive": false
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "charlie",
+      "session_id": "session_selective",
+      "assertions": [
+        {
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
+        }
+      ]
+    }
+  ]
+}

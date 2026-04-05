@@ -1,0 +1,15 @@
+{
+  "default": true,
+  "MD013": false,
+  "MD024": false,
+  "MD025": false,
+  "MD029": false,
+  "MD040": false,
+  "MD041": false,
+  "line-length": false,
+  "no-duplicate-heading": false,
+  "single-h1": false,
+  "ol-prefix": false,
+  "fenced-code-language": false,
+  "first-line-h1": false
+}

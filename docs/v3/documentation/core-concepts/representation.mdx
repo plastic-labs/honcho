@@ -1,0 +1,66 @@
+---
+title: "Peer Representations"
+icon: "user-magnifying-glass"
+sidebarTitle: "Representations"
+---
+
+A representation is the collection of reasoning Honcho has done about a peer over time. It's the continual learning about a peer over every message that's been written to it. Representations evolve dynamically as new messages come in, with Honcho reasoning about them in the background.
+
+When you write messages to Honcho, the reasoning models extract premises, draw conclusions, and scaffold new conclusions as well. All of that reasoning gets stored as the peer's representation. Think of it as Honcho's understanding of who that peer is, what they care about, and how they behave, built through formal logic rather than simple storage.
+
+## What's in a Representation?
+
+A peer representation is made up of several types of artifacts that Honcho generates through [*reasoning*](/v3/documentation/core-concepts/reasoning):
+
+**Conclusions** are insights derived through formal logic. Deductive conclusions are things Honcho can be certain about based on extracted premises. Inductive conclusions identify patterns across multiple messages. Abductive conclusions infer the simplest explanations for observed behavior. For example, if a user frequently mentions work deadlines and rarely mentions hobbies, Honcho might inductively conclude they're time-constrained or career-focused.
+
+**Summaries** capture the essence of sessions. Short summaries are generated every 20 messages by default, and long summaries every 60 messages. These help compress conversation history into dense, queryable context.
+
+**Peer cards** contain key biographical information. They essentially cache the most basic information about a peer (name, occupation, interests) to ensure the model never loses its grounding.
+
+These enable continuous improvement. Each new message refines conclusions, updates summaries, and keeps peer cards current—building a more accurate representation over time.
+
+
+## Observation & Perspective-Taking
+
+Honcho can build different representations based on what each peer observes. This enables sophisticated multi-peer scenarios where understanding is relative to what was actually witnessed.
+
+There are two observation modes controlled by [configuration](/v3/documentation/features/advanced/configuration):
+
+**Honcho observing peers** (`observe_me`): When enabled (default), Honcho forms a representation of the peer based on all messages they've sent across all sessions. This is Honcho's understanding of that peer, built from everything they've said and done in your system. Set `observe_me: false` if you don't want Honcho to reason about that peer at all.
+
+**Peers observing others** (`observe_others`): When enabled at the session level, a peer will form representations of other peers in that session based only on messages they've observed. If Alice and Bob are in a session together and Alice has `observe_others: true`, Alice will form a representation of Bob based solely on what Bob said in sessions Alice participated in. Alice's representation of Bob will be completely different from Charlie's representation of Bob if they've observed different interactions.
+
+In the diagram below, assume `observe_me` isn't turned off (again, default behavior) and `observe_others` is turned on for both peers in a session that contains the peers Alice and Bob.
+
+![](/images/observe_config.png)
+
+The shared session that Alice and Bob have informs their respective representations of each other. Alice has a small set of conclusions that pertain to Bob, and Bob has a small set of conclusions that pertain to Alice. Honcho can observe the totality of each peer's interactions, forming representations of the peers themselves, and enable peers to store conclusions about peers they interact with based only on what they witness in shared sessions.
+
+Why would you want peers observing others? So you can simulate stateful *perspectives*. If Bob participates with Alice in sessions 1 and 2, while Charlie participates with Alice in session 3, Bob's representation of Alice will be built from sessions 1 and 2, while Charlie's representation will only include what happened in session 3. Bob can reference shared history, inside jokes, or past conflicts that Charlie knows nothing about. Without perspective-based segmentation, all agents are omniscient--the simulation breaks down, trust falls apart, and users churn.
+
+
+## Why Representations Work
+
+Statefulness is simulated through reconstruction of the past. Traditional systems reconstruct by retrieving stored facts, querying semantically similar items, and hoping the LLM does the rest. Honcho reconstructs through reasoning about the past exhaustively, leaving much less to chance.
+
+Reasoning can surface insights never explicitly stated. If a user mentions they're saving for a house in one session and complains about subscription costs in another, Honcho can conclude they're budget-conscious without anyone saying it. Reasoning handles contradictions gracefully--when new information conflicts with old conclusions, it reconciles them instead of just accumulating more data. And reasoning enables prediction under uncertainty, inferring what's likely true based on patterns even when data is incomplete.
+
+Humans reconstruct the past from imperfect recollections, then act on those reconstructions as if they were complete. Representations enable agents to do the same with far greater fidelity. Reasoning produces an exhaustive, explicit record of what can be concluded about a peer--giving agents complete recollection that humans can only pretend to have. That's what makes truly stateful agents possible.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Get an API Key" icon="key" href="https://app.honcho.dev">
+    Sign up for the Honcho platform and start building
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/v3/documentation/introduction/quickstart">
+    See representations in action with a working example
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/v3/documentation/core-concepts/architecture">
+    Understand how representations fit into Honcho's architecture
+  </Card>
+  <Card title="Chat Endpoint" icon="comments" href="/v3/documentation/features/chat">
+    Chat with Honcho about your users
+  </Card>
+</CardGroup>

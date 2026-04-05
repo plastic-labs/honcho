@@ -1,0 +1,68 @@
+---
+title: Local vs Global Representations
+description: Model directional relationships between Peers in Honcho
+icon: location-pin
+---
+
+One of the unique affordances of Honcho is that it allows developers to model
+directional relationships between Peers. What I mean by this is you can model
+how one `Peer` thinks about another `Peer`.
+
+There are many use cases where you don't want every agent or human to know
+everything about another user such as games or multi-agent workflows. To
+illustrate this, the following examples shows 2 conversations.
+
+Conversation #1 (With Bob and Alice)
+```
+Alice: I had a great breakfast today.
+Bob: What did you eat?
+Alice: I had pancakes and eggs and bacon
+```
+
+Conversation #2 (With Alice and Charlie)
+```
+Alice: I actually didn't eat any breakfast today.
+Charlie: Oh that's too bad.
+Alice: But I lied to Bob and told him I did, so back me up if you see them.
+```
+
+Alice told Bob a lie in this conversation. If we stored both of these
+conversations in Honcho with Alice, Bob, and Charlie as `Peers` and let them
+use Honcho to get insights on each other then Bob would immediately know this
+deception. For example:
+
+<CodeGroup>
+  ```python Python
+  # Bob could run
+  alice.chat("What did Alice eat today?")
+  # Response: Alice did not eat anything today
+  ```
+</CodeGroup>
+
+This is a problem. Bob shouldn't be able to know everything about Alice in this
+situation. So to support these situations we support what we call **Local
+Representations**.
+
+By default insights generated for a `Peer` are scoped globally. This means every
+message sent by that `Peer` in any conversation updates the same representation
+of that `Peer`. However, we can enable **Local Representations** so Bob can
+form a representation Alice based only on what they observe Alice do.
+
+This feature is illustrated in the graphic below:
+<img src="/images/local-vs-global-reps.png" alt="Peer Representations" />
+
+We can enable local representation for a `Peer` by setting `observe_others=True`.
+This is shown in the [Configure
+Reasoning](/v3/documentation/features/advanced/reasoning-configuration) page.
+
+Now if we used Bob's local representation of Alice then Bob would only get
+insights on what they've seen Alice say to them.
+
+```python
+bob.chat(target="alice", query="What did Alice eat today?")
+# Response: Alice ate pancakes, eggs, and bacon
+```
+
+<Note>
+  Local Representations are turned off by default
+  </Note>

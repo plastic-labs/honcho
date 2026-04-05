@@ -1,0 +1,78 @@
+{
+  "description": "Test that a peer with observe_me=false can still observe others (observe_others=true)",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_invisible_observer",
+      "peer_configs": {
+        "alice": {
+          "observe_me": false,
+          "observe_others": true
+        },
+        "bob": {
+          "observe_me": null,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_invisible_observer",
+      "messages": [
+        {
+          "peer_id": "alice",
+          "content": "I'm a secret agent."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I work in retail management."
+        },
+        {
+          "peer_id": "alice",
+          "content": "Tell me more about your work."
+        },
+        {
+          "peer_id": "bob",
+          "content": "I manage a team of 20 people at a department store."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "alice",
+      "observed_peer_id": "bob",
+      "session_id": "session_invisible_observer",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "retail",
+          "case_sensitive": false
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "bob",
+      "observed_peer_id": "alice",
+      "session_id": "session_invisible_observer",
+      "assertions": [
+        {
+          "assertion_type": "not_contains",
+          "text": "## Explicit"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "## Deductive"
+        }
+      ]
+    }
+  ]
+}

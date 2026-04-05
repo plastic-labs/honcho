@@ -1,0 +1,29 @@
+{
+  "name": "honcho-mcp",
+  "version": "3.0.0",
+  "description": "Honcho MCP Server — Cloudflare Worker",
+  "main": "src/index.ts",
+  "packageManager": "bun@1.2.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "bun": ">=1.2.0"
+  },
+  "scripts": {
+    "preinstall": "node -e \"const ua=process.env.npm_config_user_agent||'';if(ua.includes('npm')&&!ua.includes('bun')){console.error('❌ Please use bun instead of npm!\\n📦 Run: bun install\\n🌐 Install bun: https://bun.sh/');process.exit(1)}\"",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging"
+  },
+  "dependencies": {
+    "@honcho-ai/sdk": "^2.1.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "agents": "^0.4.0",
+    "nanoid": "^5.1.7",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241002.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^4.24.3"
+  }
+}

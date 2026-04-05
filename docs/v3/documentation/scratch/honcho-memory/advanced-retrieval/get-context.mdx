@@ -1,0 +1,161 @@
+---
+title: "Get Context (Memory-Enhanced)"
+description: "Intelligent context retrieval powered by Honcho Memory"
+icon: "brain"
+sidebarTitle: "Get Context"
+---
+
+# Memory-Enhanced Context Retrieval
+
+The Get Context endpoint provides intelligent, memory-enhanced context retrieval that combines raw conversation history with derived insights and representations.
+
+## Overview
+
+Unlike basic message retrieval, memory-enhanced context:
+
+- Includes relevant facts about peers from long-term memory
+- Incorporates session summaries for efficient context
+- Provides working representations of peer psychology
+- Optimizes content for LLM token limits
+
+## Features
+
+### Token-Aware Retrieval
+
+Automatically manages context to fit within your specified token budget:
+
+```python
+context = session.context(tokens=2000)
+```
+
+### Multi-Layered Context
+
+Combines multiple information sources:
+
+1. **Recent Messages**: Latest conversation turns
+2. **Session Summaries**: Compressed historical context
+3. **Peer Representations**: Psychological insights
+4. **Peer Cards**: Identity and role information
+
+### Configurable Options
+
+Fine-tune what context is included:
+
+```python
+context = session.context(
+    tokens=2000,
+    include_summaries=True,
+    include_representation=True,
+    peer_id="peer_123"  # Get representation for specific peer
+)
+```
+
+## Use Cases
+
+### Agent Response Generation
+
+Provide your agent with rich context for personalized responses:
+
+```python
+# Get optimized context
+context = session.context(tokens=1500)
+
+# Use in your LLM prompt
+response = llm.generate(
+    messages=[
+        {"role": "system", "content": context},
+        {"role": "user", "content": user_message}
+    ]
+)
+```
+
+### Multi-Peer Conversations
+
+Get context tailored to specific participants:
+
+```python
+# Get Alice's perspective
+alice_context = session.context(peer_id=alice.id)
+
+# Get Bob's perspective
+bob_context = session.context(peer_id=bob.id)
+```
+
+### Dynamic Context Windows
+
+Adjust context size based on task complexity:
+
+```python
+# More context for complex tasks
+detailed_context = session.context(tokens=4000)
+
+# Minimal context for simple queries
+quick_context = session.context(tokens=500)
+```
+
+## How It Works
+
+The Get Context endpoint uses a sophisticated algorithm to:
+
+1. Estimate token counts for all available context
+2. Prioritize recent messages and relevant insights
+3. Include summaries when full history exceeds token limit
+4. Add peer representations when requested
+5. Return optimally structured context
+
+## Best Practices
+
+### Token Budgeting
+
+Leave room in your model's context window:
+
+```python
+# For a 8K context model
+context = session.context(tokens=2000)  # Leaves room for prompt + response
+```
+
+### Representation Updates
+
+Ensure representations are current:
+
+```python
+# Check queue status for observability
+status = honcho.queue_status(session_id=session.id)
+
+# Note: Don't wait for the queue to be empty—it's a continuous system.
+# The context endpoint will work with whatever reasoning is available.
+```
+
+### Caching Strategies
+
+Context can be cached for repeated queries:
+
+```python
+# Cache context for multiple agent calls
+cached_context = session.context(tokens=2000)
+
+# Reuse for multiple related queries
+for query in user_queries:
+    response = agent.query(context=cached_context, query=query)
+```
+
+## Performance Considerations
+
+- **First Call**: May be slower as representations are generated
+- **Subsequent Calls**: Fast retrieval from vector storage
+- **Token Counting**: Uses tiktoken for accurate estimation
+- **Caching**: Consider caching context for high-frequency scenarios
+
+## Related Features
+
+<CardGroup cols={3}>
+  <Card title="Basic Get Context" icon="database" href="/v3/documentation/features/get-context">
+    Learn about basic context retrieval
+  </Card>
+  <Card title="Summaries" icon="align-left" href="/v3/documentation/features/advanced/summarizer">
+    Understand session summarization
+  </Card>
+  <Card title="Dialectic API" icon="comments" href="/v3/documentation/features/chat">
+    Chat with Honcho for insights
+  </Card>
+</CardGroup>

@@ -1,0 +1,20 @@
+{
+  "name": "honcho-docs",
+  "version": "1.0.0",
+  "description": "## Setting Up `honcho-docs` Locally",
+  "main": ".pnp.js",
+  "scripts": {
+    "dev": "mint dev",
+    "openapi": "npx @mintlify/scraping openapi-file v3/openapi.json -o v3/api-reference/endpoint",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mintlify/scraping": "^4.0.467",
+    "honcho-ai": "^0.0.11"
+  },
+  "devDependencies": {
+    "mint": "^4.2.204"
+  }
+}

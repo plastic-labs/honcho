@@ -1,0 +1,14 @@
+fly.toml
+.env
+.env.template
+*.md
+docs/**
+.DS_Store
+supabase/**
+LICENSE
+__pycache__
+docker-compose.yml.example
+.github/**
+.vscode/**
+data/**
+.venv

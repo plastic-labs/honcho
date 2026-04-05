@@ -1,0 +1,33 @@
+---
+title: "Agent Zero"
+icon: 'triangle'
+description: "Add AI-native memory to Agent Zero"
+sidebarTitle: 'Agent Zero'
+---
+
+[Agent Zero](https://github.com/agent0ai/agent-zero) is a general AI agent framework with a plugin-first architecture. The Honcho plugin gives Agent Zero persistent memory across chat sessions — users are remembered with their preferences, context, and behavioral patterns, even after sessions end and new ones begin.
+
+## Getting Started
+
+The Honcho plugin is a community integration. See the [plugin README](https://github.com/alogotron/a0-plugin-honcho) for full installation and configuration instructions.
+
+The integration requires:
+1. A Honcho API key from [app.honcho.dev](https://app.honcho.dev)
+2. Cloning the plugin into your Agent Zero plugins directory
+3. Enabling it via **Settings > Plugins** in Agent Zero's UI
+
+## How It Works
+
+The plugin hooks into Agent Zero's extension system. It syncs user and assistant messages to Honcho after every turn, prefetches user context into the system prompt on each new turn, and maintains separate peer models for the user and agent. If Honcho is unavailable, the agent continues normally.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Plugin Repository" icon="github" href="https://github.com/alogotron/a0-plugin-honcho">
+    Source code, installation, and full documentation.
+  </Card>
+
+  <Card title="Honcho Architecture" icon="sitemap" href="../../documentation/core-concepts/architecture">
+    Learn about peers, sessions, and dialectic reasoning.
+  </Card>
+</CardGroup>

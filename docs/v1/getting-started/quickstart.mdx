@@ -1,0 +1,133 @@
+---
+title: 'Quickstart'
+description: 'Start building with Honcho in under 5 minutes'
+icon: 'bolt'
+---
+
+To make things easy, there's an instance of Honcho up and running on a demo
+server at [https://demo.honcho.dev](https://demo.honcho.dev/docs). The python
+package defaults to this instance, so let's dive into how to get up and
+running!
+
+<Note>
+Begin with the demo server, then seamlessly transition to the production environment once you receive an invite code—simply add your API key and everything should function immediately.
+
+Sign-up for an invite code [here](https://plasticlabs.typeform.com/honchoinvite)
+</Note>
+
+
+Install the Honcho client SDK with the following commands:
+
+<CodeGroup>
+```bash Python
+pip install honcho-ai
+```
+
+```bash NodeJS
+npm install honcho-ai
+```
+</CodeGroup>
+
+First, import the `Client` from the package:
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+honcho = Honcho(
+    # This is the default and can be omitted
+    api_key=os.environ.get("HONCHO_AUTH_TOKEN"),
+    # defaults to "local".
+    environment="demo",
+)
+```
+
+```javascript NodeJS
+import Honcho from 'honcho-ai';
+const honcho = new Honcho({
+  apiKey: process.env['HONCHO_AUTH_TOKEN'], // This is the default and can be omitted
+  environment: 'demo', // defaults to 'local'
+});
+```
+</CodeGroup>
+
+Next, we want to register an application with the Honcho client:
+
+<CodeGroup>
+
+```python Python
+app = honcho.apps.get_or_create(
+    name="string",
+)
+```
+
+```javascript NodeJS
+const app = await honcho.apps.getOrCreate({ name: 'string' });
+```
+
+</CodeGroup>
+
+
+This will create an application with the above name if it does not already exist or retrieve it if it does. After we have our application
+initialized, we can make a user with the following:
+
+<CodeGroup>
+
+```python Python
+user = honcho.apps.users.create(app_id=app.id, name="User")
+```
+
+```javascript NodeJS
+const user = honcho.apps.users.create(app.id, {name: "User" })
+```
+
+</CodeGroup>
+
+Now let's create a session for that application. Honcho is a user context management system, so you can create sessions for users. Thus, a `user_id` is required.
+
+<CodeGroup>
+
+```python Python
+session = honcho.apps.users.sessions.create(user.id, app.id)
+```
+
+```javascript NodeJS
+const session = honcho.apps.users.sessions.create(app.id, user.id) -> Session
+```
+
+</CodeGroup>
+
+Let's add a user message and an AI message to that session:
+
+<CodeGroup>
+
+```python Python
+honcho.apps.users.sessions.messages.create(session.id, app.id, user.id, content="Test", is_user=True)
+```
+
+```javascript NodeJS
+honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, { content: "Test", is_user: true })
+```
+
+</CodeGroup>
+
+You can also easily query Honcho to get the session objects for that user with the following:
+
+<CodeGroup>
+
+```python Python
+async for session in honcho.apps.users.list(app.id, user.id):
+  doSomethingWith(session)
+```
+
+```javascript NodeJS
+for await (const session of honcho.apps.users.sessions.list(app.id, user.id)) {
+  doSomethingWith(session)
+}
+```
+
+</CodeGroup>
+
+
+This is a super simple overview of how to get up and running with the Honcho SDK. We covered the basic methods for reading and writing from the hosted storage service. Next, we'll cover alternative forms of hosting Honcho.
+
+For a more detailed look at the SDK check out the SDK reference [here](/v1/api-reference).

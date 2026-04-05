@@ -1,0 +1,331 @@
+---
+title: 'Reasoning Configuration'
+description: 'Customize how Honcho reasons over peers, sessions, and messages'
+icon: 'wrench'
+---
+
+Honcho's reasoning can be configured at multiple levels to control how it processes messages, generates conclusions, creates summaries, and builds peer representations.
+
+Configuration follows a hierarchy: **message > session > workspace > global defaults**. Settings at lower levels override those at higher levels, giving you fine-grained control over behavior.
+
+## Configuration Hierarchy
+
+Honcho uses a hierarchical configuration system where more specific settings override more general ones:
+
+1. **Global Defaults**: Built-in system defaults
+2. **Workspace Configuration**: Settings that apply to all sessions in a workspace
+3. **Session Configuration**: Settings that apply to all messages in a session
+4. **Message Configuration**: Settings that apply to a specific message
+
+Separately, you can configure the reasoning status of a peer. This overrides defaults and workspace configuration, but not session or message configuration.
+
+<Info>
+All configuration fields are optional. If not specified, the value is inherited from the next level up in the hierarchy.
+</Info>
+
+## Configuration Options
+
+### Reasoning Configuration
+
+Controls whether the system should reason over messages.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Whether to enable reasoning functionality. When disabled, no facts or representations are generated. |
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho()
+
+# Disable reasoning at session level
+session = honcho.session("private-session", config={
+    "reasoning": {"enabled": False}
+})
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+const honcho = new Honcho({});
+
+// Disable reasoning at session level
+const session = await honcho.session("private-session", {
+    config: {
+        reasoning: { enabled: false }
+    }
+});
+```
+</CodeGroup>
+
+### Peer Card Configuration
+
+Controls how peer cards (containing key biographical information) are generated and used.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `use` | `bool` | Whether to use peer cards during the reasoning process. |
+| `create` | `bool` | Whether to generate and update peer cards based on message content. |
+
+<CodeGroup>
+```python Python
+# Disable peer card generation but still use existing cards
+session = honcho.session("my-session", config={
+    "peer_card": {"create": False, "use": True}
+})
+```
+```typescript TypeScript
+// Disable peer card generation but still use existing cards
+const session = await honcho.session("my-session", {
+    config: {
+        peer_card: { create: false, use: true }
+    }
+});
+```
+</CodeGroup>
+
+### Summary Configuration
+
+Controls automatic conversation summarization. Available at workspace and session levels only.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Whether to enable summary functionality. |
+| `messages_per_short_summary` | `int` | Number of messages between short summaries. Must be ≥ 10. |
+| `messages_per_long_summary` | `int` | Number of messages between long summaries. Must be ≥ 20 and greater than `messages_per_short_summary`. |
+
+<CodeGroup>
+```python Python
+# Customize summary frequency
+session = honcho.session("verbose-session", config={
+    "summary": {
+        "enabled": True,
+        "messages_per_short_summary": 15,
+        "messages_per_long_summary": 45
+    }
+})
+```
+```typescript TypeScript
+// Customize summary frequency
+const session = await honcho.session("verbose-session", {
+    config: {
+        summary: {
+            enabled: true,
+            messages_per_short_summary: 15,
+            messages_per_long_summary: 45
+        }
+    }
+});
+```
+</CodeGroup>
+
+### Dream Configuration
+
+Controls the "dreaming" process that consolidates and refines representations. Available at workspace and session levels only.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | `bool` | Whether to enable dream functionality. Automatically disabled if reasoning is disabled. |
+
+<CodeGroup>
+```python Python
+# Disable dreams for a workspace
+honcho.set_configuration({
+    "dream": {
+        "enabled": False
+    }
+})
+```
+```typescript TypeScript
+// Disable dreams for a workspace
+await honcho.setConfiguration({
+    dream: {
+        enabled: false
+    }
+});
+```
+</CodeGroup>
+
+---
+
+## Peer Configuration
+
+By default, all peers are "observed" by Honcho. This means that Honcho will reason over messages sent by the peer and generate a representation of them. In most cases, this is why you use Honcho! However, sometimes an application requires a peer that should not be observed: for example, an assistant or game NPC that your program will never need to access advanced reasoning for.
+
+You may therefore disable observation of a peer by setting the `observe_me` flag in their configuration to `false`.
+
+If the peer has a session-level configuration, it will override this configuration. If the flag is not set, or is set to `true`, the peer will be observed.
+
+<Info>
+For session-level observation controls and local representations (where peers build separate models of each other), see [Representation Scopes](/v3/documentation/features/advanced/representation-scopes).
+</Info>
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client
+honcho = Honcho()
+
+# Create peer with configuration
+peer = honcho.peer("my-peer", configuration={"observe_me": False})
+
+# Change peer's configuration
+peer.set_configuration({"observe_me": True})
+
+# Note: creating the same peer again will also replace the configuration
+peer = honcho.peer("my-peer", configuration={"observe_me": False})
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
+
+    // Create peer with configuration
+    const peer = await honcho.peer("my-peer", { configuration: { observeMe: false } });
+
+    // Change peer's configuration
+    await peer.setConfiguration({ observeMe: true });
+
+    // Note: creating the same peer again will also replace the configuration
+    await honcho.peer("my-peer", { configuration: { observeMe: false } });
+})();
+```
+</CodeGroup>
+
+## Session Configuration
+
+Sessions support the full configuration schema. You can disable reasoning entirely for a session, customize summary behavior, or adjust peer card settings.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client
+honcho = Honcho()
+
+# Create session with reasoning disabled
+session = honcho.session("my-session", configuration={
+    "reasoning": {"enabled": False}
+})
+
+# Create session with custom summary settings
+session = honcho.session("detailed-session", configuration={
+    "summary": {
+        "messages_per_short_summary": 10,
+        "messages_per_long_summary": 30
+    }
+})
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
+
+    // Create session with reasoning disabled
+    const session = await honcho.session("my-session", {
+        configuration: { reasoning: { enabled: false } }
+    });
+
+    // Create session with custom summary settings
+    const detailedSession = await honcho.session("detailed-session", {
+        configuration: {
+            summary: {
+                messages_per_short_summary: 10,
+                messages_per_long_summary: 30
+            }
+        }
+    });
+})();
+```
+</CodeGroup>
+
+## Message Configuration
+
+Individual messages can override session and workspace configuration for fine-grained control. This is useful for excluding specific messages from processing or adjusting behavior on a per-message basis.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho()
+session = honcho.session("my-session")
+user = honcho.peer("user")
+
+# Create a message that skips the reasoning process
+session.add_messages([
+    user.message("This message won't be analyzed", configuration={
+        "reasoning": {"enabled": False}
+    })
+])
+
+# Create a message with custom peer card settings
+session.add_messages([
+    user.message("Use existing card but don't update it", configuration={
+        "peer_card": {"use": True, "create": False}
+    })
+])
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+(async () => {
+    const honcho = new Honcho({});
+    const session = await honcho.session("my-session");
+    const user = await honcho.peer("user");
+
+    // Create a message that skips the reasoning process
+    await session.addMessages([
+        user.message("This message won't be analyzed", {
+            configuration: { reasoning: { enabled: false } }
+        })
+    ]);
+})();
+```
+</CodeGroup>
+
+## Full Configuration Schema Reference
+
+### Workspace & Session Configuration
+
+```json
+{
+  "reasoning": {
+    "enabled": true
+  },
+  "peer_card": {
+    "use": true,
+    "create": true
+  },
+  "summary": {
+    "enabled": true,
+    "messages_per_short_summary": 20,
+    "messages_per_long_summary": 60
+  },
+  "dream": {
+    "enabled": true
+  }
+}
+```
+
+### Message Configuration
+
+```json
+{
+  "reasoning": {
+    "enabled": true
+  },
+  "peer_card": {
+    "use": true,
+    "create": true
+  }
+}
+```
+
+<Note>
+Message configuration only supports reasoning and `peer_card` settings. Summary and dream configurations are session/workspace-level only.
+</Note>

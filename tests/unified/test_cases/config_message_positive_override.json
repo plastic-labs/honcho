@@ -1,0 +1,59 @@
+{
+  "description": "Test message-level reasoning override",
+  "workspace_config": {
+    "reasoning": {
+      "enabled": false
+    }
+  },
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "session_msg_override"
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "session_msg_override",
+      "messages": [
+        {
+          "peer_id": "charlie",
+          "content": "I like turtles.",
+          "config": {
+            "reasoning": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "peer_id": "charlie",
+          "content": "I like squids.",
+          "config": {
+            "reasoning": {
+              "enabled": false
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "get_representation",
+      "observer_peer_id": "charlie",
+      "session_id": "session_msg_override",
+      "assertions": [
+        {
+          "assertion_type": "contains",
+          "text": "turtles"
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "squids"
+        }
+      ]
+    }
+  ]
+}

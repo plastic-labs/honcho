@@ -1,0 +1,227 @@
+# Honcho Configuration File
+# This file demonstrates all available configuration options.
+# Copy this to config.toml and modify as needed.
+# Environment variables will override these values.
+
+# Application-level settings
+[app]
+LOG_LEVEL = "INFO"
+SESSION_OBSERVERS_LIMIT = 10
+GET_CONTEXT_MAX_TOKENS = 100000
+MAX_FILE_SIZE = 5242880  # 5MB
+MAX_MESSAGE_SIZE = 25000 # Characters
+EMBED_MESSAGES = true
+MAX_EMBEDDING_TOKENS = 8192
+MAX_EMBEDDING_TOKENS_PER_REQUEST = 300000
+# LANGFUSE_HOST = "https://api.langfuse.com"
+# LANGFUSE_PUBLIC_KEY = "your-public-key-here"
+# COLLECT_METRICS_LOCAL = false
+# LOCAL_METRICS_FILE = "metrics.jsonl"
+# REASONING_TRACES_FILE = "traces.jsonl"  # Path to JSONL file for reasoning traces
+NAMESPACE = "honcho"
+
+# Database settings
+[db]
+CONNECTION_URI = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+SCHEMA = "public"
+POOL_CLASS = "default"
+POOL_PRE_PING = true
+POOL_SIZE = 10
+MAX_OVERFLOW = 20
+POOL_TIMEOUT = 30  # seconds
+POOL_RECYCLE = 300  # seconds
+POOL_USE_LIFO = true
+SQL_DEBUG = false
+TRACING = false
+
+# Authentication settings
+[auth]
+USE_AUTH = false
+JWT_SECRET = "your-secret-key-here"  # Must be set if USE_AUTH is true
+
+# Sentry settings
+[sentry]
+ENABLED = false
+DSN = ""
+RELEASE = ""
+ENVIRONMENT = "development"
+TRACES_SAMPLE_RATE = 0.1
+PROFILES_SAMPLE_RATE = 0.1
+
+# LLM settings
+[llm]
+DEFAULT_MAX_TOKENS = 2500
+EMBEDDING_PROVIDER = "openai"
+MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
+MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
+
+# API Keys for LLM providers
+# ANTHROPIC_API_KEY = "your-api-key"
+# OPENAI_API_KEY = "your-api-key"
+# OPENAI_COMPATIBLE_API_KEY = "your-api-key"
+# GEMINI_API_KEY = "your-api-key"
+# GROQ_API_KEY = "your-api-key"
+# OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
+
+# Separate vLLM endpoint (for local models)
+# VLLM_API_KEY = "your-api-key"
+# VLLM_BASE_URL = "your-base-url"
+
+# Deriver settings
+[deriver]
+ENABLED = true
+WORKERS = 1
+POLLING_SLEEP_INTERVAL_SECONDS = 1.0
+STALE_SESSION_TIMEOUT_MINUTES = 5
+# QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+# TEMPERATURE = 0.0
+# BACKUP_PROVIDER = "anthropic"
+# BACKUP_MODEL = "claude-haiku-4-5"
+DEDUPLICATE = true
+MAX_OUTPUT_TOKENS = 4096
+THINKING_BUDGET_TOKENS = 1024
+LOG_OBSERVATIONS = false
+MAX_INPUT_TOKENS = 23000
+WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
+REPRESENTATION_BATCH_MAX_TOKENS = 1024
+FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
+
+# Peer card settings
+[peer_card]
+ENABLED = true
+
+# Dialectic settings
+[dialectic]
+MAX_OUTPUT_TOKENS = 8192
+MAX_INPUT_TOKENS = 100000
+HISTORY_TOKEN_LIMIT = 8192
+SESSION_HISTORY_MAX_TOKENS = 4096
+
+# Per-level settings for reasoning levels
+# MAX_OUTPUT_TOKENS is optional per level; if not set, uses global MAX_OUTPUT_TOKENS
+[dialectic.levels.minimal]
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 1
+MAX_OUTPUT_TOKENS = 250
+
+[dialectic.levels.low]
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash-lite"
+THINKING_BUDGET_TOKENS = 0
+MAX_TOOL_ITERATIONS = 5
+# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+
+[dialectic.levels.medium]
+PROVIDER = "anthropic"
+MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 1024
+MAX_TOOL_ITERATIONS = 2
+# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+
+[dialectic.levels.high]
+PROVIDER = "anthropic"
+MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 1024
+MAX_TOOL_ITERATIONS = 4
+# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+
+[dialectic.levels.max]
+PROVIDER = "anthropic"
+MODEL = "claude-haiku-4-5"
+THINKING_BUDGET_TOKENS = 2048
+MAX_TOOL_ITERATIONS = 10
+# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+# Backup provider example (optional, must set both or neither):
+# BACKUP_PROVIDER = "google"
+# BACKUP_MODEL = "gemini-2.5-pro"
+
+# Summary settings
+[summary]
+ENABLED = true
+MESSAGES_PER_SHORT_SUMMARY = 20
+MESSAGES_PER_LONG_SUMMARY = 60
+PROVIDER = "google"
+MODEL = "gemini-2.5-flash"
+MAX_TOKENS_SHORT = 1000
+MAX_TOKENS_LONG = 4000
+THINKING_BUDGET_TOKENS = 512
+# BACKUP_PROVIDER = "google"
+# BACKUP_MODEL = "gemini-2.5-flash"
+
+# Dream settings
+[dream]
+ENABLED = true
+DOCUMENT_THRESHOLD = 50
+IDLE_TIMEOUT_MINUTES = 60
+MIN_HOURS_BETWEEN_DREAMS = 8
+ENABLED_TYPES = ["omni"]
+PROVIDER = "anthropic"
+MODEL = "claude-sonnet-4-20250514"
+MAX_OUTPUT_TOKENS = 16384
+THINKING_BUDGET_TOKENS = 8192
+MAX_TOOL_ITERATIONS = 20
+HISTORY_TOKEN_LIMIT = 16384
+# BACKUP_PROVIDER = "google"
+# BACKUP_MODEL = "gemini-2.5-flash"
+
+# Specialist models (use same provider as main model)
+DEDUCTION_MODEL = "claude-haiku-4-5"
+INDUCTION_MODEL = "claude-haiku-4-5"
+
+# Surprisal-based sampling subsystem
+[dream.surprisal]
+ENABLED = false
+TREE_TYPE = "kdtree"  # Options: kdtree, balltree, rptree, covertree, lsh, graph, prototype
+TREE_K = 5  # k for kNN-based trees
+SAMPLING_STRATEGY = "recent"  # Options: recent, random, all
+SAMPLE_SIZE = 200
+TOP_PERCENT_SURPRISAL = 0.10  # Top 10% of observations
+MIN_HIGH_SURPRISAL_FOR_REPLACE = 10
+INCLUDE_LEVELS = ["explicit", "deductive"]
+
+# Webhook settings
+[webhook]
+SECRET = ""
+MAX_WORKSPACE_LIMIT = 10
+
+# Prometheus metrics settings (pull-based metrics)
+[metrics]
+ENABLED = false
+# NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
+
+# CloudEvents telemetry settings (analytics events)
+[telemetry]
+ENABLED = false
+# ENDPOINT = "https://telemetry.honcho.dev/v1/events"
+# HEADERS = '{"Authorization": "Bearer your-token"}'  # JSON string for auth headers
+BATCH_SIZE = 100
+FLUSH_INTERVAL_SECONDS = 1.0
+FLUSH_THRESHOLD = 50
+MAX_RETRIES = 3
+MAX_BUFFER_SIZE = 10000
+# NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
+
+# Cache settings
+[cache]
+ENABLED = false
+URL = "redis://localhost:6379/0?suppress=true"
+# NAMESPACE = "honcho"  # Inherits from app.NAMESPACE if not set
+DEFAULT_TTL_SECONDS = 300
+DEFAULT_LOCK_TTL_SECONDS = 5
+
+# Vector store settings
+[vector_store]
+# Vector store type: "pgvector", "turbopuffer", or "lancedb"
+TYPE = "pgvector"
+# Migration flag: set to true when migration from pgvector is complete
+MIGRATED = false
+NAMESPACE = "honcho"
+DIMENSIONS = 1536
+# TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
+# TURBOPUFFER_REGION = "us-east-1"
+LANCEDB_PATH = "./lancedb_data"
+RECONCILIATION_INTERVAL_SECONDS = 300
