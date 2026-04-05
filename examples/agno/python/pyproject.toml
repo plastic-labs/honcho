@@ -1,0 +1,72 @@
+[project]
+name = "honcho-agno"
+version = "0.1.0"
+description = "Agno integration with Honcho for persistent agent memory"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "AGPL-3.0-or-later"}
+authors = [
+    {name = "Plastic Labs", email = "hello@plasticlabs.ai"}
+]
+maintainers = [
+    {name = "Plastic Labs", email = "hello@plasticlabs.ai"}
+]
+keywords = [
+    "honcho",
+    "agno",
+    "ai-agents",
+    "memory",
+    "agent-memory",
+    "persistent-memory"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: Pydantic",
+]
+dependencies = [
+    "agno>=2.3.26",
+    "honcho-ai>=1.6.0",
+    ]
+
+[project.urls]
+Homepage = "https://honcho.dev"
+Documentation = "https://docs.honcho.dev/v2/integrations/agno"
+Repository = "https://github.com/plastic-labs/honcho"
+"Bug Tracker" = "https://github.com/plastic-labs/honcho/issues"
+Changelog = "https://github.com/plastic-labs/honcho/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.29.4",
+    "pytest>=8.2.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/honcho_agno"]
+
+[tool.basedpyright]
+include = ["src", "tests", "examples"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+reportMissingTypeStubs = false
+reportAny = false
+reportExplicitAny = false
+reportUnusedCallResult = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
