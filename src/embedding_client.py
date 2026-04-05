@@ -107,9 +107,28 @@ class _EmbeddingClient:
                 or "https://openrouter.ai/api/v1"
             )
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
+            # Support custom model via OPENAI_COMPATIBLE_EMBEDDING_MODEL env var
+            # Falls back to openai/text-embedding-3-small for OpenRouter
+            self.model = getattr(settings.LLM, 'OPENAI_COMPATIBLE_EMBEDDING_MODEL', None) or "openai/text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
+        elif self.provider == "custom":
+            # Generic OpenAI-compatible embedding endpoint
+            if api_key is None:
+                api_key = settings.LLM.CUSTOM_EMBEDDING_API_KEY or settings.LLM.OPENAI_COMPATIBLE_API_KEY
+            if not api_key:
+                raise ValueError(
+                    "Custom embedding API key (LLM_CUSTOM_EMBEDDING_API_KEY or LLM_OPENAI_COMPATIBLE_API_KEY) is required"
+                )
+            base_url = settings.LLM.CUSTOM_EMBEDDING_BASE_URL
+            if not base_url:
+                raise ValueError(
+                    "CUSTOM_EMBEDDING_BASE_URL is required for custom embedding provider"
+                )
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self.model = settings.LLM.CUSTOM_EMBEDDING_MODEL
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048
         elif self.provider == "ollama":
             if api_key is None:
                 api_key = settings.LLM.OLLAMA_API_KEY or "ollama"
@@ -159,6 +178,23 @@ class _EmbeddingClient:
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
             return response.embeddings[0].values
+        elif self.provider == "custom":
+            # Generic OpenAI-compatible embedding endpoint
+            if api_key is None:
+                api_key = settings.LLM.CUSTOM_EMBEDDING_API_KEY or settings.LLM.OPENAI_COMPATIBLE_API_KEY
+            if not api_key:
+                raise ValueError(
+                    "Custom embedding API key (LLM_CUSTOM_EMBEDDING_API_KEY or LLM_OPENAI_COMPATIBLE_API_KEY) is required"
+                )
+            base_url = settings.LLM.CUSTOM_EMBEDDING_BASE_URL
+            if not base_url:
+                raise ValueError(
+                    "CUSTOM_EMBEDDING_BASE_URL is required for custom embedding provider"
+                )
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self.model = settings.LLM.CUSTOM_EMBEDDING_MODEL
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048
         elif self.provider == "ollama":
             # Use native Ollama client
             return await self.client.embed(query)
@@ -197,7 +233,24 @@ class _EmbeddingClient:
                         for emb in response.embeddings:
                             if emb.values:
                                 embeddings.append(emb.values)
-                elif self.provider == "ollama":
+                elif self.provider == "custom":
+            # Generic OpenAI-compatible embedding endpoint
+            if api_key is None:
+                api_key = settings.LLM.CUSTOM_EMBEDDING_API_KEY or settings.LLM.OPENAI_COMPATIBLE_API_KEY
+            if not api_key:
+                raise ValueError(
+                    "Custom embedding API key (LLM_CUSTOM_EMBEDDING_API_KEY or LLM_OPENAI_COMPATIBLE_API_KEY) is required"
+                )
+            base_url = settings.LLM.CUSTOM_EMBEDDING_BASE_URL
+            if not base_url:
+                raise ValueError(
+                    "CUSTOM_EMBEDDING_BASE_URL is required for custom embedding provider"
+                )
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self.model = settings.LLM.CUSTOM_EMBEDDING_MODEL
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048
+        elif self.provider == "ollama":
                     # Use native Ollama client for batch embedding
                     batch_embeddings = await self.client.embed_batch(batch)
                     embeddings.extend(batch_embeddings)
@@ -341,7 +394,24 @@ class _EmbeddingClient:
                                 result[item.text_id][item.chunk_index] = (
                                     embedding.values
                                 )
-                elif self.provider == "ollama":
+                elif self.provider == "custom":
+            # Generic OpenAI-compatible embedding endpoint
+            if api_key is None:
+                api_key = settings.LLM.CUSTOM_EMBEDDING_API_KEY or settings.LLM.OPENAI_COMPATIBLE_API_KEY
+            if not api_key:
+                raise ValueError(
+                    "Custom embedding API key (LLM_CUSTOM_EMBEDDING_API_KEY or LLM_OPENAI_COMPATIBLE_API_KEY) is required"
+                )
+            base_url = settings.LLM.CUSTOM_EMBEDDING_BASE_URL
+            if not base_url:
+                raise ValueError(
+                    "CUSTOM_EMBEDDING_BASE_URL is required for custom embedding provider"
+                )
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self.model = settings.LLM.CUSTOM_EMBEDDING_MODEL
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048
+        elif self.provider == "ollama":
                     # Use native Ollama client for batch embedding
                     texts = [item.text for item in batch]
                     embeddings = await self.client.embed_batch(texts)
