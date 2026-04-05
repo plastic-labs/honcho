@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import ResourceNotFoundException, ValidationException
+from src.exceptions import ResourceNotFoundException
 from src.security import require_auth
 
 logger = logging.getLogger(__name__)
@@ -99,17 +99,16 @@ async def query_conclusions(
 ) -> list[schemas.Conclusion]:
     """
     Query Conclusions using semantic search. Use `top_k` to control the number of results returned.
+
+    If ``observer`` or ``observed`` is not provided in filters, results will not be
+    filtered by that field. Omitting both is allowed but will return conclusions across
+    all peer relationships in the workspace.
     """
     observer = None
     observed = None
     if body.filters:
         observer = body.filters.get("observer") or body.filters.get("observer_id")
         observed = body.filters.get("observed") or body.filters.get("observed_id")
-
-    if not observer or not observed:
-        raise ValidationException(
-            "observer and observed must be specified for semantic search"
-        )
 
     documents = await crud.query_documents(
         db,
