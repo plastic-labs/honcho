@@ -28,7 +28,7 @@ def upgrade() -> None:
         "message_embeddings",
         sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("embedding", Vector(1536), nullable=False),
+        sa.Column("embedding", Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=False),
         sa.Column("message_id", sa.Text(), nullable=False),
         sa.Column("workspace_name", sa.Text(), nullable=False),
         sa.Column("session_name", sa.Text(), nullable=True),

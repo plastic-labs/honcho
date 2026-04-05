@@ -212,8 +212,11 @@ class LLMSettings(HonchoSettings):
     # Separate vLLM endpoint (for local models)
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
+    OLLAMA_BASE_URL: str | None = None
+    OLLAMA_API_KEY: str | None = None
+    OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text:latest"
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter", "ollama"] = "openai"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500

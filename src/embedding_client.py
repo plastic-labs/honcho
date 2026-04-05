@@ -2,8 +2,9 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
+import httpx
 import tiktoken
 from google import genai
 from openai import AsyncOpenAI
@@ -21,9 +22,63 @@ class BatchItem(NamedTuple):
     chunk_index: int
 
 
+class OllamaEmbeddingClient:
+    """Native Ollama embedding client using Ollama's API directly."""
+
+    def __init__(self, base_url: str, model: str, api_key: str | None = None):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.api_key = api_key or "ollama"
+        self.client = httpx.AsyncClient(timeout=60.0)
+
+    async def embed(self, text: str) -> list[float]:
+        """Embed a single text using Ollama's /api/embed endpoint."""
+        url = f"{self.base_url}/api/embed"
+        payload = {
+            "model": self.model,
+            "input": text,
+        }
+
+        response = await self.client.post(url, json=payload)
+        response.raise_for_status()
+        data = response.json()
+
+        # Ollama returns embeddings in the "embeddings" field
+        embeddings = data.get("embeddings", [])
+        if not embeddings:
+            raise ValueError("No embedding returned from Ollama API")
+
+        # For single input, Ollama returns a list with one embedding
+        if isinstance(embeddings[0], list):
+            return embeddings[0]
+        return embeddings
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts using Ollama's /api/embed endpoint."""
+        url = f"{self.base_url}/api/embed"
+        payload = {
+            "model": self.model,
+            "input": texts,
+        }
+
+        response = await self.client.post(url, json=payload)
+        response.raise_for_status()
+        data = response.json()
+
+        embeddings = data.get("embeddings", [])
+        if not embeddings:
+            raise ValueError("No embeddings returned from Ollama API")
+
+        return embeddings
+
+    async def close(self):
+        """Close the HTTP client."""
+        await self.client.aclose()
+
+
 class _EmbeddingClient:
     """
-    Embedding client supporting OpenAI and Gemini with chunking and batching support.
+    Embedding client supporting OpenAI, Gemini, OpenRouter, and Ollama with chunking and batching support.
     """
 
     def __init__(self, api_key: str | None = None, provider: str | None = None):
@@ -34,7 +89,7 @@ class _EmbeddingClient:
                 api_key = settings.LLM.GEMINI_API_KEY
             if not api_key:
                 raise ValueError("Gemini API key is required")
-            self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
+            self.client: Any = genai.Client(api_key=api_key)
             self.model: str = "gemini-embedding-001"
             # Gemini has a 2048 token limit
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
@@ -55,6 +110,23 @@ class _EmbeddingClient:
             self.model = "openai/text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
+        elif self.provider == "ollama":
+            if api_key is None:
+                api_key = settings.LLM.OLLAMA_API_KEY or "ollama"
+            base_url = settings.LLM.OLLAMA_BASE_URL
+            if not base_url:
+                raise ValueError(
+                    "OLLAMA_BASE_URL is required for ollama embedding provider"
+                )
+            # Use native Ollama client instead of OpenAI-compatible client
+            self.client = OllamaEmbeddingClient(
+                base_url=base_url,
+                model=settings.LLM.OLLAMA_EMBEDDING_MODEL,
+                api_key=api_key,
+            )
+            self.model = settings.LLM.OLLAMA_EMBEDDING_MODEL
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 512  # Conservative for Ollama
         else:  # openai
             if api_key is None:
                 api_key = settings.LLM.OPENAI_API_KEY
@@ -78,16 +150,19 @@ class _EmbeddingClient:
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
 
-        if isinstance(self.client, genai.Client):
+        if self.provider == "gemini":
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
-                config={"output_dimensionality": 1536},
+                config={"output_dimensionality": 768},
             )
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
             return response.embeddings[0].values
-        else:  # openai
+        elif self.provider == "ollama":
+            # Use native Ollama client
+            return await self.client.embed(query)
+        else:  # openai, openrouter
             response = await self.client.embeddings.create(
                 model=self.model, input=query
             )
@@ -111,18 +186,22 @@ class _EmbeddingClient:
         for i in range(0, len(texts), self.max_batch_size):
             batch = texts[i : i + self.max_batch_size]
             try:
-                if isinstance(self.client, genai.Client):
+                if self.provider == "gemini":
                     # Type cast needed due to genai type signature complexity
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": 768},
                     )
                     if response.embeddings:
                         for emb in response.embeddings:
                             if emb.values:
                                 embeddings.append(emb.values)
-                else:  # openai
+                elif self.provider == "ollama":
+                    # Use native Ollama client for batch embedding
+                    batch_embeddings = await self.client.embed_batch(batch)
+                    embeddings.extend(batch_embeddings)
+                else:  # openai, openrouter
                     response = await self.client.embeddings.create(
                         input=batch,
                         model=self.model,
@@ -248,11 +327,11 @@ class _EmbeddingClient:
                 # Organize embeddings by text_id and chunk_index
                 result: dict[str, dict[int, list[float]]] = defaultdict(dict)
 
-                if isinstance(self.client, genai.Client):
+                if self.provider == "gemini":
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": 768},
                     )
                     if response.embeddings:
                         for item, embedding in zip(
@@ -262,6 +341,12 @@ class _EmbeddingClient:
                                 result[item.text_id][item.chunk_index] = (
                                     embedding.values
                                 )
+                elif self.provider == "ollama":
+                    # Use native Ollama client for batch embedding
+                    texts = [item.text for item in batch]
+                    embeddings = await self.client.embed_batch(texts)
+                    for item, embedding_vector in zip(batch, embeddings, strict=True):
+                        result[item.text_id][item.chunk_index] = embedding_vector
                 else:  # openai / openrouter
                     response = await self.client.embeddings.create(
                         model=self.model, input=[item.text for item in batch]
@@ -382,6 +467,8 @@ class EmbeddingClient:
                         api_key = settings.LLM.GEMINI_API_KEY
                     elif provider == "openrouter":
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
+                    elif provider == "ollama":
+                        api_key = settings.LLM.OLLAMA_API_KEY or "ollama"
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
 
