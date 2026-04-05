@@ -363,7 +363,7 @@ def upgrade() -> None:
             server_default="{}",
         ),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("embedding", Vector(1536), nullable=True),  # pyright: ignore
+        sa.Column("embedding", Vector(settings.VECTOR_STORE.DIMENSIONS), nullable=True),  # pyright: ignore
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

@@ -208,12 +208,21 @@ class LLMSettings(HonchoSettings):
     GEMINI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
+    OPENAI_COMPATIBLE_EMBEDDING_MODEL: str | None = None
 
     # Separate vLLM endpoint (for local models)
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
+    OLLAMA_BASE_URL: str | None = None
+    OLLAMA_API_KEY: str | None = None
+    OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text:latest"
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    # Custom OpenAI-compatible embedding endpoint
+    CUSTOM_EMBEDDING_BASE_URL: str | None = None
+    CUSTOM_EMBEDDING_API_KEY: str | None = None
+    CUSTOM_EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter", "ollama", "custom"] = "openai"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
