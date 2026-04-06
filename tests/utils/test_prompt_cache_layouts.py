@@ -6,6 +6,26 @@ from src.utils.prompt_cache_layouts import (
     merge_system_prompt_with_rolling_context,
     provider_default_prompt_cache_layout,
 )
+from src.utils.types import SupportedProviders
+
+
+class DialecticAgentHarness(DialecticAgent):
+    _provider: SupportedProviders
+
+    @property
+    def provider(self) -> SupportedProviders:
+        return self._provider
+
+    @provider.setter
+    def provider(self, value: SupportedProviders) -> None:
+        self._provider = value
+
+    @property
+    def base_system_prompt(self) -> str:
+        return self._base_system_prompt
+
+    def set_system_messages(self, session_history_section: str | None = None) -> None:
+        self._set_system_messages(session_history_section)
 
 
 def test_provider_default_prompt_cache_layout_is_google_specific() -> None:
@@ -61,7 +81,7 @@ def test_merge_system_prompt_with_rolling_context_strips_noise() -> None:
 
 
 def test_dialectic_agent_rebuilds_google_system_messages() -> None:
-    agent = DialecticAgent(
+    agent = DialecticAgentHarness(
         db=AsyncMock(),
         workspace_name="workspace",
         session_name="session",
@@ -70,14 +90,14 @@ def test_dialectic_agent_rebuilds_google_system_messages() -> None:
         reasoning_level="low",
     )
 
-    agent._provider = "google"
-    agent._set_system_messages("rolling history")
+    agent.provider = "google"
+    agent.set_system_messages("rolling history")
 
     assert agent.messages == [
         {
             "role": "system",
             "content": (
-                agent._base_system_prompt.strip()
+                agent.base_system_prompt.strip()
                 + "\n\n<rolling_history>\nrolling history\n</rolling_history>"
             ),
         }
@@ -85,7 +105,7 @@ def test_dialectic_agent_rebuilds_google_system_messages() -> None:
 
 
 def test_dialectic_agent_rebuilds_anthropic_system_messages() -> None:
-    agent = DialecticAgent(
+    agent = DialecticAgentHarness(
         db=AsyncMock(),
         workspace_name="workspace",
         session_name="session",
@@ -94,10 +114,10 @@ def test_dialectic_agent_rebuilds_anthropic_system_messages() -> None:
         reasoning_level="medium",
     )
 
-    agent._provider = "anthropic"
-    agent._set_system_messages("rolling history")
+    agent.provider = "anthropic"
+    agent.set_system_messages("rolling history")
 
     assert agent.messages == [
-        {"role": "system", "content": agent._base_system_prompt.strip()},
+        {"role": "system", "content": agent.base_system_prompt.strip()},
         {"role": "system", "content": "rolling history"},
     ]
