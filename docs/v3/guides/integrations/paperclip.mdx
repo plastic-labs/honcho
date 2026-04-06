@@ -54,26 +54,28 @@ pnpm paperclipai plugin install /absolute/path/to/honcho-ai-paperclip-honcho-0.1
 
 ## Multi-Agent Hierarchy
 
-### Core Mapping Model
+### What Maps Where
 
-Today, the Paperclip plugin models memory around company, issue, and agent boundaries:
+Paperclip memory is organized around company, issue, and agent boundaries:
 
 - **Company -> workspace**: each Paperclip company maps to one Honcho workspace.
 - **Issue -> session**: each Paperclip issue maps to one Honcho session inside that workspace.
 - **Humans and agents -> peers**: human actors and Paperclip agents map to Honcho peers.
 
-### Observation Settings
+This gives the plugin a natural hierarchy: company-level memory lives at the workspace level, issue-level memory lives at the session level, and people or agents are modeled as peers that participate across those scopes.
 
-The latest plugin also gives agent peers explicit observation settings:
+### How Agent Observation Works
+
+The current plugin gives agent peers explicit observation settings:
 
 - `observeMe` defaults to `true`
 - `observeOthers` defaults to `true`
 
-### Hierarchy Context Today
+In practice, that means agent peers can both be observed by Honcho and form representations of other peers they interact with. That is the main multi-agent improvement in the current Paperclip plugin compared with the older single-toggle model.
 
-That means agent peers can be observed by Honcho and can form representations of other peers they interact with. This is the main hierarchy-related improvement in the current plugin.
+### When Hierarchy Context Is Available
 
-Hierarchy is still host-dependent. `honcho_get_hierarchy_context` is available, but it only returns delegated-work context when the Paperclip host provides lineage metadata. The tool degrades gracefully when that metadata is unavailable.
+Hierarchy is still partly host-dependent. `honcho_get_hierarchy_context` is available, but it only returns delegated-work context when the Paperclip host provides lineage metadata. The tool degrades gracefully when that metadata is unavailable.
 
 Prompt context is still more conservative than in integrations like OpenClaw. The recommended starting configuration keeps `enablePromptContext: false`, and operators use `Preview prompt context` for manual prompt probes instead of relying on automatic injection hooks.
 
@@ -88,13 +90,7 @@ The integration breaks down into four parts:
 - **What operators get** - operators get a plugin settings page, migration preview/status data, repair tools, and an issue-level `Memory` tab.
 - **What agents get** - agents get Honcho retrieval and peer-chat tools inside Paperclip.
 
-### Issue Memory Tab
-
-The `Memory` issue tab is intentionally narrow. It shows sync markers, prompt-context previews, session previews, and a focused resync action for the current issue.
-
 ## Operator Actions
-
-### Core Actions
 
 The settings page exposes the main operator workflow directly:
 
@@ -132,8 +128,6 @@ Set `honchoApiKeySecretRef` first. Everything else can be left at the defaults u
 The plugin also accepts additional advanced fields in the settings page, including noise-pattern and metadata-strip controls. Most setups can ignore those and start with the defaults above.
 
 ## Agent Tools
-
-### Tool Surface
 
 The plugin registers the following Honcho tools for Paperclip agents:
 
