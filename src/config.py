@@ -214,6 +214,12 @@ class LLMSettings(HonchoSettings):
     VLLM_BASE_URL: str | None = None
 
     EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    # Optional override for embedding model name.
+    # Examples:
+    # - OpenAI: text-embedding-3-small
+    # - OpenRouter: openai/text-embedding-3-small
+    # - Ollama via OpenAI-compatible API: qwen3-embedding:4b
+    EMBEDDING_MODEL: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
