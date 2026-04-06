@@ -13,6 +13,8 @@ if (!HONCHO_USER) {
   process.exit(1);
 }
 
+const TIMEOUT_MS = 30000;
+
 function postToHoncho(request) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(request);
@@ -43,13 +45,25 @@ function postToHoncho(request) {
             try {
               resolve(JSON.parse(line.slice(6)));
               return;
-            } catch {}
+            } catch (parseErr) {
+              console.error(
+                "Failed to parse SSE data:",
+                line.slice(0, 100),
+                parseErr.message,
+              );
+            }
           }
         }
         reject(new Error("No valid SSE data"));
       });
     });
+
     req.on("error", reject);
+    req.setTimeout(TIMEOUT_MS, () => {
+      req.destroy();
+      reject(new Error(`Honcho request timed out after ${TIMEOUT_MS}ms`));
+    });
+
     req.write(body);
     req.end();
   });

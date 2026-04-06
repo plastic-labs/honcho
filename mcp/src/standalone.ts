@@ -2,18 +2,26 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Honcho } from "@honcho-ai/sdk";
 
-const HONCHO_BASE_URL = process.env.HONCHO_BASE_URL || "http://honcho-api:8000";
+// Required environment variables:
+//   HONCHO_USER - The user identifier for Honcho API
+// Optional environment variables:
+//   HONCHO_API_URL - Defaults to "http://honcho-api:8000"
+//   HONCHO_WORKSPACE - Defaults to "default"
+//   HONCHO_API_KEY - Defaults to "not-needed" (for local/dev use)
+
+const HONCHO_API_URL = process.env.HONCHO_API_URL || "http://honcho-api:8000";
 const HONCHO_USER = process.env.HONCHO_USER;
 if (!HONCHO_USER) {
   console.error("HONCHO_USER environment variable is required");
   process.exit(1);
 }
 const HONCHO_WORKSPACE = process.env.HONCHO_WORKSPACE || "default";
+const HONCHO_API_KEY = process.env.HONCHO_API_KEY || "not-needed";
 
 function createHonchoClient(): Honcho {
   return new Honcho({
-    apiKey: "not-needed",
-    baseURL: HONCHO_BASE_URL,
+    apiKey: HONCHO_API_KEY,
+    baseURL: HONCHO_API_URL,
     workspaceId: HONCHO_WORKSPACE,
   });
 }
