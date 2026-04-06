@@ -221,12 +221,16 @@ Below are the required configurations:
 ```env
 DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psycopg prefix)
 
-# LLM Provider API Keys (at least one required depending on your configuration)
+# LLM Provider API Keys
 LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic by default)
 LLM_OPENAI_API_KEY= # API Key for OpenAI (optional, for embeddings if EMBED_MESSAGES=true)
-LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for summary/deriver by default)
+LLM_GEMINI_API_KEY= # API Key for Google Gemini (REQUIRED - used for summary/deriver by default)
 LLM_GROQ_API_KEY= # API Key for Groq (used for query generation by default)
 ```
+
+> **Important:** `LLM_GEMINI_API_KEY` is required for a default Honcho setup. Honcho uses
+> Google Gemini for the deriver and summary workers out of the box. Without this key, the
+> server will fail to start. Get a free API key at [Google AI Studio](https://aistudio.google.com/).
 
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
 > function properly. This is a requirement brought by `sqlalchemy`
