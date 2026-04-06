@@ -5,34 +5,40 @@
  */
 
 const http = require("http");
+const https = require("https");
 
 const HONCHO_API_URL = process.env.HONCHO_API_URL || "http://honcho-api:8000/";
+const HONCHO_API_KEY = process.env.HONCHO_API_KEY || "not-needed";
 const HONCHO_USER = process.env.HONCHO_USER;
 if (!HONCHO_USER) {
   console.error("HONCHO_USER environment variable is required");
   process.exit(1);
 }
 
+const HEALTH_PORT = parseInt(process.env.HEALTH_PORT || "8788", 10);
+const HEALTH_HOST = process.env.HEALTH_HOST || "0.0.0.0";
 const TIMEOUT_MS = 30000;
 
 function postToHoncho(request) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(request);
     const url = new URL(HONCHO_API_URL);
+    const isHttps = url.protocol === "https:";
+    const httpModule = isHttps ? https : http;
     const options = {
       hostname: url.hostname,
-      port: url.port || 80,
+      port: url.port || (isHttps ? 443 : 80),
       path: url.pathname,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
-        Authorization: "Bearer not-needed",
+        Authorization: `Bearer ${HONCHO_API_KEY}`,
         "X-Honcho-User-Name": HONCHO_USER,
       },
     };
 
-    const req = http.request(options, (res) => {
+    const req = httpModule.request(options, (res) => {
       let data = "";
       res.setEncoding("utf8");
       res.on("data", (chunk) => {
@@ -132,8 +138,8 @@ const healthServer = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ status: "ok" }));
 });
-healthServer.listen(8788, "0.0.0.0", () => {
-  console.log("Honcho MCP server listening on 0.0.0.0:8788");
+healthServer.listen(HEALTH_PORT, HEALTH_HOST, () => {
+  console.log(`Honcho MCP server listening on ${HEALTH_HOST}:${HEALTH_PORT}`);
 });
 
 // Process JSON-RPC from stdin

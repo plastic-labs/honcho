@@ -26,11 +26,72 @@ function createHonchoClient(): Honcho {
   });
 }
 
+// Typed input interfaces
+interface SearchInput {
+  query: string;
+  peer_id?: string;
+  session_id?: string;
+}
+
+interface PeerIdInput {
+  peer_id: string;
+}
+
+interface SessionIdInput {
+  session_id: string;
+}
+
+interface PeerAndTargetInput {
+  peer_id: string;
+  target_peer_id?: string;
+}
+
+interface ChatInput {
+  peer_id: string;
+  query: string;
+  target_peer_id?: string;
+  session_id?: string;
+  reasoning_level?: "minimal" | "low" | "medium" | "high" | "max";
+}
+
+interface RepresentationInput {
+  peer_id: string;
+  target_peer_id?: string;
+  session_id?: string;
+}
+
+interface AddPeersInput {
+  session_id: string;
+  peers: string[];
+}
+
+interface AddMessagesInput {
+  session_id: string;
+  messages: Array<{ peer_id: string; content: string }>;
+}
+
+interface ConclusionsInput {
+  peer_id: string;
+  target_peer_id: string;
+  conclusions: string[];
+  session_id?: string;
+}
+
+interface QueryConclusionsInput {
+  peer_id: string;
+  query: string;
+  target_peer_id?: string;
+  top_k?: number;
+}
+
 function registerTools(server: McpServer, honcho: Honcho) {
   // inspect_workspace
   server.registerTool(
     "inspect_workspace",
-    { description: "Inspect the current workspace at a glance." },
+    {
+      description: "Inspect the current workspace at a glance.",
+      inputSchema: { type: "object", properties: {} },
+    },
     async () => {
       const metadata = await honcho.getMetadata();
       return { content: [{ type: "text", text: JSON.stringify(metadata) }] };
@@ -40,7 +101,10 @@ function registerTools(server: McpServer, honcho: Honcho) {
   // list_workspaces
   server.registerTool(
     "list_workspaces",
-    { description: "List workspaces accessible to the current credentials." },
+    {
+      description: "List workspaces accessible to the current credentials.",
+      inputSchema: { type: "object", properties: {} },
+    },
     async () => {
       const ws = await honcho.workspaces();
       return { content: [{ type: "text", text: JSON.stringify(ws) }] };
@@ -65,7 +129,7 @@ function registerTools(server: McpServer, honcho: Honcho) {
         required: ["query"],
       },
     },
-    async ({ query, peer_id, session_id }: any) => {
+    async ({ query, peer_id, session_id }: SearchInput) => {
       const result = await honcho.search(query, {
         filters: { peerId: peer_id, sessionId: session_id },
       });
@@ -80,13 +144,11 @@ function registerTools(server: McpServer, honcho: Honcho) {
       description: "Get or create a peer.",
       inputSchema: {
         type: "object",
-        properties: {
-          peer_id: { type: "string" },
-        },
+        properties: { peer_id: { type: "string" } },
         required: ["peer_id"],
       },
     },
-    async ({ peer_id }: any) => {
+    async ({ peer_id }: PeerIdInput) => {
       const peer = await honcho.peer(peer_id);
       return {
         content: [{ type: "text", text: JSON.stringify({ peer_id: peer.id }) }],
@@ -97,7 +159,10 @@ function registerTools(server: McpServer, honcho: Honcho) {
   // list_peers
   server.registerTool(
     "list_peers",
-    { description: "List peers in the workspace." },
+    {
+      description: "List peers in the workspace.",
+      inputSchema: { type: "object", properties: {} },
+    },
     async () => {
       const result = await honcho.peers();
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
@@ -111,13 +176,11 @@ function registerTools(server: McpServer, honcho: Honcho) {
       description: "Get or create a session.",
       inputSchema: {
         type: "object",
-        properties: {
-          session_id: { type: "string" },
-        },
+        properties: { session_id: { type: "string" } },
         required: ["session_id"],
       },
     },
-    async ({ session_id }: any) => {
+    async ({ session_id }: SessionIdInput) => {
       const session = await honcho.session(session_id);
       return {
         content: [
@@ -130,7 +193,10 @@ function registerTools(server: McpServer, honcho: Honcho) {
   // list_sessions
   server.registerTool(
     "list_sessions",
-    { description: "List sessions in the workspace." },
+    {
+      description: "List sessions in the workspace.",
+      inputSchema: { type: "object", properties: {} },
+    },
     async () => {
       const result = await honcho.sessions();
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
@@ -151,7 +217,7 @@ function registerTools(server: McpServer, honcho: Honcho) {
         required: ["session_id", "peers"],
       },
     },
-    async ({ session_id, peers }: any) => {
+    async ({ session_id, peers }: AddPeersInput) => {
       const session = await honcho.session(session_id);
       await session.addPeers(peers);
       return {
@@ -184,10 +250,10 @@ function registerTools(server: McpServer, honcho: Honcho) {
         required: ["session_id", "messages"],
       },
     },
-    async ({ session_id, messages }: any) => {
+    async ({ session_id, messages }: AddMessagesInput) => {
       const session = await honcho.session(session_id);
       const result = await session.addMessages(
-        messages.map((m: any) => ({ peerId: m.peer_id, content: m.content })),
+        messages.map((m) => ({ peerId: m.peer_id, content: m.content })),
       );
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },
@@ -200,13 +266,11 @@ function registerTools(server: McpServer, honcho: Honcho) {
       description: "Get messages from a session.",
       inputSchema: {
         type: "object",
-        properties: {
-          session_id: { type: "string" },
-        },
+        properties: { session_id: { type: "string" } },
         required: ["session_id"],
       },
     },
-    async ({ session_id }: any) => {
+    async ({ session_id }: SessionIdInput) => {
       const session = await honcho.session(session_id);
       const result = await session.getMessages();
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
@@ -239,7 +303,7 @@ function registerTools(server: McpServer, honcho: Honcho) {
       target_peer_id,
       session_id,
       reasoning_level,
-    }: any) => {
+    }: ChatInput) => {
       const peer = await honcho.peer(peer_id);
       const result = await peer.chat(query, {
         targetPeerId: target_peer_id,
@@ -264,7 +328,7 @@ function registerTools(server: McpServer, honcho: Honcho) {
         required: ["peer_id"],
       },
     },
-    async ({ peer_id, target_peer_id }: any) => {
+    async ({ peer_id, target_peer_id }: PeerAndTargetInput) => {
       const peer = await honcho.peer(peer_id);
       const result = await peer.getCard(target_peer_id);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
@@ -286,7 +350,7 @@ function registerTools(server: McpServer, honcho: Honcho) {
         required: ["peer_id"],
       },
     },
-    async ({ peer_id, target_peer_id, session_id }: any) => {
+    async ({ peer_id, target_peer_id, session_id }: RepresentationInput) => {
       const peer = await honcho.peer(peer_id);
       const result = await peer.getRepresentation({
         targetPeerId: target_peer_id,
@@ -310,7 +374,7 @@ function registerTools(server: McpServer, honcho: Honcho) {
         required: ["peer_id"],
       },
     },
-    async ({ peer_id, target_peer_id }: any) => {
+    async ({ peer_id, target_peer_id }: PeerAndTargetInput) => {
       const peer = await honcho.peer(peer_id);
       const result = await peer.listConclusions(target_peer_id);
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
@@ -333,7 +397,12 @@ function registerTools(server: McpServer, honcho: Honcho) {
         required: ["peer_id", "query"],
       },
     },
-    async ({ peer_id, query, target_peer_id, top_k }: any) => {
+    async ({
+      peer_id,
+      query,
+      target_peer_id,
+      top_k,
+    }: QueryConclusionsInput) => {
       const peer = await honcho.peer(peer_id);
       const result = await peer.queryConclusions(query, {
         targetPeerId: target_peer_id,
@@ -359,7 +428,12 @@ function registerTools(server: McpServer, honcho: Honcho) {
         required: ["peer_id", "target_peer_id", "conclusions"],
       },
     },
-    async ({ peer_id, target_peer_id, conclusions, session_id }: any) => {
+    async ({
+      peer_id,
+      target_peer_id,
+      conclusions,
+      session_id,
+    }: ConclusionsInput) => {
       const peer = await honcho.peer(peer_id);
       const result = await peer.createConclusions(target_peer_id, conclusions, {
         sessionId: session_id,
@@ -371,7 +445,10 @@ function registerTools(server: McpServer, honcho: Honcho) {
   // get_queue_status
   server.registerTool(
     "get_queue_status",
-    { description: "Get background task queue status." },
+    {
+      description: "Get background task queue status.",
+      inputSchema: { type: "object", properties: {} },
+    },
     async () => {
       const result = await honcho.queueStatus();
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
@@ -380,17 +457,22 @@ function registerTools(server: McpServer, honcho: Honcho) {
 }
 
 async function main() {
-  const honcho = createHonchoClient();
+  try {
+    const honcho = createHonchoClient();
 
-  const server = new McpServer(
-    { name: "honcho-mcp", version: "1.0.0" },
-    { capabilities: { tools: {} } },
-  );
+    const server = new McpServer(
+      { name: "honcho-mcp", version: "1.0.0" },
+      { capabilities: { tools: {} } },
+    );
 
-  registerTools(server, honcho);
+    registerTools(server, honcho);
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+  } catch (err) {
+    console.error("MCP server failed to start:", err);
+    process.exit(1);
+  }
 }
 
-main().catch(console.error);
+main();
