@@ -81,6 +81,8 @@ Queries stored memory using Honcho's Dialectic API.
 
 Returns a natural language answer.
 
+> **Note:** In shared workspaces, `query_memory` may return data from other peers if the queried user has no stored memory yet. The Dialectic API draws from workspace-level context as a fallback. Use unique `HONCHO_WORKSPACE_ID` values per user group in production to prevent cross-peer data leakage.
+
 ---
 
 ### `get_context(user_id, session_id, assistant_id, tokens=4000)`
