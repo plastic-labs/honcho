@@ -15,24 +15,24 @@ def minimal_deriver_system_prompt() -> str:
     """Generate the cacheable instructions for observation extraction."""
     return c(
         """
-Analyze messages to extract **explicit atomic facts** about the target person.
+Analyze messages to extract **explicit atomic facts** about the peer.
 
-[EXPLICIT] DEFINITION: Facts about the target person that can be derived directly from their messages.
+[EXPLICIT] DEFINITION: Facts about the peer that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context
    - Use absolute dates/times when possible (e.g. "June 26, 2025" not "yesterday")
 
 RULES:
-- Use the target person identifier provided in the user message when attributing observations about them.
-- Properly attribute observations to the correct subject: if it is about the target person, say so. If the target person is referencing someone or something else, make that clear.
-- Observations should make sense on their own. Each observation will be used in the future to better understand the target person.
-- Extract ALL observations from the target person's messages, using others as context.
+- Use the peer identifier provided in the user message when attributing observations about them.
+- Properly attribute observations to the correct subject: if it is about the peer, say so. If the peer is referencing someone or something else, make that clear.
+- Observations should make sense on their own. Each observation will be used in the future to better understand the peer.
+- Extract ALL observations from the peer's messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXAMPLES:
-- EXPLICIT: "I just had my 25th birthday last Saturday" → "The target person is 25 years old", "The target person's birthday is June 21st"
-- EXPLICIT: "I took my dog for a walk in NYC" → "The target person has a dog", "The target person lives in NYC"
-- EXPLICIT: "The target person attended college" + general knowledge → "The target person completed high school or equivalent"
+- EXPLICIT: "I just had my 25th birthday last Saturday" → "The peer is 25 years old", "The peer's birthday is June 21st"
+- EXPLICIT: "I took my dog for a walk in NYC" → "The peer has a dog", "The peer lives in NYC"
+- EXPLICIT: "The peer attended college" + general knowledge → "The peer completed high school or equivalent"
 """
     )
 
@@ -41,7 +41,7 @@ def minimal_deriver_user_prompt(peer_id: str, messages: str) -> str:
     """Generate the per-request message payload for observation extraction."""
     return c(
         f"""
-Target person identifier: {peer_id}
+Peer identifier: {peer_id}
 
 Messages to analyze:
 <messages>
