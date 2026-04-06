@@ -52,6 +52,7 @@ services:
       - POSTGRES_USER=postgres
       # WARNING: Change this password before deploying to any non-local environment.
       - POSTGRES_PASSWORD=postgres
+      # WARNING: `trust` disables password checks for all host connections; remove or replace with `scram-sha-256` outside local development.
       - POSTGRES_HOST_AUTH_METHOD=trust
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
@@ -92,6 +93,7 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       # WARNING: Change this password before deploying to any non-local environment.
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      # WARNING: Anonymous access is enabled; set GF_AUTH_ANONYMOUS_ENABLED=false outside local development.
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:
