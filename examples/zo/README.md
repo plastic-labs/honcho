@@ -54,7 +54,7 @@ messages = get_context("alice", "session-1", "assistant", tokens=4000)
 
 ## Tool Reference
 
-### `save_memory(user_id, content, role, session_id)`
+### `save_memory(user_id, content, role, session_id, assistant_id="assistant")`
 
 Saves a message to Honcho memory.
 
@@ -64,6 +64,7 @@ Saves a message to Honcho memory.
 | `content` | `str` | Message text |
 | `role` | `str` | `"user"` or `"assistant"` |
 | `session_id` | `str` | Session/conversation identifier |
+| `assistant_id` | `str` | Peer ID for the assistant. Defaults to `"assistant"` |
 
 Returns a confirmation string.
 
@@ -77,7 +78,7 @@ Queries stored memory using Honcho's Dialectic API.
 |---|---|---|
 | `user_id` | `str` | Unique user identifier |
 | `query` | `str` | Natural language question |
-| `session_id` | `str` | Optional: scope to a specific session |
+| `session_id` | `str | None` | Optional: scope to a specific session. Defaults to `None` (global memory) |
 
 Returns a natural language answer.
 
