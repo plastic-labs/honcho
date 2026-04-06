@@ -52,6 +52,7 @@ PROFILES_SAMPLE_RATE = 0.1
 [llm]
 DEFAULT_MAX_TOKENS = 2500
 EMBEDDING_PROVIDER = "openai"
+# EMBEDDING_MODEL = "text-embedding-3-small"  # Optional override for embedding model name
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 

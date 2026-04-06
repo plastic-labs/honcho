@@ -228,6 +228,24 @@ LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for summary/deriver by def
 LLM_GROQ_API_KEY= # API Key for Groq (used for query generation by default)
 ```
 
+Embedding provider configuration supports multiple backends:
+
+```env
+# One of: openai, gemini, openrouter, openai-compatible, vllm
+LLM_EMBEDDING_PROVIDER=openai
+
+# Optional custom embedding model (provider-specific)
+LLM_EMBEDDING_MODEL=text-embedding-3-small
+
+# Required when using openai-compatible/openrouter
+LLM_OPENAI_COMPATIBLE_BASE_URL=
+LLM_OPENAI_COMPATIBLE_API_KEY=
+
+# Required when using vllm
+LLM_VLLM_BASE_URL=
+LLM_VLLM_API_KEY= # optional for local deployments, defaults to sk-no-key-required
+```
+
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
 > function properly. This is a requirement brought by `sqlalchemy`
 

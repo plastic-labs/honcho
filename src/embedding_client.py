@@ -23,11 +23,12 @@ class BatchItem(NamedTuple):
 
 class _EmbeddingClient:
     """
-    Embedding client supporting OpenAI and Gemini with chunking and batching support.
+    Embedding client supporting OpenAI-compatible providers with chunking and batching.
     """
 
     def __init__(self, api_key: str | None = None, provider: str | None = None):
         self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+        custom_model = settings.LLM.EMBEDDING_MODEL
 
         if self.provider == "gemini":
             if api_key is None:
@@ -35,7 +36,7 @@ class _EmbeddingClient:
             if not api_key:
                 raise ValueError("Gemini API key is required")
             self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
-            self.model: str = "gemini-embedding-001"
+            self.model = custom_model or "gemini-embedding-001"
             # Gemini has a 2048 token limit
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
@@ -52,7 +53,36 @@ class _EmbeddingClient:
                 or "https://openrouter.ai/api/v1"
             )
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
+            self.model = custom_model or "openai/text-embedding-3-small"
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048  # Same as OpenAI
+        elif self.provider == "openai-compatible":
+            if api_key is None:
+                api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
+            if not api_key:
+                raise ValueError(
+                    "OpenAI-compatible API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
+                )
+            if not settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
+                raise ValueError(
+                    "OpenAI-compatible base URL (LLM_OPENAI_COMPATIBLE_BASE_URL) is required"
+                )
+
+            self.client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
+            )
+            self.model = custom_model or "openai/text-embedding-3-small"
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048  # Same as OpenAI
+        elif self.provider == "vllm":
+            base_url = settings.LLM.VLLM_BASE_URL
+            if not base_url:
+                raise ValueError("vLLM base URL (LLM_VLLM_BASE_URL) is required")
+
+            resolved_api_key = api_key or settings.LLM.VLLM_API_KEY or "sk-no-key-required"
+            self.client = AsyncOpenAI(api_key=resolved_api_key, base_url=base_url)
+            self.model = custom_model or "openai/text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
         else:  # openai
@@ -61,7 +91,7 @@ class _EmbeddingClient:
             if not api_key:
                 raise ValueError("OpenAI API key is required")
             self.client = AsyncOpenAI(api_key=api_key)
-            self.model = "text-embedding-3-small"
+            self.model = custom_model or "text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # OpenAI batch limit
 
@@ -380,8 +410,10 @@ class EmbeddingClient:
                     provider = settings.LLM.EMBEDDING_PROVIDER
                     if provider == "gemini":
                         api_key = settings.LLM.GEMINI_API_KEY
-                    elif provider == "openrouter":
+                    elif provider in ("openrouter", "openai-compatible"):
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
+                    elif provider == "vllm":
+                        api_key = settings.LLM.VLLM_API_KEY
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
 
