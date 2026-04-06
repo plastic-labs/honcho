@@ -1,22 +1,57 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ToolContext } from "./types.js";
-import { register as registerWorkspaceTools } from "./tools/workspace.js";
-import { register as registerPeerTools } from "./tools/peers.js";
-import { register as registerSessionTools } from "./tools/sessions.js";
-import { register as registerConclusionTools } from "./tools/conclusions.js";
-import { register as registerSystemTools } from "./tools/system.js";
+import { createMcpHandler } from "agents/mcp";
+import { parseConfig, createClient } from "./config.js";
+import { createServer } from "./server.js";
 
-export function createServer(ctx: ToolContext): McpServer {
-  const server = new McpServer({
-    name: "Honcho MCP Server",
-    version: "3.0.0",
-  });
+const CORS_ORIGIN = "*";
+const CORS_METHODS = "GET, POST, DELETE, OPTIONS";
+const CORS_ALLOWED_HEADERS =
+  "Content-Type, Authorization, X-Honcho-User-Name, X-Honcho-Workspace-ID, X-Honcho-Assistant-Name, X-Honcho-Base-Url";
 
-  registerWorkspaceTools(server, ctx);
-  registerPeerTools(server, ctx);
-  registerSessionTools(server, ctx);
-  registerConclusionTools(server, ctx);
-  registerSystemTools(server, ctx);
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": CORS_ORIGIN,
+  "Access-Control-Allow-Methods": CORS_METHODS,
+  "Access-Control-Allow-Headers": CORS_ALLOWED_HEADERS,
+};
 
-  return server;
-}
+export default {
+  async fetch(
+    request: Request,
+    env: unknown,
+    executionCtx: ExecutionContext,
+  ): Promise<Response> {
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    let config;
+    try {
+      config = parseConfig(request);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Invalid request";
+      return new Response(JSON.stringify({ error: message }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+
+    try {
+      const honcho = createClient(config);
+      const server = createServer({ honcho, config });
+      const handler = createMcpHandler(server, {
+        route: "/",
+        corsOptions: {
+          origin: CORS_ORIGIN,
+          methods: CORS_METHODS,
+          headers: CORS_ALLOWED_HEADERS,
+        },
+      });
+      return await handler(request, env, executionCtx);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Internal server error";
+      return new Response(JSON.stringify({ error: message }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+      });
+    }
+  },
+};

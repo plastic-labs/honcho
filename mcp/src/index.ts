@@ -5,7 +5,7 @@ import { createServer } from "./server.js";
 const CORS_ORIGIN = "*";
 const CORS_METHODS = "GET, POST, DELETE, OPTIONS";
 const CORS_ALLOWED_HEADERS =
-  "Content-Type, Authorization, X-Honcho-User-Name, X-Honcho-Workspace-ID, X-Honcho-Assistant-Name";
+  "Content-Type, Authorization, X-Honcho-User-Name, X-Honcho-Workspace-ID, X-Honcho-Assistant-Name, X-Honcho-Base-Url";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": CORS_ORIGIN,
@@ -27,8 +27,7 @@ export default {
     try {
       config = parseConfig(request);
     } catch (e) {
-      const message =
-        e instanceof Error ? e.message : "Invalid request";
+      const message = e instanceof Error ? e.message : "Invalid request";
       return new Response(JSON.stringify({ error: message }), {
         status: 401,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },
@@ -48,8 +47,7 @@ export default {
       });
       return await handler(request, env, executionCtx);
     } catch (e) {
-      const message =
-        e instanceof Error ? e.message : "Internal server error";
+      const message = e instanceof Error ? e.message : "Internal server error";
       return new Response(JSON.stringify({ error: message }), {
         status: 500,
         headers: { "Content-Type": "application/json", ...CORS_HEADERS },

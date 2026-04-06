@@ -36,9 +36,13 @@ export function parseConfig(request: Request): HonchoConfig {
   return {
     apiKey,
     userName,
-    assistantName: request.headers.get("X-Honcho-Assistant-Name")?.trim() || "Assistant",
-    baseUrl: "https://api.honcho.dev",
-    workspaceId: request.headers.get("X-Honcho-Workspace-ID")?.trim() || "default",
+    assistantName:
+      request.headers.get("X-Honcho-Assistant-Name")?.trim() || "Assistant",
+    baseUrl:
+      request.headers.get("X-Honcho-Base-Url")?.trim() ||
+      "https://api.honcho.dev",
+    workspaceId:
+      request.headers.get("X-Honcho-Workspace-ID")?.trim() || "default",
   };
 }
 
