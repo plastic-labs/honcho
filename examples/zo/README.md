@@ -78,7 +78,7 @@ Queries stored memory using Honcho's Dialectic API.
 |---|---|---|
 | `user_id` | `str` | Unique user identifier |
 | `query` | `str` | Natural language question |
-| `session_id` | `str | None` | Optional: scope to a specific session. Defaults to `None` (global memory) |
+| `session_id` | `str \| None` | Optional: scope to a specific session. Defaults to `None` (global memory) |
 
 Returns a natural language answer.
 
@@ -128,6 +128,7 @@ To publish this skill to the [Zo Skills Registry](https://github.com/zocomputer/
    └── honcho-memory/
        ├── SKILL.md
        ├── README.md
+       ├── client.py
        ├── pyproject.toml
        └── tools/
    ```
@@ -137,6 +138,7 @@ To publish this skill to the [Zo Skills Registry](https://github.com/zocomputer/
    ```bash
    bun validate
    ```
+
 4. **Submit a pull request** to the upstream registry repository.
 
 Once merged, the skill will be automatically added to the Zo marketplace `manifest.json`.
