@@ -44,7 +44,8 @@ save_memory(
     user_id="alice",           # unique user identifier
     content="I love hiking",   # message text
     role="user",               # "user" or "assistant"
-    session_id="chat-1"        # conversation session ID
+    session_id="chat-1",       # conversation session ID
+    assistant_id="assistant"   # optional: assistant peer ID (default: "assistant")
 )
 ```
 
