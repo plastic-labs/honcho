@@ -45,21 +45,25 @@ This creates a virtual environment at `honcho/.venv` and installs all dependenci
 Activate the virtual environment:
 
 **macOS / Linux:**
+
 ```bash
 source .venv/bin/activate
 ```
 
 **Windows PowerShell:**
+
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
 **Windows Git Bash:**
+
 ```bash
 source .venv/Scripts/activate
 ```
 
 **WSL2:**
+
 ```bash
 source .venv/bin/activate
 ```
@@ -94,11 +98,13 @@ SENTRY_ENABLED=false
 If you need to set environment variables directly in your shell (e.g., for one-off overrides):
 
 **macOS / Linux / WSL2 / Git Bash:**
+
 ```bash
 export DB_CONNECTION_URI="postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 ```
 
 **Windows PowerShell:**
+
 ```powershell
 $env:DB_CONNECTION_URI="postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 ```
@@ -411,10 +417,18 @@ On Linux, install system dev packages: `sudo apt install python3-dev libpq-dev` 
 
 **Every file is flagged for whitespace/line ending changes**
 
-This usually means Git is converting line endings. Fix with:
+This usually means Git is converting line endings. Fix with the safe normalization approach:
 
 ```bash
 git config core.autocrlf input
+git add --renormalize .
+git status  # review the changes before committing
+git commit -m "chore: normalize line endings"
+```
+
+If the above doesn't fully resolve it and you want a clean slate, **commit or stash any local changes first**, then:
+
+```bash
 git rm --cached -r .
 git reset --hard
 ```
@@ -433,10 +447,18 @@ uv run alembic upgrade head
 
 **"Can't locate revision"**
 
-Your local migrations may be out of sync. Pull latest from upstream and re-run:
+Your local migrations may be out of sync. Pull the latest and re-run:
 
 ```bash
+# Check your remotes first:
+git remote -v
+
+# If you forked the repo and have an "upstream" remote:
 git pull upstream main
+
+# If you cloned directly (only "origin"):
+git pull origin main
+
 uv run alembic upgrade head
 ```
 
@@ -445,18 +467,21 @@ uv run alembic upgrade head
 **"Address already in use" when starting the API server**
 
 **macOS / Linux / WSL2:**
+
 ```bash
 lsof -i :8000
 kill -9 <PID>
 ```
 
 **Windows PowerShell:**
+
 ```powershell
 netstat -ano | findstr :8000
 taskkill /PID <PID> /F
 ```
 
 **Windows Git Bash:**
+
 ```bash
 netstat -ano | grep :8000
 # Note the PID, then:
