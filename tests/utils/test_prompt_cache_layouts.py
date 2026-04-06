@@ -82,11 +82,11 @@ def test_merge_system_prompt_with_rolling_context_strips_noise() -> None:
 
 def test_dialectic_agent_rebuilds_google_system_messages() -> None:
     agent = DialecticAgentHarness(
-        db=AsyncMock(),
-        workspace_name="workspace",
-        session_name="session",
-        observer="Mira",
-        observed="Jon",
+        AsyncMock(),
+        "workspace",
+        "session",
+        "Mira",
+        "Jon",
         reasoning_level="low",
     )
 
@@ -106,11 +106,11 @@ def test_dialectic_agent_rebuilds_google_system_messages() -> None:
 
 def test_dialectic_agent_rebuilds_anthropic_system_messages() -> None:
     agent = DialecticAgentHarness(
-        db=AsyncMock(),
-        workspace_name="workspace",
-        session_name="session",
-        observer="Mira",
-        observed="Jon",
+        AsyncMock(),
+        "workspace",
+        "session",
+        "Mira",
+        "Jon",
         reasoning_level="medium",
     )
 
