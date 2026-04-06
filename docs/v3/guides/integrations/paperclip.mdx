@@ -32,10 +32,6 @@ pnpm paperclipai plugin install /absolute/path/to/honcho-ai-paperclip-honcho-0.1
 2. Open the Honcho plugin settings page in Paperclip.
 3. Set:
    - `honchoApiKeySecretRef`
-   - `workspacePrefix` if you want something other than `paperclip`
-   - `syncIssueComments`
-   - `syncIssueDocuments`
-   - `enablePeerChat`
 4. Save the settings.
 5. Run:
    - `Validate config`
@@ -75,23 +71,16 @@ The plugin registers issue, search, workspace, session, agent, hierarchy, and pe
 
 ## Configuration Notes
 
-Open the Honcho plugin settings page in Paperclip and set the plugin fields there.
+Open the Honcho plugin settings page in Paperclip and set `honchoApiKeySecretRef`. That is the only field required for initialization.
 
-The key settings to start with are:
+The other settings are optional overrides with defaults:
 
-- `honchoApiKeySecretRef`
-- `workspacePrefix` if you want something other than `paperclip`
-- `syncIssueComments`
-- `syncIssueDocuments`
-- `enablePeerChat`
-
-Recommended starting configuration:
-
-- `syncIssueComments: true`
-- `syncIssueDocuments: true`
-- `enablePromptContext: false`
-- `enablePeerChat: true`
-- `observeAgentPeers: false`
+- `workspacePrefix` defaults to `paperclip`
+- `syncIssueComments` defaults to `true`
+- `syncIssueDocuments` defaults to `true`
+- `enablePeerChat` defaults to `true`
+- `enablePromptContext` defaults to `false`
+- `observeAgentPeers` defaults to `false`
 
 Use `Preview prompt context` and the related operator actions when you want to inspect prompt context manually.
 
