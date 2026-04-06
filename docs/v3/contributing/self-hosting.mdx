@@ -32,108 +32,57 @@ You'll need a PostgreSQL database with the pgvector extension. Choose one:
 - **Railway** - Simple cloud PostgreSQL hosting
 - **Your own PostgreSQL server**
 
-## LLM Provider Setup
+## LLM Setup
 
-Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dream consolidation. The server will **fail to start** until a provider is configured — this is intentional so you don't get a running server that silently does no reasoning.
+Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dreaming. The server will **fail to start** without a provider configured.
 
-Each feature needs a `PROVIDER` and `MODEL`. You set these in your `.env` file (see `.env.template` for the full list).
-
-<Warning>
-All Honcho agents (deriver, dialectic, dream) use tool calling. Your models must support the OpenAI tool calling format.
-</Warning>
-
-<Info>
-**Community quick-start**: [elkimek/honcho-self-hosted](https://github.com/elkimek/honcho-self-hosted) provides an opinionated one-command installer with pre-configured model tiers, interactive provider setup, and Hermes Agent integration. Good starting point if you want to get running fast.
-</Info>
-
-### Choosing Models
-
-Honcho's agents rely heavily on function calling. Model choice matters more for tool-use reliability than raw intelligence. Here are models known to work well, ranked by function-calling benchmarks:
-
-| Tier | Example models | Use case | Notes |
-|---|---|---|---|
-| **Light** | Gemini 2.5 Flash, GLM-4.7-Flash | Deriver, summary, dialectic minimal/low | High throughput, cheap, reliable tool use |
-| **Medium** | Claude Haiku 4.5, Grok 4.1 Fast | Dialectic medium/high | Good reasoning + tool use balance |
-| **Heavy** | Claude Sonnet 4, GLM-5 | Dream, dialectic max | Best quality for rare/complex tasks |
-
-Set `PROVIDER` and `MODEL` per feature — you can mix providers freely. For example, use Gemini for the deriver and Claude for dream.
-
-<Warning>
-**`THINKING_BUDGET_TOKENS` and non-Anthropic providers**: The default config uses thinking budgets tuned for Anthropic models. If you're using a provider that doesn't support Anthropic-style extended thinking (OpenRouter with non-Anthropic models, vLLM, Ollama, Groq, etc.), set `THINKING_BUDGET_TOKENS=0` for all components. Leaving it at the default will cause errors or silent failures. See the [Configuration Guide](./configuration#thinking-budget) for details.
-</Warning>
-
-### Provider Options
-
-| Provider | Endpoint | Use case |
-|---|---|---|
-| `custom` | Any OpenAI-compatible API (OpenRouter, Together, Fireworks, LiteLLM, Ollama) | Single key, many models |
-| `vllm` | vLLM self-hosted models | Local inference |
-| `google` | Google Gemini (direct) | Direct vendor API |
-| `anthropic` | Anthropic Claude (direct) | Direct vendor API |
-| `openai` | OpenAI (direct) | Direct vendor API |
-| `groq` | Groq (direct) | Direct vendor API |
-
-### Example: OpenRouter
+You need one API key and one model. Any OpenAI-compatible endpoint works — OpenRouter, Together, Fireworks, Ollama, vLLM, or a direct vendor API. Add these to your `.env` file:
 
 ```bash
+# Your endpoint and key
 LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
 LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
-LLM_EMBEDDING_PROVIDER=openrouter
 
+# One model for everything
 DERIVER_PROVIDER=custom
-DERIVER_MODEL=google/gemini-2.5-flash-lite
-
+DERIVER_MODEL=google/gemini-2.5-flash
 SUMMARY_PROVIDER=custom
 SUMMARY_MODEL=google/gemini-2.5-flash
-
 DIALECTIC_LEVELS__minimal__PROVIDER=custom
-DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash-lite
+DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash
 DIALECTIC_LEVELS__low__PROVIDER=custom
-DIALECTIC_LEVELS__low__MODEL=google/gemini-2.5-flash-lite
+DIALECTIC_LEVELS__low__MODEL=google/gemini-2.5-flash
 DIALECTIC_LEVELS__medium__PROVIDER=custom
-DIALECTIC_LEVELS__medium__MODEL=anthropic/claude-haiku-4-5
+DIALECTIC_LEVELS__medium__MODEL=google/gemini-2.5-flash
 DIALECTIC_LEVELS__high__PROVIDER=custom
-DIALECTIC_LEVELS__high__MODEL=anthropic/claude-haiku-4-5
+DIALECTIC_LEVELS__high__MODEL=google/gemini-2.5-flash
 DIALECTIC_LEVELS__max__PROVIDER=custom
-DIALECTIC_LEVELS__max__MODEL=anthropic/claude-haiku-4-5
-
+DIALECTIC_LEVELS__max__MODEL=google/gemini-2.5-flash
 DREAM_PROVIDER=custom
-DREAM_MODEL=anthropic/claude-sonnet-4-20250514
-DREAM_DEDUCTION_MODEL=anthropic/claude-haiku-4-5
-DREAM_INDUCTION_MODEL=anthropic/claude-haiku-4-5
+DREAM_MODEL=google/gemini-2.5-flash
+DREAM_DEDUCTION_MODEL=google/gemini-2.5-flash
+DREAM_INDUCTION_MODEL=google/gemini-2.5-flash
+
+# Disable thinking budget (only needed for Anthropic models)
+DERIVER_THINKING_BUDGET_TOKENS=0
+SUMMARY_THINKING_BUDGET_TOKENS=0
+DREAM_THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__low__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS=0
 ```
 
-Model names depend on your endpoint. OpenRouter uses `vendor/model` format. Swap any model for another available on your provider.
+Swap `google/gemini-2.5-flash` for any model with tool calling support. Model name format depends on your provider (OpenRouter uses `vendor/model`).
 
-### Example: Self-Hosted (vLLM / Ollama)
+<Info>
+For recommended model tiers per feature, using multiple providers, or direct vendor API keys, see the [Configuration Guide](./configuration#alternative-providers).
+</Info>
 
-```bash
-# vLLM
-LLM_VLLM_BASE_URL=http://localhost:8000/v1
-LLM_VLLM_API_KEY=not-needed
-DERIVER_PROVIDER=vllm
-DERIVER_MODEL=your-model-name
-
-# Ollama (uses custom provider)
-LLM_OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
-LLM_OPENAI_COMPATIBLE_API_KEY=ollama
-DERIVER_PROVIDER=custom
-DERIVER_MODEL=llama3.3:70b
-```
-
-Set `PROVIDER` and `MODEL` for each feature the same way.
-
-### Example: Direct Vendor Keys
-
-Leave the provider overrides commented out in `.env`. Set individual API keys and the code defaults will route to the correct vendor per feature:
-
-```bash
-LLM_GEMINI_API_KEY=...       # deriver, summary, dialectic minimal/low
-LLM_ANTHROPIC_API_KEY=...    # dialectic medium/high/max, dream
-LLM_OPENAI_API_KEY=...       # embeddings
-```
-
-See the [Configuration Guide](./configuration) for the full reference.
+<Info>
+**Community quick-start**: [elkimek/honcho-self-hosted](https://github.com/elkimek/honcho-self-hosted) provides a one-command installer with pre-configured model tiers, interactive provider setup, and Hermes Agent integration.
+</Info>
 
 ## Docker Setup (Recommended)
 
@@ -456,8 +405,8 @@ When self-hosting for production, start with `docker-compose.prod.yml` — it bi
 - Check current migration status with `uv run alembic current`
 
 ### LLM Providers
-- Ensure your provider endpoint and API key are configured (see [LLM Provider Setup](#llm-provider-setup))
-- All features are independently configurable — see the [Configuration Guide](./configuration) for per-feature model overrides
+- Ensure your API keys are configured (see [LLM API Keys](#llm-api-keys))
+- For alternative providers or per-feature model overrides, see the [Configuration Guide](./configuration#alternative-providers)
 
 ### Monitoring
 - Enable Prometheus metrics with `METRICS_ENABLED=true` (scraped at `/metrics` on port 8000 for API, port 9090 for deriver)
