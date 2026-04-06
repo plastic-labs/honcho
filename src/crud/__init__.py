@@ -9,6 +9,7 @@ from .document import (
     create_observations,
     delete_document,
     delete_document_by_id,
+    fetch_documents_by_ids,
     get_all_documents,
     get_child_observations,
     get_documents_by_ids,
@@ -16,6 +17,7 @@ from .document import (
     query_documents,
     query_documents_most_derived,
     query_documents_recent,
+    query_external_vector_document_ids,
 )
 from .message import (
     create_messages,
@@ -82,6 +84,7 @@ __all__ = [
     # Document
     "create_documents",
     "create_observations",
+    "fetch_documents_by_ids",
     "get_all_documents",
     "get_child_observations",
     "get_documents_by_ids",
@@ -89,6 +92,7 @@ __all__ = [
     "query_documents",
     "query_documents_most_derived",
     "query_documents_recent",
+    "query_external_vector_document_ids",
     "delete_document",
     "delete_document_by_id",
     # Message

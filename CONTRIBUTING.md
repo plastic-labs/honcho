@@ -8,7 +8,7 @@ Before you start contributing, please:
 
 1. **Set up your development environment** - Follow the [Local Development guide](./README.md#local-development) in the README to get Honcho running locally.
 
-2. **Join our community** - Feel free to join us in our [Discord](http://discord.gg/plasticlabs) to discuss your changes, get help, or ask questions.
+2. **Join our community** - Feel free to join us in our [Discord](http://discord.gg/honcho) to discuss your changes, get help, or ask questions.
 
 3. **Review existing issues** - Check the [issues tab](https://github.com/plastic-labs/honcho/issues) to see what's already being worked on or to find something to contribute to.
 
@@ -164,7 +164,7 @@ When reporting bugs or requesting features:
 
 ## Questions and Support
 
-- **General questions** - Join our [Discord](http://discord.gg/plasticlabs)
+- **General questions** - Join our [Discord](http://discord.gg/honcho)
 - **Bug reports** - Use GitHub issues
 - **Feature requests** - Use GitHub issues with the feature request template
 - **Security issues** - Please email us privately rather than opening a public issue

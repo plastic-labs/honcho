@@ -5,7 +5,7 @@ Use this checklist to track migration progress. Copy into your working notes and
 ## Dependencies
 
 - [ ] Remove `@honcho-ai/core` from dependencies
-- [ ] Update `@honcho-ai/sdk` to v2.0.0
+- [ ] Update `@honcho-ai/sdk` to v2.1.1
 
 ## Client-Level Changes
 
@@ -100,6 +100,44 @@ Use this checklist to track migration progress. Copy into your working notes and
 
 - [ ] Remove usage of `Representation` class methods (`.explicit`, `.deductive`, `.isEmpty()`, `.diff()`)
 - [ ] Handle representation as plain string
+
+## Card Method Updates (v2.0.1)
+
+- [ ] Replace `peer.card()` with `peer.getCard()` (card() is deprecated)
+- [ ] Use `peer.setCard(string[])` if setting peer cards
+
+## Strict Validation (v2.0.2)
+
+- [ ] Verify no constructor options or input schemas pass unknown/misspelled fields (now throws `ZodError`)
+- [ ] Check for `baseUrl` vs `baseURL` typo in Honcho constructor
+
+## peer() / session() API Call Change (v2.1.0)
+
+- [ ] Update code that relied on lazy `peer()` / `session()` — they now always make API calls
+- [ ] Ensure all `peer()` and `session()` calls are `await`ed
+
+## New Properties (v2.1.0)
+
+- [ ] Use `peer.createdAt` / `session.createdAt` where creation time is needed
+- [ ] Use `session.isActive` where session active status is needed
+
+## New Methods (v2.1.0)
+
+- [ ] Use `session.getMessage(messageId)` to fetch single messages by ID
+
+## Pagination Parameters (v2.1.0)
+
+- [ ] Add `page`, `size`, `reverse` parameters to list calls where needed:
+  - [ ] `honcho.peers()`
+  - [ ] `honcho.sessions()`
+  - [ ] `honcho.workspaces()`
+  - [ ] `peer.sessions()`
+  - [ ] `session.messages()`
+  - [ ] `scope.list()`
+
+## searchQuery Location Change (v2.1.0)
+
+- [ ] Move `searchQuery` from top-level `context()` options to `representationOptions.searchQuery`
 
 ## Final Verification
 

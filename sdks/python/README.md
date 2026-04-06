@@ -29,9 +29,6 @@ session.add_messages([
     bob.message("Hi Alice, how are you?")
 ])
 
-# Wait for deriver to process all messages (only necessary if very recent messages are critical to query)
-client.poll_deriver_status()
-
 # Query conversation context
 response = alice.chat("What did Bob say to the user?")
 print(response)
@@ -73,7 +70,7 @@ session.add_messages([
 ])
 
 # Get conversation context
-context = session.get_context()
+context = session.context()
 ```
 
 ### Messages and Context
@@ -82,7 +79,7 @@ Retrieve and use conversation history:
 
 ```python
 # Get messages from a session
-messages = session.get_messages()
+messages = session.messages()
 
 # Convert to OpenAI format for further prompting
 openai_messages = context.to_openai(assistant="assistant")
@@ -93,11 +90,24 @@ anthropic_messages = context.to_anthropic(assistant="assistant")
 
 ### Async Support
 
+The SDK provides async access via the `.aio` accessor on any instance:
+
 ```python
-from honcho import AsyncHoncho
+from honcho import Honcho
 
 async def main():
-    client = AsyncHoncho(api_key="your-api-key")
+    client = Honcho(api_key="your-api-key")
+
+    # Async peer and session creation
+    peer = await client.aio.peer("user-123")
+    session = await client.aio.session("conversation-1")
+
+    # Async chat
+    response = await peer.aio.chat("What does this user prefer?")
+
+    # Async iteration
+    async for p in client.aio.peers():
+        print(p.id)
 ```
 
 ### Metadata Management
@@ -119,7 +129,7 @@ response = alice.chat("Does Bob remember our discussion about the budget?", targ
 # Session-specific perspective
 response = alice.chat("What does Bob think about this project?",
                      target=bob,
-                     session_id=session.id)
+                     session=session)
 ```
 
 ## Configuration
@@ -137,20 +147,11 @@ export HONCHO_WORKSPACE_ID="your-workspace"  # Optional
 ```python
 client = Honcho(
     api_key="your-api-key",
-    environment="production",  # or "local", "demo"
+    environment="production",  # or "local"
     workspace_id="custom-workspace",
     base_url="https://api.honcho.dev"
 )
 ```
-
-## Examples
-
-Check out the `examples/` directory for complete usage examples:
-
-- `example.py` - Comprehensive feature demonstration
-- `chat.py` - Basic multi-peer chat
-- `async_example.py` - Async/await usage
-- `search.py` - Context search and retrieval
 
 ## License
 
@@ -159,5 +160,5 @@ Apache 2.0 - see [LICENSE](../../LICENSE) for details.
 ## Support
 
 - [Documentation](https://docs.honcho.dev)
-- [GitHub Issues](https://github.com/plastic-labs/honcho-sdks/issues)
+- [GitHub Issues](https://github.com/plastic-labs/honcho/issues)
 - [Discord Community](https://discord.gg/honcho)

@@ -143,7 +143,6 @@ async def get_sessions_for_peer(
 
 @router.post(
     "/{peer_id}/chat",
-    summary="Query a Peer's representation using natural language",
     responses={
         200: {
             "content": {
