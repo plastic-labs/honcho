@@ -213,12 +213,11 @@ class LLMSettings(HonchoSettings):
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "custom", "openrouter"] = "openai"
     # Optional override for embedding model name.
     # Examples:
     # - OpenAI: text-embedding-3-small
-    # - OpenRouter: openai/text-embedding-3-small
-    # - Ollama via OpenAI-compatible API: qwen3-embedding:4b
+    # - Custom/OpenAI-compatible: qwen3-embedding:4b
     EMBEDDING_MODEL: str | None = None
 
     # General LLM settings

@@ -28,6 +28,8 @@ class _EmbeddingClient:
 
     def __init__(self, api_key: str | None = None, provider: str | None = None):
         self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+        if self.provider not in {"openai", "gemini", "openrouter", "custom"}:
+            raise ValueError(f"Unsupported embedding provider: {self.provider}")
 
         if self.provider == "gemini":
             if api_key is None:
@@ -40,21 +42,29 @@ class _EmbeddingClient:
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
-        elif self.provider == "openrouter":
+        elif self.provider in {"openrouter", "custom"}:
             if api_key is None:
                 api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
             if not api_key:
                 raise ValueError(
-                    "OpenRouter API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
+                    "OpenAI-compatible API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
                 )
-            base_url = (
-                settings.LLM.OPENAI_COMPATIBLE_BASE_URL
-                or "https://openrouter.ai/api/v1"
-            )
+            if self.provider == "openrouter":
+                base_url = (
+                    settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+                    or "https://openrouter.ai/api/v1"
+                )
+                default_model = "openai/text-embedding-3-small"
+            else:
+                base_url = settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+                if not base_url:
+                    raise ValueError(
+                        "OpenAI-compatible base URL (LLM_OPENAI_COMPATIBLE_BASE_URL) is required when EMBEDDING_PROVIDER=custom"
+                    )
+                default_model = "text-embedding-3-small"
+
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = (
-                settings.LLM.EMBEDDING_MODEL or "openai/text-embedding-3-small"
-            )
+            self.model = settings.LLM.EMBEDDING_MODEL or default_model
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
         else:  # openai
@@ -381,7 +391,7 @@ class EmbeddingClient:
                     provider = settings.LLM.EMBEDDING_PROVIDER
                     if provider == "gemini":
                         api_key = settings.LLM.GEMINI_API_KEY
-                    elif provider == "openrouter":
+                    elif provider in {"openrouter", "custom"}:
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
