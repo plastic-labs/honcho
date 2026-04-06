@@ -5,84 +5,149 @@ description: "Add Honcho memory to Paperclip"
 sidebarTitle: "Paperclip"
 ---
 
-[Honcho for Paperclip](https://github.com/plastic-labs/paperclip-honcho) adds a Honcho memory layer to Paperclip. Paperclip stays the system of record, while Honcho stores derived memory for companies, agents, issues, comments, and document revisions.
+[Honcho for Paperclip](https://github.com/plastic-labs/paperclip-honcho) adds persistent Honcho memory to Paperclip while keeping Paperclip as the system of record.
 
 <Note>
-This page covers the shipped integration only. It does not rely on automatic prompt-context injection hooks, run transcript import, legacy workspace file import, or delegation/run-lineage reconstruction.
+This page covers the current public-host-compatible Paperclip plugin. It supports tools, sync, migration import, and manual prompt previews. It does not depend on automatic prompt-context injection hooks, run transcript import, or legacy workspace file import.
 </Note>
 
 ## Install the Plugin
 
-From a local checkout:
+### Local Checkout
+
+Install the plugin into Paperclip from a local checkout:
 
 ```bash
 pnpm build
 pnpm paperclipai plugin install /absolute/path/to/paperclip-honcho
 ```
 
-From a packed tarball:
+### Packed Tarball
+
+Or install it from a packed tarball:
 
 ```bash
 pnpm paperclipai plugin install /absolute/path/to/honcho-ai-paperclip-honcho-0.1.0.tgz
 ```
 
-## Operator Setup
+## Quick Setup
+
+### Minimal Path
 
 1. Create a Paperclip secret containing the Honcho API key.
 2. Open the Honcho plugin settings page in Paperclip.
-3. Set:
-   - `honchoApiKeySecretRef`
+3. Set `honchoApiKeySecretRef`.
 4. Save the settings.
-5. Run:
+5. Run `Initialize memory for this company`.
+
+### Optional Checks And Follow-Up Actions
+
+6. Optionally run:
    - `Validate config`
    - `Test connection`
-   - `Initialize memory for this company`
-6. Optionally run:
+   - `Preview prompt context`
    - `Rescan migration sources`
    - `Import history`
    - `Repair mappings`
-   - `Preview prompt context`
 
-The recommended starting configuration keeps `enablePromptContext: false`. Operators can still use `Preview prompt context` and the related manual probe workflow from the settings page. The plugin does not rely on automatic prompt-context injection hooks.
+`honchoApiKeySecretRef` is the only field required for the standard setup path. The other settings already have defaults.
+
+## Multi-Agent Hierarchy
+
+### Core Mapping Model
+
+Today, the Paperclip plugin models memory around company, issue, and agent boundaries:
+
+- **Company -> workspace**: each Paperclip company maps to one Honcho workspace.
+- **Issue -> session**: each Paperclip issue maps to one Honcho session inside that workspace.
+- **Humans and agents -> peers**: human actors and Paperclip agents map to Honcho peers.
+
+### Observation Settings
+
+The latest plugin also gives agent peers explicit observation settings:
+
+- `observeMe` defaults to `true`
+- `observeOthers` defaults to `true`
+
+### Hierarchy Context Today
+
+That means agent peers can be observed by Honcho and can form representations of other peers they interact with. This is the main hierarchy-related improvement in the current plugin.
+
+Hierarchy is still host-dependent. `honcho_get_hierarchy_context` is available, but it only returns delegated-work context when the Paperclip host provides lineage metadata. The tool degrades gracefully when that metadata is unavailable.
+
+Prompt context is still more conservative than in integrations like OpenClaw. The recommended starting configuration keeps `enablePromptContext: false`, and operators use `Preview prompt context` for manual prompt probes instead of relying on automatic injection hooks.
 
 ## How It Works
 
-The integration breaks down into three parts:
+### Identity And Scope
+
+The integration breaks down into four parts:
 
 - **Identity and scope** - each Paperclip company maps to a Honcho workspace, agents and human actors map to peers, and issues map to sessions.
 - **What gets copied into Honcho** - issue comments and document revisions sync into Honcho, with document content sectioned and normalized message content capped before ingestion.
-- **What operators and agents get** - operators get the issue Memory tab and the plugin settings page, and agents get Honcho retrieval tools.
+- **What operators get** - operators get a plugin settings page, migration preview/status data, repair tools, and an issue-level `Memory` tab.
+- **What agents get** - agents get Honcho retrieval and peer-chat tools inside Paperclip.
+
+### Issue Memory Tab
+
+The `Memory` issue tab is intentionally narrow. It shows sync markers, prompt-context previews, session previews, and a focused resync action for the current issue.
+
+## Operator Actions
+
+### Core Actions
+
+The settings page exposes the main operator workflow directly:
+
+| Action | What it does |
+| --- | --- |
+| `Validate config` | Validates the current plugin configuration before any sync or import work runs. |
+| `Test connection` | Resolves the API key secret, checks the Honcho connection, and returns the mapped workspace ID. |
+| `Initialize memory for this company` | Connects Honcho, creates core mappings, imports baseline issue memory, and verifies manual prompt previews. |
+| `Rescan migration sources` | Scans issue comments and issue documents and writes a fresh import preview. |
+| `Import history` | Imports the approved historical preview into Honcho with idempotent ledger checks. |
+| `Preview prompt context` | Builds a manual prompt-context preview for a company or issue without relying on automatic host hooks. |
+| `Repair mappings` | Recreates missing workspace, peer, and session mappings for the current company. |
+| `Resync this issue` | Replays sync for the current issue from the issue Memory tab. |
+
+## Configuration Defaults And Overrides
+
+### Required Setting
+
+Set `honchoApiKeySecretRef` first. Everything else can be left at the defaults until you have a reason to change it.
+
+### Default Behavior
+
+| Setting | Default | Use when |
+| --- | --- | --- |
+| `honchoApiKeySecretRef` | — | Required. Points the plugin at the Paperclip secret containing your Honcho API key. |
+| `honchoApiBaseUrl` | `https://api.honcho.dev` | Override this for self-hosted or non-default Honcho deployments. |
+| `workspacePrefix` | `paperclip` | Change this if you want a different workspace namespace. |
+| `syncIssueComments` | `true` | Turn this off if you do not want comment history imported into Honcho. |
+| `syncIssueDocuments` | `true` | Turn this off if you do not want issue document revisions imported. |
+| `enablePeerChat` | `true` | Required for the peer chat tool surface. |
+| `enablePromptContext` | `false` | Keep this off on the public-host-compatible path and use manual prompt previews instead. |
+| `observeMe` | `true` | Controls whether agent peers are observed by Honcho. |
+| `observeOthers` | `true` | Controls whether agent peers form representations of other peers they interact with. |
+
+The plugin also accepts additional advanced fields in the settings page, including noise-pattern and metadata-strip controls. Most setups can ignore those and start with the defaults above.
 
 ## Agent Tools
 
-The plugin registers issue, search, workspace, session, agent, hierarchy, and peer tools:
+### Tool Surface
 
-| Group | Tools |
+The plugin registers the following Honcho tools for Paperclip agents:
+
+| Tool | Description |
 | --- | --- |
-| Issue | `honcho_get_issue_context` |
-| Search | `honcho_search_memory`, `honcho_search_messages`, `honcho_search_conclusions` |
-| Workspace | `honcho_get_workspace_context` |
-| Session | `honcho_get_session` |
-| Agent | `honcho_get_agent_context` |
-| Hierarchy | `honcho_get_hierarchy_context` |
-| Peer | `honcho_ask_peer` |
-
-`honcho_get_hierarchy_context` degrades gracefully when lineage data is unavailable.
-
-## Configuration Notes
-
-Open the Honcho plugin settings page in Paperclip and set `honchoApiKeySecretRef`. That is the only field required for initialization.
-
-The other settings are optional overrides with defaults:
-
-- `workspacePrefix` defaults to `paperclip`
-- `syncIssueComments` defaults to `true`
-- `syncIssueDocuments` defaults to `true`
-- `enablePeerChat` defaults to `true`
-- `enablePromptContext` defaults to `false`
-- `observeAgentPeers` defaults to `false`
-
-Use `Preview prompt context` and the related operator actions when you want to inspect prompt context manually.
+| `honcho_get_issue_context` | Retrieve compact Honcho context for the current issue session. |
+| `honcho_search_memory` | Search Honcho memory within the current workspace, narrowing to the current issue by default. |
+| `honcho_search_messages` | Search raw Honcho messages. |
+| `honcho_search_conclusions` | Search high-signal summarized Honcho memory. |
+| `honcho_get_workspace_context` | Retrieve broad workspace recall from Honcho. |
+| `honcho_get_session` | Retrieve issue session context from Honcho. |
+| `honcho_get_agent_context` | Retrieve peer context for a specific agent. |
+| `honcho_get_hierarchy_context` | Retrieve delegated-work context when the host provides lineage metadata. |
+| `honcho_ask_peer` | Query Honcho peer chat for a target peer. Requires peer chat to be enabled in plugin config. |
 
 ## Next Steps
 
@@ -95,7 +160,7 @@ Use `Preview prompt context` and the related operator actions when you want to i
     Review how workspaces, peers, and sessions fit together.
   </Card>
 
-  <Card title="Get Context" icon="messages" href="/v3/documentation/features/get-context">
-    Review Honcho context retrieval and formatting.
+  <Card title="Representation Scopes" icon="messages" href="/v3/documentation/features/advanced/representation-scopes">
+    Review how `observe_me` and `observe_others` change what peers can model.
   </Card>
 </CardGroup>
