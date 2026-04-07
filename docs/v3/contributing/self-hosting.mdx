@@ -36,7 +36,30 @@ You'll need a PostgreSQL database with the pgvector extension. Choose one:
 
 Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dreaming. The server will **fail to start** without a provider configured.
 
-You need one API key and one model. Any OpenAI-compatible endpoint works — OpenRouter, Together, Fireworks, Ollama, vLLM, or a direct vendor API. The `.env.template` has provider and model lines ready for each feature — just set your endpoint, API key, and replace `your-model-here` with any model that supports tool calling.
+You need one API key and one model. Any OpenAI-compatible endpoint works — OpenRouter, Together, Fireworks, Ollama, vLLM, or a direct vendor API. Models must support tool calling (function calling).
+
+The `.env.template` has provider and model lines ready for each feature. After copying it to `.env`, you need to set three things:
+
+```bash
+# 1. Your endpoint and API key (already uncommented in the template)
+LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
+LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
+
+# 2. Replace "your-model-here" everywhere with your model
+#    (these are spread across the Deriver, Dialectic, Summary, and Dream sections)
+DERIVER_MODEL=google/gemini-2.5-flash  # e.g. google/gemini-2.5-flash
+SUMMARY_MODEL=google/gemini-2.5-flash
+DREAM_MODEL=google/gemini-2.5-flash
+DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash
+# ... same for low, medium, high, max
+
+# 3. Everything else is already configured:
+#    - PROVIDER=custom for all features (routes through your endpoint)
+#    - THINKING_BUDGET_TOKENS=0 (correct for non-Anthropic models)
+#    - LLM_EMBEDDING_PROVIDER=openrouter (uses same endpoint for embeddings)
+```
+
+Use find-and-replace to swap all `your-model-here` with your chosen model in one step.
 
 <Info>
 For recommended model tiers per feature, using multiple providers, or direct vendor API keys, see the [Configuration Guide](./configuration#llm-configuration).
@@ -76,13 +99,28 @@ cp docker-compose.yml.example docker-compose.yml
 docker compose up -d --build
 ```
 
+The first build takes a few minutes (compiling from source). Subsequent starts are fast.
+
 This starts four services: **api** (port 8000), **deriver** (background worker), **database** (PostgreSQL with pgvector, port 5432), and **redis** (port 6379). All ports are bound to `127.0.0.1`. Redis caching is enabled by default.
 
 For development, uncomment the source mount and monitoring sections inside `docker-compose.yml` to enable live reload, Prometheus, and Grafana.
 
 ### 4. Verify
 
-Migrations run automatically on startup. Check that services are running with `docker compose ps`, then see [Verify Your Setup](#verify-your-setup) below.
+Migrations run automatically on startup.
+
+```bash
+# Check all containers are running
+docker compose ps
+
+# Health check (confirms the process is up)
+curl http://localhost:8000/health
+
+# Check the deriver is processing (look for "polling" or "processing" in logs)
+docker compose logs deriver --tail 20
+```
+
+For a full end-to-end test, see [Verify Your Setup](#verify-your-setup) below.
 
 ## Manual Setup
 
@@ -218,26 +256,38 @@ Once your Honcho server is running, verify everything is working:
 
 ```bash
 curl http://localhost:8000/health
+# {"status":"ok"}
 ```
 
-### 2. API Documentation
+Note: `/health` only confirms the process is running. It does not check database or LLM connectivity.
+
+### 2. Smoke Test (database + API)
+
+This confirms the database connection, migrations, and API are all working:
+
+```bash
+# Create a workspace
+curl -s -X POST http://localhost:8000/v1/workspaces \
+  -H "Content-Type: application/json" \
+  -d '{"name": "test"}' | python3 -m json.tool
+```
+
+If you get back a workspace object with an `id`, your database is connected and migrations ran correctly.
+
+### 3. API Documentation
 
 Visit `http://localhost:8000/docs` to see the interactive API documentation.
 
-### 3. Test with SDK
-
-Create a simple test script:
+### 4. Test with SDK
 
 ```python
 from honcho import Honcho
 
-# Connect to your local instance
 client = Honcho(
     base_url="http://localhost:8000",
-    workspace_id="my-app-testing"
+    workspace_id="test"
 )
 
-# Create a test peer
 peer = client.peer("test-user")
 print(f"Created peer: {peer.id}")
 ```
