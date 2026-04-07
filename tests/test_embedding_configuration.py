@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -30,7 +31,7 @@ def _make_settings(
 
 
 @pytest.fixture(autouse=True)
-def _reset_embedding_singleton() -> None:
+def _reset_embedding_singleton() -> Generator[None, None, None]:
     import src.embedding_client as ec
 
     ec.EmbeddingClient._instance = None
