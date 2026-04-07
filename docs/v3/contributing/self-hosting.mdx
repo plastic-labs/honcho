@@ -388,9 +388,9 @@ The default compose file is already production-oriented — ports bound to `127.
 - For alternative providers or per-feature model overrides, see the [Configuration Guide](./configuration#llm-configuration)
 
 ### Monitoring
-- Enable Prometheus metrics with `METRICS_ENABLED=true` (scraped at `/metrics` on port 8000 for API, port 9090 for deriver)
+- Enable Prometheus metrics with `METRICS_ENABLED=true`. The API exposes `/metrics` on port 8000, the deriver on port 9090 (internal to its container — not published to the host by default).
 - Enable Sentry error tracking with `SENTRY_ENABLED=true`
-- The development compose (`docker-compose.yml.example`) includes Prometheus and Grafana on ports 9090 and 3000. For the production compose, add them separately or use an external monitoring stack.
+- The development compose includes Prometheus (host port 9090) and Grafana (host port 3000) for scraping and dashboards. Uncomment those services to enable them.
 
 ### Backups
 - Set up regular PostgreSQL backups:
