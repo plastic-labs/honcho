@@ -55,13 +55,22 @@ class _EmbeddingClient:
             self.model = "openai/text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
-        else:  # openai
-            if api_key is None:
-                api_key = settings.LLM.OPENAI_API_KEY
-            if not api_key:
-                raise ValueError("OpenAI API key is required")
-            self.client = AsyncOpenAI(api_key=api_key)
-            self.model = "text-embedding-3-small"
+        else:  # openai (or OpenAI-compatible like Ollama, vLLM, etc.)
+            # Prefer OPENAI_COMPATIBLE_* if set (allows pointing to local Ollama/vLLM),
+            # otherwise fall back to standard OPENAI_API_KEY.
+            base_url = settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+            if base_url:
+                if api_key is None:
+                    api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY or "not-needed"
+                self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+                self.model = settings.LLM.EMBEDDING_MODEL or "text-embedding-3-small"
+            else:
+                if api_key is None:
+                    api_key = settings.LLM.OPENAI_API_KEY
+                if not api_key:
+                    raise ValueError("OpenAI API key is required")
+                self.client = AsyncOpenAI(api_key=api_key)
+                self.model = settings.LLM.EMBEDDING_MODEL or "text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # OpenAI batch limit
 
@@ -82,7 +91,7 @@ class _EmbeddingClient:
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
-                config={"output_dimensionality": 1536},
+                config={"output_dimensionality": settings.VECTOR_STORE.DIMENSIONS},
             )
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
@@ -116,7 +125,7 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": settings.VECTOR_STORE.DIMENSIONS},
                     )
                     if response.embeddings:
                         for emb in response.embeddings:
@@ -252,7 +261,7 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": settings.VECTOR_STORE.DIMENSIONS},
                     )
                     if response.embeddings:
                         for item, embedding in zip(

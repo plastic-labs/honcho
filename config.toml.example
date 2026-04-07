@@ -63,6 +63,13 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # GROQ_API_KEY = "your-api-key"
 # OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
 
+# Vertex AI mode for the Google provider (instead of GEMINI_API_KEY).
+# Uses Application Default Credentials from `gcloud auth application-default login`
+# and routes requests through Vertex AI for enterprise GCP billing.
+# GEMINI_USE_VERTEX = true
+# GOOGLE_CLOUD_PROJECT = "your-gcp-project-id"
+# GOOGLE_CLOUD_LOCATION = "us-central1"
+
 # Separate vLLM endpoint (for local models)
 # VLLM_API_KEY = "your-api-key"
 # VLLM_BASE_URL = "your-base-url"

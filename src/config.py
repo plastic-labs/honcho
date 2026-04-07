@@ -209,11 +209,25 @@ class LLMSettings(HonchoSettings):
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
+    # Vertex AI mode for the Google provider.
+    # When GEMINI_USE_VERTEX is true, the google client uses Vertex AI with
+    # Application Default Credentials (gcloud auth application-default login)
+    # instead of the Gemini API key. Useful for enterprise GCP billing and
+    # avoiding free-tier rate limits.
+    GEMINI_USE_VERTEX: bool = False
+    GOOGLE_CLOUD_PROJECT: str | None = None
+    GOOGLE_CLOUD_LOCATION: str = "us-central1"
+
     # Separate vLLM endpoint (for local models)
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
 
     EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+
+    # Override the default embedding model. Useful when using an OpenAI-compatible
+    # endpoint (Ollama, vLLM) that exposes a different model name like
+    # "nomic-embed-text" instead of "text-embedding-3-small".
+    EMBEDDING_MODEL: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500

@@ -276,7 +276,23 @@ if settings.LLM.VLLM_API_KEY and settings.LLM.VLLM_BASE_URL:
         base_url=settings.LLM.VLLM_BASE_URL,
     )
 
-if settings.LLM.GEMINI_API_KEY:
+if settings.LLM.GEMINI_USE_VERTEX:
+    # Use Vertex AI mode with Application Default Credentials (ADC).
+    # Requires `gcloud auth application-default login` and a GCP project
+    # with the Vertex AI API enabled.
+    if not settings.LLM.GOOGLE_CLOUD_PROJECT:
+        raise ValueError(
+            "GEMINI_USE_VERTEX is enabled but GOOGLE_CLOUD_PROJECT is not set. "
+            "Configure LLM.GOOGLE_CLOUD_PROJECT in config.toml or set the "
+            "GOOGLE_CLOUD_PROJECT environment variable."
+        )
+    google = genai.client.Client(
+        vertexai=True,
+        project=settings.LLM.GOOGLE_CLOUD_PROJECT,
+        location=settings.LLM.GOOGLE_CLOUD_LOCATION,
+    )
+    CLIENTS["google"] = google
+elif settings.LLM.GEMINI_API_KEY:
     google = genai.client.Client(api_key=settings.LLM.GEMINI_API_KEY)
     CLIENTS["google"] = google
 
