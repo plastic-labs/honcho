@@ -246,7 +246,7 @@ This reinstalls all dependencies from scratch, which resolves corrupted or incom
 **Fix:**
 Honcho defaults to Gemini. Add your key to `.env`:
 
-```bash
+```env
 LLM_GEMINI_API_KEY=your-key-here
 ```
 
