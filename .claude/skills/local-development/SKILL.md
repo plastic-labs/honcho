@@ -42,14 +42,14 @@ Open `.env` and set the required values:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DB_CONNECTION_URI` | Yes | PostgreSQL connection string — must use `postgresql+psycopg` prefix |
-| `LLM_GEMINI_API_KEY` | Yes (default) | Honcho uses Gemini by default — get a key at [aistudio.google.com](https://aistudio.google.com) |
-| `LLM_ANTHROPIC_API_KEY` | Alternative | Use instead of Gemini if preferred |
-| `LLM_OPENAI_API_KEY` | Alternative | Use instead of Gemini if preferred |
-| `LLM_GROQ_API_KEY` | Alternative | Use instead of Gemini if preferred |
+| `LLM_GEMINI_API_KEY` | One required (default) | Honcho uses Gemini by default — get a key at [aistudio.google.com](https://aistudio.google.com) |
+| `LLM_ANTHROPIC_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
+| `LLM_OPENAI_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
+| `LLM_GROQ_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
 | `AUTH_USE_AUTH` | No | Set to `false` for local development |
 | `SENTRY_ENABLED` | No | Set to `false` for local development |
 
-> **Important:** Honcho requires at least one LLM API key to function. The default is Gemini (`LLM_GEMINI_API_KEY`). If you see errors about missing model configuration, this is the most likely cause.
+> **Important:** Honcho requires exactly one LLM API key to function — you do not need all of them. The default provider is Gemini (`LLM_GEMINI_API_KEY`). If you see errors about missing model configuration, an LLM key is the most likely cause.
 
 ### Set Up the Database
 
@@ -217,7 +217,7 @@ uv run alembic upgrade head
 
 ### Port already in use
 
-**Symptom:** `ERROR: [Errno 48] Address already in use` on port 8000
+**Symptom:** `ERROR: [Errno 48] Address already in use` (macOS) or `ERROR: [Errno 98] Address already in use` (Linux) on port 8000
 
 **Fix:**
 
