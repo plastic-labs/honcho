@@ -106,6 +106,17 @@ uv run python -m src.deriver
 
 To verify the deriver is working, send a message via the API and watch the deriver terminal for log output showing it picked up the task. If the deriver log is silent, check that a valid LLM API key is set in `.env`.
 
+### Verify Your Setup
+
+With both the API server and deriver running, confirm everything is working:
+
+```bash
+curl http://localhost:8000/health
+# Expected: {"status":"OK"}
+```
+
+If the health check fails, confirm the API server started without errors and the database migrations ran successfully.
+
 ### Run Everything with Docker
 
 If you prefer to run the full stack via Docker:
@@ -114,6 +125,22 @@ If you prefer to run the full stack via Docker:
 cp .env.template .env
 cp docker-compose.yml.example docker-compose.yml
 docker compose up
+```
+
+### Clean Up
+
+Stop the API server and deriver with `Ctrl+C` in each terminal.
+
+Stop Docker containers:
+
+```bash
+docker compose down
+```
+
+Deactivate the virtual environment:
+
+```bash
+deactivate
 ```
 
 ---
@@ -177,6 +204,18 @@ Follow these conventions when contributing:
 ---
 
 ## Phase 4: Troubleshooting
+
+### ModuleNotFoundError at startup
+
+**Symptom:** `ModuleNotFoundError: No module named 'honcho'` or similar import errors
+
+**Fix:**
+
+```bash
+uv sync --reinstall
+```
+
+This reinstalls all dependencies from scratch, which resolves corrupted or incomplete installs.
 
 ### Database connection error
 
