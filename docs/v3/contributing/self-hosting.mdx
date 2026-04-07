@@ -88,12 +88,7 @@ For recommended model tiers per feature, using multiple providers, or direct ven
 
 Docker Compose handles the database, Redis, and Honcho server. The compose file **builds the image from source** (there is no pre-built image on Docker Hub). This requires Docker with BuildKit enabled — see [Troubleshooting](./troubleshooting#docker-build-fails-with-permission-errors) if the build fails.
 
-Two compose files are provided:
-
-| File | Use case |
-|---|---|
-| `docker-compose.prod.yml` | **Production / VM deployment.** No source mounts, restart policies, ports bound to `127.0.0.1`, caching enabled. Use this on a server. |
-| `docker-compose.yml.example` | **Local development.** Source mounts for live reload, all ports exposed, includes Prometheus + Grafana monitoring stack. |
+The compose file is production-ready by default (ports bound to `127.0.0.1`, restart policies, caching enabled). For development, uncomment the source mounts and monitoring services inside the file.
 
 ### 1. Clone the Repository
 
@@ -115,19 +110,13 @@ Edit `.env` and configure your LLM provider — see [LLM Provider Setup](#llm-pr
 ### 3. Start the Services
 
 ```bash
-# For production / VM deployment:
-cp docker-compose.prod.yml docker-compose.yml
-
-# For local development (includes monitoring stack):
-# cp docker-compose.yml.example docker-compose.yml
-
-# Start PostgreSQL, Redis, Honcho API, and the deriver background worker
-docker compose up -d
+cp docker-compose.yml.example docker-compose.yml
+docker compose up -d --build
 ```
 
-**Production compose** starts four services: **api** (port 8000), **deriver** (background worker), **database** (PostgreSQL with pgvector, port 5432), and **redis** (port 6379). All ports are bound to `127.0.0.1` — use a reverse proxy (nginx, Caddy) to expose the API externally with TLS. Redis caching is enabled by default.
+This starts four services: **api** (port 8000), **deriver** (background worker), **database** (PostgreSQL with pgvector, port 5432), and **redis** (port 6379). All ports are bound to `127.0.0.1`. Redis caching is enabled by default.
 
-**Development compose** additionally includes **Prometheus** (port 9090) and **Grafana** (port 3000), and mounts the source directory for live code changes.
+For development, uncomment the source mount and monitoring sections inside `docker-compose.yml` to enable live reload, Prometheus, and Grafana.
 
 ### 4. Run Database Migrations
 
@@ -361,7 +350,7 @@ Running into issues? See the [Troubleshooting Guide](./troubleshooting) for deta
 
 ## Production Considerations
 
-When self-hosting for production, start with `docker-compose.prod.yml` — it binds all ports to `127.0.0.1`, enables restart policies, and turns on caching by default.
+The default compose file is already production-ready — ports bound to `127.0.0.1`, restart policies, caching enabled.
 
 ### Security
 - Set `AUTH_USE_AUTH=true` and generate a JWT secret with `python scripts/generate_jwt_secret.py`
@@ -417,9 +406,9 @@ When self-hosting for production, start with `docker-compose.prod.yml` — it bi
 - Set up regular PostgreSQL backups:
   ```bash
   # One-off backup
-  docker compose exec database pg_dump -U honcho honcho > backup-$(date +%Y%m%d).sql
+  docker compose exec database pg_dump -U postgres postgres > backup-$(date +%Y%m%d).sql
 
   # Restore
-  cat backup.sql | docker compose exec -T database psql -U honcho honcho
+  cat backup.sql | docker compose exec -T database psql -U postgres postgres
   ```
 - Back up your `.env` or `config.toml` configuration files
