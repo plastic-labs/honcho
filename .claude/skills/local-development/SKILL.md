@@ -220,6 +220,7 @@ uv run alembic upgrade head
 **Symptom:** `ERROR: [Errno 48] Address already in use` on port 8000
 
 **Fix:**
+
 ```bash
 lsof -ti:8000 | xargs kill -9
 uv run fastapi dev src/main.py
