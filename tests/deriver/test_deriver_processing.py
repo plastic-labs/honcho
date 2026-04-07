@@ -15,8 +15,11 @@ from src.schemas import (
     ResolvedSummaryConfiguration,
 )
 from src.utils.clients import HonchoLLMCallResponse
-from src.utils.representation import ExplicitObservationBase, PromptRepresentation
-from src.utils.representation import Representation
+from src.utils.representation import (
+    ExplicitObservationBase,
+    PromptRepresentation,
+    Representation,
+)
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
@@ -256,8 +259,12 @@ class TestCustomInstructions:
         assert mock_call.await_args is not None
         call_messages = mock_call.await_args.kwargs["messages"]
         assert call_messages[0]["role"] == "system"
-        assert "Analyze messages from alice" in call_messages[0]["content"]
+        assert (
+            "Analyze messages to extract **explicit atomic facts** about the peer."
+            in call_messages[0]["content"]
+        )
         assert call_messages[1]["role"] == "user"
+        assert "Peer identifier: alice" in call_messages[1]["content"]
         assert "CUSTOM INSTRUCTIONS:" in call_messages[1]["content"]
         assert (
             "Focus on durable preferences only." in call_messages[1]["content"]

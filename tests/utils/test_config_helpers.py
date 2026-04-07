@@ -1,4 +1,8 @@
+import pytest
+from pydantic import ValidationError
+
 from src import models
+from src.config import settings
 from src.schemas import MessageConfiguration, ReasoningConfiguration
 from src.utils.config_helpers import get_configuration
 
@@ -37,3 +41,27 @@ class TestGetConfiguration:
         config = get_configuration(message, session, workspace)
 
         assert config.reasoning.custom_instructions == "message scope"
+
+    def test_get_configuration_rejects_over_budget_custom_instructions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+            5,
+        )
+
+        workspace = models.Workspace(
+            name="workspace-1",
+            configuration={
+                "reasoning": {
+                    "enabled": True,
+                    "custom_instructions": "focus on stable preferences and long-term plans",
+                }
+            },
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            get_configuration(None, None, workspace)
+
+        assert "custom_instructions" in str(exc_info.value)
