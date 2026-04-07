@@ -1,5 +1,6 @@
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
@@ -93,7 +94,7 @@ def test_create_session_with_configuration(
 def test_create_session_rejects_over_budget_reasoning_custom_instructions(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())

@@ -285,7 +285,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         if self.MAX_CUSTOM_INSTRUCTIONS_TOKENS is None:
             raise ValueError(
                 "No value configured for DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS. "
-                "Set [deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS in config.toml."
+                + "Set [deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS in config.toml."
             )
 
         return self.MAX_CUSTOM_INSTRUCTIONS_TOKENS
@@ -301,9 +301,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
             and self.MAX_CUSTOM_INSTRUCTIONS_TOKENS > self.MAX_INPUT_TOKENS
         ):
             raise ValueError(
-                "MAX_CUSTOM_INSTRUCTIONS_TOKENS "
-                f"({self.MAX_CUSTOM_INSTRUCTIONS_TOKENS}) cannot exceed "
-                f"max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+                f"MAX_CUSTOM_INSTRUCTIONS_TOKENS ({self.MAX_CUSTOM_INSTRUCTIONS_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
 

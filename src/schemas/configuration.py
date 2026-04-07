@@ -5,7 +5,7 @@ the fully-resolved variants used at runtime.
 """
 
 from enum import Enum
-from typing import Any, Self, cast
+from typing import Any, ClassVar, Self, cast
 
 import tiktoken
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -32,9 +32,7 @@ def _validate_custom_instructions_budget(value: str | None) -> str | None:
     token_limit = settings.DERIVER.effective_max_custom_instructions_tokens
     if token_count > token_limit:
         raise ValueError(
-            "reasoning.custom_instructions uses "
-            f"{token_count} tokens and exceeds DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS "
-            f"({token_limit})"
+            f"reasoning.custom_instructions uses {token_count} tokens and exceeds DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS ({token_limit})"
         )
 
     return value
@@ -56,7 +54,7 @@ class ReasoningConfiguration(BaseModel):
         description="Optional custom instructions for the reasoning system on this workspace/session/message. May be omitted or set to a blank string. Non-blank values are rejected if they exceed the explicitly configured deriver custom-instructions token budget.",
     )
 
-    _validate_custom_instructions = field_validator(
+    _validate_custom_instructions: ClassVar[Any] = field_validator(
         "custom_instructions", mode="after"
     )(_validate_custom_instructions_budget)
 
@@ -163,7 +161,7 @@ class ResolvedReasoningConfiguration(BaseModel):
     enabled: bool
     custom_instructions: str | None = None
 
-    _validate_custom_instructions = field_validator(
+    _validate_custom_instructions: ClassVar[Any] = field_validator(
         "custom_instructions", mode="after"
     )(_validate_custom_instructions_budget)
 
