@@ -20,7 +20,7 @@ This skill guides you through setting up and running Honcho locally for developm
 
 - Python 3.9 or higher
 - [uv](https://docs.astral.sh/uv/) 0.4.9 or higher
-- Docker (recommended for the database)
+- Docker with Compose v2 (recommended for the database) — use `docker compose` not `docker-compose`
 
 ### Install Dependencies
 
@@ -61,9 +61,10 @@ Open `.env` and set the required values:
 | `AUTH_JWT_SECRET` | Conditional | Required when `AUTH_USE_AUTH=true` — JWT signing secret for auth tokens |
 | `LLM_PROVIDER` | No | Override the default provider — valid values: `google`, `anthropic`, `openai`, `groq` |
 | `LLM_OPENAI_COMPATIBLE_API_KEY` | Optional | API key for OpenAI-compatible endpoints (e.g. vLLM, local models) |
+| `LLM_OPENAI_COMPATIBLE_BASE_URL` | Optional | Base URL for the OpenAI-compatible endpoint — required when `LLM_OPENAI_COMPATIBLE_API_KEY` is set |
 | `SENTRY_ENABLED` | No | Set to `false` for local development |
 
-> **Important:** Honcho requires exactly one LLM API key to function — you do not need all of them. The default provider is Gemini (`LLM_GEMINI_API_KEY`). If you see errors about missing model configuration, an LLM key is the most likely cause.
+> **Important:** Honcho requires at least one LLM API key. You can set multiple keys, but only the provider matching `LLM_PROVIDER` will be used (default: `google`/Gemini). If you see errors about missing model configuration, an LLM key is the most likely cause.
 
 Minimal local development `.env` (Gemini example):
 
