@@ -20,7 +20,7 @@ By the end of this guide, you'll have:
 Before you begin, ensure you have the following installed:
 
 ### Required Software
-- **uv** - Python package manager: `pip install uv` (manages Python installations automatically)
+- **uv** - Python package manager: `curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`
 - **Git** - [Download from git-scm.com](https://git-scm.com/downloads)
 - **Docker** (optional) - [Download from docker.com](https://www.docker.com/products/docker-desktop/)
 
@@ -77,7 +77,7 @@ DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS=0
 Swap `google/gemini-2.5-flash` for any model with tool calling support. Model name format depends on your provider (OpenRouter uses `vendor/model`).
 
 <Info>
-For recommended model tiers per feature, using multiple providers, or direct vendor API keys, see the [Configuration Guide](./configuration#alternative-providers).
+For recommended model tiers per feature, using multiple providers, or direct vendor API keys, see the [Configuration Guide](./configuration#llm-configuration).
 </Info>
 
 <Info>
@@ -105,7 +105,7 @@ Copy the example environment file and configure it:
 cp .env.template .env
 ```
 
-Edit `.env` and configure your LLM provider — see [LLM Provider Setup](#llm-provider-setup) above. The database connection is set in the compose file. Auth is disabled by default (`AUTH_USE_AUTH=false`).
+Edit `.env` and configure your LLM provider — see [LLM Setup](#llm-setup) above. The database connection is set in the compose file. Auth is disabled by default (`AUTH_USE_AUTH=false`).
 
 ### 3. Start the Services
 
@@ -118,15 +118,9 @@ This starts four services: **api** (port 8000), **deriver** (background worker),
 
 For development, uncomment the source mount and monitoring sections inside `docker-compose.yml` to enable live reload, Prometheus, and Grafana.
 
-### 4. Run Database Migrations
+### 4. Verify It's Working
 
-After the containers are running, create the database tables:
-
-```bash
-docker compose exec api uv run alembic upgrade head
-```
-
-### 5. Verify It's Working
+Migrations run automatically on startup via the entrypoint script.
 
 Check that both services are running:
 
@@ -212,7 +206,7 @@ Create a `.env` file with your settings:
 cp .env.template .env
 ```
 
-Edit `.env` — configure your LLM provider (see [LLM Provider Setup](#llm-provider-setup) above) and set the database connection:
+Edit `.env` — configure your LLM provider (see [LLM Setup](#llm-setup) above) and set the database connection:
 
 ```bash
 DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
@@ -394,8 +388,8 @@ The default compose file is already production-ready — ports bound to `127.0.0
 - Check current migration status with `uv run alembic current`
 
 ### LLM Providers
-- Ensure your API keys are configured (see [LLM API Keys](#llm-api-keys))
-- For alternative providers or per-feature model overrides, see the [Configuration Guide](./configuration#alternative-providers)
+- Ensure your API keys are configured (see [LLM Setup](#llm-setup))
+- For alternative providers or per-feature model overrides, see the [Configuration Guide](./configuration#llm-configuration)
 
 ### Monitoring
 - Enable Prometheus metrics with `METRICS_ENABLED=true` (scraped at `/metrics` on port 8000 for API, port 9090 for deriver)

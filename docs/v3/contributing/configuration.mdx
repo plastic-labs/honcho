@@ -5,7 +5,7 @@ icon: "gear"
 ---
 
 <Info>
-Most users only need the three API keys from the [Self-Hosting Guide](./self-hosting#llm-api-keys). This page is the full reference for customizing providers, tuning features, and hardening your deployment.
+Most users only need the setup from the [Self-Hosting Guide](./self-hosting#llm-setup). This page is the full reference for customizing providers, tuning features, and hardening your deployment.
 </Info>
 
 Honcho loads configuration in this priority order (highest wins):
@@ -446,7 +446,7 @@ USE_AUTH = false
 
 [cache]
 ENABLED = false
-URL = "redis://localhost:6379/0"
+URL = "redis://localhost:6379/0?suppress=true"
 DEFAULT_TTL_SECONDS = 300
 
 [deriver]
