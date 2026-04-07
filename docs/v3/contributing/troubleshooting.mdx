@@ -147,7 +147,7 @@ If you set `PROVIDER=custom` but calls fail:
 
 If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, your `THINKING_BUDGET_TOKENS` is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking.
 
-**Fix:** Set `THINKING_BUDGET_TOKENS=0` (or `1` to explicitly disable) for every component when using non-Anthropic providers:
+**Fix:** Set `THINKING_BUDGET_TOKENS=0` for every component when using non-Anthropic providers:
 
 ```bash
 DERIVER_THINKING_BUDGET_TOKENS=0

@@ -41,58 +41,9 @@ Hermes exposes four Honcho tools to the agent:
 | `honcho_context` | Dialectic Q&A powered by Honcho's LLM. Synthesizes answers from conversation history. |
 | `honcho_conclude` | Writes durable facts to Honcho when the user states preferences, corrections, or important context. |
 
-## Two memory layers
-
-When Honcho is enabled, Hermes operates with two layer memory by default (`hybrid`):
-
-**Local session history** -- the immediate transcript for the current chat, thread, or CLI session. Use it for recent turns, short-lived task context, and follow-up questions.
-
-**Honcho memory** -- the semantic, cross-session layer. Use it for user preferences, durable project facts, cross-session continuity, and synthesized peer context.
-
 ## Running Honcho locally with Hermes
 
-If you want to point Hermes at a local Honcho instance instead of the hosted API:
-
-### Docker (quickest)
-
-```bash
-git clone https://github.com/plastic-labs/honcho.git
-cd honcho
-cp .env.template .env
-cp docker-compose.yml.example docker-compose.yml
-```
-
-Edit `.env`:
-
-```bash
-OPENAI_API_KEY=your-openai-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-AUTH_USE_AUTH=false
-```
-
-```bash
-docker compose up -d
-curl http://localhost:8000/health
-```
-
-### Manual
-
-```bash
-git clone https://github.com/plastic-labs/honcho.git
-cd honcho
-uv sync
-cp .env.template .env
-```
-
-Edit `.env` with a local or cloud Postgres connection string and API keys, then:
-
-```bash
-uv run alembic upgrade head
-uv run fastapi dev src/main.py
-```
-
-Then update `~/.honcho/config.json` to point at your local instance:
+Follow the [Self-Hosting Guide](/v3/contributing/self-hosting) to get Honcho running locally. Once it's up, point Hermes at your instance by updating `~/.honcho/config.json`:
 
 ```json
 {
@@ -112,11 +63,11 @@ Then update `~/.honcho/config.json` to point at your local instance:
 
 The `baseUrl` field overrides the default hosted API. With `AUTH_USE_AUTH=false` on the server, the `apiKey` value is ignored but the field must still be present.
 
-See the full [self-hosting guide](/v3/contributing/self-hosting) for database options, cloud setup, and troubleshooting.
+<Info>
+**Community quick-start**: [elkimek/honcho-self-hosted](https://github.com/elkimek/honcho-self-hosted) provides a one-command installer with pre-configured model tiers and Hermes Agent integration.
+</Info>
 
 ## Verifying the integration
-
-Steps to test the integration via CLI and agentically by speaking to Hermes agent in natural language.
 
 ### 1. Check configuration
 
@@ -156,15 +107,13 @@ How should you respond to me?
 
 If Hermes answers with the stored preference, writeback is functioning.
 
-
 ## Session strategy
 
-| Scope                | When to use                                              |
-|----------------------|---------------------------------------------------------|
+| Scope | When to use |
+|---|---|
 | Per-Session | A honcho session starts fresh each time a new Hermes session is created. Hermes remembers the user across sessions. |
-| Per Directory   | One honcho session per project directory. Context is scoped to each directory. Coding/project memory scoped to each repository/workspace. |
-| Global (per user)    | Continuity across all chats, threads, and projects. One honcho session globally for the user and Hermes agent.      |
-
+| Per Directory | One honcho session per project directory. Context is scoped to each directory. Coding/project memory scoped to each repository/workspace. |
+| Global (per user) | Continuity across all chats, threads, and projects. One honcho session globally for the user and Hermes agent. |
 
 ## Next steps
 
@@ -182,6 +131,6 @@ If Hermes answers with the stored preference, writeback is functioning.
   </Card>
 
   <Card title="Self-Hosting Guide" icon="server" href="/v3/contributing/self-hosting">
-    Full local environment setup, database options, and troubleshooting.
+    Full local environment setup, provider configuration, and troubleshooting.
   </Card>
 </CardGroup>

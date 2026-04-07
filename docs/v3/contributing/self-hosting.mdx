@@ -50,7 +50,7 @@ For recommended model tiers per feature, using multiple providers, or direct ven
 
 Docker Compose handles the database, Redis, and Honcho server. The compose file **builds the image from source** (there is no pre-built image on Docker Hub). This requires Docker with BuildKit enabled — see [Troubleshooting](./troubleshooting#docker-build-fails-with-permission-errors) if the build fails.
 
-The compose file is production-ready by default (ports bound to `127.0.0.1`, restart policies, caching enabled). For development, uncomment the source mounts and monitoring services inside the file.
+The compose file is production-oriented by default (ports bound to `127.0.0.1`, restart policies, caching enabled). For development, uncomment the source mounts and monitoring services inside the file.
 
 ### 1. Clone the Repository
 
@@ -290,7 +290,7 @@ Running into issues? See the [Troubleshooting Guide](./troubleshooting) for deta
 
 ## Production Considerations
 
-The default compose file is already production-ready — ports bound to `127.0.0.1`, restart policies, caching enabled.
+The default compose file is already production-oriented — ports bound to `127.0.0.1`, restart policies, caching enabled.
 
 ### Security
 - Set `AUTH_USE_AUTH=true` and generate a JWT secret with `python scripts/generate_jwt_secret.py`
