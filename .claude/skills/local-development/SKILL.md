@@ -65,6 +65,14 @@ Open `.env` and set the required values:
 
 > **Important:** Honcho requires exactly one LLM API key to function — you do not need all of them. The default provider is Gemini (`LLM_GEMINI_API_KEY`). If you see errors about missing model configuration, an LLM key is the most likely cause.
 
+Minimal local development `.env` (Gemini example):
+
+```env
+DB_CONNECTION_URI=postgresql+psycopg://user:password@localhost:5432/honcho
+LLM_GEMINI_API_KEY=your-gemini-key-here
+SENTRY_ENABLED=false
+```
+
 ### Set Up the Database
 
 Using Docker (recommended):
