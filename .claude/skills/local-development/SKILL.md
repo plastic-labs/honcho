@@ -28,8 +28,19 @@ This skill guides you through setting up and running Honcho locally for developm
 git clone https://github.com/plastic-labs/honcho.git
 cd honcho
 uv sync
-source .venv/bin/activate
 ```
+
+Activate the virtual environment:
+
+```bash
+# Unix/macOS
+source .venv/bin/activate
+
+# Windows (Command Prompt): .venv\Scripts\activate
+# Windows (PowerShell):     .venv\Scripts\activate.ps1
+```
+
+> **Note:** All commands in this guide use `uv run`, which automatically uses the virtual environment — explicit activation is optional.
 
 ### Configure Environment Variables
 
@@ -46,7 +57,8 @@ Open `.env` and set the required values:
 | `LLM_ANTHROPIC_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
 | `LLM_OPENAI_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
 | `LLM_GROQ_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
-| `AUTH_USE_AUTH` | No | Set to `false` for local development |
+| `AUTH_USE_AUTH` | No | Set to `false` for local development — defaults to `true`, which requires a valid token on every request |
+| `LLM_PROVIDER` | No | Override the default provider — valid values: `gemini`, `anthropic`, `openai`, `groq` |
 | `SENTRY_ENABLED` | No | Set to `false` for local development |
 
 > **Important:** Honcho requires exactly one LLM API key to function — you do not need all of them. The default provider is Gemini (`LLM_GEMINI_API_KEY`). If you see errors about missing model configuration, an LLM key is the most likely cause.
@@ -91,6 +103,8 @@ uv run python -m src.deriver
 ```
 
 > **Note:** Both the API server and the deriver must be running for Honcho's memory and reasoning features to work. The API accepts messages; the deriver processes them in the background.
+
+To verify the deriver is working, send a message via the API and watch the deriver terminal for log output showing it picked up the task. If the deriver log is silent, check that a valid LLM API key is set in `.env`.
 
 ### Run Everything with Docker
 
@@ -138,7 +152,6 @@ Review the generated migration file in `migrations/versions/` before applying it
 ### Set Up Pre-commit Hooks
 
 ```bash
-uv add --dev pre-commit
 uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 ```
 
@@ -156,7 +169,7 @@ Follow these conventions when contributing:
 
 - Format code: `uv run ruff format src/`
 - Lint code: `uv run ruff check src/`
-- Type check: `uv run basedpyright`
+- Type check: `uv run basedpyright` (a strict fork of pyright — stricter than standard mypy)
 - Use type hints on all function signatures
 - Write Google-style docstrings
 - Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`
@@ -187,7 +200,7 @@ LLM_GEMINI_API_KEY=your-key-here
 
 Get a free Gemini key at [aistudio.google.com](https://aistudio.google.com).
 
-If you prefer a different provider, set the corresponding key and update `LLM_PROVIDER` in `.env` if that setting is present.
+If you prefer a different provider, set the corresponding key and set `LLM_PROVIDER` in `.env` to the matching value (`anthropic`, `openai`, or `groq`).
 
 ### Deriver not processing messages
 
@@ -210,6 +223,8 @@ uv run alembic upgrade head
 
 If you have conflicts or a dirty migration state:
 
+> **Warning:** `alembic downgrade base` drops all tables and deletes all data. Only use this in a local development database.
+
 ```bash
 uv run alembic downgrade base
 uv run alembic upgrade head
@@ -221,8 +236,27 @@ uv run alembic upgrade head
 
 **Fix:**
 
+Unix/macOS:
+
 ```bash
 lsof -ti:8000 | xargs kill -9
+```
+
+Windows (Command Prompt):
+
+```cmd
+for /f "tokens=5" %a in ('netstat -aon ^| findstr :8000') do taskkill /F /PID %a
+```
+
+Windows (PowerShell):
+
+```powershell
+Get-NetTCPConnection -LocalPort 8000 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+```
+
+Then restart the server:
+
+```bash
 uv run fastapi dev src/main.py
 ```
 
