@@ -242,14 +242,16 @@ class TestResolvedConfigurationMigration:
 
 class TestReasoningConfigurationValidation:
     def test_session_create_allows_blank_custom_instructions(self):
-        session = SessionCreate(
-            name="test-session",
-            configuration={
-                "reasoning": {
-                    "enabled": True,
-                    "custom_instructions": "",
-                }
-            },
+        session = SessionCreate.model_validate(
+            {
+                "name": "test-session",
+                "configuration": {
+                    "reasoning": {
+                        "enabled": True,
+                        "custom_instructions": "",
+                    }
+                },
+            }
         )
 
         assert session.configuration is not None
@@ -266,14 +268,16 @@ class TestReasoningConfigurationValidation:
         )
 
         with pytest.raises(ValidationError) as exc_info:
-            SessionCreate(
-                name="test-session",
-                configuration={
-                    "reasoning": {
-                        "enabled": True,
-                        "custom_instructions": "focus on durable preferences",
-                    }
-                },
+            SessionCreate.model_validate(
+                {
+                    "name": "test-session",
+                    "configuration": {
+                        "reasoning": {
+                            "enabled": True,
+                            "custom_instructions": "focus on durable preferences",
+                        }
+                    },
+                }
             )
 
         assert "MAX_CUSTOM_INSTRUCTIONS_TOKENS" in str(exc_info.value)
@@ -289,14 +293,16 @@ class TestReasoningConfigurationValidation:
         )
 
         with pytest.raises(ValidationError) as exc_info:
-            SessionCreate(
-                name="test-session",
-                configuration={
-                    "reasoning": {
-                        "enabled": True,
-                        "custom_instructions": "focus on stable preferences and long-term plans",
-                    }
-                },
+            SessionCreate.model_validate(
+                {
+                    "name": "test-session",
+                    "configuration": {
+                        "reasoning": {
+                            "enabled": True,
+                            "custom_instructions": "focus on stable preferences and long-term plans",
+                        }
+                    },
+                }
             )
 
         assert "custom_instructions" in str(exc_info.value)
