@@ -22,7 +22,7 @@ Before you begin, ensure you have the following installed:
 ### Required Software
 - **uv** - Python package manager: `curl -LsSf https://astral.sh/uv/install.sh | sh` or `brew install uv`
 - **Git** - [Download from git-scm.com](https://git-scm.com/downloads)
-- **Docker** (optional) - [Download from docker.com](https://www.docker.com/products/docker-desktop/)
+- **Docker** (required for Docker setup, not needed for manual setup) - [Download from docker.com](https://www.docker.com/products/docker-desktop/)
 
 ### Database Options
 You'll need a PostgreSQL database with the pgvector extension. Choose one:
@@ -36,45 +36,7 @@ You'll need a PostgreSQL database with the pgvector extension. Choose one:
 
 Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dreaming. The server will **fail to start** without a provider configured.
 
-You need one API key and one model. Any OpenAI-compatible endpoint works — OpenRouter, Together, Fireworks, Ollama, vLLM, or a direct vendor API. Add these to your `.env` file:
-
-```bash
-# Your endpoint and key
-LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
-
-# One model for everything
-DERIVER_PROVIDER=custom
-DERIVER_MODEL=google/gemini-2.5-flash
-SUMMARY_PROVIDER=custom
-SUMMARY_MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__minimal__PROVIDER=custom
-DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__low__PROVIDER=custom
-DIALECTIC_LEVELS__low__MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__medium__PROVIDER=custom
-DIALECTIC_LEVELS__medium__MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__high__PROVIDER=custom
-DIALECTIC_LEVELS__high__MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__max__PROVIDER=custom
-DIALECTIC_LEVELS__max__MODEL=google/gemini-2.5-flash
-DREAM_PROVIDER=custom
-DREAM_MODEL=google/gemini-2.5-flash
-DREAM_DEDUCTION_MODEL=google/gemini-2.5-flash
-DREAM_INDUCTION_MODEL=google/gemini-2.5-flash
-
-# Disable thinking budget (only needed for Anthropic models)
-DERIVER_THINKING_BUDGET_TOKENS=0
-SUMMARY_THINKING_BUDGET_TOKENS=0
-DREAM_THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__low__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS=0
-```
-
-Swap `google/gemini-2.5-flash` for any model with tool calling support. Model name format depends on your provider (OpenRouter uses `vendor/model`).
+You need one API key and one model. Any OpenAI-compatible endpoint works — OpenRouter, Together, Fireworks, Ollama, vLLM, or a direct vendor API. The `.env.template` has provider and model lines ready for each feature — just set your endpoint, API key, and replace `your-model-here` with any model that supports tool calling.
 
 <Info>
 For recommended model tiers per feature, using multiple providers, or direct vendor API keys, see the [Configuration Guide](./configuration#llm-configuration).
@@ -118,23 +80,9 @@ This starts four services: **api** (port 8000), **deriver** (background worker),
 
 For development, uncomment the source mount and monitoring sections inside `docker-compose.yml` to enable live reload, Prometheus, and Grafana.
 
-### 4. Verify It's Working
+### 4. Verify
 
-Migrations run automatically on startup via the entrypoint script.
-
-Check that both services are running:
-
-```bash
-docker compose ps
-```
-
-Test the Honcho API:
-
-```bash
-curl http://localhost:8000/health
-```
-
-You should see a response indicating the service is healthy.
+Migrations run automatically on startup. Check that services are running with `docker compose ps`, then see [Verify Your Setup](#verify-your-setup) below.
 
 ## Manual Setup
 
@@ -305,8 +253,7 @@ Now that Honcho is running locally, you can connect your applications:
 from honcho import Honcho
 
 client = Honcho(
-    base_url="http://localhost:8000",  # Your local instance
-    api_key="your-api-key"  # If auth is enabled
+    base_url="http://localhost:8000",
 )
 ```
 
@@ -315,8 +262,7 @@ client = Honcho(
 import { Honcho } from '@honcho-ai/sdk';
 
 const client = new Honcho({
-  baseUrl: 'http://localhost:8000',  // Your local instance
-  apiKey: 'your-api-key'  // If auth is enabled
+  baseUrl: 'http://localhost:8000',
 });
 ```
 
