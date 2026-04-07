@@ -18,7 +18,7 @@ This skill guides you through setting up and running Honcho locally for developm
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher
 - [uv](https://docs.astral.sh/uv/) 0.4.9 or higher
 - Docker with Compose v2 (recommended for the database) — use `docker compose` not `docker-compose`
 
@@ -54,9 +54,9 @@ Open `.env` and set the required values:
 |----------|----------|-------------|
 | `DB_CONNECTION_URI` | Yes | PostgreSQL connection string — must use `postgresql+psycopg` prefix |
 | `LLM_GEMINI_API_KEY` | One required (default) | Honcho uses Gemini by default — get a key at [aistudio.google.com](https://aistudio.google.com) |
-| `LLM_ANTHROPIC_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
-| `LLM_OPENAI_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
-| `LLM_GROQ_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
+| `LLM_ANTHROPIC_API_KEY` | One required (alternative) | Use instead of Gemini — get a key at [console.anthropic.com](https://console.anthropic.com) |
+| `LLM_OPENAI_API_KEY` | One required (alternative) | Use instead of Gemini — get a key at [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `LLM_GROQ_API_KEY` | One required (alternative) | Use instead of Gemini — get a key at [console.groq.com/keys](https://console.groq.com/keys) |
 | `AUTH_USE_AUTH` | No | Defaults to `false`. If set to `true`, every request requires a valid auth token and `AUTH_JWT_SECRET` must also be set |
 | `AUTH_JWT_SECRET` | Conditional | Required when `AUTH_USE_AUTH=true` — JWT signing secret for auth tokens |
 | `LLM_PROVIDER` | No | Override the default provider — valid values: `google`, `anthropic`, `openai`, `groq` |
@@ -122,11 +122,10 @@ To verify the deriver is working, send a message via the API and watch the deriv
 With both the API server and deriver running, confirm everything is working:
 
 ```bash
-curl http://localhost:8000/health
-# Expected: {"status":"OK"}
+curl http://localhost:8000/docs
 ```
 
-If the health check fails, confirm the API server started without errors and the database migrations ran successfully.
+If the interactive docs page loads, the API server is running correctly. You can also confirm the server started without errors by checking the terminal where you ran `uv run fastapi dev src/main.py`.
 
 ### Run Everything with Docker
 
