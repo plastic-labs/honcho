@@ -429,13 +429,13 @@ Examples:
 - `AUTH_JWT_SECRET` - JWT secret key
 - `DIALECTIC_LEVELS__low__MODEL` - Model for low reasoning level
 - `DERIVER_PROVIDER` - Provider for background deriver
-- `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` - Optional cap for `reasoning.custom_instructions`
+- `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` - Explicit cap for `reasoning.custom_instructions`
 - `SUMMARY_PROVIDER` - Summary generation provider
 - `LOG_LEVEL` - Application log level
 - `METRICS_ENABLED` - Enable Prometheus metrics
 - `TELEMETRY_ENABLED` - Enable CloudEvents telemetry
 
-When using `reasoning.custom_instructions`, keep in mind that those instructions count against the deriver input budget along with discussion/history. If `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` is unset, Honcho derives a conservative cap from `DERIVER_MAX_INPUT_TOKENS` and rejects oversized values instead of truncating them silently.
+When using `reasoning.custom_instructions`, keep in mind that those instructions count against the deriver input budget along with discussion/history. `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` must be set explicitly; Honcho does not derive it from `DERIVER_MAX_INPUT_TOKENS`. If custom instructions are provided without that setting, validation fails with a config error instead of silently assuming a fallback.
 
 ### Configuration Priority
 

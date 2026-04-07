@@ -84,8 +84,8 @@ MAX_OUTPUT_TOKENS = 4096
 THINKING_BUDGET_TOKENS = 1024
 LOG_OBSERVATIONS = false
 MAX_INPUT_TOKENS = 23000
-# Optional override for reasoning.custom_instructions token budget.
-# If unset, Honcho derives a conservative cap from MAX_INPUT_TOKENS.
+# Explicit token budget for reasoning.custom_instructions.
+# Honcho does not derive this from MAX_INPUT_TOKENS.
 MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2048
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 1024

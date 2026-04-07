@@ -256,6 +256,29 @@ class TestReasoningConfigurationValidation:
         assert session.configuration.reasoning is not None
         assert session.configuration.reasoning.custom_instructions == ""
 
+    def test_session_create_requires_explicit_custom_instruction_token_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+            None,
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SessionCreate(
+                name="test-session",
+                configuration={
+                    "reasoning": {
+                        "enabled": True,
+                        "custom_instructions": "focus on durable preferences",
+                    }
+                },
+            )
+
+        assert "MAX_CUSTOM_INSTRUCTIONS_TOKENS" in str(exc_info.value)
+        assert "config.toml" in str(exc_info.value)
+
     def test_session_create_rejects_over_budget_custom_instructions(
         self, monkeypatch: pytest.MonkeyPatch
     ):

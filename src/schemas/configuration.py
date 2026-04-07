@@ -53,7 +53,7 @@ class ReasoningConfiguration(BaseModel):
     )
     custom_instructions: str | None = Field(
         default=None,
-        description="Optional custom instructions for the reasoning system on this workspace/session/message. May be omitted or set to a blank string. Non-blank values are rejected if they exceed the configured deriver custom-instructions token budget.",
+        description="Optional custom instructions for the reasoning system on this workspace/session/message. May be omitted or set to a blank string. Non-blank values are rejected if they exceed the explicitly configured deriver custom-instructions token budget.",
     )
 
     _validate_custom_instructions = field_validator(

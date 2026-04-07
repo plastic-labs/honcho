@@ -8,7 +8,15 @@ from src.utils.config_helpers import get_configuration
 
 
 class TestGetConfiguration:
-    def test_preserves_workspace_custom_instructions(self) -> None:
+    def test_preserves_workspace_custom_instructions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+            100,
+        )
+
         workspace = models.Workspace(
             name="workspace-1",
             configuration={
@@ -24,7 +32,15 @@ class TestGetConfiguration:
         assert config.reasoning.enabled is True
         assert config.reasoning.custom_instructions == "Focus on durable preferences."
 
-    def test_message_custom_instructions_override_session_and_workspace(self) -> None:
+    def test_message_custom_instructions_override_session_and_workspace(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+            100,
+        )
+
         workspace = models.Workspace(
             name="workspace-1",
             configuration={"reasoning": {"custom_instructions": "workspace scope"}}

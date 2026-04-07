@@ -281,13 +281,14 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     @property
     def effective_max_custom_instructions_tokens(self) -> int:
-        """Resolve the custom instruction budget from explicit or derived settings."""
-        if self.MAX_CUSTOM_INSTRUCTIONS_TOKENS is not None:
-            return self.MAX_CUSTOM_INSTRUCTIONS_TOKENS
+        """Return the explicit custom instruction budget."""
+        if self.MAX_CUSTOM_INSTRUCTIONS_TOKENS is None:
+            raise ValueError(
+                "No value configured for DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS. "
+                "Set [deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS in config.toml."
+            )
 
-        # Reserve most of the deriver input budget for discussion/history while
-        # still allowing moderately detailed custom instructions by default.
-        return max(1, min(2048, self.MAX_INPUT_TOKENS // 4))
+        return self.MAX_CUSTOM_INSTRUCTIONS_TOKENS
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
@@ -295,10 +296,13 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
             raise ValueError(
                 f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
-        if self.effective_max_custom_instructions_tokens > self.MAX_INPUT_TOKENS:
+        if (
+            self.MAX_CUSTOM_INSTRUCTIONS_TOKENS is not None
+            and self.MAX_CUSTOM_INSTRUCTIONS_TOKENS > self.MAX_INPUT_TOKENS
+        ):
             raise ValueError(
                 "MAX_CUSTOM_INSTRUCTIONS_TOKENS "
-                f"({self.effective_max_custom_instructions_tokens}) cannot exceed "
+                f"({self.MAX_CUSTOM_INSTRUCTIONS_TOKENS}) cannot exceed "
                 f"max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self

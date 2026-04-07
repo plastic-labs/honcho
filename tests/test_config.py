@@ -5,15 +5,14 @@ from src.config import DeriverSettings
 
 
 class TestDeriverSettings:
-    def test_derives_custom_instruction_token_limit_from_input_budget(self) -> None:
+    def test_requires_explicit_custom_instruction_token_limit(self) -> None:
         settings = DeriverSettings(MAX_INPUT_TOKENS=2000)
 
-        assert settings.effective_max_custom_instructions_tokens == 500
+        with pytest.raises(ValueError) as exc_info:
+            _ = settings.effective_max_custom_instructions_tokens
 
-    def test_caps_derived_custom_instruction_token_limit(self) -> None:
-        settings = DeriverSettings(MAX_INPUT_TOKENS=23000)
-
-        assert settings.effective_max_custom_instructions_tokens == 2048
+        assert "MAX_CUSTOM_INSTRUCTIONS_TOKENS" in str(exc_info.value)
+        assert "config.toml" in str(exc_info.value)
 
     def test_uses_explicit_custom_instruction_token_limit(self) -> None:
         settings = DeriverSettings(

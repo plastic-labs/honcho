@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src import models
+from src.config import settings
 from src.deriver.deriver import process_representation_tasks_batch
 from src.schemas import (
     ResolvedConfiguration,
@@ -221,6 +222,11 @@ class TestCustomInstructions:
         monkeypatch.setattr(
             "src.crud.representation.RepresentationManager.save_representation",
             AsyncMock(),
+        )
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+            100,
         )
 
         message = models.Message(
