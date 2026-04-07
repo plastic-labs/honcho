@@ -57,8 +57,10 @@ Open `.env` and set the required values:
 | `LLM_ANTHROPIC_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
 | `LLM_OPENAI_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
 | `LLM_GROQ_API_KEY` | One required (alternative) | Use instead of Gemini if preferred |
-| `AUTH_USE_AUTH` | No | Set to `false` for local development — defaults to `true`, which requires a valid token on every request |
-| `LLM_PROVIDER` | No | Override the default provider — valid values: `gemini`, `anthropic`, `openai`, `groq` |
+| `AUTH_USE_AUTH` | No | Defaults to `false`. If set to `true`, every request requires a valid auth token and `AUTH_JWT_SECRET` must also be set |
+| `AUTH_JWT_SECRET` | Conditional | Required when `AUTH_USE_AUTH=true` — JWT signing secret for auth tokens |
+| `LLM_PROVIDER` | No | Override the default provider — valid values: `google`, `anthropic`, `openai`, `groq` |
+| `LLM_OPENAI_COMPATIBLE_API_KEY` | Optional | API key for OpenAI-compatible endpoints (e.g. vLLM, local models) |
 | `SENTRY_ENABLED` | No | Set to `false` for local development |
 
 > **Important:** Honcho requires exactly one LLM API key to function — you do not need all of them. The default provider is Gemini (`LLM_GEMINI_API_KEY`). If you see errors about missing model configuration, an LLM key is the most likely cause.
@@ -127,6 +129,8 @@ cp docker-compose.yml.example docker-compose.yml
 docker compose up
 ```
 
+> **Note:** The API container automatically runs database migrations on startup via `docker/entrypoint.sh`. You do not need to run `alembic upgrade head` manually when using Docker.
+
 ### Clean Up
 
 Stop the API server and deriver with `Ctrl+C` in each terminal.
@@ -194,8 +198,8 @@ Hooks enforce formatting, linting, type checking, and conventional commit messag
 
 Follow these conventions when contributing:
 
-- Format code: `uv run ruff format src/`
-- Lint code: `uv run ruff check src/`
+- Format code: `uv run ruff format .`
+- Lint code: `uv run ruff check .`
 - Type check: `uv run basedpyright` (a strict fork of pyright — stricter than standard mypy)
 - Use type hints on all function signatures
 - Write Google-style docstrings
@@ -239,7 +243,7 @@ LLM_GEMINI_API_KEY=your-key-here
 
 Get a free Gemini key at [aistudio.google.com](https://aistudio.google.com).
 
-If you prefer a different provider, set the corresponding key and set `LLM_PROVIDER` in `.env` to the matching value (`anthropic`, `openai`, or `groq`).
+If you prefer a different provider, set the corresponding key and set `LLM_PROVIDER` in `.env` to the matching value (`anthropic`, `openai`, `groq`, or `google` for Gemini).
 
 ### Deriver not processing messages
 
@@ -310,7 +314,7 @@ uv run fastapi dev src/main.py
 | Start API server | `uv run fastapi dev src/main.py` |
 | Start deriver | `uv run python -m src.deriver` |
 | Run tests | `uv run pytest` |
-| Format code | `uv run ruff format src/` |
+| Format code | `uv run ruff format .` |
 | New migration | `uv run alembic revision --autogenerate -m "description"` |
 | Run all pre-commit hooks | `uv run pre-commit run --all-files` |
 
