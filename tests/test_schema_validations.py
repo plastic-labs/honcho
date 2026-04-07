@@ -3,13 +3,14 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from src.config import settings
 from src.schemas import (
     ConclusionCreate,
     DialecticOptions,
     DocumentCreate,
     DocumentMetadata,
-    MessageSearchOptions,
     MessageCreate,
+    MessageSearchOptions,
     ObservationInput,
     PeerCreate,
     ResolvedConfiguration,
@@ -215,6 +216,97 @@ class TestResolvedConfigurationMigration:
             ResolvedConfiguration.model_validate(payload)
 
         assert any(e["loc"] == ("reasoning",) for e in exc_info.value.errors())
+
+    def test_rejects_over_budget_custom_instructions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+            5,
+        )
+
+        payload = self._make_config(
+            reasoning={
+                "enabled": True,
+                "custom_instructions": "focus on stable preferences and long-term plans",
+            }
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            ResolvedConfiguration.model_validate(payload)
+
+        assert "custom_instructions" in str(exc_info.value)
+        assert "MAX_CUSTOM_INSTRUCTIONS_TOKENS" in str(exc_info.value)
+
+
+class TestReasoningConfigurationValidation:
+    def test_session_create_allows_blank_custom_instructions(self):
+        session = SessionCreate.model_validate(
+            {
+                "name": "test-session",
+                "configuration": {
+                    "reasoning": {
+                        "enabled": True,
+                        "custom_instructions": "",
+                    }
+                },
+            }
+        )
+
+        assert session.configuration is not None
+        assert session.configuration.reasoning is not None
+        assert session.configuration.reasoning.custom_instructions == ""
+
+    def test_session_create_requires_explicit_custom_instruction_token_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+            None,
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SessionCreate.model_validate(
+                {
+                    "name": "test-session",
+                    "configuration": {
+                        "reasoning": {
+                            "enabled": True,
+                            "custom_instructions": "focus on durable preferences",
+                        }
+                    },
+                }
+            )
+
+        assert "MAX_CUSTOM_INSTRUCTIONS_TOKENS" in str(exc_info.value)
+        assert "config.toml" in str(exc_info.value)
+
+    def test_session_create_rejects_over_budget_custom_instructions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            settings.DERIVER,
+            "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+            5,
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            SessionCreate.model_validate(
+                {
+                    "name": "test-session",
+                    "configuration": {
+                        "reasoning": {
+                            "enabled": True,
+                            "custom_instructions": "focus on stable preferences and long-term plans",
+                        }
+                    },
+                }
+            )
+
+        assert "custom_instructions" in str(exc_info.value)
+        assert "MAX_CUSTOM_INSTRUCTIONS_TOKENS" in str(exc_info.value)
 
 
 class TestSanitizedRequiredFields:

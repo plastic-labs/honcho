@@ -11,6 +11,19 @@ from inspect import cleandoc as c
 from src.utils.tokens import estimate_tokens
 
 
+def _custom_instructions_section(custom_instructions: str | None) -> str:
+    """Render the optional custom instructions block for the deriver prompt."""
+    if not custom_instructions or not custom_instructions.strip():
+        return ""
+
+    return c(
+        f"""
+        CUSTOM INSTRUCTIONS:
+        {custom_instructions.strip()}
+        """
+    )
+
+
 def minimal_deriver_system_prompt() -> str:
     """Generate the cacheable instructions for observation extraction."""
     return c(
@@ -38,11 +51,19 @@ EXAMPLES:
     )
 
 
-def minimal_deriver_user_prompt(peer_id: str, messages: str) -> str:
+def minimal_deriver_user_prompt(
+    peer_id: str,
+    messages: str,
+    *,
+    custom_instructions: str | None = None,
+) -> str:
     """Generate the per-request message payload for observation extraction."""
+    instructions_section = _custom_instructions_section(custom_instructions)
     return c(
         f"""
 Peer identifier: {peer_id}
+
+{instructions_section}
 
 Messages to analyze:
 <messages>
@@ -55,6 +76,8 @@ Messages to analyze:
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
+    *,
+    custom_instructions: str | None = None,
 ) -> str:
     """
     Generate the combined prompt for fast observation extraction.
@@ -66,7 +89,7 @@ def minimal_deriver_prompt(
         f"""
 {minimal_deriver_system_prompt()}
 
-{minimal_deriver_user_prompt(peer_id, messages)}
+{minimal_deriver_user_prompt(peer_id, messages, custom_instructions=custom_instructions)}
 """
     )
 
@@ -84,3 +107,22 @@ def estimate_minimal_deriver_prompt_tokens() -> int:
         return estimate_tokens(prompt)
     except ValueError:
         return 300
+
+
+def estimate_deriver_prompt_tokens(custom_instructions: str | None = None) -> int:
+    """Estimate deriver prompt tokens, including optional custom instructions."""
+    if not custom_instructions or not custom_instructions.strip():
+        return estimate_minimal_deriver_prompt_tokens()
+
+    return estimate_tokens(
+        "\n\n".join(
+            [
+                minimal_deriver_system_prompt(),
+                minimal_deriver_user_prompt(
+                    peer_id="",
+                    messages="",
+                    custom_instructions=custom_instructions,
+                ),
+            ]
+        )
+    )

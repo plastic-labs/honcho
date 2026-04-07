@@ -261,6 +261,9 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     LOG_OBSERVATIONS: bool = False
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
+    MAX_CUSTOM_INSTRUCTIONS_TOKENS: Annotated[
+        int | None, Field(default=None, gt=0, le=100_000)
+    ] = None
 
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
@@ -276,11 +279,29 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
 
+    @property
+    def effective_max_custom_instructions_tokens(self) -> int:
+        """Return the explicit custom instruction budget."""
+        if self.MAX_CUSTOM_INSTRUCTIONS_TOKENS is None:
+            raise ValueError(
+                "No value configured for DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS. "
+                + "Set [deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS in config.toml."
+            )
+
+        return self.MAX_CUSTOM_INSTRUCTIONS_TOKENS
+
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
         if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
                 f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+            )
+        if (
+            self.MAX_CUSTOM_INSTRUCTIONS_TOKENS is not None
+            and self.MAX_CUSTOM_INSTRUCTIONS_TOKENS > self.MAX_INPUT_TOKENS
+        ):
+            raise ValueError(
+                f"MAX_CUSTOM_INSTRUCTIONS_TOKENS ({self.MAX_CUSTOM_INSTRUCTIONS_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
 

@@ -371,6 +371,7 @@ DERIVER_MODEL=gemini-2.5-flash-lite
 DERIVER_MAX_OUTPUT_TOKENS=4096
 DERIVER_THINKING_BUDGET_TOKENS=1024
 DERIVER_MAX_INPUT_TOKENS=23000  # Maximum input tokens for deriver
+DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2048  # Explicit cap for reasoning.custom_instructions
 DERIVER_TEMPERATURE=  # Optional temperature override (unset by default)
 
 # Backup provider (optional, must set both or neither)
@@ -393,6 +394,8 @@ DERIVER_LOG_OBSERVATIONS=false  # Log all observations
 DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS=100  # Max observations stored
 DERIVER_REPRESENTATION_BATCH_MAX_TOKENS=1024  # Max tokens per batch (must be <= MAX_INPUT_TOKENS)
 ```
+
+`reasoning.custom_instructions` consumes the same deriver input budget as the discussion/history sent to the model. `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` must be configured explicitly; Honcho does not derive it from `DERIVER_MAX_INPUT_TOKENS`. If custom instructions are supplied without that setting, or if they exceed it, the request/configuration is rejected instead of being truncated.
 
 **Peer Card:**
 

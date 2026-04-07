@@ -5,9 +5,37 @@ the fully-resolved variants used at runtime.
 """
 
 from enum import Enum
-from typing import Any, Self, cast
+from typing import Any, ClassVar, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+import tiktoken
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from src.config import settings
+
+_TOKENIZER = tiktoken.get_encoding("o200k_base")
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count for reasoning configuration validation."""
+    try:
+        return len(_TOKENIZER.encode(text))
+    except Exception:
+        return len(text) // 4
+
+
+def _validate_custom_instructions_budget(value: str | None) -> str | None:
+    """Reject custom instructions that exceed the configured deriver budget."""
+    if value is None or not value.strip():
+        return value
+
+    token_count = _estimate_tokens(value)
+    token_limit = settings.DERIVER.effective_max_custom_instructions_tokens
+    if token_count > token_limit:
+        raise ValueError(
+            f"reasoning.custom_instructions uses {token_count} tokens and exceeds DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS ({token_limit})"
+        )
+
+    return value
 
 
 class DreamType(str, Enum):
@@ -23,8 +51,12 @@ class ReasoningConfiguration(BaseModel):
     )
     custom_instructions: str | None = Field(
         default=None,
-        description="TODO: currently unused. Custom instructions to use for the reasoning system on this workspace/session/message.",
+        description="Optional custom instructions for the reasoning system on this workspace/session/message. May be omitted or set to a blank string. Non-blank values are rejected if they exceed the explicitly configured deriver custom-instructions token budget.",
     )
+
+    _validate_custom_instructions: ClassVar[Any] = field_validator(
+        "custom_instructions", mode="after"
+    )(_validate_custom_instructions_budget)
 
 
 class PeerCardConfiguration(BaseModel):
@@ -127,6 +159,11 @@ class MessageConfiguration(BaseModel):
 
 class ResolvedReasoningConfiguration(BaseModel):
     enabled: bool
+    custom_instructions: str | None = None
+
+    _validate_custom_instructions: ClassVar[Any] = field_validator(
+        "custom_instructions", mode="after"
+    )(_validate_custom_instructions_budget)
 
 
 class ResolvedPeerCardConfiguration(BaseModel):

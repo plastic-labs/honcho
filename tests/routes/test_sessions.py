@@ -1,8 +1,10 @@
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
+from src.config import settings
 from src.models import Peer, Workspace
 
 
@@ -87,6 +89,39 @@ def test_create_session_with_configuration(
     assert data["configuration"] == configuration
     assert data["id"] == session_id
     assert data["workspace_id"] == test_workspace.name
+
+
+def test_create_session_rejects_over_budget_reasoning_custom_instructions(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+    monkeypatch.setattr(
+        settings.DERIVER,
+        "MAX_CUSTOM_INSTRUCTIONS_TOKENS",
+        5,
+    )
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {test_peer.name: {}},
+            "configuration": {
+                "reasoning": {
+                    "enabled": True,
+                    "custom_instructions": "focus on stable preferences and long-term plans",
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    error = response.json()["detail"][0]
+    assert "configuration" in str(error["loc"])
+    assert "custom_instructions" in error["msg"]
 
 
 def test_create_session_with_all_optional_params(
