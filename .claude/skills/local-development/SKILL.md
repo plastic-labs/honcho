@@ -148,13 +148,15 @@ Run hooks manually against all files:
 uv run pre-commit run --all-files
 ```
 
-Hooks enforce PEP 8, Black formatting, type hints, and conventional commit messages.
+Hooks enforce formatting, linting, type checking, and conventional commit messages.
 
 ### Code Standards
 
 Follow these conventions when contributing:
 
-- Format with [Black](https://black.readthedocs.io/) (`uv run black .`)
+- Format code: `uv run ruff format src/`
+- Lint code: `uv run ruff check src/`
+- Type check: `uv run basedpyright`
 - Use type hints on all function signatures
 - Write Google-style docstrings
 - Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`
@@ -178,9 +180,11 @@ Follow these conventions when contributing:
 
 **Fix:**
 Honcho defaults to Gemini. Add your key to `.env`:
-```
+
+```bash
 LLM_GEMINI_API_KEY=your-key-here
 ```
+
 Get a free Gemini key at [aistudio.google.com](https://aistudio.google.com).
 
 If you prefer a different provider, set the corresponding key and update `LLM_PROVIDER` in `.env` if that setting is present.
@@ -199,10 +203,13 @@ If you prefer a different provider, set the corresponding key and update `LLM_PR
 **Symptom:** `alembic.util.exc.CommandError` or `relation does not exist`
 
 **Fix:**
+
 ```bash
 uv run alembic upgrade head
 ```
+
 If you have conflicts or a dirty migration state:
+
 ```bash
 uv run alembic downgrade base
 uv run alembic upgrade head
@@ -229,7 +236,7 @@ uv run fastapi dev src/main.py
 | Start API server | `uv run fastapi dev src/main.py` |
 | Start deriver | `uv run python -m src.deriver` |
 | Run tests | `uv run pytest` |
-| Format code | `uv run black .` |
+| Format code | `uv run ruff format src/` |
 | New migration | `uv run alembic revision --autogenerate -m "description"` |
 | Run all pre-commit hooks | `uv run pre-commit run --all-files` |
 
@@ -238,6 +245,6 @@ uv run fastapi dev src/main.py
 ## Resources
 
 - [Honcho Documentation](https://docs.honcho.dev)
-- [Contributing Guide](../../CONTRIBUTING.md)
+- [Contributing Guide](../../../CONTRIBUTING.md)
 - [API Reference](https://docs.honcho.dev/v3/api-reference/introduction)
 - [Discord Community](https://discord.com/invite/honcho)
