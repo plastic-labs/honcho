@@ -267,7 +267,7 @@ This confirms the database connection, migrations, and API are all working:
 
 ```bash
 # Create a workspace
-curl -s -X POST http://localhost:8000/v1/workspaces \
+curl -s -X POST http://localhost:8000/v3/workspaces \
   -H "Content-Type: application/json" \
   -d '{"name": "test"}' | python3 -m json.tool
 ```
