@@ -291,6 +291,7 @@ async def test_search_messages_external_lookup_happens_before_tracked_db(
         limit: int,
         *,
         session_name: str | None = None,
+        allowed_session_names: list[str] | None = None,
         after_date: datetime | None = None,
         before_date: datetime | None = None,
     ) -> list[str]:
@@ -299,6 +300,7 @@ async def test_search_messages_external_lookup_happens_before_tracked_db(
             query_embedding,
             limit,
             session_name,
+            allowed_session_names,
             after_date,
             before_date,
         )
@@ -391,10 +393,17 @@ async def test_search_messages_temporal_external_lookup_happens_before_tracked_d
         limit: int,
         *,
         session_name: str | None = None,
+        allowed_session_names: list[str] | None = None,
         after_date: datetime | None = None,
         before_date: datetime | None = None,
     ) -> list[str]:
-        _ = (workspace_name, query_embedding, limit, session_name)
+        _ = (
+            workspace_name,
+            query_embedding,
+            limit,
+            session_name,
+            allowed_session_names,
+        )
         assert after_date is not None
         assert before_date is not None
         call_order.append("external")
