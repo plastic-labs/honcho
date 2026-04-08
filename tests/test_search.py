@@ -571,20 +571,20 @@ async def test_grep_messages_observer_scoping_noop_when_session_provided(
         workspace,
         peer1,
         _,
-        session1,
         _,
-        msg_visible,
+        session_hidden,
         _,
+        msg_hidden,
     ) = await _setup_multi_session_workspace(db_session)
 
     results = await crud.grep_messages(
         workspace_name=workspace.name,
-        session_name=session1.name,
+        session_name=session_hidden.name,
         text="keyword",
         observer=peer1.name,
     )
     matched_ids = [m.public_id for matches, _ in results for m in matches]
-    assert msg_visible.public_id in matched_ids
+    assert msg_hidden.public_id in matched_ids
 
 
 @pytest.mark.asyncio
