@@ -9,42 +9,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.crud.webhook import list_webhook_endpoints
+from src.dependencies import tracked_db
 from src.utils.formatting import utc_now_iso
 from src.utils.queue_payload import WebhookPayload
 
 logger = logging.getLogger(__name__)
 
 
-async def deliver_webhook(
-    db: AsyncSession, payload: WebhookPayload, workspace_name: str
-) -> None:
+async def deliver_webhook(payload: WebhookPayload, workspace_name: str) -> None:
     """
     Deliver a single webhook event to its configured endpoints.
     """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
+    try:
+        async with tracked_db("webhook.deliver") as db:
             webhook_urls = await _get_webhook_urls(db, workspace_name)
-            if not webhook_urls:
-                logger.debug(
-                    f"No webhook endpoints for workspace {workspace_name}, skipping."
-                )
-                return
 
-            event_payload = {
-                "type": payload.event_type,
-                "data": payload.data,
-                "timestamp": utc_now_iso(),
-            }
-            event_json = json.dumps(
-                event_payload, separators=(",", ":"), sort_keys=True
+        if not webhook_urls:
+            logger.debug(
+                f"No webhook endpoints for workspace {workspace_name}, skipping."
             )
+            return
 
-            try:
-                signature = _generate_webhook_signature(event_json)
-            except ValueError:
-                logger.exception("Failed to generate webhook signature")
-                return
+        event_payload = {
+            "type": payload.event_type,
+            "data": payload.data,
+            "timestamp": utc_now_iso(),
+        }
+        event_json = json.dumps(event_payload, separators=(",", ":"), sort_keys=True)
 
+        try:
+            signature = _generate_webhook_signature(event_json)
+        except ValueError:
+            logger.exception("Failed to generate webhook signature")
+            return
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
             tasks = [
                 client.post(
                     url=url,
@@ -73,10 +72,10 @@ async def deliver_webhook(
                         f"Failed delivery for {payload.event_type} to {url}. Exception: {result}"
                     )
 
-        except httpx.RequestError:
-            logger.exception(f"Error sending webhook for {workspace_name}.")
-        except Exception:
-            logger.exception("Unexpected error delivering webhook.")
+    except httpx.RequestError:
+        logger.exception(f"Error sending webhook for {workspace_name}.")
+    except Exception:
+        logger.exception("Unexpected error delivering webhook.")
 
 
 async def _get_webhook_urls(db: AsyncSession, workspace_name: str) -> list[str]:

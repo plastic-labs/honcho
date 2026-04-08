@@ -136,6 +136,7 @@ def mock_tracked_db(ts_db_session: async_sessionmaker[AsyncSession]):
         patch("src.dialectic.chat.tracked_db", ts_tracked_db),
         patch("src.utils.summarizer.tracked_db", ts_tracked_db),
         patch("src.webhooks.events.tracked_db", ts_tracked_db),
+        patch("src.webhooks.webhook_delivery.tracked_db", ts_tracked_db),
         patch("src.utils.search.tracked_db", ts_tracked_db),
         patch("src.crud.message.tracked_db", ts_tracked_db),
     ):
