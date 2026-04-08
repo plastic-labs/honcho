@@ -89,38 +89,45 @@ def test_all_resources_in_honcho_namespace(manifests: list[dict[str, Any]]):
 
 
 def test_default_deny_ingress_policy_exists(manifests: list[dict[str, Any]]):
-    """A default-deny NetworkPolicy must select all pods."""
+    """A default-deny NetworkPolicy must select all pods and allow no ingress."""
     policy = _by_kind_name(manifests, "NetworkPolicy", "default-deny-ingress")
     assert policy["spec"]["podSelector"] == {}, (
         "default-deny must select all pods (empty podSelector)"
     )
     assert "Ingress" in policy["spec"]["policyTypes"]
+    assert policy["spec"].get("ingress", []) == [], (
+        "default-deny policy must not contain any ingress allow rules"
+    )
 
 
 def test_postgres_network_policy_restricts_access(manifests: list[dict[str, Any]]):
-    """Only honcho-api and honcho-deriver pods may reach postgres."""
+    """Only honcho-api and honcho-deriver pods may reach postgres — no other sources."""
     policy = _by_kind_name(manifests, "NetworkPolicy", "allow-postgres-from-honcho")
     allowed_labels = {
         frozenset(src.get("podSelector", {}).get("matchLabels", {}).items())
         for src in policy["spec"]["ingress"][0]["from"]
     }
-    assert frozenset({"app": "honcho-api"}.items()) in allowed_labels
-    assert frozenset({"app": "honcho-deriver"}.items()) in allowed_labels
-    ports = [p["port"] for p in policy["spec"]["ingress"][0]["ports"]]
-    assert 5432 in ports
+    assert allowed_labels == {
+        frozenset({"app": "honcho-api"}.items()),
+        frozenset({"app": "honcho-deriver"}.items()),
+    }, f"postgres ingress sources must be exactly api+deriver, got: {allowed_labels}"
+    ports = {p["port"] for p in policy["spec"]["ingress"][0]["ports"]}
+    assert ports == {5432}, f"postgres ingress must allow only port 5432, got: {ports}"
 
 
 def test_redis_network_policy_restricts_access(manifests: list[dict[str, Any]]):
-    """Only honcho-api and honcho-deriver pods may reach redis."""
+    """Only honcho-api and honcho-deriver pods may reach redis — no other sources."""
     policy = _by_kind_name(manifests, "NetworkPolicy", "allow-redis-from-honcho")
     allowed_labels = {
         frozenset(src.get("podSelector", {}).get("matchLabels", {}).items())
         for src in policy["spec"]["ingress"][0]["from"]
     }
-    assert frozenset({"app": "honcho-api"}.items()) in allowed_labels
-    assert frozenset({"app": "honcho-deriver"}.items()) in allowed_labels
-    ports = [p["port"] for p in policy["spec"]["ingress"][0]["ports"]]
-    assert 6379 in ports
+    assert allowed_labels == {
+        frozenset({"app": "honcho-api"}.items()),
+        frozenset({"app": "honcho-deriver"}.items()),
+    }, f"redis ingress sources must be exactly api+deriver, got: {allowed_labels}"
+    ports = {p["port"] for p in policy["spec"]["ingress"][0]["ports"]}
+    assert ports == {6379}, f"redis ingress must allow only port 6379, got: {ports}"
 
 
 def test_four_network_policies_present(manifests: list[dict[str, Any]]):
@@ -199,7 +206,11 @@ def test_hpa_targets_api_deployment(manifests: list[dict[str, Any]]):
 def test_pdb_selects_api_pods(manifests: list[dict[str, Any]]):
     pdb = _by_kind_name(manifests, "PodDisruptionBudget", "honcho-api")
     assert pdb["spec"]["selector"]["matchLabels"] == {"app": "honcho-api"}
-    assert pdb["spec"].get("minAvailable", 0) >= 1
+    # maxUnavailable: 1 allows node drains even at minReplicas=1; minAvailable: 1
+    # would deadlock when only one replica is running.
+    assert pdb["spec"].get("maxUnavailable") == 1, (
+        "PDB must use maxUnavailable: 1 to avoid deadlock with HPA minReplicas: 1"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -207,11 +218,12 @@ def test_pdb_selects_api_pods(manifests: list[dict[str, Any]]):
 # ---------------------------------------------------------------------------
 
 
-def test_deriver_has_no_liveness_probe(manifests: list[dict[str, Any]]):
+def test_deriver_has_no_http_probes(manifests: list[dict[str, Any]]):
     """The deriver is a queue worker, not an HTTP server.
 
-    An HTTP liveness probe would always fail (as per the GitHub issue that
-    triggered this contribution). Health is managed by the restart policy.
+    Neither a liveness nor a readiness HTTP probe must be present — the
+    deriver has no HTTP server to probe. Health is managed by the restart
+    policy (restartPolicy: Always, the Deployment default).
     """
     deployment = _by_kind_name(manifests, "Deployment", "honcho-deriver")
     container = next(
@@ -221,6 +233,10 @@ def test_deriver_has_no_liveness_probe(manifests: list[dict[str, Any]]):
     )
     assert "livenessProbe" not in container, (
         "deriver must not have a livenessProbe — it is not an HTTP server"
+    )
+    readiness = container.get("readinessProbe", {})
+    assert "httpGet" not in readiness, (
+        "deriver must not have an HTTP readinessProbe — it is not an HTTP server"
     )
 
 

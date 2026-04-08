@@ -230,7 +230,11 @@ kubectl delete pvc --all -n honcho
 
 ## Configuration
 
-Non-secret configuration lives in `k8s/configmap.yaml`. Edit it and re-apply with `kubectl apply -k k8s/` to pick up changes (this will trigger a rolling restart of the API and Deriver).
+Non-secret configuration lives in `k8s/configmap.yaml`. Edit it and re-apply with `kubectl apply -k k8s/` to update the ConfigMap — but environment variables injected via `configMapKeyRef` are only read at pod start, so running pods will **not** pick up the change automatically. Trigger a rolling restart explicitly after re-applying:
+
+```bash
+kubectl rollout restart deployment/honcho-api deployment/honcho-deriver -n honcho
+```
 
 Notable settings:
 
@@ -276,10 +280,13 @@ The HPA (`k8s/api/hpa.yaml`) scales the API between 1 and 5 replicas when averag
 - **Docker Desktop**: included by default
 - **k3s**: included by default
 - **kind**: install manually:
+
   ```bash
   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
   ```
+
   On kind you may also need to patch metrics-server to disable TLS verification:
+
   ```bash
   kubectl patch deployment metrics-server -n kube-system \
     --type='json' \
