@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -256,7 +256,7 @@ async def test_gemini_backend_strips_system_and_tools_when_using_cached_content(
     client.aio.caches.create = AsyncMock(
         return_value=SimpleNamespace(
             name="cachedContents/abc123",
-            expire_time=datetime.now(timezone.utc),
+            expire_time=datetime.now(timezone.utc) + timedelta(minutes=5),
         )
     )
     client.aio.models.generate_content = AsyncMock(

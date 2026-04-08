@@ -321,7 +321,7 @@ class AnthropicBackend:
         if tool_choice in {"any", "required"}:
             return {"type": "any"}
         if tool_choice == "none":
-            return None
+            return {"type": "none"}
         return {"type": "tool", "name": tool_choice}
 
     @staticmethod
