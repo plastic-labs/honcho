@@ -1499,9 +1499,9 @@ async def honcho_llm_call(
         result: (
             HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
         ) = await decorated()
-        if trace_name and isinstance(result, HonchoLLMCallResponse):
+        if isinstance(result, HonchoLLMCallResponse):
             log_reasoning_trace(
-                task_type=trace_name,
+                task_type=trace_name or "untagged",
                 llm_settings=llm_settings,
                 prompt=prompt,
                 response=result,
@@ -1549,9 +1549,9 @@ async def honcho_llm_call(
         stream_final=stream_final_only,
         iteration_callback=iteration_callback,
     )
-    if trace_name and isinstance(result, HonchoLLMCallResponse):
+    if isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(
-            task_type=trace_name,
+            task_type=trace_name or "untagged",
             llm_settings=llm_settings,
             prompt=prompt,
             response=result,

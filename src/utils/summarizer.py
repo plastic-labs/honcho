@@ -215,6 +215,7 @@ async def create_short_summary(
         llm_settings=settings.SUMMARY,
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+        trace_name="short_summary",
     )
 
 
@@ -240,6 +241,7 @@ async def create_long_summary(
         llm_settings=settings.SUMMARY,
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+        trace_name="long_summary",
     )
 
 
