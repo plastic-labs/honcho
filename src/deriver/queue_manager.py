@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sqlalchemy import and_, delete, or_, select, update
-from sqlalchemy.dialects.postgresql import insert
+from src.db_types import upsert_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -342,7 +342,7 @@ class QueueManager:
         values = [{"work_unit_key": key} for key in work_unit_keys]
 
         stmt = (
-            insert(models.ActiveQueueSession)
+            upsert_insert(models.ActiveQueueSession)
             .values(values)
             .on_conflict_do_nothing()
             .returning(

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Sequence
 from datetime import datetime
 from logging import getLogger
@@ -8,7 +9,7 @@ from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text, upd
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
-from src.config import settings
+from src.config import is_sqlite, settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.utils.filter import apply_filter
@@ -18,6 +19,40 @@ from src.vector_store import VectorRecord, get_external_vector_store, upsert_wit
 from .session import get_or_create_session
 
 logger = getLogger(__name__)
+
+# Per-session asyncio locks used as a fallback for SQLite (single-process only).
+# PostgreSQL uses pg_advisory_xact_lock which is cross-process safe.
+_sqlite_session_locks: dict[tuple[str, str], asyncio.Lock] = {}
+_sqlite_locks_mutex = asyncio.Lock()
+
+
+async def _acquire_session_lock(
+    db: AsyncSession, workspace_name: str, session_name: str
+) -> asyncio.Lock | None:
+    """Acquire a write lock for the given session.
+
+    On PostgreSQL: uses a transaction-scoped advisory lock (auto-released on commit).
+    On SQLite: uses an asyncio.Lock (must be explicitly released by the caller).
+
+    Returns the acquired asyncio.Lock (SQLite) or None (PostgreSQL, lock is implicit).
+    """
+    if is_sqlite():
+        async with _sqlite_locks_mutex:
+            key = (workspace_name, session_name)
+            if key not in _sqlite_session_locks:
+                _sqlite_session_locks[key] = asyncio.Lock()
+            lock = _sqlite_session_locks[key]
+        await lock.acquire()
+        return lock
+
+    await db.execute(text("SET LOCAL lock_timeout = '5s'"))
+    await db.execute(
+        text(
+            "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
+        ),
+        {"workspace_name": workspace_name, "session_name": session_name},
+    )
+    return None
 
 
 def _deduplicate_messages(
@@ -216,13 +251,7 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
-    await db.execute(text("SET LOCAL lock_timeout = '5s'"))
-    await db.execute(
-        text(
-            "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
-        ),
-        {"workspace_name": workspace_name, "session_name": session_name},
-    )
+    _session_lock = await _acquire_session_lock(db, workspace_name, session_name)
 
     # Get the last sequence number on a session - uses (workspace_name, session_name, seq_in_session) index
     last_seq = (
@@ -257,8 +286,13 @@ async def create_messages(
 
     db.add_all(message_objects)
 
-    # Commit here to release the advisory lock before generating embeddings
-    await db.commit()
+    # Commit here to release the advisory lock before generating embeddings.
+    # For SQLite, also release the asyncio.Lock acquired above.
+    try:
+        await db.commit()
+    finally:
+        if _session_lock is not None:
+            _session_lock.release()
     try:
         if settings.EMBED_MESSAGES:
             encoded_message_lookup = {

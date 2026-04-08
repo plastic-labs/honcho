@@ -11,7 +11,7 @@ from sqlalchemy.sql import Select
 from sqlalchemy.sql.functions import func
 
 from src import models, schemas
-from src.config import settings
+from src.config import is_sqlite, settings
 from src.crud.collection import get_or_create_collection
 from src.crud.peer import get_peer
 from src.crud.session import get_session
@@ -193,6 +193,8 @@ async def query_documents_most_derived(
 
 def _uses_pgvector() -> bool:
     """Check whether queries should go through pgvector (DB-only) path."""
+    if is_sqlite():
+        return False
     return (
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )

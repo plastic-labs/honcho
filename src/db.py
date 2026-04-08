@@ -5,9 +5,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
 
-from src.config import settings
+from src.config import is_sqlite, settings
 
-connect_args = {"prepare_threshold": None}
+connect_args = {"check_same_thread": False} if is_sqlite() else {"prepare_threshold": None}
 
 # Context variable to store request context
 request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -54,7 +54,7 @@ convention = {
     "pk": "pk_%(table_name)s",  # Primary key
 }
 
-table_schema = settings.DB.SCHEMA
+table_schema = settings.DB.SCHEMA or None  # empty string (SQLite) → None
 # Note: column_0_N_name expands to include all columns in multi-column constraints
 # e.g., "workspace_id_tenant_id" for a composite constraint on both columns
 meta = MetaData(naming_convention=convention)
@@ -63,7 +63,16 @@ Base = declarative_base(metadata=meta)
 
 
 async def init_db():
-    """Initialize the database using Alembic migrations"""
+    """Initialize the database.
+
+    For SQLite: creates all tables directly via SQLAlchemy metadata (no Alembic).
+    For PostgreSQL: installs the pgvector extension and runs Alembic migrations.
+    """
+    if is_sqlite():
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        return
+
     from alembic import command
     from alembic.config import Config
 

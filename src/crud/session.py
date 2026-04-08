@@ -6,7 +6,7 @@ from typing import cast as typing_cast
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from src.db_types import upsert_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1000,7 +1000,7 @@ async def _get_or_add_peers_to_session(
             raise ObserverException(session_name, total_observers)
 
     # Use upsert to handle both new peers and rejoining peers
-    stmt = pg_insert(models.SessionPeer).values(
+    stmt = upsert_insert(models.SessionPeer).values(
         [
             {
                 "session_name": session_name,
