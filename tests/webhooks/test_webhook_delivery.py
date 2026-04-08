@@ -121,7 +121,7 @@ async def test_deliver_webhook_skips_when_no_urls(
     )
 
     payload = WebhookPayload(event_type="peer.created", data={"id": "p_123"})
-    await webhook_delivery.deliver_webhook(AsyncMock(), payload, "workspace-a")
+    await webhook_delivery.deliver_webhook(payload, "workspace-a")
 
     assert fake_client.calls == []
 
@@ -162,7 +162,7 @@ async def test_deliver_webhook_posts_signed_payload_to_each_endpoint(
         event_type="message.created",
         data={"id": "m_1", "workspace": "workspace-a"},
     )
-    await webhook_delivery.deliver_webhook(AsyncMock(), payload, "workspace-a")
+    await webhook_delivery.deliver_webhook(payload, "workspace-a")
 
     expected_event_json = json.dumps(
         {
@@ -210,7 +210,7 @@ async def test_deliver_webhook_handles_signature_generation_failure(
     monkeypatch.setattr(httpx, "AsyncClient", async_client_factory)
 
     payload = WebhookPayload(event_type="workspace.updated", data={"id": "ws_1"})
-    await webhook_delivery.deliver_webhook(AsyncMock(), payload, "workspace-a")
+    await webhook_delivery.deliver_webhook(payload, "workspace-a")
 
     assert fake_client.calls == []
 
@@ -233,4 +233,4 @@ async def test_deliver_webhook_catches_request_errors(
     monkeypatch.setattr(httpx, "AsyncClient", async_client_factory)
 
     payload = WebhookPayload(event_type="workspace.updated", data={"id": "ws_1"})
-    await webhook_delivery.deliver_webhook(AsyncMock(), payload, "workspace-a")
+    await webhook_delivery.deliver_webhook(payload, "workspace-a")

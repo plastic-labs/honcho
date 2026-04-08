@@ -41,130 +41,82 @@ Hermes exposes four Honcho tools to the agent:
 | `honcho_context` | Dialectic Q&A powered by Honcho's LLM. Synthesizes answers from conversation history. |
 | `honcho_conclude` | Writes durable facts to Honcho when the user states preferences, corrections, or important context. |
 
-## Two memory layers
-
-When Honcho is enabled, Hermes operates with two layer memory by default (`hybrid`):
-
-**Local session history** -- the immediate transcript for the current chat, thread, or CLI session. Use it for recent turns, short-lived task context, and follow-up questions.
-
-**Honcho memory** -- the semantic, cross-session layer. Use it for user preferences, durable project facts, cross-session continuity, and synthesized peer context.
-
 ## Running Honcho locally with Hermes
 
-If you want to point Hermes at a local Honcho instance instead of the hosted API:
-
-### Docker (quickest)
+Follow the [Self-Hosting Guide](/v3/contributing/self-hosting) to get Honcho running locally. Once it's up, point Hermes at your instance:
 
 ```bash
-git clone https://github.com/plastic-labs/honcho.git
-cd honcho
-cp .env.template .env
-cp docker-compose.yml.example docker-compose.yml
+hermes memory setup  # select "honcho", enter http://localhost:8000 as the base URL
 ```
 
-Edit `.env`:
-
-```bash
-OPENAI_API_KEY=your-openai-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/honcho
-AUTH_USE_AUTH=false
-```
-
-```bash
-docker compose up -d
-curl http://localhost:8000/health
-```
-
-### Manual
-
-```bash
-git clone https://github.com/plastic-labs/honcho.git
-cd honcho
-uv sync
-cp .env.template .env
-```
-
-Edit `.env` with a local or cloud Postgres connection string and API keys, then:
-
-```bash
-uv run alembic upgrade head
-uv run fastapi dev src/main.py
-```
-
-Then update `~/.honcho/config.json` to point at your local instance:
+Or manually create/edit the config file (checked in order: `$HERMES_HOME/honcho.json` > `~/.hermes/honcho.json` > `~/.honcho/config.json`):
 
 ```json
 {
-  "apiKey": "not-needed-with-auth-disabled",
   "baseUrl": "http://localhost:8000",
   "hosts": {
     "hermes": {
-      "workspace": "hermes",
-      "peerName": "your-name",
+      "enabled": true,
       "aiPeer": "hermes",
-      "memoryMode": "hybrid",
-      "enabled": true
+      "peerName": "your-name",
+      "workspace": "hermes"
     }
   }
 }
 ```
 
-The `baseUrl` field overrides the default hosted API. With `AUTH_USE_AUTH=false` on the server, the `apiKey` value is ignored but the field must still be present.
+For the full list of config fields (`recallMode`, `writeFrequency`, `sessionStrategy`, `dialecticReasoningLevel`, etc.), see the [Hermes memory provider docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory-providers#honcho).
 
-See the full [self-hosting guide](/v3/contributing/self-hosting) for database options, cloud setup, and troubleshooting.
+<Info>
+**Community quick-start**: [elkimek/honcho-self-hosted](https://github.com/elkimek/honcho-self-hosted) provides a one-command installer with pre-configured model tiers and Hermes Agent integration.
+</Info>
 
 ## Verifying the integration
 
-Steps to test the integration via CLI and agentically by speaking to Hermes agent in natural language.
-
-### 1. Check configuration
+### 1. Check status
 
 ```bash
-hermes honcho status
+hermes memory status
 ```
 
-### 2. Test cross-session recall
+This should show Honcho as the active memory provider with your base URL.
 
-In one conversation:
+### 2. Store a fact and recall it across sessions
+
+In one conversation, tell Hermes something specific:
 
 ```text
-Remember that my test phrase is velvet circuit.
+My favorite programming language is Rust and I always use dark mode.
 ```
 
-In a fresh conversation (different thread, new CLI session):
+Start a **new session** (different thread, new CLI invocation, or a different platform). Ask:
 
 ```text
-What is my test phrase?
+What do you know about my preferences?
 ```
 
-If Hermes recalls "velvet circuit" after short-term context is gone, Honcho is working.
+If Hermes mentions Rust and dark mode without being told again, cross-session memory is working. The deriver processed your messages, extracted observations, and the dialectic recalled them.
 
-### 3. Test writeback
+### 3. Test tool calling directly
 
-Tell Hermes a preference:
+Ask Hermes to use a specific Honcho tool:
 
 ```text
-Remember that I prefer terse answers.
+Use your honcho_search tool to find anything you know about me.
 ```
 
-Wait briefly if writes are asynchronous. Open a fresh conversation:
+If Hermes calls the tool and returns results, the full tool pipeline (API connection, vector search, embedding) is functional.
 
-```text
-How should you respond to me?
-```
+## Configuration options
 
-If Hermes answers with the stored preference, writeback is functioning.
-
-
-## Session strategy
-
-| Scope                | When to use                                              |
-|----------------------|---------------------------------------------------------|
-| Per-Session | A honcho session starts fresh each time a new Hermes session is created. Hermes remembers the user across sessions. |
-| Per Directory   | One honcho session per project directory. Context is scoped to each directory. Coding/project memory scoped to each repository/workspace. |
-| Global (per user)    | Continuity across all chats, threads, and projects. One honcho session globally for the user and Hermes agent.      |
-
+| Field | Default | Description |
+|---|---|---|
+| `recallMode` | `hybrid` | `hybrid` (auto-inject + tools), `context` (inject only), `tools` (tools only) |
+| `writeFrequency` | `async` | `async`, `turn`, `session`, or integer N |
+| `sessionStrategy` | `per-directory` | `per-directory`, `per-repo`, `per-session`, `global` |
+| `dialecticReasoningLevel` | `low` | `minimal`, `low`, `medium`, `high`, `max` |
+| `dialecticDynamic` | `true` | Auto-bump reasoning level by query complexity |
+| `messageMaxChars` | `25000` | Max chars per message (chunked if exceeded) |
 
 ## Next steps
 
@@ -182,6 +134,6 @@ If Hermes answers with the stored preference, writeback is functioning.
   </Card>
 
   <Card title="Self-Hosting Guide" icon="server" href="/v3/contributing/self-hosting">
-    Full local environment setup, database options, and troubleshooting.
+    Full local environment setup, provider configuration, and troubleshooting.
   </Card>
 </CardGroup>

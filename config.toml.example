@@ -55,17 +55,21 @@ EMBEDDING_PROVIDER = "openai"
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
-# API Keys for LLM providers
-# ANTHROPIC_API_KEY = "your-api-key"
-# OPENAI_API_KEY = "your-api-key"
-# OPENAI_COMPATIBLE_API_KEY = "your-api-key"
-# GEMINI_API_KEY = "your-api-key"
-# GROQ_API_KEY = "your-api-key"
-# OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
+# API Keys for LLM providers (set the ones you need)
+# GEMINI_API_KEY = "your-api-key"       # Default: deriver, summary, dialectic minimal/low
+# ANTHROPIC_API_KEY = "your-api-key"    # Default: dialectic medium/high/max, dream
+# OPENAI_API_KEY = "your-api-key"       # Default: embeddings
+# GROQ_API_KEY = "your-api-key"         # Not used by default
 
-# Separate vLLM endpoint (for local models)
-# VLLM_API_KEY = "your-api-key"
-# VLLM_BASE_URL = "your-base-url"
+# OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, etc.)
+# Set provider to "custom" in feature config to route calls through this endpoint.
+# OPENAI_COMPATIBLE_BASE_URL = "https://openrouter.ai/api/v1"
+# OPENAI_COMPATIBLE_API_KEY = "your-api-key"
+
+# vLLM endpoint (for self-hosted models)
+# Set provider to "vllm" in feature config to route calls through this endpoint.
+# VLLM_BASE_URL = "http://localhost:8000/v1"
+# VLLM_API_KEY = "not-needed"
 
 # Deriver settings
 [deriver]

@@ -70,8 +70,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 queue_payload,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
-        async with tracked_db() as db:
-            await webhook_delivery.deliver_webhook(db, validated, workspace_name)
+        await webhook_delivery.deliver_webhook(validated, workspace_name)
 
     elif task_type == "summary":
         try:

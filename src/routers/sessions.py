@@ -794,7 +794,6 @@ async def search_session(
     body: schemas.MessageSearchOptions = Body(
         ..., description="Message search parameters"
     ),
-    db: AsyncSession = db,
 ):
     """
     Search a Session with optional filters. Use `limit` to control the number of results returned.
@@ -804,7 +803,6 @@ async def search_session(
     filters["workspace_id"] = workspace_id
     filters["session_id"] = session_id
     return await search(
-        db,
         body.query,
         filters=filters,
         limit=body.limit,

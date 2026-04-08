@@ -1,3 +1,4 @@
+.worktrees/
 api/**/*.db
 api/data
 api/docker-compose.yml
