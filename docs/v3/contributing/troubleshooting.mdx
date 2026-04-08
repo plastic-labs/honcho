@@ -109,6 +109,7 @@ Messages are stored but no observations, summaries, or representations are being
    ```bash
    DERIVER_WORKERS=4
    ```
+5. **Representation Batch Max** — By default the deriver is set to buffer its operations until there are enough tokens for a given representation in a session. This is set via the `REPRESENTATION_BATCH_MAX_TOKENS` environment variable. If you aren't seeing tasks continue it may be that the batch size is set too high or enough data hasn't flowed into to the session yet. See [token batching](/v3/documentation/core-concepts/reasoning#token-batching) for more details
 
 ## Alternative Provider Issues
 
