@@ -56,6 +56,48 @@ class WorkerOwnership(NamedTuple):
     aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
 
 
+def _detach_queue_batch_objects(
+    db: AsyncSession,
+    messages_context: list[models.Message],
+    items_to_process: list[QueueItem],
+) -> None:
+    """Detach loaded batch objects so they remain usable after tracked_db exits."""
+    seen: set[int] = set()
+    for obj in [*messages_context, *items_to_process]:
+        obj_id = id(obj)
+        if obj_id in seen:
+            continue
+        db.expunge(obj)
+        seen.add(obj_id)
+
+
+def _resolve_batch_configuration(
+    items_to_process: list[QueueItem],
+) -> tuple[list[QueueItem], ResolvedConfiguration | None]:
+    """Keep only the initial homogeneous configuration prefix for a batch."""
+    if not items_to_process:
+        return [], None
+
+    raw_config = items_to_process[0].payload.get("configuration")
+    resolved_config = (
+        None if raw_config is None else ResolvedConfiguration.model_validate(raw_config)
+    )
+
+    valid_items: list[QueueItem] = []
+    for item in items_to_process:
+        item_raw_config = item.payload.get("configuration")
+        item_config = (
+            None
+            if item_raw_config is None
+            else ResolvedConfiguration.model_validate(item_raw_config)
+        )
+        if item_config != resolved_config:
+            break
+        valid_items.append(item)
+
+    return valid_items, resolved_config
+
+
 class QueueManager:
     def __init__(self):
         self.shutdown_event: asyncio.Event = asyncio.Event()
@@ -608,21 +650,19 @@ class QueueManager:
             )
 
         batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        parsed_key = parse_work_unit_key(work_unit_key)
+        messages_context: list[models.Message] = []
+        items_to_process: list[QueueItem] = []
 
         async with tracked_db("get_queue_item_batch") as db:
             # For batch tasks, get messages based on token limit.
-            # Step 1: Parse work_unit_key to get session context and focused sender
-            parsed_key = parse_work_unit_key(work_unit_key)
-
-            # Verify worker still owns the work_unit_key
+            # Step 1: Verify worker still owns the work_unit_key.
             ownership_check = await db.execute(
                 select(models.ActiveQueueSession.id)
                 .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
                 .where(models.ActiveQueueSession.id == aqs_id)
             )
             if not ownership_check.scalar_one_or_none():
-                # Worker lost ownership, return empty
-                await db.commit()
                 return [], [], None
 
             # Step 2: Build a single SQL query that:
@@ -716,11 +756,8 @@ class QueueManager:
             result = await db.execute(query)
             rows = result.all()
             if not rows:
-                await db.commit()
                 return [], [], None
 
-            messages_context: list[models.Message] = []
-            items_to_process: list[QueueItem] = []
             seen_messages: set[int] = set()
             for m, qi in rows:
                 if m.id not in seen_messages:
@@ -729,48 +766,21 @@ class QueueManager:
                 if qi is not None:
                     items_to_process.append(qi)
 
-            if items_to_process:
-                # Enforce homogeneous peer_card_config in the batch
-                # We stop collecting items as soon as we encounter a different configuration
-                payload = items_to_process[0].payload
+            _detach_queue_batch_objects(db, messages_context, items_to_process)
 
-                raw_config = payload.get("configuration")
-                if raw_config is None:
-                    resolved_config = None
-                else:
-                    resolved_config = ResolvedConfiguration.model_validate(raw_config)
+        items_to_process, resolved_config = _resolve_batch_configuration(
+            items_to_process
+        )
 
-                valid_items: list[QueueItem] = []
-                for item in items_to_process:
-                    item_raw_config = item.payload.get("configuration")
-                    if item_raw_config is None:
-                        item_config = None
-                    else:
-                        item_config = ResolvedConfiguration.model_validate(
-                            item_raw_config
-                        )
-                    if item_config != resolved_config:
-                        break
-                    valid_items.append(item)
-                items_to_process = valid_items
-            else:
-                resolved_config = None
+        if items_to_process:
+            max_queue_item_message_id = max(
+                qi.message_id for qi in items_to_process if qi.message_id is not None
+            )
+            messages_context = [
+                m for m in messages_context if m.id <= max_queue_item_message_id
+            ]
 
-            if items_to_process:
-                max_queue_item_message_id = max(
-                    [
-                        qi.message_id
-                        for qi in items_to_process
-                        if qi.message_id is not None
-                    ]
-                )
-                messages_context = [  # remove any messages that are after the last message_id from queue items
-                    m for m in messages_context if m.id <= max_queue_item_message_id
-                ]
-
-            await db.commit()
-
-            return messages_context, items_to_process, resolved_config
+        return messages_context, items_to_process, resolved_config
 
     async def mark_queue_items_as_processed(
         self, items: list[QueueItem], work_unit_key: str

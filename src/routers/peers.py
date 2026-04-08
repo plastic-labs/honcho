@@ -446,11 +446,10 @@ async def search_peer(
         ...,
         description="Message search parameters. Use `limit` to control the number of results returned.",
     ),
-    db: AsyncSession = db,
 ):
     """Search a Peer's messages, optionally filtered by various criteria."""
     # take user-provided filter and add workspace_id and peer_id to it
     filters = body.filters or {}
     filters["workspace_id"] = workspace_id
     filters["peer_id"] = peer_id
-    return await search(db, body.query, filters=filters, limit=body.limit)
+    return await search(body.query, filters=filters, limit=body.limit)

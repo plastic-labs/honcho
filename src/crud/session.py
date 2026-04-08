@@ -137,21 +137,30 @@ async def get_or_create_session(
     _retry: bool = False,
 ) -> GetOrCreateResult[models.Session]:
     """
-    Get or create a session in a workspace with specified peers.
-    If the session already exists, the peers are added to the session.
+    Get an active session in a workspace or create it if it does not exist.
+
+    If the session already exists, provided metadata replaces the current
+    metadata, provided configuration keys are merged into the existing
+    configuration, and any provided peers are ensured to be members of the
+    session. If the session does not exist, the workspace and peers are created
+    as needed before the session is created.
 
     Args:
         db: Database session
-        session: Session creation schema
+        session: Session creation payload, including optional metadata,
+            configuration, and session-peer configuration
         workspace_name: Name of the workspace
-        peer_names: List of peer names to add to the session
-        _retry: Whether to retry the operation
+        _retry: Whether to retry after a concurrent create conflict
+
     Returns:
         GetOrCreateResult containing the session and whether it was created
 
     Raises:
-        ResourceNotFoundException: If the session does not exist and create is false
-        ConflictException: If we fail to get or create the session
+        ValueError: If session.name is empty
+        ResourceNotFoundException: If the named session exists but is inactive
+        ObserverException: If adding peers would exceed the observer limit
+        ConflictException: If concurrent creation prevents fetching or creating
+            the session
     """
 
     if not session.name:
@@ -247,10 +256,10 @@ async def get_or_create_session(
             workspace_name=workspace_name,
             session_name=session.name,
             peer_names=session.peer_names,
+            fetch_after_upsert=False,
         )
 
     await db.commit()
-    await db.refresh(honcho_session)
 
     # Run deferred cache operations from workspace/peer creation
     if ws_result is not None:
@@ -334,7 +343,11 @@ async def update_session(
     session_name: str,
 ) -> models.Session:
     """
-    Update a session.
+    Get or create a session, then apply metadata and configuration updates.
+
+    Provided metadata replaces the current metadata when present. Provided
+    configuration keys are merged into the existing configuration instead of
+    replacing it wholesale.
 
     Args:
         db: Database session
@@ -346,7 +359,9 @@ async def update_session(
         The updated session
 
     Raises:
-        ResourceNotFoundException: If the session does not exist or peer is not in session
+        ResourceNotFoundException: If the named session exists but is inactive
+        ConflictException: If concurrent creation prevents fetching or creating
+            the session
     """
     honcho_session: models.Session = (
         await get_or_create_session(
@@ -381,7 +396,6 @@ async def update_session(
         return honcho_session
 
     await db.commit()
-    await db.refresh(honcho_session)
 
     # Only invalidate if we actually updated
     cache_key = session_cache_key(workspace_name, session_name)
@@ -729,7 +743,6 @@ async def clone_session(
         db.add(new_session_peer)
 
     await db.commit()
-    await db.refresh(new_session)
     logger.debug("Session %s cloned successfully", original_session_name)
 
     # Cache will be populated on next read - read-through pattern
@@ -795,7 +808,13 @@ async def get_peers_from_session(
     # Get all active peers in the session (where left_at is NULL)
     return (
         select(models.Peer)
-        .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
+        .join(
+            models.SessionPeer,
+            and_(
+                models.Peer.name == models.SessionPeer.peer_name,
+                models.Peer.workspace_name == models.SessionPeer.workspace_name,
+            ),
+        )
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
@@ -825,7 +844,13 @@ async def get_session_peer_configuration(
             models.SessionPeer.configuration.label("session_peer_configuration"),
             (models.SessionPeer.left_at.is_(None)).label("is_active"),
         )
-        .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
+        .join(
+            models.SessionPeer,
+            and_(
+                models.Peer.name == models.SessionPeer.peer_name,
+                models.Peer.workspace_name == models.SessionPeer.workspace_name,
+            ),
+        )
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.workspace_name == workspace_name)
@@ -912,24 +937,35 @@ async def _get_or_add_peers_to_session(
     workspace_name: str,
     session_name: str,
     peer_names: dict[str, schemas.SessionPeerConfig],
+    *,
+    fetch_after_upsert: bool = True,
 ) -> list[models.SessionPeer]:
     """
-    Add multiple peers to an existing session. If a peer already exists in the session,
-    it will be skipped gracefully.
+    Upsert session-peer memberships for a session and optionally fetch the
+    active memberships afterward.
+
+    New peers are inserted, peers that previously left the session are rejoined,
+    and already-active peers keep their existing session-level configuration.
 
     Args:
         db: Database session
+        workspace_name: Name of the workspace
         session_name: Name of the session
-        peer_names: Set of peer names to add to the session
+        peer_names: Mapping of peer names to session-level configuration
+        fetch_after_upsert: If True, query and return the active session peers
+            after the upsert. If False, skip that read and return an empty list.
 
     Returns:
-        List of all SessionPeer objects (both existing and newly created)
+        Active SessionPeer objects after the upsert, or an empty list when the
+        post-upsert fetch is skipped
 
     Raises:
-        ValueError: If adding peers would exceed the maximum limit
+        ObserverException: If adding peers would exceed the observer limit
     """
     # If no peers to add, skip the insert and just return existing active session peers
     if not peer_names:
+        if not fetch_after_upsert:
+            return []
         select_stmt = select(models.SessionPeer).where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.workspace_name == workspace_name,
@@ -993,6 +1029,9 @@ async def _get_or_add_peers_to_session(
         },
     )
     await db.execute(stmt)
+
+    if not fetch_after_upsert:
+        return []
 
     # Return all active session peers after the upsert
     select_stmt = select(models.SessionPeer).where(

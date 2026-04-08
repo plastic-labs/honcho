@@ -142,7 +142,6 @@ async def search_workspace(
     body: schemas.MessageSearchOptions = Body(
         ..., description="Message search parameters"
     ),
-    db: AsyncSession = db,
 ):
     """
     Search messages in a Workspace using optional filters. Use `limit` to control the number of
@@ -151,7 +150,7 @@ async def search_workspace(
     # take user-provided filter and add workspace_id to it
     filters = body.filters or {}
     filters["workspace_id"] = workspace_id
-    return await search(db, body.query, filters=filters, limit=body.limit)
+    return await search(body.query, filters=filters, limit=body.limit)
 
 
 @router.get(
