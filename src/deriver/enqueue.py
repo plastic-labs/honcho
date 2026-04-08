@@ -77,8 +77,6 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 import sentry_sdk
 
                 sentry_sdk.capture_exception(e)
-
-
 async def handle_session(
     db_session: AsyncSession,
     payload: list[dict[str, Any]],

@@ -61,6 +61,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SENTRY": "sentry",
         "CACHE": "cache",
         "LLM": "llm",
+        "AUDIO": "audio",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
         "DIALECTIC": "dialectic",
@@ -230,6 +231,19 @@ class LLMSettings(HonchoSettings):
     MAX_MESSAGE_CONTENT_CHARS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = (
         2000
     )
+
+
+class AudioSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="AUDIO_", extra="ignore")  # pyright: ignore
+
+    PROVIDER: Literal["openai"] = "openai"
+    MODEL: str = "whisper-1"
+    MAX_FILE_SIZE_BYTES: Annotated[int, Field(default=9_500_000, gt=0)] = 9_500_000
+    MAX_CHUNK_DURATION_SECONDS: Annotated[int, Field(default=55, gt=0, le=3600)] = (
+        55
+    )
+    MAX_CHUNK_BYTES: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880
+    TRANSCRIPTION_CONCURRENCY: Annotated[int, Field(default=4, gt=0, le=16)] = 4
 
 
 class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
@@ -651,6 +665,7 @@ class AppSettings(HonchoSettings):
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
     SENTRY: SentrySettings = Field(default_factory=SentrySettings)
     LLM: LLMSettings = Field(default_factory=LLMSettings)
+    AUDIO: AudioSettings = Field(default_factory=AudioSettings)
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)

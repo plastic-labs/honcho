@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 from collections.abc import AsyncIterator, Callable
@@ -70,7 +71,6 @@ T = TypeVar("T")
 # Type aliases for OpenAI GPT-5 specific parameters
 ReasoningEffortType = Literal["low", "medium", "high", "minimal"] | None
 VerbosityType = Literal["low", "medium", "high"] | None
-
 
 def count_message_tokens(messages: list[dict[str, Any]]) -> int:
     """Count tokens in a list of messages using tiktoken."""
@@ -315,6 +315,46 @@ for component_name, backup_provider in BACKUP_PROVIDERS:
             + "but this provider is not initialized. Please set the required API key/URL environment "
             + "variables or remove the backup configuration."
         )
+
+
+async def _transcribe_audio_once(
+    content: bytes,
+    *,
+    filename: str,
+    content_type: str,
+    model: str,
+) -> str:
+    if not content_type.startswith("audio/"):
+        raise LLMError(f"Unsupported audio content type: {content_type}")
+    if "openai" not in CLIENTS:
+        raise LLMError("Audio transcription provider 'openai' is not initialized")
+    client = cast(AsyncOpenAI, CLIENTS["openai"])
+    audio_buffer = io.BytesIO(content)
+    audio_buffer.name = filename
+    response = cast(
+        Any,
+        await client.audio.transcriptions.create(
+            file=audio_buffer,
+            model=model,
+            response_format="text",
+        ),
+    )
+    return response.strip() if isinstance(response, str) else str(response).strip()
+
+
+async def transcribe_audio(
+    content: bytes,
+    *,
+    filename: str,
+    content_type: str,
+    model: str | None = None,
+) -> str:
+    return await _transcribe_audio_once(
+        content,
+        filename=filename,
+        content_type=content_type,
+        model=model or settings.AUDIO.MODEL,
+    )
 
 
 def convert_tools_for_provider(

@@ -468,8 +468,6 @@ class Document(Base):
             "last_sync_at",
         ),
     )
-
-
 @final
 class QueueItem(Base):
     __tablename__: str = "queue"
