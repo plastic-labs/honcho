@@ -4,7 +4,7 @@
 
 Add audio-only ingestion to the existing `/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/upload` endpoint so `.mp3` and `.wav` uploads are accepted and converted into ordinary Honcho message rows. The endpoint remains one file per request. Audio uploads are transcribed during upload using an external provider, normalized into transcript text, chunked into message-sized text blocks, stored as regular messages, and then enqueued into the existing deriver path without changing the deriver message format.
 
-This design is intended to support migrations into Honcho without introducing a new ingestion API surface. Throughput comes from two places: clients may issue many upload requests concurrently, and the server may transcribe large single files by splitting them into provider-safe audio segments and processing those segments with bounded parallelism.
+This design is intended to support migrat     Pions into Honcho without introducing a new ingestion API surface. Throughput comes from two places: clients may issue many upload requests concurrently, and the server may transcribe large single files by splitting them into provider-safe audio segments and processing those segments with bounded parallelism.
 
 ## Goals
 

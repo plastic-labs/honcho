@@ -130,6 +130,7 @@ def mock_tracked_db(ts_db_session: async_sessionmaker[AsyncSession]):
         patch("src.deriver.consumer.tracked_db", ts_tracked_db),
         patch("src.deriver.enqueue.tracked_db", ts_tracked_db),
         patch("src.routers.peers.tracked_db", ts_tracked_db),
+        patch("src.routers.messages.tracked_db", ts_tracked_db),
         patch("src.crud.representation.tracked_db", ts_tracked_db),
         patch("src.dreamer.dream_scheduler.tracked_db", ts_tracked_db),
         patch("src.dreamer.orchestrator.tracked_db", ts_tracked_db),
