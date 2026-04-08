@@ -24,11 +24,14 @@ K8S_DIR = Path(__file__).parent.parent / "k8s"
 @pytest.fixture(scope="session")
 def manifests() -> list[dict[str, Any]]:
     """Render `kubectl kustomize k8s/` and return parsed YAML documents."""
-    result = subprocess.run(
-        ["kubectl", "kustomize", str(K8S_DIR)],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["kubectl", "kustomize", str(K8S_DIR)],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        pytest.skip("kubectl not found on PATH — skipping k8s manifest tests")
     assert result.returncode == 0, (
         f"kubectl kustomize failed:\n{result.stderr}"
     )
@@ -168,12 +171,22 @@ def test_allow_api_ingress_policy_semantics(manifests: list[dict[str, Any]]):
         f"must match API pod template labels {pod_labels}"
     )
 
-    # Ingress must open port 8000 (the container port) over TCP.
-    ingress_ports = policy["spec"]["ingress"][0]["ports"]
-    assert any(
-        p.get("port") == 8000 and p.get("protocol", "TCP") == "TCP"
-        for p in ingress_ports
-    ), f"allow-api-ingress must permit TCP/8000; got ports: {ingress_ports}"
+    # Ingress must have exactly one rule allowing exactly port 8000/TCP.
+    ingress_rules = policy["spec"]["ingress"]
+    assert len(ingress_rules) == 1, (
+        f"allow-api-ingress must have exactly 1 ingress rule, got {len(ingress_rules)}"
+    )
+    ingress_ports = ingress_rules[0]["ports"]
+    assert len(ingress_ports) == 1, (
+        f"allow-api-ingress ingress rule must specify exactly 1 port, got {ingress_ports}"
+    )
+    entry = ingress_ports[0]
+    assert entry.get("port") == 8000, (
+        f"allow-api-ingress must allow port 8000, got {entry.get('port')}"
+    )
+    assert entry.get("protocol", "TCP") == "TCP", (
+        f"allow-api-ingress must use TCP protocol, got {entry.get('protocol')}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -421,12 +434,14 @@ def test_init_containers_run_as_nobody(manifests: list[dict[str, Any]]):
             )
 
 
-def test_api_deployment_no_service_account_token(manifests: list[dict[str, Any]]):
-    deployment = _by_kind_name(manifests, "Deployment", "honcho-api")
-    assert (
-        deployment["spec"]["template"]["spec"].get("automountServiceAccountToken")
-        is False
-    )
+def test_deployments_no_service_account_token(manifests: list[dict[str, Any]]):
+    """Neither the API nor the deriver must mount a service account token."""
+    for deployment_name in ("honcho-api", "honcho-deriver"):
+        deployment = _by_kind_name(manifests, "Deployment", deployment_name)
+        assert (
+            deployment["spec"]["template"]["spec"].get("automountServiceAccountToken")
+            is False
+        ), f"{deployment_name} must set automountServiceAccountToken: false"
 
 
 # ---------------------------------------------------------------------------

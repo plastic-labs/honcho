@@ -6,8 +6,8 @@ This directory contains Kubernetes manifests for deploying all Honcho services. 
 
 | Resource | Kind | Notes |
 |----------|------|-------|
-| `postgres` | StatefulSet + ClusterIP Service | pgvector/pgvector:pg15, 10 Gi PVC |
-| `redis` | StatefulSet + ClusterIP Service | redis:8.2, 2 Gi PVC |
+| `postgres` | StatefulSet + Headless Service | pgvector/pgvector:pg15, 10 Gi PVC |
+| `redis` | StatefulSet + Headless Service | redis:8.2, 2 Gi PVC |
 | `honcho-api` | Deployment + ClusterIP Service | FastAPI server; runs migrations on start |
 | `honcho-deriver` | Deployment (no Service) | Background queue worker |
 | `honcho-api` | HorizontalPodAutoscaler | 1–5 replicas at 70% CPU |
