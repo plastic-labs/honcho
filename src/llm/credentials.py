@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from src.config import ModelConfig, settings
+from src.exceptions import ValidationException
 
 
 def resolve_credentials(config: ModelConfig) -> dict[str, str | None]:
@@ -20,4 +21,4 @@ def _default_transport_api_key(transport: str) -> str | None:
         return settings.LLM.OPENAI_API_KEY
     if transport == "gemini":
         return settings.LLM.GEMINI_API_KEY
-    raise ValueError(f"Unknown transport: {transport}")
+    raise ValidationException(f"Unknown transport: {transport}")

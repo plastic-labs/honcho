@@ -68,6 +68,10 @@ class InMemoryGeminiCacheStore:
 
     def set(self, handle: GeminiCacheHandle) -> GeminiCacheHandle:
         with self._lock:
+            now = datetime.now(timezone.utc)
+            expired = [k for k, h in self._handles.items() if h.expires_at <= now]
+            for k in expired:
+                self._handles.pop(k, None)
             if handle.key in self._handles:
                 self._handles.move_to_end(handle.key)
             self._handles[handle.key] = handle

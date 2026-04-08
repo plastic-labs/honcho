@@ -18,7 +18,7 @@ from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types as genai_types
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -42,8 +42,6 @@ from src.llm.history_adapters import (
 )
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
-from src.utils.json_parser import validate_and_repair_json
-from src.utils.representation import PromptRepresentation
 from src.utils.tokens import estimate_tokens
 from src.utils.types import SupportedProviders, set_current_iteration
 
@@ -1519,68 +1517,6 @@ async def honcho_llm_call(
             messages=messages,
         )
     return result
-
-
-def _repair_response_model_json(  # pyright: ignore[reportUnusedFunction]
-    raw_content: str,
-    response_model: type[BaseModel],
-    model: str,
-) -> BaseModel:
-    """Attempt to repair truncated/malformed JSON and validate against response_model.
-
-    Used by all provider paths when structured output parsing fails.
-    For PromptRepresentation, falls back to an empty instance.
-    For other models, re-raises ValidationError.
-    """
-    try:
-        final = validate_and_repair_json(raw_content)
-        repaired_data = json.loads(final)
-
-        # Schema-aware repair for PromptRepresentation
-        if (
-            response_model is PromptRepresentation
-            and "deductive" in repaired_data
-            and isinstance(repaired_data["deductive"], list)
-        ):
-            for i, item in enumerate(repaired_data["deductive"]):
-                if isinstance(item, dict):
-                    if "conclusion" not in item and "premises" in item:
-                        logger.warning(
-                            f"Deductive observation {i} missing conclusion, adding placeholder"
-                        )
-                        if item["premises"]:
-                            item["conclusion"] = (
-                                f"[Incomplete reasoning from premises: {item['premises'][0][:100]}...]"
-                            )
-                        else:
-                            item["conclusion"] = (
-                                "[Incomplete reasoning - conclusion missing]"
-                            )
-                    if "premises" not in item:
-                        item["premises"] = []
-
-        final = json.dumps(repaired_data)
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as repair_err:
-        final = ""
-        logger.warning(
-            f"Could not perform JSON repair on truncated output from {model}: {repair_err}"
-        )
-
-    try:
-        return response_model.model_validate_json(final)
-    except ValidationError as ve:
-        logger.error(
-            f"Validation error after repair of truncated output from {model}: {ve}"
-        )
-        logger.debug(f"Problematic JSON: {final}")
-
-        if response_model is PromptRepresentation:
-            logger.warning(
-                "Using fallback empty Representation due to truncated output"
-            )
-            return PromptRepresentation(explicit=[])
-        else:
-            raise
 
 
 @overload

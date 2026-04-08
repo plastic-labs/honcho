@@ -78,6 +78,10 @@ class GeminiBackend:
                 contents=contents if isinstance(contents, list) else [],
                 tools=tools,
             )
+            # When cached_content is attached, the cached material is served
+            # via the handle — only send the final user message as new input.
+            if "cached_content" in config and isinstance(contents, list) and contents:
+                contents = contents[-1:]
 
         response = await self._client.aio.models.generate_content(
             model=model,
@@ -192,7 +196,7 @@ class GeminiBackend:
         thinking_config: dict[str, Any] = {}
         if thinking_budget_tokens is not None:
             thinking_config["thinking_budget"] = thinking_budget_tokens
-        if thinking_effort:
+        if thinking_effort is not None:
             thinking_config["thinking_level"] = thinking_effort
         if len(thinking_config) > 1:
             raise ValueError(
