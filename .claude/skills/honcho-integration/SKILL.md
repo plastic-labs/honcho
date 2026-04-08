@@ -139,8 +139,8 @@ response = peer.chat("What does this user prefer?")
 # Async usage (FastAPI, Starlette)
 from honcho import Honcho
 honcho = Honcho(workspace_id="my-app", api_key=os.environ["HONCHO_API_KEY"])
-peer = honcho.aio.peer("user-123")
-response = await peer.chat("What does this user prefer?")
+peer = await honcho.aio.peer("user-123")
+response = await peer.aio.chat("What does this user prefer?")
 ```
 
 Match the client to the framework — check whether the codebase uses `async def` handlers or sync `def` handlers and choose accordingly. The rest of this skill shows sync Python examples; swap to `.aio` equivalents for async codebases.
@@ -188,7 +188,7 @@ Create peers for **every entity** in your business logic - users AND AI assistan
 **Python:**
 
 ```python
-from honcho import PeerConfig
+from honcho.api_types import PeerConfig
 
 # Human users
 user = honcho.peer("user-123")

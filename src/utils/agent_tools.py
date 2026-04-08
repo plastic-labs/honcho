@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.models import Document
 from src.schemas import ResolvedConfiguration
@@ -615,7 +616,6 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 
 
 async def create_observations(
-    db: AsyncSession,
     observations: list[schemas.ObservationInput],
     observer: str,
     observed: str,
@@ -627,8 +627,9 @@ async def create_observations(
     """
     Create multiple observations (documents) in the memory system in a single call.
 
+    Uses short-lived DB sessions to avoid holding connections during embedding API calls.
+
     Args:
-        db: Database session
         observations: List of validated observation inputs
         observer: The peer making the observation
         observed: The peer being observed
@@ -644,18 +645,17 @@ async def create_observations(
         logger.warning("create_observations called with empty list")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
-    # Get or create collection
-    await crud.get_or_create_collection(
-        db,
-        workspace_name,
-        observer=observer,
-        observed=observed,
-    )
+    # Phase 1: Ensure collection exists (short DB scope)
+    async with tracked_db("create_observations.collection") as db:
+        await crud.get_or_create_collection(
+            db,
+            workspace_name,
+            observer=observer,
+            observed=observed,
+        )
 
+    # Phase 2: Compute embeddings (no DB needed)
     contents = [obs.content for obs in observations]
-
-    # Batch embed all observation contents.
-    # If batching fails, fall back to per-observation embedding.
     embeddings_by_index: dict[int, list[float]] | None = None
     try:
         embeddings = await embedding_client.simple_batch_embed(contents)
@@ -721,27 +721,29 @@ async def create_observations(
         )
         documents.append(doc)
 
-    # Bulk create all documents
+    # Phase 3: Bulk create all documents (short DB scope)
+    accepted: list[schemas.DocumentCreate] = []
     if documents:
-        await crud.create_documents(
-            db,
-            documents=documents,
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            deduplicate=True,
-        )
+        async with tracked_db("create_observations.save") as db:
+            accepted = await crud.create_documents(
+                db,
+                documents=documents,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                deduplicate=True,
+            )
         logger.info(
             "Created %d observations in %s/%s/%s",
-            len(documents),
+            len(accepted),
             workspace_name,
             observer,
             observed,
         )
 
     return ObservationsCreatedResult(
-        created_count=len(documents),
-        created_levels=[doc.level for doc in documents],
+        created_count=len(accepted),
+        created_levels=[doc.level for doc in accepted],
         failed=failed,
     )
 
@@ -801,7 +803,6 @@ async def get_recent_history(
 
 
 async def search_memory(
-    db: AsyncSession,
     workspace_name: str,
     observer: str,
     observed: str,
@@ -813,8 +814,10 @@ async def search_memory(
     """
     Search for observations in memory using semantic similarity.
 
+    Does not require a DB session — ``query_documents`` manages its own
+    short-lived sessions so no connection is held during external calls.
+
     Args:
-        db: Database session
         workspace_name: Workspace identifier
         observer: The peer who made the observations
         observed: The peer who was observed
@@ -833,7 +836,7 @@ async def search_memory(
         filters = {"level": {"in": levels}}
 
     documents = await crud.query_documents(
-        db=db,
+        db=None,
         workspace_name=workspace_name,
         observer=observer,
         observed=observed,
@@ -910,7 +913,6 @@ async def get_observation_context(
 
 
 async def extract_preferences(
-    db: AsyncSession,
     workspace_name: str,
     session_name: str | None,
     observed: str,
@@ -922,7 +924,6 @@ async def extract_preferences(
     This is language-agnostic and doesn't rely on keyword matching.
 
     Args:
-        db: Database session
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: The peer whose preferences to extract
@@ -942,7 +943,7 @@ async def extract_preferences(
         "things user wants or does not want",
     ]
 
-    # Batch embed all queries in a single API call.
+    # Batch embed all queries in a single API call (no DB needed).
     # If batching fails, each search call will generate its own embedding.
     query_embeddings_by_query: dict[str, list[float]] | None = None
     try:
@@ -958,26 +959,27 @@ async def extract_preferences(
 
     for query in semantic_queries:
         try:
-            snippets = await crud.search_messages(
-                db,
-                workspace_name=workspace_name,
-                session_name=session_name,
-                query=query,
-                limit=10,
-                context_window=0,
-                embedding=(
-                    query_embeddings_by_query.get(query)
-                    if query_embeddings_by_query is not None
-                    else None
-                ),
-            )
-            for matches, _ in snippets:
-                for msg in matches:
-                    if msg.peer_name == observed:
-                        content_key = msg.content[:100].lower()
-                        if content_key not in seen_content:
-                            seen_content.add(content_key)
-                            messages.append(f"'{msg.content.strip()}'")
+            async with tracked_db("extract_preferences") as db:
+                snippets = await crud.search_messages(
+                    db,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    query=query,
+                    limit=10,
+                    context_window=0,
+                    embedding=(
+                        query_embeddings_by_query.get(query)
+                        if query_embeddings_by_query is not None
+                        else None
+                    ),
+                )
+                for matches, _ in snippets:
+                    for msg in matches:
+                        if msg.peer_name == observed:
+                            content_key = msg.content[:100].lower()
+                            if content_key not in seen_content:
+                                seen_content.add(content_key)
+                                messages.append(f"'{msg.content.strip()}'")
         except Exception as e:
             logger.warning("Error in semantic search for '%s': %s", query, e)
 
@@ -992,7 +994,6 @@ async def extract_preferences(
 class ToolContext:
     """Context object passed to tool handlers."""
 
-    db: AsyncSession
     workspace_name: str
     observer: str
     observed: str
@@ -1068,7 +1069,6 @@ async def _handle_create_observations(
     # Use lock to serialize database writes (prevents concurrent commit issues)
     async with ctx.db_lock:
         result = await create_observations(
-            ctx.db,
             observations=observations,
             observer=ctx.observer,
             observed=ctx.observed,
@@ -1178,9 +1178,9 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
         )
         normalized_peer_card = normalized_peer_card[:MAX_PEER_CARD_FACTS]
 
-    async with ctx.db_lock:
+    async with ctx.db_lock, tracked_db("tool.update_peer_card") as db:
         await crud.set_peer_card(
-            ctx.db,
+            db,
             workspace_name=ctx.workspace_name,
             peer_card=normalized_peer_card,
             observer=ctx.observer,
@@ -1214,18 +1214,19 @@ async def _handle_get_recent_history(
 ) -> str:
     """Handle get_recent_history tool."""
     _ = tool_input
-    history: list[models.Message] = await get_recent_history(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        observed=ctx.observed,
-        token_limit=ctx.history_token_limit,
-    )
-    if not history:
-        return "No conversation history available"
-    history_text = "\n".join(
-        [f"{m.peer_name}: {_truncate_message_content(m.content)}" for m in history]
-    )
+    async with tracked_db("tool.get_recent_history") as db:
+        history: list[models.Message] = await get_recent_history(
+            db,
+            workspace_name=ctx.workspace_name,
+            session_name=ctx.session_name,
+            observed=ctx.observed,
+            token_limit=ctx.history_token_limit,
+        )
+        if not history:
+            return "No conversation history available"
+        history_text = "\n".join(
+            [f"{m.peer_name}: {_truncate_message_content(m.content)}" for m in history]
+        )
     scope = (
         f"from session {ctx.session_name}"
         if ctx.session_name
@@ -1248,7 +1249,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         )
 
     documents = await crud.query_documents(
-        db=ctx.db,
+        db=None,
         workspace_name=ctx.workspace_name,
         observer=ctx.observer,
         observed=ctx.observed,
@@ -1266,19 +1267,22 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # automatically search the message history for relevant information.
         if ctx.agent_type == "dialectic":
             limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
-            snippets = await crud.search_messages(
-                ctx.db,
-                workspace_name=ctx.workspace_name,
-                session_name=ctx.session_name,
-                query=query,
-                limit=limit,
-                context_window=0,
-                embedding=query_embedding,
-            )
-            if snippets:
-                message_output = _format_message_snippets(
-                    snippets, f"for query '{query}'"
+            message_output = None
+            async with tracked_db("tool.search_memory.fallback") as db:
+                snippets = await crud.search_messages(
+                    db,
+                    workspace_name=ctx.workspace_name,
+                    session_name=ctx.session_name,
+                    query=query,
+                    limit=limit,
+                    context_window=0,
+                    embedding=query_embedding,
                 )
+                if snippets:
+                    message_output = _format_message_snippets(
+                        snippets, f"for query '{query}'"
+                    )
+            if message_output:
                 return (
                     f"No observations yet. Message search results:\n\n{message_output}"
                 )
@@ -1295,24 +1299,25 @@ async def _handle_get_observation_context(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_observation_context tool."""
-    messages = await get_observation_context(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        message_ids=tool_input["message_ids"],
-    )
-    if not messages:
-        return f"No messages found for IDs {tool_input['message_ids']}"
-    messages_text = "\n".join(
-        [
-            format_new_turn_with_timestamp(
-                _truncate_message_content(m.content),
-                m.created_at,
-                m.peer_name,
-            )
-            for m in messages
-        ]
-    )
+    async with tracked_db("tool.get_observation_context") as db:
+        messages = await get_observation_context(
+            db,
+            workspace_name=ctx.workspace_name,
+            session_name=ctx.session_name,
+            message_ids=tool_input["message_ids"],
+        )
+        if not messages:
+            return f"No messages found for IDs {tool_input['message_ids']}"
+        messages_text = "\n".join(
+            [
+                format_new_turn_with_timestamp(
+                    _truncate_message_content(m.content),
+                    m.created_at,
+                    m.peer_name,
+                )
+                for m in messages
+            ]
+        )
     output = f"Retrieved {len(messages)} messages with context:\n{messages_text}"
     return _truncate_tool_output(output)
 
@@ -1321,18 +1326,23 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
     """Handle search_messages tool."""
     query = tool_input["query"]
     limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
-    snippets = await crud.search_messages(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        query=query,
-        limit=limit,
-        context_window=2,
-    )
-    if not snippets:
-        return f"No messages found for query '{query}'"
-
-    return _format_message_snippets(snippets, f"for query '{query}'")
+    # Pre-compute embedding outside DB session to avoid holding a connection
+    # during the external API call (same pattern as _handle_search_memory).
+    query_embedding = await embedding_client.embed(query)
+    async with tracked_db("tool.search_messages") as db:
+        snippets = await crud.search_messages(
+            db,
+            workspace_name=ctx.workspace_name,
+            session_name=ctx.session_name,
+            query=query,
+            limit=limit,
+            context_window=2,
+            embedding=query_embedding,
+        )
+        if not snippets:
+            return f"No messages found for query '{query}'"
+        formatted = _format_message_snippets(snippets, f"for query '{query}'")
+    return formatted
 
 
 async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
@@ -1345,32 +1355,35 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
         _safe_int(tool_input.get("context_window"), 2), 2
     )  # Cap context
 
-    snippets = await crud.grep_messages(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        text=text,
-        limit=limit,
-        context_window=context_window,
-    )
-    if not snippets:
-        return f"No messages found containing '{text}'"
-
-    # Format with pattern-based snippet extraction
-    snippet_texts: list[str] = []
-    total_matches = sum(len(matches) for matches, _ in snippets)
-    for i, (matches, context) in enumerate(snippets, 1):
-        lines: list[str] = []
-        for msg in context:
-            truncated = _extract_pattern_snippet(msg.content, text)
-            lines.append(
-                format_new_turn_with_timestamp(truncated, msg.created_at, msg.peer_name)
-            )
-        sess = context[0].session_name if context else "unknown"
-        snippet_texts.append(
-            f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
-            + "\n".join(lines)
+    async with tracked_db("tool.grep_messages") as db:
+        snippets = await crud.grep_messages(
+            db,
+            workspace_name=ctx.workspace_name,
+            session_name=ctx.session_name,
+            text=text,
+            limit=limit,
+            context_window=context_window,
         )
+        if not snippets:
+            return f"No messages found containing '{text}'"
+
+        # Format with pattern-based snippet extraction
+        snippet_texts: list[str] = []
+        total_matches = sum(len(matches) for matches, _ in snippets)
+        for i, (matches, context) in enumerate(snippets, 1):
+            lines: list[str] = []
+            for msg in context:
+                truncated = _extract_pattern_snippet(msg.content, text)
+                lines.append(
+                    format_new_turn_with_timestamp(
+                        truncated, msg.created_at, msg.peer_name
+                    )
+                )
+            sess = context[0].session_name if context else "unknown"
+            snippet_texts.append(
+                f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
+                + "\n".join(lines)
+            )
 
     output = (
         f"Found {total_matches} messages containing '{text}' in {len(snippets)} conversation snippets:\n\n"
@@ -1406,15 +1419,29 @@ async def _handle_get_messages_by_date_range(
     if isinstance(before_date, str):
         return before_date  # Error message
 
-    messages = await crud.get_messages_by_date_range(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        after_date=after_date,
-        before_date=before_date,
-        limit=limit,
-        order=order,
-    )
+    async with tracked_db("tool.get_messages_by_date_range") as db:
+        messages = await crud.get_messages_by_date_range(
+            db,
+            workspace_name=ctx.workspace_name,
+            session_name=ctx.session_name,
+            after_date=after_date,
+            before_date=before_date,
+            limit=limit,
+            order=order,
+        )
+        msg_count = len(messages)
+        messages_text = (
+            "\n".join(
+                [
+                    format_new_turn_with_timestamp(
+                        _truncate_message_content(m.content), m.created_at, m.peer_name
+                    )
+                    for m in messages
+                ]
+            )
+            if messages
+            else ""
+        )
 
     date_range: list[str] = []
     if after_date_str:
@@ -1422,23 +1449,16 @@ async def _handle_get_messages_by_date_range(
     if before_date_str:
         date_range.append(f"before {before_date_str}")
 
-    if not messages:
+    if not msg_count:
         range_desc = " and ".join(date_range) if date_range else "specified range"
         return f"No messages found {range_desc}"
-
-    messages_text = "\n".join(
-        [
-            format_new_turn_with_timestamp(
-                _truncate_message_content(m.content), m.created_at, m.peer_name
-            )
-            for m in messages
-        ]
-    )
 
     range_desc = " and ".join(date_range) if date_range else "all time"
     order_desc = "oldest first" if order == "asc" else "newest first"
 
-    output = f"Found {len(messages)} messages ({range_desc}, {order_desc}):\n\n{messages_text}"
+    output = (
+        f"Found {msg_count} messages ({range_desc}, {order_desc}):\n\n{messages_text}"
+    )
     return _truncate_tool_output(output)
 
 
@@ -1463,28 +1483,35 @@ async def _handle_search_messages_temporal(
     if isinstance(before_date, str):
         return before_date
 
-    snippets = await crud.search_messages_temporal(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        query=query,
-        after_date=after_date,
-        before_date=before_date,
-        limit=limit,
-        context_window=context_window,
-    )
+    # Pre-compute embedding outside DB session to avoid holding a connection
+    # during the external API call.
+    query_embedding = await embedding_client.embed(query)
+    async with tracked_db("tool.search_messages_temporal") as db:
+        snippets = await crud.search_messages_temporal(
+            db,
+            workspace_name=ctx.workspace_name,
+            session_name=ctx.session_name,
+            query=query,
+            after_date=after_date,
+            before_date=before_date,
+            limit=limit,
+            context_window=context_window,
+            embedding=query_embedding,
+        )
+        date_filter: list[str] = []
+        if after_date_str:
+            date_filter.append(f"after {after_date_str}")
+        if before_date_str:
+            date_filter.append(f"before {before_date_str}")
+        filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
 
-    date_filter: list[str] = []
-    if after_date_str:
-        date_filter.append(f"after {after_date_str}")
-    if before_date_str:
-        date_filter.append(f"before {before_date_str}")
-    filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
+        if not snippets:
+            return f"No messages found for query '{query}'{filter_desc}"
 
-    if not snippets:
-        return f"No messages found for query '{query}'{filter_desc}"
-
-    return _format_message_snippets(snippets, f"for query '{query}'{filter_desc}")
+        formatted = _format_message_snippets(
+            snippets, f"for query '{query}'{filter_desc}"
+        )
+    return formatted
 
 
 async def _handle_get_recent_observations(
@@ -1492,15 +1519,16 @@ async def _handle_get_recent_observations(
 ) -> str:
     """Handle get_recent_observations tool."""
     session_only = tool_input.get("session_only", False)
-    documents = await crud.query_documents_recent(
-        db=ctx.db,
-        workspace_name=ctx.workspace_name,
-        observer=ctx.observer,
-        observed=ctx.observed,
-        limit=min(_safe_int(tool_input.get("limit"), 10), 100),
-        session_name=ctx.session_name if session_only else None,
-    )
-    representation = Representation.from_documents(documents)
+    async with tracked_db("tool.get_recent_observations") as db:
+        documents = await crud.query_documents_recent(
+            db=db,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            limit=min(_safe_int(tool_input.get("limit"), 10), 100),
+            session_name=ctx.session_name if session_only else None,
+        )
+        representation = Representation.from_documents(documents)
     total_count = representation.len()
     if total_count == 0:
         return "No recent observations found"
@@ -1517,14 +1545,15 @@ async def _handle_get_most_derived_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_most_derived_observations tool."""
-    documents = await crud.query_documents_most_derived(
-        db=ctx.db,
-        workspace_name=ctx.workspace_name,
-        observer=ctx.observer,
-        observed=ctx.observed,
-        limit=min(_safe_int(tool_input.get("limit"), 10), 100),
-    )
-    representation = Representation.from_documents(documents)
+    async with tracked_db("tool.get_most_derived_observations") as db:
+        documents = await crud.query_documents_most_derived(
+            db=db,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            limit=min(_safe_int(tool_input.get("limit"), 10), 100),
+        )
+        representation = Representation.from_documents(documents)
     total_count = representation.len()
     if total_count == 0:
         return "No established observations found"
@@ -1548,9 +1577,10 @@ async def _handle_get_session_summary(
         if summary_type == "long"
         else summarizer.SummaryType.SHORT
     )
-    summary = await summarizer.get_summary(
-        ctx.db, ctx.workspace_name, ctx.session_name, st
-    )
+    async with tracked_db("tool.get_session_summary") as db:
+        summary = await summarizer.get_summary(
+            db, ctx.workspace_name, ctx.session_name, st
+        )
     if not summary:
         return "No session summary available yet"
     return f"Session summary ({summary['summary_type']}):\n{summary['content']}"
@@ -1559,12 +1589,13 @@ async def _handle_get_session_summary(
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle get_peer_card tool."""
     _ = tool_input
-    peer_card = await crud.get_peer_card(
-        ctx.db,
-        workspace_name=ctx.workspace_name,
-        observer=ctx.observer,
-        observed=ctx.observed,
-    )
+    async with tracked_db("tool.get_peer_card") as db:
+        peer_card = await crud.get_peer_card(
+            db,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+        )
     if not peer_card:
         return f"No peer card available for {ctx.observed}"
     return f"Peer card for {ctx.observed}:\n" + "\n".join(
@@ -1581,11 +1612,11 @@ async def _handle_delete_observations(
         return "ERROR: observation_ids list is empty"
 
     deleted_count = 0
-    async with ctx.db_lock:
+    async with ctx.db_lock, tracked_db("tool.delete_observations") as db:
         for obs_id in observation_ids:
             try:
                 await crud.delete_document(
-                    ctx.db,
+                    db,
                     workspace_name=ctx.workspace_name,
                     document_id=obs_id,
                     observer=ctx.observer,
@@ -1628,7 +1659,6 @@ async def _handle_extract_preferences(
     """Handle extract_preferences tool."""
     _ = tool_input
     results = await extract_preferences(
-        ctx.db,
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
         observed=ctx.observed,
@@ -1688,79 +1718,83 @@ async def _handle_get_reasoning_chain(
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
     # Get the observation itself
-    docs = await crud.get_documents_by_ids(ctx.db, ctx.workspace_name, [observation_id])
-    if not docs or not docs[0]:
-        return f"ERROR: Observation '{observation_id}' not found"
+    async with tracked_db("tool.get_reasoning_chain") as db:
+        docs = await crud.get_documents_by_ids(db, ctx.workspace_name, [observation_id])
+        if not docs or not docs[0]:
+            return f"ERROR: Observation '{observation_id}' not found"
 
-    doc: Document = docs[0]
+        doc: Document = docs[0]
 
-    output_parts: list[str] = []
+        output_parts: list[str] = []
 
-    # Format the main observation
-    level = doc.level or "explicit"
-    output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
+        # Format the main observation
+        level = doc.level or "explicit"
+        output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
 
-    # Get premises/sources if requested
-    if direction in ("premises", "both"):
-        if level == "deductive" and doc.source_ids:
-            premises = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.source_ids
-            )
-            if premises:
-                premise_lines: list[Any] = []
-                for p in premises:
-                    p_level = p.level or "explicit"
-                    premise_lines.append(f"  - [id:{p.id}] ({p_level}): {p.content}")
+        # Get premises/sources if requested
+        if direction in ("premises", "both"):
+            if level == "deductive" and doc.source_ids:
+                premises = await crud.get_documents_by_ids(
+                    db, ctx.workspace_name, doc.source_ids
+                )
+                if premises:
+                    premise_lines: list[Any] = []
+                    for p in premises:
+                        p_level = p.level or "explicit"
+                        premise_lines.append(
+                            f"  - [id:{p.id}] ({p_level}): {p.content}"
+                        )
+                    output_parts.append(
+                        f"\n**Premises ({len(premises)}):**\n"
+                        + "\n".join(premise_lines)
+                    )
+                else:
+                    output_parts.append(
+                        f"\n**Premises:** Referenced {len(doc.source_ids)} premise IDs but none found in database"
+                    )
+            elif level == "inductive" and doc.source_ids:
+                sources = await crud.get_documents_by_ids(
+                    db, ctx.workspace_name, doc.source_ids
+                )
+                if sources:
+                    source_lines: list[Any] = []
+                    for s in sources:
+                        s_level = s.level or "explicit"
+                        source_lines.append(f"  - [id:{s.id}] ({s_level}): {s.content}")
+                    output_parts.append(
+                        f"\n**Sources ({len(sources)}):**\n" + "\n".join(source_lines)
+                    )
+                else:
+                    output_parts.append(
+                        f"\n**Sources:** Referenced {len(doc.source_ids)} source IDs but none found in database"
+                    )
+            elif level == "explicit":
                 output_parts.append(
-                    f"\n**Premises ({len(premises)}):**\n" + "\n".join(premise_lines)
+                    "\n**Premises/Sources:** N/A (explicit observations have no premises)"
                 )
             else:
-                output_parts.append(
-                    f"\n**Premises:** Referenced {len(doc.source_ids)} premise IDs but none found in database"
-                )
-        elif level == "inductive" and doc.source_ids:
-            sources = await crud.get_documents_by_ids(
-                ctx.db, ctx.workspace_name, doc.source_ids
+                output_parts.append("\n**Premises/Sources:** None recorded")
+
+        # Get conclusions if requested
+        if direction in ("conclusions", "both"):
+            children = await crud.get_child_observations(
+                db,
+                ctx.workspace_name,
+                observation_id,
+                observer=ctx.observer,
+                observed=ctx.observed,
             )
-            if sources:
-                source_lines: list[Any] = []
-                for s in sources:
-                    s_level = s.level or "explicit"
-                    source_lines.append(f"  - [id:{s.id}] ({s_level}): {s.content}")
+            if children:
+                child_lines: list[Any] = []
+                for c in children:
+                    c_level = c.level or "explicit"
+                    child_lines.append(f"  - [id:{c.id}] ({c_level}): {c.content}")
                 output_parts.append(
-                    f"\n**Sources ({len(sources)}):**\n" + "\n".join(source_lines)
+                    f"\n**Derived Conclusions ({len(children)}):**\n"
+                    + "\n".join(child_lines)
                 )
             else:
-                output_parts.append(
-                    f"\n**Sources:** Referenced {len(doc.source_ids)} source IDs but none found in database"
-                )
-        elif level == "explicit":
-            output_parts.append(
-                "\n**Premises/Sources:** N/A (explicit observations have no premises)"
-            )
-        else:
-            output_parts.append("\n**Premises/Sources:** None recorded")
-
-    # Get conclusions if requested
-    if direction in ("conclusions", "both"):
-        children = await crud.get_child_observations(
-            ctx.db,
-            ctx.workspace_name,
-            observation_id,
-            observer=ctx.observer,
-            observed=ctx.observed,
-        )
-        if children:
-            child_lines: list[Any] = []
-            for c in children:
-                c_level = c.level or "explicit"
-                child_lines.append(f"  - [id:{c.id}] ({c_level}): {c.content}")
-            output_parts.append(
-                f"\n**Derived Conclusions ({len(children)}):**\n"
-                + "\n".join(child_lines)
-            )
-        else:
-            output_parts.append("\n**Derived Conclusions:** None found")
+                output_parts.append("\n**Derived Conclusions:** None found")
 
     return "\n".join(output_parts)
 
@@ -1788,7 +1822,6 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
 
 
 async def create_tool_executor(
-    db: AsyncSession,
     workspace_name: str,
     observer: str,
     observed: str,
@@ -1807,8 +1840,10 @@ async def create_tool_executor(
     This factory function captures the agent's context and returns an async callable
     that can execute any tool from AGENT_TOOLS or DIALECTIC_AGENT_TOOLS.
 
+    Each tool handler manages its own short-lived DB sessions via tracked_db(),
+    so no long-lived database session is needed.
+
     Args:
-        db: Database session
         workspace_name: Workspace identifier
         observer: The peer making observations/queries
         observed: The peer being observed/queried about
@@ -1829,7 +1864,6 @@ async def create_tool_executor(
     shared_lock = await get_observation_lock(workspace_name, observer, observed)
 
     ctx = ToolContext(
-        db=db,
         workspace_name=workspace_name,
         observer=observer,
         observed=observed,
@@ -1880,9 +1914,8 @@ async def create_tool_executor(
             # We don't re-raise because the LLM should be able to continue with other tools
             error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
             logger.error(error_msg, exc_info=True)
-            # Rollback the transaction to clear any failed state
-            # This is critical for PostgreSQL which blocks subsequent queries on failed transactions
-            await ctx.db.rollback()
+            # No explicit rollback needed — each handler uses tracked_db() which
+            # handles rollback in its finally block
             return error_msg
 
     return execute_tool

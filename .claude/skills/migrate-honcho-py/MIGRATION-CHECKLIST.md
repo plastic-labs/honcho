@@ -4,7 +4,7 @@ Use this checklist to track migration progress. Copy into your working notes and
 
 ## Dependencies
 
-- [ ] Update `honcho` package to v2.0.0
+- [ ] Update `honcho` package to v2.1.1
 - [ ] Remove any `honcho-core` imports
 
 ## Async Architecture Changes
@@ -112,6 +112,39 @@ Use this checklist to track migration progress. Copy into your working notes and
   - `PermissionDeniedError`, `NotFoundError`, `ConflictError`
   - `UnprocessableEntityError`, `RateLimitError`, `ServerError`
   - `TimeoutError`, `ConnectionError`
+
+## Card Method Updates (v2.0.1)
+
+- [ ] Replace `peer.card()` with `peer.get_card()` (card() is deprecated)
+- [ ] Use `peer.set_card(list[str])` if setting peer cards
+
+## Strict Validation (v2.0.2)
+
+- [ ] Verify no input models pass unknown/misspelled fields (now raises `ValidationError`)
+- [ ] Check for typos in `PeerConfig`, `SessionConfiguration`, `WorkspaceConfiguration` fields
+
+## peer() / session() API Call Change (v2.1.0)
+
+- [ ] Update code that relied on lazy `peer()` / `session()` — they now always make API calls
+- [ ] Add `await` if using async and previously didn't need it for lazy construction
+
+## New Properties (v2.1.0)
+
+- [ ] Use `peer.created_at` / `session.created_at` where creation time is needed
+- [ ] Use `session.is_active` where session active status is needed
+
+## New Methods (v2.1.0)
+
+- [ ] Use `session.get_message(message_id)` to fetch single messages by ID
+
+## Pagination Parameters (v2.1.0)
+
+- [ ] Add `page`, `size`, `reverse` parameters to list calls where needed:
+  - [ ] `client.peers()`
+  - [ ] `client.sessions()`
+  - [ ] `peer.sessions()`
+  - [ ] `session.messages()`
+  - [ ] `scope.list()`
 
 ## Final Verification
 

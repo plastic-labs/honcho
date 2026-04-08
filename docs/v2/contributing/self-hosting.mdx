@@ -135,24 +135,21 @@ Download from [postgresql.org](https://www.postgresql.org/download/windows/)
 
 ```bash
 docker run --name honcho-db \
-  -e POSTGRES_DB=honcho \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -p 5432:5432 \
   -d pgvector/pgvector:pg15
 ```
 
-### 3. Create Database and Enable Extensions
+### 3. Enable Extensions
 
-Connect to PostgreSQL and set up the database:
+Connect to PostgreSQL and enable pgvector:
 
 ```bash
 # Connect to PostgreSQL
 psql -U postgres
 
-# Create database and enable extensions
-CREATE DATABASE honcho;
-\c honcho
+# Enable extensions on the default database
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 \q
@@ -170,7 +167,7 @@ Edit `.env` with your configuration:
 
 ```bash
 # Database connection
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 
 # Optional API keys (required for LLM features)
 OPENAI_API_KEY=your-openai-api-key
@@ -280,7 +277,7 @@ const client = new Honcho({
 - **Explore the API**: Check out the [API Reference](/v2/api-reference/introduction)
 - **Try the SDKs**: See our [guides](/v2/guides) for examples
 - **Configure Honcho**: Visit the [Configuration Guide](./configuration) for detailed settings
-- **Join the community**: [Discord](https://discord.gg/plasticlabs)
+- **Join the community**: [Discord](https://discord.gg/honcho)
 
 ## Troubleshooting
 
@@ -311,7 +308,7 @@ const client = new Honcho({
 ### Getting Help
 
 - **GitHub Issues**: [Report bugs](https://github.com/plastic-labs/honcho/issues)
-- **Discord**: [Join our community](https://discord.gg/plasticlabs)
+- **Discord**: [Join our community](https://discord.gg/honcho)
 - **Documentation**: Check the [Configuration Guide](./configuration) for detailed settings
 
 ## Production Considerations

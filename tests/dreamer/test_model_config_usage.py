@@ -1,8 +1,6 @@
-from typing import cast
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.dreamer.specialists import DeductionSpecialist
@@ -41,7 +39,6 @@ async def test_deduction_specialist_uses_nested_model_config(
         ) as mock_llm_call,
     ):
         result = await specialist.run(
-            db=cast(AsyncSession, Mock()),
             workspace_name="workspace",
             observer="alice",
             observed="alice",

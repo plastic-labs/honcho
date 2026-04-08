@@ -18,10 +18,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from src import crud, schemas
 from src.config import ConfiguredModelSettings, settings
+from src.dependencies import tracked_db
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DreamSpecialistEvent, emit
@@ -126,7 +125,6 @@ If you update it, send the full deduplicated list and remove stale entries.
 
     async def run(
         self,
-        db: AsyncSession,
         workspace_name: str,
         observer: str,
         observed: str,
@@ -138,8 +136,9 @@ If you update it, send the full deduplicated list and remove stale entries.
         """
         Run the specialist agent.
 
+        Uses short-lived DB sessions to avoid holding connections during LLM calls.
+
         Args:
-            db: Database session
             workspace_name: Workspace identifier
             observer: The observing peer
             observed: The peer being observed
@@ -155,23 +154,27 @@ If you update it, send the full deduplicated list and remove stale entries.
         task_name = f"dreamer_{self.name}_{run_id}"
         start_time = time.perf_counter()
 
-        # Validate that the peers exist before proceeding
-        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
-        if observer != observed:
-            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
+        # Short-lived DB session for preflight operations
+        async with tracked_db("dream.specialist.preflight") as db:
+            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+            if observer != observed:
+                await crud.get_peer(
+                    db, workspace_name, schemas.PeerCreate(name=observed)
+                )
 
-        # Determine if peer card tools should be included
-        peer_card_enabled = configuration is None or configuration.peer_card.create
+            # Determine if peer card tools should be included
+            peer_card_enabled = configuration is None or configuration.peer_card.create
 
-        # Fetch current peer card to inject into prompt (saves a tool call)
-        current_peer_card: list[str] | None = None
-        if peer_card_enabled:
-            current_peer_card = await crud.get_peer_card(
-                db,
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-            )
+            # Fetch current peer card to inject into prompt (saves a tool call)
+            current_peer_card: list[str] | None = None
+            if peer_card_enabled:
+                current_peer_card = await crud.get_peer_card(
+                    db,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                )
+        # DB session closed — LLM calls happen without holding a connection
 
         # Build messages
         messages: list[dict[str, str]] = [
@@ -191,7 +194,6 @@ If you update it, send the full deduplicated list and remove stale entries.
         tool_executor: Callable[
             [str, dict[str, Any]], Any
         ] = await create_tool_executor(
-            db=db,
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,

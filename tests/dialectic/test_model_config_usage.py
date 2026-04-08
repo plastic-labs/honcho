@@ -1,9 +1,7 @@
 import time
-from typing import cast
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.dialectic.core import DialecticAgent
@@ -33,7 +31,6 @@ async def _stream_chunks() -> StreamingResponseWithMetadata:
 @pytest.mark.asyncio
 async def test_dialectic_answer_uses_level_model_config() -> None:
     agent = DialecticAgent(
-        db=cast(AsyncSession, Mock()),
         workspace_name="workspace",
         session_name="session",
         observer="observer",
@@ -79,7 +76,6 @@ async def test_dialectic_answer_uses_level_model_config() -> None:
 @pytest.mark.asyncio
 async def test_dialectic_answer_stream_uses_level_model_config() -> None:
     agent = DialecticAgent(
-        db=cast(AsyncSession, Mock()),
         workspace_name="workspace",
         session_name="session",
         observer="observer",

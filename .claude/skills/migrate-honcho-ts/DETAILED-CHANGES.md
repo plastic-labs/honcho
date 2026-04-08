@@ -432,3 +432,152 @@ interface SummaryData {
   tokenCount: number
 }
 ```
+
+---
+
+## Post-v2.0.0 Changes
+
+---
+
+## Card Method Deprecation and setCard (v2.0.1)
+
+### Before (v2.0.0)
+
+```typescript
+const card = await peer.card(target)  // string[] | null
+```
+
+### After (v2.0.1+)
+
+```typescript
+// getCard() is the preferred method
+const card = await peer.getCard(target)  // string[] | null
+
+// card() still works but is deprecated
+const card = await peer.card(target)  // Deprecated
+
+// New: setCard()
+const updated = await peer.setCard(['Fact 1', 'Fact 2'])
+const updated = await peer.setCard(['Fact 1'], targetPeer)
+```
+
+---
+
+## Strict Input Validation (v2.0.2)
+
+Client constructor and all input schemas now use `.strict()` Zod validation.
+
+```typescript
+// Before (v2.0.1) — silently ignored
+const honcho = new Honcho({ baseUrl: 'http://...' })  // typo fell back to default
+
+// After (v2.0.2+) — ZodError thrown
+const honcho = new Honcho({ baseUrl: 'http://...' })  // ZodError: Unrecognized key "baseUrl"
+```
+
+---
+
+## peer() and session() Always Make API Calls (v2.1.0)
+
+### Before (v2.0.x)
+
+```typescript
+// Without options: lazy object, no API call
+const peer = honcho.peer('user-123')
+
+// With options: made API call
+const peer = await honcho.peer('user-123', { metadata: { key: 'value' } })
+```
+
+### After (v2.1.0+)
+
+```typescript
+// Always makes a get-or-create API call
+const peer = await honcho.peer('user-123')
+// peer.createdAt is now always populated
+```
+
+---
+
+## New Properties: createdAt, isActive (v2.1.0)
+
+```typescript
+// Peer
+const peer = await honcho.peer('user-123')
+console.log(peer.createdAt)   // string | undefined
+
+// Session
+const session = await honcho.session('sess-1')
+console.log(session.createdAt) // string | undefined
+console.log(session.isActive)  // boolean | undefined
+
+// Refreshed by getMetadata(), getConfiguration(), and refresh()
+await session.refresh()
+```
+
+---
+
+## getMessage() on Session (v2.1.0)
+
+```typescript
+// Fetch a single message by ID
+const msg = await session.getMessage('msg-abc123')
+console.log(msg.content, msg.createdAt)
+```
+
+---
+
+## Pagination Parameters (v2.1.0)
+
+All list methods now accept `page`, `size`, and `reverse`:
+
+```typescript
+// Defaults: page=1, size=50, reverse=false
+const peersPage = await honcho.peers({
+  filters: { metadata: { role: 'admin' } },
+  page: 2,
+  size: 25,
+  reverse: true
+})
+
+// Page<T> properties:
+console.log(peersPage.total)      // Total items
+console.log(peersPage.pages)      // Total pages
+console.log(peersPage.hasNextPage) // boolean
+
+// Works on:
+// honcho.peers(), honcho.sessions(), honcho.workspaces()
+// peer.sessions()
+// session.messages()
+// scope.list()
+```
+
+---
+
+## searchQuery Moved in context() (v2.1.0)
+
+### Before (v2.0.x)
+
+```typescript
+const ctx = await session.context({
+  searchQuery: 'What are my preferences?',
+  representationOptions: { maxConclusions: 50 }
+})
+```
+
+### After (v2.1.0+)
+
+```typescript
+const ctx = await session.context({
+  representationOptions: {
+    searchQuery: 'What are my preferences?',
+    maxConclusions: 50
+  }
+})
+```
+
+---
+
+## Broader Fetch Retry Logic (v2.1.1)
+
+The SDK now retries on all `TypeError` network failures (connection resets, DNS errors, etc.) instead of only those containing `'fetch'` in the error message. This is transparent — no code changes needed.
