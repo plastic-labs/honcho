@@ -342,6 +342,71 @@ def test_split_audio_segments_splits_long_wav_when_duration_exceeds_limit():
     assert all(segment.content for segment in segments)
 
 
+def test_split_audio_segments_normalizes_small_mime_only_audio_filename():
+    processor = AudioProcessor()
+
+    original_duration_limit = settings.AUDIO.MAX_CHUNK_DURATION_SECONDS
+    original_chunk_bytes = settings.AUDIO.MAX_CHUNK_BYTES
+    settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = 60
+    settings.AUDIO.MAX_CHUNK_BYTES = 1024
+    try:
+        with patch.object(
+            processor,
+            "_probe_audio_duration_seconds",
+            return_value=0.5,
+        ):
+            segments = processor.split_audio_segments(
+                b"audio-bytes",
+                filename="blob",
+                content_type="audio/mpeg",
+            )
+    finally:
+        settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = original_duration_limit
+        settings.AUDIO.MAX_CHUNK_BYTES = original_chunk_bytes
+
+    assert len(segments) == 1
+    assert segments[0].filename == "blob.mp3"
+
+
+def test_split_audio_segments_falls_back_to_mp3_when_wav_floor_exceeds_byte_limit():
+    processor = AudioProcessor()
+
+    original_duration_limit = settings.AUDIO.MAX_CHUNK_DURATION_SECONDS
+    original_chunk_bytes = settings.AUDIO.MAX_CHUNK_BYTES
+    settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = 60
+    settings.AUDIO.MAX_CHUNK_BYTES = 200_000
+    build_segments = [
+        [AudioSegment(index=0, filename="segment_000.wav", content=b"x" * 200_001)],
+        [AudioSegment(index=0, filename="segment_000.mp3", content=b"x" * 10)],
+    ]
+    try:
+        with (
+            patch.object(
+                processor,
+                "_probe_audio_duration_seconds",
+                return_value=1.0,
+            ),
+            patch.object(
+                processor,
+                "_build_audio_segments",
+                side_effect=build_segments,
+            ) as mock_build,
+        ):
+            segments = processor.split_audio_segments(
+                b"x" * 200_001,
+                filename="clip.wav",
+                content_type="audio/wav",
+            )
+    finally:
+        settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = original_duration_limit
+        settings.AUDIO.MAX_CHUNK_BYTES = original_chunk_bytes
+
+    assert len(segments) == 1
+    assert segments[0].filename.endswith(".mp3")
+    assert mock_build.call_args_list[0].kwargs["suffix"] == ".wav"
+    assert mock_build.call_args_list[1].kwargs["suffix"] == ".mp3"
+
+
 def test_split_audio_segments_raises_validation_for_invalid_audio_bytes():
     processor = AudioProcessor()
 

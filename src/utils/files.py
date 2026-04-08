@@ -219,13 +219,14 @@ class AudioProcessor:
             raise ValidationException("Audio upload is empty")
 
         suffix = self.get_output_suffix(filename, content_type)
+        normalized_filename = self.ensure_audio_filename(filename, suffix)
         duration_seconds = self._probe_audio_duration_seconds(content, suffix)
 
         if (
             len(content) <= settings.AUDIO.MAX_CHUNK_BYTES
             and duration_seconds <= settings.AUDIO.MAX_CHUNK_DURATION_SECONDS
         ):
-            return [AudioSegment(index=0, filename=filename, content=content)]
+            return [AudioSegment(index=0, filename=normalized_filename, content=content)]
 
         segment_count = self._estimate_initial_segment_count(
             duration_seconds=duration_seconds,
@@ -253,6 +254,13 @@ class AudioProcessor:
                     return segments
 
                 if duration_seconds / segment_count <= 1.0:
+                    if suffix == ".wav":
+                        suffix = ".mp3"
+                        segment_count = self._estimate_initial_segment_count(
+                            duration_seconds=duration_seconds,
+                            suffix=suffix,
+                        )
+                        continue
                     raise FileProcessingError(
                         "Audio segmentation could not satisfy max chunk size"
                     )
@@ -346,6 +354,12 @@ class AudioProcessor:
         if content_type in {"audio/wave", "audio/wav", "audio/x-wav"}:
             return ".wav"
         return ".mp3"
+
+    def ensure_audio_filename(self, filename: str, suffix: str) -> str:
+        path = Path(filename)
+        if path.suffix.lower() == suffix:
+            return filename
+        return f"{filename}{suffix}"
 
     def _probe_audio_duration_seconds(self, content: bytes, suffix: str) -> float:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
