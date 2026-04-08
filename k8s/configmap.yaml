@@ -1,0 +1,26 @@
+# Non-secret application configuration for the Honcho API and Deriver pods.
+# All sensitive values (passwords, API keys, JWT secrets) live in secrets.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: honcho-config
+  namespace: honcho
+data:
+  # Authentication — set to "true" for all non-development deployments
+  AUTH_USE_AUTH: "true"
+
+  # Logging
+  LOG_LEVEL: "INFO"
+
+  # Redis cache — hostname matches the redis ClusterIP Service defined in redis/service.yaml
+  # Set CACHE_ENABLED to "true" to activate the cache (disabled by default).
+  CACHE_URL: "redis://redis:6379/0"
+  CACHE_ENABLED: "false"
+
+  # Deriver background worker
+  DERIVER_ENABLED: "true"
+  DERIVER_WORKERS: "1"
+
+  # Prometheus metrics — set to "true" and add a deriver Service on port 9090
+  # if you are deploying Prometheus in the same cluster.
+  METRICS_ENABLED: "false"

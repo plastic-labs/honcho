@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: honcho
+spec:
+  serviceName: postgres
+  # Single replica is intentional — HA PostgreSQL requires an operator
+  # (e.g., CloudNativePG) that is beyond the scope of these sample manifests.
+  # For production, use a managed database service instead.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg15
+          # Explicit pull policy — specific tags are cached after first pull.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_DB
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: POSTGRES_PASSWORD
+            # Store data in a subdirectory so the mount point itself can be
+            # owned by root while pgdata is owned by the postgres user.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          # startupProbe — absorbs the slow initial DB init before
+          # readiness/liveness probes take over (up to 5 min grace).
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          # readinessProbe — checks that postgres is accepting connections.
+          # Probe type: exec (full connection check).
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # livenessProbe — checks that the TCP port is open (lighter weight
+          # than pg_isready; a different probe type avoids the identical-probe
+          # anti-pattern and avoids triggering restarts on query-level issues).
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+              ephemeral-storage: "100Mi"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+              ephemeral-storage: "500Mi"
+          # securityContext is intentionally omitted for the postgres container.
+          # The official postgres image starts as root and uses gosu/su-exec to
+          # drop to the 'postgres' user after initialising the data directory —
+          # a pattern that requires CAP_SETUID/CAP_SETGID. Dropping ALL
+          # capabilities breaks the init sequence, and setting runAsNonRoot or
+          # readOnlyRootFilesystem without corresponding volume mounts would also
+          # fail. For production, use a managed PostgreSQL service or a Kubernetes
+          # operator (e.g. CloudNativePG) that handles hardening at the operator
+          # level. Security at the network level is enforced by NetworkPolicies.
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

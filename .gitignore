@@ -185,6 +185,9 @@ timing_logs.csv
 config.toml
 .aider*
 
+# Kubernetes secrets — filled-in copies of k8s/secrets.yaml.example
+k8s/secrets.yaml
+
 CRUSH.md
 .crush/
 
