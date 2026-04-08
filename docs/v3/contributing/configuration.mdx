@@ -90,8 +90,6 @@ DIALECTIC_LEVELS__max__MODEL_CONFIG__TRANSPORT=openai
 DIALECTIC_LEVELS__max__MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
 
 # Heavy tier — best quality for complex tasks
-DREAM_MODEL_CONFIG__TRANSPORT=openai
-DREAM_MODEL_CONFIG__MODEL=anthropic/claude-sonnet-4-20250514
 DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=openai
 DREAM_DEDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
 DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT=openai
@@ -142,18 +140,31 @@ api_key_env = "DERIVER_LOCAL_API_KEY"
 
 ### Thinking Budget
 
-Default configs use `MODEL_CONFIG.thinking_budget_tokens` tuned for Anthropic models. Non-Anthropic providers don't support extended thinking and will error or silently fail. The [Self-Hosting Guide](./self-hosting#llm-setup) sets these to `0` by default. If you switch to Anthropic models, you can re-enable them:
+Default configs use `MODEL_CONFIG.thinking_budget_tokens` for models that support explicit thinking budgets (Anthropic, Gemini). For OpenAI reasoning models, use `MODEL_CONFIG.thinking_effort` instead. Set thinking budget to `0` or omit it for models that don't support extended thinking. The [Self-Hosting Guide](./self-hosting#llm-setup) sets these to `0` by default:
 
 ```bash
 # Anthropic models — enable thinking
 DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=512
-DREAM_MODEL_CONFIG__THINKING_BUDGET_TOKENS=8192
 DIALECTIC_LEVELS__medium__MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 DIALECTIC_LEVELS__high__MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 DIALECTIC_LEVELS__max__MODEL_CONFIG__THINKING_BUDGET_TOKENS=2048
 # minimal and low stay at 0
 ```
+
+### Provider-Specific Parameters
+
+Each model config supports an `overrides.provider_params` dict for passing arbitrary parameters to the underlying provider SDK. Use this for vendor-specific features that aren't part of the standard config:
+
+```toml
+[deriver.model_config.overrides.provider_params]
+# These are passed directly to the provider SDK
+verbosity = "low"
+```
+
+### Changing Transport
+
+When changing a feature's `transport`, always specify `model` explicitly. Partial overrides that change transport without model will keep the previous model name, which may not be valid for the new provider.
 
 ### General LLM Settings
 
@@ -330,16 +341,10 @@ DREAM_DOCUMENT_THRESHOLD=50
 DREAM_IDLE_TIMEOUT_MINUTES=60
 DREAM_MIN_HOURS_BETWEEN_DREAMS=8
 DREAM_ENABLED_TYPES=["omni"]
-
-# LLM settings
-DREAM_MODEL_CONFIG__TRANSPORT=anthropic
-DREAM_MODEL_CONFIG__MODEL=claude-sonnet-4-20250514
-DREAM_MODEL_CONFIG__MAX_OUTPUT_TOKENS=16384
-DREAM_MODEL_CONFIG__THINKING_BUDGET_TOKENS=8192
 DREAM_MAX_TOOL_ITERATIONS=20
 DREAM_HISTORY_TOKEN_LIMIT=16384
 
-# Specialist model configs inherit omitted values from DREAM_MODEL_CONFIG
+# Specialist model configs (each is independent)
 DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=anthropic
 DREAM_DEDUCTION_MODEL_CONFIG__MODEL=claude-haiku-4-5
 DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT=anthropic
@@ -372,8 +377,8 @@ GET_CONTEXT_MAX_TOKENS=100000
 MAX_MESSAGE_SIZE=25000
 MAX_FILE_SIZE=5242880  # 5MB
 EMBED_MESSAGES=true
-MAX_EMBEDDING_TOKENS=8192
-MAX_EMBEDDING_TOKENS_PER_REQUEST=300000
+EMBEDDING_MAX_INPUT_TOKENS=8192
+EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 NAMESPACE=honcho
 ```
 
@@ -571,10 +576,6 @@ model = "gemini-2.5-flash"
 
 [dream]
 ENABLED = true
-
-[dream.model_config]
-transport = "anthropic"
-model = "claude-sonnet-4-20250514"
 
 [dream.deduction_model_config]
 transport = "anthropic"
