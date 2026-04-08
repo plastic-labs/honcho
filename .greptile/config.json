@@ -1,0 +1,8 @@
+{
+  "strictness": 2,
+  "triggerOnUpdates": true,
+  "statusCheck": true,
+  "updateExistingSummaryComment": true,
+  "fixWithAI": true,
+  "hideFooter": true
+}
