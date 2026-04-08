@@ -93,10 +93,12 @@ async def query_external_vector_message_ids(
         if "peer_id" in filters:
             vector_filters["peer_name"] = filters["peer_id"]
 
+    # Oversample: multiple chunk-level hits can map to the same message,
+    # so fetch extra to ensure enough unique messages after deduplication.
     vector_results = await external_vector_store.query(
         namespace,
         embedding_query,
-        top_k=limit,
+        top_k=limit * 3,
         filters=vector_filters if vector_filters else None,
     )
 
@@ -167,10 +169,19 @@ async def _semantic_search_pgvector(
         internal_filters["workspace_id"] = workspace_name
         stmt = apply_filter(stmt, models.Message, internal_filters)
 
-    stmt = stmt.order_by(distance_expr).limit(limit)
+    # Oversample because a message with multiple embedding chunks can
+    # produce duplicate rows; we deduplicate in Python to preserve HNSW
+    # index usage (a DISTINCT ON subquery would prevent the index scan).
+    stmt = stmt.order_by(distance_expr).limit(limit * 2)
 
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    seen: set[str] = set()
+    deduped: list[models.Message] = []
+    for msg in result.scalars().all():
+        if msg.public_id not in seen:
+            seen.add(msg.public_id)
+            deduped.append(msg)
+    return deduped[:limit]
 
 
 async def _filter_by_peer_perspective(

@@ -42,18 +42,18 @@ async def get_or_create_webhook_endpoint(
     result = await db.execute(stmt)
     endpoints = result.scalars().all()
 
-    # No more than WORKSPACE_LIMIT webhooks per workspace
-    if len(endpoints) >= settings.WEBHOOK.MAX_WORKSPACE_LIMIT:
-        raise ValueError(
-            f"Maximum number of webhook endpoints ({settings.WEBHOOK.MAX_WORKSPACE_LIMIT}) reached for this workspace."
-        )
-
     # Check if webhook already exists for this workspace
     for endpoint in endpoints:
         if endpoint.url == webhook.url:
             return GetOrCreateResult(
                 schemas.WebhookEndpoint.model_validate(endpoint), created=False
             )
+
+    # No more than WORKSPACE_LIMIT webhooks per workspace
+    if len(endpoints) >= settings.WEBHOOK.MAX_WORKSPACE_LIMIT:
+        raise ValueError(
+            f"Maximum number of webhook endpoints ({settings.WEBHOOK.MAX_WORKSPACE_LIMIT}) reached for this workspace."
+        )
 
     # Create new webhook endpoint
     webhook_endpoint = models.WebhookEndpoint(

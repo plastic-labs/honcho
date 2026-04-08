@@ -676,49 +676,56 @@ class BaseRunner(ABC, Generic[ResultT]):
             if self.config.skip_dream:
                 print(f"[{workspace_id}] Skipping dreams (--skip-dream)")
             else:
-                if active_sem:
-                    await active_sem.acquire()
-                try:
 
-                    async def _schedule_dream(
-                        observer: str,
-                        session_id: str,
-                    ) -> bool:
+                async def _schedule_dream(
+                    observer: str,
+                    session_id: str,
+                ) -> bool:
+                    try:
+                        if active_sem:
+                            await active_sem.acquire()
                         try:
                             await ctx.honcho_client.aio.schedule_dream(
                                 observer=observer,
                                 session=session_id,
                                 observed=observer,
                             )
-                            print(
-                                f"[{workspace_id}] Dream triggered for "
-                                + f"{observer}/{observer} in {session_id}"
-                            )
-                            return True
-                        except Exception as e:
-                            print(
-                                f"[{workspace_id}] ERROR: Dream trigger exception "
-                                + f"for {observer} in {session_id}: {e}"
-                            )
-                            return False
+                        finally:
+                            if active_sem:
+                                active_sem.release()
+                        print(
+                            f"[{workspace_id}] Dream triggered for "
+                            + f"{observer}/{observer} in {session_id}"
+                        )
+                        return True
+                    except Exception as e:
+                        print(
+                            f"[{workspace_id}] ERROR: Dream trigger exception "
+                            + f"for {observer} in {session_id}: {e}"
+                        )
+                        return False
 
-                    dream_results = await asyncio.gather(
-                        *[
-                            _schedule_dream(observer, dream_session_id)
-                            for observer in dream_observers
-                            for dream_session_id in dream_session_ids
-                        ]
-                    )
-                finally:
-                    if active_sem:
-                        active_sem.release()
+                dream_results = await asyncio.gather(
+                    *[
+                        _schedule_dream(observer, dream_session_id)
+                        for observer in dream_observers
+                        for dream_session_id in dream_session_ids
+                    ]
+                )
 
-                if any(dream_results):
+                if all(dream_results):
                     success = await self._wait_for_queue_empty(ctx.honcho_client)
                     if success:
                         print(f"[{workspace_id}] All dreams completed")
                     else:
                         print(f"[{workspace_id}] Dreams timed out")
+                elif any(dream_results):
+                    failed = [i for i, ok in enumerate(dream_results) if not ok]
+                    print(
+                        f"[{workspace_id}] Warning: {len(failed)} of "
+                        + f"{len(dream_results)} dream schedules failed"
+                    )
+                    await self._wait_for_queue_empty(ctx.honcho_client)
                 else:
                     print(f"[{workspace_id}] Warning: No dreams were scheduled")
 
