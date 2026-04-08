@@ -18,17 +18,20 @@ async def get_or_create_webhook_endpoint(
     webhook: schemas.WebhookEndpointCreate,
 ) -> GetOrCreateResult[schemas.WebhookEndpoint]:
     """
-    Get or create a webhook endpoint, optionally for a workspace.
+    Get an existing webhook endpoint for a workspace or create it if missing.
 
     Args:
         db: Database session
+        workspace_name: Name of the workspace
         webhook: Webhook endpoint creation schema
 
     Returns:
         GetOrCreateResult containing the webhook endpoint and whether it was created
 
     Raises:
-        ResourceNotFoundException: If the workspace is specified and does not exist
+        ResourceNotFoundException: If the workspace does not exist
+        ValueError: If the workspace already has the maximum number of webhook
+            endpoints
     """
     # Verify workspace exists
     await get_workspace(db, workspace_name=workspace_name)
@@ -59,7 +62,6 @@ async def get_or_create_webhook_endpoint(
     )
     db.add(webhook_endpoint)
     await db.commit()
-    await db.refresh(webhook_endpoint)
 
     logger.debug("Webhook endpoint created: %s", webhook.url)
     return GetOrCreateResult(
