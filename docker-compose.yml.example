@@ -1,3 +1,18 @@
+# ⚠️  SECURITY NOTE
+# This file is a starting point for local development only.
+# All services are bound to 127.0.0.1 (localhost) to prevent exposure
+# to external networks. Do NOT remove the 127.0.0.1: prefix on port
+# bindings when deploying to any shared or public-facing environment.
+#
+# Before production use:
+#   - Change POSTGRES_PASSWORD and POSTGRES_USER to strong credentials
+#     and update DB_CONNECTION_URI in api/deriver environment blocks accordingly
+#   - Remove POSTGRES_HOST_AUTH_METHOD=trust (use password auth instead)
+#   - Set a strong Grafana admin password (GF_SECURITY_ADMIN_PASSWORD)
+#     and disable anonymous access (GF_AUTH_ANONYMOUS_ENABLED=false)
+#   - Add Redis authentication (requirepass) or remove Redis port exposure
+#   - Consider removing Prometheus/Grafana ports entirely if not needed
+
 services:
   api:
     image: honcho:latest
@@ -11,13 +26,13 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - 8000:8000
+      - 127.0.0.1:8000:8000
     volumes:
       - .:/app
       - venv:/app/.venv
     environment:
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - DB_CONNECTION_URI=${DB_CONNECTION_URI:-postgresql+psycopg://postgres:postgres@database:5432/postgres}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
     env_file:
       - path: .env
         required: false
@@ -35,17 +50,17 @@ services:
       - .:/app
       - venv:/app/.venv
     environment:
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - DB_CONNECTION_URI=${DB_CONNECTION_URI:-postgresql+psycopg://postgres:postgres@database:5432/postgres}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
       - METRICS_ENABLED=true
     env_file:
       - path: .env
         required: false
   database:
     image: pgvector/pgvector:pg15
-    restart: always
+    restart: unless-stopped
     ports:
-      - 5432:5432
+      - 127.0.0.1:5432:5432
     command: ["postgres", "-c", "max_connections=800"]
     environment:
       - POSTGRES_DB=postgres
@@ -63,11 +78,11 @@ services:
       retries: 5
   redis:
     image: redis:8.2
-    restart: always
+    restart: unless-stopped
     ports:
-      - 6379:6379
+      - 127.0.0.1:6379:6379
     volumes:
-      - ./redis-data:/data
+      - redis-data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping"]
       interval: 5s
@@ -76,7 +91,7 @@ services:
   prometheus:
     image: prom/prometheus:v3.2.1
     ports:
-      - 9090:9090
+      - 127.0.0.1:9090:9090
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
@@ -86,14 +101,14 @@ services:
   grafana:
     image: grafana/grafana:11.4.0
     ports:
-      - 3000:3000
+      - 127.0.0.1:3000:3000
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     volumes:
-      - ./grafana-data:/var/lib/grafana
+      - grafana-data:/var/lib/grafana
       - ./docker/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
     depends_on:
       prometheus:
@@ -101,4 +116,6 @@ services:
 volumes:
   pgdata:
   venv:
+  redis-data:
   prometheus-data:
+  grafana-data:
