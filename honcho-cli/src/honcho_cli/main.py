@@ -87,8 +87,10 @@ from honcho_cli.commands.key import app as key_app
 from honcho_cli.commands.message import app as message_app
 from honcho_cli.commands.peer import app as peer_app
 from honcho_cli.commands.session import app as session_app
+from honcho_cli.commands.setup import app as setup_app
 from honcho_cli.commands.workspace import app as workspace_app
 
+app.add_typer(setup_app, name="setup")
 app.add_typer(config_app, name="config")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(peer_app, name="peer")
