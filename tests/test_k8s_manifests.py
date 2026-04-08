@@ -103,30 +103,44 @@ def test_default_deny_ingress_policy_exists(manifests: list[dict[str, Any]]):
 def test_postgres_network_policy_restricts_access(manifests: list[dict[str, Any]]):
     """Only honcho-api and honcho-deriver pods may reach postgres — no other sources."""
     policy = _by_kind_name(manifests, "NetworkPolicy", "allow-postgres-from-honcho")
+    assert policy["spec"].get("podSelector", {}).get("matchLabels") == {"app": "postgres"}, (
+        "allow-postgres-from-honcho must select postgres pods"
+    )
+    ingress_rules = policy["spec"].get("ingress", [])
+    assert len(ingress_rules) == 1, (
+        f"allow-postgres-from-honcho must have exactly 1 ingress rule, got {len(ingress_rules)}"
+    )
     allowed_labels = {
         frozenset(src.get("podSelector", {}).get("matchLabels", {}).items())
-        for src in policy["spec"]["ingress"][0]["from"]
+        for src in ingress_rules[0]["from"]
     }
     assert allowed_labels == {
         frozenset({"app": "honcho-api"}.items()),
         frozenset({"app": "honcho-deriver"}.items()),
     }, f"postgres ingress sources must be exactly api+deriver, got: {allowed_labels}"
-    ports = {p["port"] for p in policy["spec"]["ingress"][0]["ports"]}
+    ports = {p["port"] for p in ingress_rules[0]["ports"]}
     assert ports == {5432}, f"postgres ingress must allow only port 5432, got: {ports}"
 
 
 def test_redis_network_policy_restricts_access(manifests: list[dict[str, Any]]):
     """Only honcho-api and honcho-deriver pods may reach redis — no other sources."""
     policy = _by_kind_name(manifests, "NetworkPolicy", "allow-redis-from-honcho")
+    assert policy["spec"].get("podSelector", {}).get("matchLabels") == {"app": "redis"}, (
+        "allow-redis-from-honcho must select redis pods"
+    )
+    ingress_rules = policy["spec"].get("ingress", [])
+    assert len(ingress_rules) == 1, (
+        f"allow-redis-from-honcho must have exactly 1 ingress rule, got {len(ingress_rules)}"
+    )
     allowed_labels = {
         frozenset(src.get("podSelector", {}).get("matchLabels", {}).items())
-        for src in policy["spec"]["ingress"][0]["from"]
+        for src in ingress_rules[0]["from"]
     }
     assert allowed_labels == {
         frozenset({"app": "honcho-api"}.items()),
         frozenset({"app": "honcho-deriver"}.items()),
     }, f"redis ingress sources must be exactly api+deriver, got: {allowed_labels}"
-    ports = {p["port"] for p in policy["spec"]["ingress"][0]["ports"]}
+    ports = {p["port"] for p in ingress_rules[0]["ports"]}
     assert ports == {6379}, f"redis ingress must allow only port 6379, got: {ports}"
 
 
@@ -140,6 +154,26 @@ def test_four_network_policies_present(manifests: list[dict[str, Any]]):
         "allow-postgres-from-honcho",
         "allow-redis-from-honcho",
     }
+
+
+def test_allow_api_ingress_policy_semantics(manifests: list[dict[str, Any]]):
+    """allow-api-ingress must target API pods and allow exactly port 8000/TCP."""
+    policy = _by_kind_name(manifests, "NetworkPolicy", "allow-api-ingress")
+    deployment = _by_kind_name(manifests, "Deployment", "honcho-api")
+
+    # Policy podSelector must match the Deployment's pod template labels.
+    pod_labels = deployment["spec"]["template"]["metadata"]["labels"]
+    assert policy["spec"]["podSelector"].get("matchLabels") == pod_labels, (
+        f"allow-api-ingress podSelector {policy['spec']['podSelector']} "
+        f"must match API pod template labels {pod_labels}"
+    )
+
+    # Ingress must open port 8000 (the container port) over TCP.
+    ingress_ports = policy["spec"]["ingress"][0]["ports"]
+    assert any(
+        p.get("port") == 8000 and p.get("protocol", "TCP") == "TCP"
+        for p in ingress_ports
+    ), f"allow-api-ingress must permit TCP/8000; got ports: {ingress_ports}"
 
 
 # ---------------------------------------------------------------------------
@@ -199,8 +233,22 @@ def test_hpa_targets_api_deployment(manifests: list[dict[str, Any]]):
     ref = hpa["spec"]["scaleTargetRef"]
     assert ref["kind"] == "Deployment"
     assert ref["name"] == "honcho-api"
-    assert hpa["spec"]["minReplicas"] >= 1
-    assert hpa["spec"]["maxReplicas"] >= 2
+    assert hpa["spec"]["minReplicas"] == 1, (
+        f"HPA minReplicas must be 1, got {hpa['spec']['minReplicas']}"
+    )
+    assert hpa["spec"]["maxReplicas"] == 5, (
+        f"HPA maxReplicas must be 5, got {hpa['spec']['maxReplicas']}"
+    )
+    cpu_metrics = [
+        m for m in hpa["spec"]["metrics"]
+        if m.get("type") == "Resource"
+        and m.get("resource", {}).get("name") == "cpu"
+    ]
+    assert cpu_metrics, "HPA must define a CPU Resource metric"
+    utilization = cpu_metrics[0]["resource"]["target"].get("averageUtilization")
+    assert utilization == 70, (
+        f"HPA CPU target averageUtilization must be 70, got {utilization}"
+    )
 
 
 def test_pdb_selects_api_pods(manifests: list[dict[str, Any]]):
@@ -208,6 +256,10 @@ def test_pdb_selects_api_pods(manifests: list[dict[str, Any]]):
     assert pdb["spec"]["selector"]["matchLabels"] == {"app": "honcho-api"}
     # maxUnavailable: 1 allows node drains even at minReplicas=1; minAvailable: 1
     # would deadlock when only one replica is running.
+    assert "maxUnavailable" in pdb["spec"] and "minAvailable" not in pdb["spec"], (
+        "PDB must not define both maxUnavailable and minAvailable; "
+        "use maxUnavailable: 1 only"
+    )
     assert pdb["spec"].get("maxUnavailable") == 1, (
         "PDB must use maxUnavailable: 1 to avoid deadlock with HPA minReplicas: 1"
     )
@@ -386,7 +438,14 @@ def test_configmap_contains_no_secret_keys(manifests: list[dict[str, Any]]):
     """Sensitive values must not appear in the ConfigMap."""
     cm = _by_kind_name(manifests, "ConfigMap", "honcho-config")
     data = cm.get("data", {})
-    forbidden = {"DB_CONNECTION_URI", "AUTH_JWT_SECRET", "POSTGRES_PASSWORD"}
+    forbidden = {
+        "DB_CONNECTION_URI",
+        "AUTH_JWT_SECRET",
+        "POSTGRES_PASSWORD",
+        "LLM_ANTHROPIC_API_KEY",
+        "LLM_GEMINI_API_KEY",
+        "LLM_OPENAI_API_KEY",
+    }
     leaked = forbidden & set(data.keys())
     assert not leaked, f"Secret key(s) found in ConfigMap: {leaked}"
 

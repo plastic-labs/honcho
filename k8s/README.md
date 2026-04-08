@@ -11,7 +11,7 @@ This directory contains Kubernetes manifests for deploying all Honcho services. 
 | `honcho-api` | Deployment + ClusterIP Service | FastAPI server; runs migrations on start |
 | `honcho-deriver` | Deployment (no Service) | Background queue worker |
 | `honcho-api` | HorizontalPodAutoscaler | 1–5 replicas at 70% CPU |
-| `honcho-api` | PodDisruptionBudget | minAvailable: 1 |
+| `honcho-api` | PodDisruptionBudget | maxUnavailable: 1 (allows drains at minReplicas=1) |
 | NetworkPolicies | default-deny + allow rules | Postgres/Redis reachable only from API/Deriver |
 
 ## Testing the manifests
@@ -117,7 +117,13 @@ uv run python scripts/generate_jwt_secret.py
 
 `k8s/secrets.yaml` is listed in `.gitignore` — **never commit it**.
 
-Apply secrets to the cluster:
+The `honcho` namespace must exist before the Secret can be applied. Create it first:
+
+```bash
+kubectl apply -f k8s/namespace.yaml
+```
+
+Then apply the secrets:
 
 ```bash
 kubectl apply -f k8s/secrets.yaml
