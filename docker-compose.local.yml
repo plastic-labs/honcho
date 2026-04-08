@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: honcho-postgres
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      - POSTGRES_DB=honcho
+      - POSTGRES_USER=honcho
+      - POSTGRES_PASSWORD=honcho
+    volumes:
+      - honcho-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U honcho -d honcho"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  honcho-postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /Users/headless/docker-volumes/honcho-postgres
