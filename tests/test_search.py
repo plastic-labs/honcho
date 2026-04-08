@@ -62,11 +62,10 @@ async def test_peer_perspective_search_single_session(
         created_at=join_time + datetime.timedelta(seconds=2),
     )
     db_session.add_all([msg1, msg2])
-    await db_session.flush()
+    await db_session.commit()
 
     # Search with peer_perspective filter
     results = await search(
-        db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
@@ -132,11 +131,10 @@ async def test_peer_perspective_search_multiple_sessions(
         created_at=join_time + datetime.timedelta(seconds=2),
     )
     db_session.add_all([msg1, msg2])
-    await db_session.flush()
+    await db_session.commit()
 
     # Search with peer_perspective filter
     results = await search(
-        db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
@@ -212,11 +210,10 @@ async def test_peer_perspective_search_temporal_constraints(
         created_at=leave_time + datetime.timedelta(seconds=1),
     )
     db_session.add_all([msg_before, msg_during, msg_after])
-    await db_session.flush()
+    await db_session.commit()
 
     # Search with peer_perspective filter
     results = await search(
-        db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
@@ -279,11 +276,10 @@ async def test_peer_perspective_search_active_member(
         created_at=join_time + datetime.timedelta(seconds=100),
     )
     db_session.add_all([msg1, msg2])
-    await db_session.flush()
+    await db_session.commit()
 
     # Search with peer_perspective filter
     results = await search(
-        db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
@@ -339,11 +335,10 @@ async def test_peer_perspective_search_no_sessions(
         created_at=join_time + datetime.timedelta(seconds=1),
     )
     db_session.add(msg)
-    await db_session.flush()
+    await db_session.commit()
 
     # Search with peer_perspective filter for peer1 (not in any sessions)
     results = await search(
-        db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
@@ -408,11 +403,10 @@ async def test_peer_perspective_search_boundary_timestamps(
         created_at=leave_time,  # Exact leave time
     )
     db_session.add_all([msg_at_join, msg_at_leave])
-    await db_session.flush()
+    await db_session.commit()
 
     # Search with peer_perspective filter
     results = await search(
-        db_session,
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
