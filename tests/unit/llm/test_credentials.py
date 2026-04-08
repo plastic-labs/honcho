@@ -36,7 +36,6 @@ def test_openai_transport_credentials_fall_back_to_global_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings.LLM, "OPENAI_API_KEY", "openai-test-key")
-    monkeypatch.setattr(settings.LLM, "OPENAI_BASE_URL", "http://openai.local/v1")
 
     credentials = resolve_credentials(
         ModelConfig(
@@ -47,5 +46,5 @@ def test_openai_transport_credentials_fall_back_to_global_defaults(
 
     assert credentials == {
         "api_key": "openai-test-key",
-        "api_base": "http://openai.local/v1",
+        "api_base": None,
     }

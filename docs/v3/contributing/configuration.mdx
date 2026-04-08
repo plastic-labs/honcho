@@ -52,14 +52,13 @@ You can mix providers freely — for example, use Gemini for the deriver and Cla
 
 ### Provider Types
 
-| Provider value | What it connects to | Key env var |
+| Transport value | What it connects to | API key env var |
 |---|---|---|
-| `custom` | Any OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, Ollama) | `LLM_OPENAI_COMPATIBLE_API_KEY` + `LLM_OPENAI_COMPATIBLE_BASE_URL` |
-| `vllm` | vLLM self-hosted models | `LLM_VLLM_API_KEY` + `LLM_VLLM_BASE_URL` |
-| `google` | Google Gemini (direct) | `LLM_GEMINI_API_KEY` |
+| `openai` | OpenAI or any OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, vLLM, Ollama) | `LLM_OPENAI_API_KEY` |
 | `anthropic` | Anthropic Claude (direct) | `LLM_ANTHROPIC_API_KEY` |
-| `openai` | OpenAI (direct) | `LLM_OPENAI_API_KEY` |
-| `groq` | Groq (direct) | `LLM_GROQ_API_KEY` |
+| `gemini` | Google Gemini (direct) | `LLM_GEMINI_API_KEY` |
+
+For OpenAI-compatible proxies (OpenRouter, vLLM, Ollama, etc.), use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature to point at your endpoint.
 
 ### Tiered Model Setup
 
@@ -67,11 +66,14 @@ Once you're past initial setup, you can assign different models per feature for 
 
 ```bash
 LLM_OPENAI_API_KEY=sk-or-v1-...
-LLM_OPENAI_BASE_URL=https://openrouter.ai/api/v1
+
+# All features route through OpenRouter via overrides.base_url
+# (You can set this on each feature's MODEL_CONFIG)
 
 # Light tier — high throughput, cheap
 DERIVER_MODEL_CONFIG__TRANSPORT=openai
 DERIVER_MODEL_CONFIG__MODEL=google/gemini-2.5-flash-lite
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
 SUMMARY_MODEL_CONFIG__TRANSPORT=openai
 SUMMARY_MODEL_CONFIG__MODEL=google/gemini-2.5-flash
 DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT=openai
@@ -98,7 +100,7 @@ DREAM_INDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
 
 ### Direct Vendor Keys
 
-Instead of an OpenAI-compatible proxy, you can use vendor APIs directly. Each transport picks up its own `LLM_{TRANSPORT}_API_KEY` and `LLM_{TRANSPORT}_BASE_URL`. The default model configs route per feature:
+Instead of an OpenAI-compatible proxy, you can use vendor APIs directly. Each transport picks up its own `LLM_{TRANSPORT}_API_KEY`. The default model configs route per feature:
 
 ```bash
 LLM_GEMINI_API_KEY=...       # deriver, summary, dialectic minimal/low
@@ -108,25 +110,25 @@ LLM_OPENAI_API_KEY=...       # embeddings
 
 ### Self-Hosted (vLLM / Ollama)
 
-Use `transport = "openai"` and point `LLM_OPENAI_BASE_URL` at your endpoint:
+Use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature:
 
 ```bash
 # vLLM
-LLM_OPENAI_BASE_URL=http://localhost:8000/v1
 LLM_OPENAI_API_KEY=not-needed
 DERIVER_MODEL_CONFIG__TRANSPORT=openai
 DERIVER_MODEL_CONFIG__MODEL=your-model-name
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 
 # Ollama
-LLM_OPENAI_BASE_URL=http://localhost:11434/v1
 LLM_OPENAI_API_KEY=ollama
 DERIVER_MODEL_CONFIG__TRANSPORT=openai
 DERIVER_MODEL_CONFIG__MODEL=llama3.3:70b
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:11434/v1
 ```
 
-Set `MODEL_CONFIG__TRANSPORT` and `MODEL_CONFIG__MODEL` for each feature the same way.
+Set `MODEL_CONFIG__TRANSPORT`, `MODEL_CONFIG__MODEL`, and `MODEL_CONFIG__OVERRIDES__BASE_URL` for each feature the same way.
 
-Per-module endpoint overrides are also available via `MODEL_CONFIG.overrides`:
+The same overrides are available in `config.toml`:
 
 ```toml
 [deriver.model_config]

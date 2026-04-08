@@ -38,7 +38,6 @@ SupportedProviders = Literal[
     "anthropic",
     "openai",
     "google",
-    "groq",
 ]
 TaskType = Literal[
     "webhook", "summary", "representation", "dream", "deletion", "reconciler"

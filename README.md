@@ -225,7 +225,6 @@ DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psy
 LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for deriver, summary, and dialectic minimal/low by default)
 LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic medium/high/max and dream by default)
 LLM_OPENAI_API_KEY= # API Key for OpenAI (used for embeddings when EMBED_MESSAGES=true)
-LLM_GROQ_API_KEY= # API Key for Groq (optional)
 ```
 
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to

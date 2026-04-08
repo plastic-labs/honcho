@@ -17,7 +17,6 @@ from typing import (
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types as genai_types
-from groq import AsyncGroq
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, ValidationError
 from sentry_sdk.ai.monitoring import ai_track
@@ -35,7 +34,6 @@ from src.llm.backend import StreamChunk as BackendStreamChunk
 from src.llm.backend import ToolCallResult
 from src.llm.backends.anthropic import AnthropicBackend
 from src.llm.backends.gemini import GeminiBackend
-from src.llm.backends.groq import GroqBackend
 from src.llm.backends.openai import OpenAIBackend
 from src.llm.history_adapters import (
     AnthropicHistoryAdapter,
@@ -91,7 +89,7 @@ ReasoningEffortType = (
 )
 VerbosityType = Literal["low", "medium", "high"] | None
 
-ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq
+ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client
 
 
 class ProviderSelection(NamedTuple):
@@ -111,7 +109,6 @@ def _provider_for_model_config(
         "anthropic": "anthropic",
         "openai": "openai",
         "gemini": "google",
-        "groq": "groq",
     }
     return provider_map[transport]
 
@@ -302,7 +299,6 @@ CLIENTS: dict[SupportedProviders, ProviderClient] = {}
 if settings.LLM.ANTHROPIC_API_KEY:
     anthropic = AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
-        base_url=settings.LLM.ANTHROPIC_BASE_URL,
         timeout=600.0,  # 10 minutes timeout for long-running operations
     )
     CLIENTS["anthropic"] = anthropic
@@ -310,39 +306,25 @@ if settings.LLM.ANTHROPIC_API_KEY:
 if settings.LLM.OPENAI_API_KEY:
     openai_client = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
-        base_url=settings.LLM.OPENAI_BASE_URL,
     )
     CLIENTS["openai"] = openai_client
 
 if settings.LLM.GEMINI_API_KEY:
-    http_options: genai_types.HttpOptions | None = None
-    if settings.LLM.GEMINI_BASE_URL:
-        http_options = genai_types.HttpOptions(base_url=settings.LLM.GEMINI_BASE_URL)
     google = genai.client.Client(
         api_key=settings.LLM.GEMINI_API_KEY,
-        http_options=http_options,
     )
     CLIENTS["google"] = google
-
-if settings.LLM.GROQ_API_KEY:
-    groq = AsyncGroq(
-        api_key=settings.LLM.GROQ_API_KEY,
-        base_url=settings.LLM.GROQ_BASE_URL,
-    )
-    CLIENTS["groq"] = groq
 
 
 def _default_credentials_for_provider(
     provider: SupportedProviders,
 ) -> tuple[str | None, str | None]:
     if provider == "anthropic":
-        return settings.LLM.ANTHROPIC_API_KEY, settings.LLM.ANTHROPIC_BASE_URL
+        return settings.LLM.ANTHROPIC_API_KEY, None
     if provider == "openai":
-        return settings.LLM.OPENAI_API_KEY, settings.LLM.OPENAI_BASE_URL
+        return settings.LLM.OPENAI_API_KEY, None
     if provider == "google":
-        return settings.LLM.GEMINI_API_KEY, settings.LLM.GEMINI_BASE_URL
-    if provider == "groq":
-        return settings.LLM.GROQ_API_KEY, settings.LLM.GROQ_BASE_URL
+        return settings.LLM.GEMINI_API_KEY, None
     assert_never(provider)
 
 
@@ -369,10 +351,6 @@ def _build_client(
             raise ValueError("Missing API key for Gemini model config")
         http_options = genai_types.HttpOptions(base_url=base_url) if base_url else None
         return genai.client.Client(api_key=api_key, http_options=http_options)
-    if provider == "groq":
-        if not api_key:
-            raise ValueError("Missing API key for Groq model config")
-        return AsyncGroq(api_key=api_key, base_url=base_url)
     assert_never(provider)
 
 
@@ -628,16 +606,14 @@ class StreamingResponseWithMetadata:
 
 def _get_backend_for_provider(
     provider: SupportedProviders,
-    client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
-) -> AnthropicBackend | OpenAIBackend | GeminiBackend | GroqBackend:
+    client: AsyncAnthropic | AsyncOpenAI | genai.Client,
+) -> AnthropicBackend | OpenAIBackend | GeminiBackend:
     if provider == "anthropic":
         return AnthropicBackend(client)
     if provider == "openai":
         return OpenAIBackend(client)
     if provider == "google":
         return GeminiBackend(client)
-    if provider == "groq":
-        return GroqBackend(client)
     assert_never(provider)
 
 
@@ -1754,19 +1730,17 @@ async def honcho_llm_call_inner(
 
 
 def _provider_for_streaming_client(
-    client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
+    client: AsyncAnthropic | AsyncOpenAI | genai.Client,
 ) -> SupportedProviders:
     if isinstance(client, AsyncAnthropic):
         return "anthropic"
     if isinstance(client, genai.Client):
         return "google"
-    if isinstance(client, AsyncGroq):
-        return "groq"
     return "openai"
 
 
 async def handle_streaming_response(
-    client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
+    client: AsyncAnthropic | AsyncOpenAI | genai.Client,
     params: dict[str, Any],
     json_mode: bool,
     thinking_budget_tokens: int | None,

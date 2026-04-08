@@ -34,7 +34,6 @@ def _provider_for_model_config(
         "anthropic": "anthropic",
         "openai": "openai",
         "gemini": "google",
-        "groq": "groq",
     }
     if transport not in provider_map:
         raise ValueError(f"Unsupported reasoning trace transport: {transport}")

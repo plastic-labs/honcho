@@ -22,7 +22,7 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini", "groq"]
+ModelTransport = Literal["anthropic", "openai", "gemini"]
 EmbeddingTransport = Literal["openai", "gemini"]
 
 
@@ -76,7 +76,7 @@ def _normalize_model_transport(data: Any) -> Any:
     transport_value = update.get("transport")
     if isinstance(model_value, str) and "/" in model_value and transport_value is None:
         prefix, bare_model = model_value.split("/", 1)
-        if prefix in {"anthropic", "openai", "gemini", "groq"}:
+        if prefix in {"anthropic", "openai", "gemini"}:
             update["transport"] = prefix
             update["model"] = bare_model
     return update
@@ -654,11 +654,6 @@ class LLMSettings(HonchoSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
-    GROQ_API_KEY: str | None = None
-    ANTHROPIC_BASE_URL: str | None = None
-    OPENAI_BASE_URL: str | None = None
-    GEMINI_BASE_URL: str | None = None
-    GROQ_BASE_URL: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500

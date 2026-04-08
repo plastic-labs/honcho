@@ -38,25 +38,19 @@ Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dream
 
 You need one API key and one model. Any OpenAI-compatible endpoint works — OpenRouter, Together, Fireworks, Ollama, vLLM, or a direct vendor API. Models must support tool calling (function calling).
 
-The `.env.template` has provider and model lines ready for each feature. After copying it to `.env`, you need to set three things:
+The `.env.template` has transport and model lines ready for each feature. After copying it to `.env`, you need to set two things:
 
 ```bash
-# 1. Your endpoint and API key (already uncommented in the template)
-LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
+# 1. Your API key (already uncommented in the template)
+LLM_OPENAI_API_KEY=sk-or-v1-...
 
-# 2. Replace "your-model-here" everywhere with your model
+# 2. Replace "your-model-here" everywhere with your model and set
+#    OVERRIDES__BASE_URL on each feature to point at your endpoint
 #    (these are spread across the Deriver, Dialectic, Summary, and Dream sections)
-DERIVER_MODEL=google/gemini-2.5-flash  # e.g. google/gemini-2.5-flash
-SUMMARY_MODEL=google/gemini-2.5-flash
-DREAM_MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash
-# ... same for low, medium, high, max
-
-# 3. Everything else is already configured:
-#    - PROVIDER=custom for all features (routes through your endpoint)
-#    - THINKING_BUDGET_TOKENS=0 (correct for non-Anthropic models)
-#    - LLM_EMBEDDING_PROVIDER=openrouter (uses same endpoint for embeddings)
+DERIVER_MODEL_CONFIG__TRANSPORT=openai
+DERIVER_MODEL_CONFIG__MODEL=google/gemini-2.5-flash
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
+# ... same for summary, dream, and each dialectic level
 ```
 
 Use find-and-replace to swap all `your-model-here` with your chosen model in one step.

@@ -52,18 +52,12 @@ DEFAULT_MAX_TOKENS = 2500
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
-# API Keys for LLM providers
-# Each transport uses its own API key + base URL pair.
-# Quick start: set OPENAI_API_KEY + OPENAI_BASE_URL and use transport = "openai"
-# for all features to route through any OpenAI-compatible endpoint.
+# API Keys for LLM providers (set the ones you need)
+# Supported transports: openai, anthropic, gemini
+# Base URLs are set per-module via model_config.overrides.base_url
 OPENAI_API_KEY = "your-api-key-here"
-OPENAI_BASE_URL = "https://openrouter.ai/api/v1"
 # ANTHROPIC_API_KEY = "your-api-key"
 # GEMINI_API_KEY = "your-api-key"
-# GROQ_API_KEY = "your-api-key"
-# ANTHROPIC_BASE_URL = "https://anthropic-proxy.example/v1"
-# GEMINI_BASE_URL = "https://gemini-proxy.example/v1beta"
-# GROQ_BASE_URL = "https://groq-proxy.example/v1"
 
 # Embedding settings
 [embedding]

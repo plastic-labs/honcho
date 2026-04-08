@@ -9,7 +9,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.131.0",
-    "groq>=0.31.0",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.30",
     "fastapi-pagination>=0.14.2",
