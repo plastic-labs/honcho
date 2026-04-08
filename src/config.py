@@ -214,6 +214,10 @@ class LLMSettings(HonchoSettings):
     VLLM_BASE_URL: str | None = None
 
     EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    EMBEDDING_MODEL: str | None = None
+    EMBEDDING_DIMENSIONS: Annotated[int | None, Field(default=None, gt=0, le=4096)] = (
+        None
+    )
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500

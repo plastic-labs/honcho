@@ -28,6 +28,8 @@ class _EmbeddingClient:
 
     def __init__(self, api_key: str | None = None, provider: str | None = None):
         self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+        configured_model = settings.LLM.EMBEDDING_MODEL
+        configured_dimensions = settings.LLM.EMBEDDING_DIMENSIONS
 
         if self.provider == "gemini":
             if api_key is None:
@@ -35,7 +37,8 @@ class _EmbeddingClient:
             if not api_key:
                 raise ValueError("Gemini API key is required")
             self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
-            self.model: str = "gemini-embedding-001"
+            self.model: str = configured_model or "gemini-embedding-001"
+            self.output_dimensions = configured_dimensions or 1536
             # Gemini has a 2048 token limit
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
@@ -46,13 +49,14 @@ class _EmbeddingClient:
             if not api_key:
                 raise ValueError(
                     "OpenRouter API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
-                )
+            )
             base_url = (
                 settings.LLM.OPENAI_COMPATIBLE_BASE_URL
                 or "https://openrouter.ai/api/v1"
             )
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
+            self.model = configured_model or "openai/text-embedding-3-small"
+            self.output_dimensions = configured_dimensions
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
         else:  # openai
@@ -61,7 +65,8 @@ class _EmbeddingClient:
             if not api_key:
                 raise ValueError("OpenAI API key is required")
             self.client = AsyncOpenAI(api_key=api_key)
-            self.model = "text-embedding-3-small"
+            self.model = configured_model or "text-embedding-3-small"
+            self.output_dimensions = configured_dimensions
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # OpenAI batch limit
 
@@ -82,15 +87,16 @@ class _EmbeddingClient:
             response = await self.client.aio.models.embed_content(
                 model=self.model,
                 contents=query,
-                config={"output_dimensionality": 1536},
+                config={"output_dimensionality": self.output_dimensions},
             )
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
             return response.embeddings[0].values
         else:  # openai
-            response = await self.client.embeddings.create(
-                model=self.model, input=query
-            )
+            kwargs = {"model": self.model, "input": query}
+            if self.output_dimensions is not None:
+                kwargs["dimensions"] = self.output_dimensions
+            response = await self.client.embeddings.create(**kwargs)
             return response.data[0].embedding
 
     async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
@@ -116,17 +122,17 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": self.output_dimensions},
                     )
                     if response.embeddings:
                         for emb in response.embeddings:
                             if emb.values:
                                 embeddings.append(emb.values)
                 else:  # openai
-                    response = await self.client.embeddings.create(
-                        input=batch,
-                        model=self.model,
-                    )
+                    kwargs = {"input": batch, "model": self.model}
+                    if self.output_dimensions is not None:
+                        kwargs["dimensions"] = self.output_dimensions
+                    response = await self.client.embeddings.create(**kwargs)
                     embeddings.extend([data.embedding for data in response.data])
             except Exception as e:
                 # Check if it's a token limit error and re-raise as ValueError for consistency
@@ -252,7 +258,7 @@ class _EmbeddingClient:
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
                         contents=[item.text for item in batch],
-                        config={"output_dimensionality": 1536},
+                        config={"output_dimensionality": self.output_dimensions},
                     )
                     if response.embeddings:
                         for item, embedding in zip(
@@ -263,9 +269,13 @@ class _EmbeddingClient:
                                     embedding.values
                                 )
                 else:  # openai / openrouter
-                    response = await self.client.embeddings.create(
-                        model=self.model, input=[item.text for item in batch]
-                    )
+                    kwargs = {
+                        "model": self.model,
+                        "input": [item.text for item in batch],
+                    }
+                    if self.output_dimensions is not None:
+                        kwargs["dimensions"] = self.output_dimensions
+                    response = await self.client.embeddings.create(**kwargs)
                     for item, embedding_data in zip(batch, response.data, strict=True):
                         result[item.text_id][item.chunk_index] = (
                             embedding_data.embedding
