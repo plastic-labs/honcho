@@ -1,0 +1,13 @@
+# PodDisruptionBudget — ensures at least one API pod remains available during
+# voluntary disruptions such as node drains and cluster upgrades.
+# Only takes effect when replicas > 1 (i.e., after the HPA scales up).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: honcho-api
+  namespace: honcho
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: honcho-api

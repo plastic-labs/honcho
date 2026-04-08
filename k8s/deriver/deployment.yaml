@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: honcho-deriver
+  namespace: honcho
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: honcho-deriver
+  template:
+    metadata:
+      labels:
+        app: honcho-deriver
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z postgres 5432; do
+                echo "Waiting for postgres..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready."
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "50m"
+              ephemeral-storage: "16Mi"
+            limits:
+              memory: "32Mi"
+              cpu: "100m"
+              ephemeral-storage: "64Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534      # nobody
+            runAsGroup: 65534     # nogroup
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+        - name: wait-for-redis
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z redis 6379; do
+                echo "Waiting for redis..."
+                sleep 2
+              done
+              echo "Redis is ready."
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "50m"
+              ephemeral-storage: "16Mi"
+            limits:
+              memory: "32Mi"
+              cpu: "100m"
+              ephemeral-storage: "64Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534      # nobody
+            runAsGroup: 65534     # nogroup
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: deriver
+          image: honcho:latest
+          imagePullPolicy: IfNotPresent
+          # The deriver is a background queue worker — it is NOT an HTTP server.
+          # No HTTP liveness probe is defined; Kubernetes restarts the container
+          # automatically if the process exits (restartPolicy: Always, the
+          # Deployment default). This resolves the healthcheck issue present
+          # when the image-level HEALTHCHECK is applied to a non-API service.
+          command: ["/app/.venv/bin/python", "-m", "src.deriver"]
+          env:
+            # ── Non-secret config ──────────────────────────────────────────
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: LOG_LEVEL
+            - name: CACHE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: CACHE_URL
+            - name: CACHE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: CACHE_ENABLED
+            - name: DERIVER_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: DERIVER_ENABLED
+            - name: DERIVER_WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: DERIVER_WORKERS
+            - name: METRICS_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: METRICS_ENABLED
+            # ── Secrets ────────────────────────────────────────────────────
+            - name: DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: DB_CONNECTION_URI
+            - name: LLM_ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: LLM_ANTHROPIC_API_KEY
+                  optional: true
+            - name: LLM_GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: LLM_GEMINI_API_KEY
+                  optional: true
+            - name: LLM_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: LLM_OPENAI_API_KEY
+                  optional: true
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            # Generous limits — the deriver runs multi-step LLM tool-calling loops.
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+              ephemeral-storage: "256Mi"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+              ephemeral-storage: "1Gi"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tmp
+          emptyDir: {}
