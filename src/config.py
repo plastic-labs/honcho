@@ -1078,6 +1078,24 @@ class DreamSettings(HonchoSettings):
             )
         return data  # pyright: ignore[reportUnknownVariableType]
 
+    @model_validator(mode="after")
+    def _validate_specialist_token_budgets(self) -> "DreamSettings":
+        """Ensure thinking_budget_tokens < max_output_tokens for each specialist."""
+        for name, cfg in (
+            ("DEDUCTION_MODEL_CONFIG", self.DEDUCTION_MODEL_CONFIG),
+            ("INDUCTION_MODEL_CONFIG", self.INDUCTION_MODEL_CONFIG),
+        ):
+            if (
+                cfg.max_output_tokens is not None
+                and cfg.thinking_budget_tokens is not None
+                and cfg.max_output_tokens <= cfg.thinking_budget_tokens
+            ):
+                raise ValueError(
+                    f"dream.{name}.max_output_tokens must be greater than "
+                    + f"dream.{name}.thinking_budget_tokens"
+                )
+        return self
+
 
 class VectorStoreSettings(HonchoSettings):
     """Settings for vector store (pgvector, Turbopuffer, or LanceDB)."""
