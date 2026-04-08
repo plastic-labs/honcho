@@ -959,27 +959,25 @@ async def extract_preferences(
 
     for query in semantic_queries:
         try:
-            async with tracked_db("extract_preferences") as db:
-                snippets = await crud.search_messages(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    query=query,
-                    limit=10,
-                    context_window=0,
-                    embedding=(
-                        query_embeddings_by_query.get(query)
-                        if query_embeddings_by_query is not None
-                        else None
-                    ),
-                )
-                for matches, _ in snippets:
-                    for msg in matches:
-                        if msg.peer_name == observed:
-                            content_key = msg.content[:100].lower()
-                            if content_key not in seen_content:
-                                seen_content.add(content_key)
-                                messages.append(f"'{msg.content.strip()}'")
+            snippets = await crud.search_messages(
+                workspace_name=workspace_name,
+                session_name=session_name,
+                query=query,
+                limit=10,
+                context_window=0,
+                embedding=(
+                    query_embeddings_by_query.get(query)
+                    if query_embeddings_by_query is not None
+                    else None
+                ),
+            )
+            for matches, _ in snippets:
+                for msg in matches:
+                    if msg.peer_name == observed:
+                        content_key = msg.content[:100].lower()
+                        if content_key not in seen_content:
+                            seen_content.add(content_key)
+                            messages.append(f"'{msg.content.strip()}'")
         except Exception as e:
             logger.warning("Error in semantic search for '%s': %s", query, e)
 
@@ -1265,20 +1263,18 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         if ctx.agent_type == "dialectic":
             limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
             message_output = None
-            async with tracked_db("tool.search_memory.fallback") as db:
-                snippets = await crud.search_messages(
-                    db,
-                    workspace_name=ctx.workspace_name,
-                    session_name=ctx.session_name,
-                    query=query,
-                    limit=limit,
-                    context_window=0,
-                    embedding=query_embedding,
+            snippets = await crud.search_messages(
+                workspace_name=ctx.workspace_name,
+                session_name=ctx.session_name,
+                query=query,
+                limit=limit,
+                context_window=0,
+                embedding=query_embedding,
+            )
+            if snippets:
+                message_output = _format_message_snippets(
+                    snippets, f"for query '{query}'"
                 )
-                if snippets:
-                    message_output = _format_message_snippets(
-                        snippets, f"for query '{query}'"
-                    )
             if message_output:
                 return (
                     f"No observations yet. Message search results:\n\n{message_output}"
@@ -1326,19 +1322,17 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call (same pattern as _handle_search_memory).
     query_embedding = await embedding_client.embed(query)
-    async with tracked_db("tool.search_messages") as db:
-        snippets = await crud.search_messages(
-            db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            query=query,
-            limit=limit,
-            context_window=2,
-            embedding=query_embedding,
-        )
-        if not snippets:
-            return f"No messages found for query '{query}'"
-        formatted = _format_message_snippets(snippets, f"for query '{query}'")
+    snippets = await crud.search_messages(
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        query=query,
+        limit=limit,
+        context_window=2,
+        embedding=query_embedding,
+    )
+    if not snippets:
+        return f"No messages found for query '{query}'"
+    formatted = _format_message_snippets(snippets, f"for query '{query}'")
     return formatted
 
 
@@ -1352,35 +1346,31 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
         _safe_int(tool_input.get("context_window"), 2), 2
     )  # Cap context
 
-    async with tracked_db("tool.grep_messages") as db:
-        snippets = await crud.grep_messages(
-            db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            text=text,
-            limit=limit,
-            context_window=context_window,
-        )
-        if not snippets:
-            return f"No messages found containing '{text}'"
+    snippets = await crud.grep_messages(
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        text=text,
+        limit=limit,
+        context_window=context_window,
+    )
+    if not snippets:
+        return f"No messages found containing '{text}'"
 
-        # Format with pattern-based snippet extraction
-        snippet_texts: list[str] = []
-        total_matches = sum(len(matches) for matches, _ in snippets)
-        for i, (matches, context) in enumerate(snippets, 1):
-            lines: list[str] = []
-            for msg in context:
-                truncated = _extract_pattern_snippet(msg.content, text)
-                lines.append(
-                    format_new_turn_with_timestamp(
-                        truncated, msg.created_at, msg.peer_name
-                    )
-                )
-            sess = context[0].session_name if context else "unknown"
-            snippet_texts.append(
-                f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
-                + "\n".join(lines)
+    # Format with pattern-based snippet extraction
+    snippet_texts: list[str] = []
+    total_matches = sum(len(matches) for matches, _ in snippets)
+    for i, (matches, context) in enumerate(snippets, 1):
+        lines: list[str] = []
+        for msg in context:
+            truncated = _extract_pattern_snippet(msg.content, text)
+            lines.append(
+                format_new_turn_with_timestamp(truncated, msg.created_at, msg.peer_name)
             )
+        sess = context[0].session_name if context else "unknown"
+        snippet_texts.append(
+            f"--- Snippet {i} (session: {sess}, {len(matches)} match(es)) ---\n"
+            + "\n".join(lines)
+        )
 
     output = (
         f"Found {total_matches} messages containing '{text}' in {len(snippets)} conversation snippets:\n\n"
@@ -1483,31 +1473,27 @@ async def _handle_search_messages_temporal(
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call.
     query_embedding = await embedding_client.embed(query)
-    async with tracked_db("tool.search_messages_temporal") as db:
-        snippets = await crud.search_messages_temporal(
-            db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
-            query=query,
-            after_date=after_date,
-            before_date=before_date,
-            limit=limit,
-            context_window=context_window,
-            embedding=query_embedding,
-        )
-        date_filter: list[str] = []
-        if after_date_str:
-            date_filter.append(f"after {after_date_str}")
-        if before_date_str:
-            date_filter.append(f"before {before_date_str}")
-        filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
+    snippets = await crud.search_messages_temporal(
+        workspace_name=ctx.workspace_name,
+        session_name=ctx.session_name,
+        query=query,
+        after_date=after_date,
+        before_date=before_date,
+        limit=limit,
+        context_window=context_window,
+        embedding=query_embedding,
+    )
+    date_filter: list[str] = []
+    if after_date_str:
+        date_filter.append(f"after {after_date_str}")
+    if before_date_str:
+        date_filter.append(f"before {before_date_str}")
+    filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
 
-        if not snippets:
-            return f"No messages found for query '{query}'{filter_desc}"
+    if not snippets:
+        return f"No messages found for query '{query}'{filter_desc}"
 
-        formatted = _format_message_snippets(
-            snippets, f"for query '{query}'{filter_desc}"
-        )
+    formatted = _format_message_snippets(snippets, f"for query '{query}'{filter_desc}")
     return formatted
 
 

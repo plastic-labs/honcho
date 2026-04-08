@@ -4,6 +4,8 @@ Tests for message embedding functionality.
 These tests verify that message embeddings are created, stored, and can be searched.
 """
 
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -12,7 +14,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.crud import create_messages
+from src.crud import message as message_crud
 from src.models import Peer, Workspace
 from src.schemas import MessageCreate
 from src.utils.search import search
@@ -254,6 +258,203 @@ async def test_semantic_search_when_embeddings_enabled(
     assert len(search_results) > 0
     found_message_ids = [msg.public_id for msg in search_results]
     assert created_message.public_id in found_message_ids
+
+
+@pytest.mark.asyncio
+async def test_search_messages_external_lookup_happens_before_tracked_db(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """External semantic lookup should finish before opening tracked_db."""
+    monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+    monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "external")
+
+    call_order: list[str] = []
+    message = models.Message(
+        workspace_name="workspace",
+        session_name="session",
+        peer_name="peer",
+        content="Relevant external search result",
+        seq_in_session=1,
+        token_count=5,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    class FakeDb:
+        def expunge(self, _obj: object) -> None:
+            call_order.append("expunge")
+
+    fake_db = FakeDb()
+
+    async def fake_search_messages_external(
+        workspace_name: str,
+        query_embedding: list[float],
+        limit: int,
+        *,
+        session_name: str | None = None,
+        after_date: datetime | None = None,
+        before_date: datetime | None = None,
+    ) -> list[str]:
+        _ = (
+            workspace_name,
+            query_embedding,
+            limit,
+            session_name,
+            after_date,
+            before_date,
+        )
+        call_order.append("external")
+        return ["message-1"]
+
+    async def fake_fetch_messages_by_ids(
+        db: FakeDb,
+        workspace_name: str,
+        message_ids: list[str],
+        *,
+        after_date: datetime | None = None,
+        before_date: datetime | None = None,
+    ) -> list[models.Message]:
+        _ = (workspace_name, message_ids, after_date, before_date)
+        assert db is fake_db
+        call_order.append("fetch")
+        return [message]
+
+    async def fake_build_merged_snippets(
+        db: FakeDb,
+        workspace_name: str,
+        matched_messages: list[models.Message],
+        context_window: int,
+    ) -> list[tuple[list[models.Message], list[models.Message]]]:
+        _ = (workspace_name, context_window)
+        assert db is fake_db
+        assert matched_messages == [message]
+        call_order.append("build")
+        return [([message], [message])]
+
+    @asynccontextmanager
+    async def fake_tracked_db(_operation_name: str | None = None):
+        call_order.append("enter")
+        yield fake_db
+        call_order.append("exit")
+
+    monkeypatch.setattr(
+        message_crud, "_search_messages_external", fake_search_messages_external
+    )
+    monkeypatch.setattr(
+        message_crud, "_fetch_messages_by_ids", fake_fetch_messages_by_ids
+    )
+    monkeypatch.setattr(
+        message_crud, "_build_merged_snippets", fake_build_merged_snippets
+    )
+    monkeypatch.setattr(message_crud, "tracked_db", fake_tracked_db)
+
+    snippets = await message_crud.search_messages(
+        workspace_name="workspace",
+        session_name="session",
+        query="relevant query",
+        embedding=[0.1, 0.2, 0.3],
+    )
+
+    assert snippets == [([message], [message])]
+    assert call_order.index("external") < call_order.index("enter")
+
+
+@pytest.mark.asyncio
+async def test_search_messages_temporal_external_lookup_happens_before_tracked_db(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Temporal external semantic lookup should finish before opening tracked_db."""
+    monkeypatch.setattr(settings.VECTOR_STORE, "MIGRATED", True)
+    monkeypatch.setattr(settings.VECTOR_STORE, "TYPE", "external")
+
+    call_order: list[str] = []
+    after_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    before_date = datetime(2024, 12, 31, tzinfo=timezone.utc)
+    message = models.Message(
+        workspace_name="workspace",
+        session_name="session",
+        peer_name="peer",
+        content="Relevant temporal external search result",
+        seq_in_session=1,
+        token_count=5,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    class FakeDb:
+        def expunge(self, _obj: object) -> None:
+            call_order.append("expunge")
+
+    fake_db = FakeDb()
+
+    async def fake_search_messages_external(
+        workspace_name: str,
+        query_embedding: list[float],
+        limit: int,
+        *,
+        session_name: str | None = None,
+        after_date: datetime | None = None,
+        before_date: datetime | None = None,
+    ) -> list[str]:
+        _ = (workspace_name, query_embedding, limit, session_name)
+        assert after_date is not None
+        assert before_date is not None
+        call_order.append("external")
+        return ["message-1"]
+
+    async def fake_fetch_messages_by_ids(
+        db: FakeDb,
+        workspace_name: str,
+        message_ids: list[str],
+        *,
+        after_date: datetime | None = None,
+        before_date: datetime | None = None,
+    ) -> list[models.Message]:
+        _ = (workspace_name, message_ids)
+        assert db is fake_db
+        assert after_date is not None
+        assert before_date is not None
+        call_order.append("fetch")
+        return [message]
+
+    async def fake_build_merged_snippets(
+        db: FakeDb,
+        workspace_name: str,
+        matched_messages: list[models.Message],
+        context_window: int,
+    ) -> list[tuple[list[models.Message], list[models.Message]]]:
+        _ = (workspace_name, context_window)
+        assert db is fake_db
+        assert matched_messages == [message]
+        call_order.append("build")
+        return [([message], [message])]
+
+    @asynccontextmanager
+    async def fake_tracked_db(_operation_name: str | None = None):
+        call_order.append("enter")
+        yield fake_db
+        call_order.append("exit")
+
+    monkeypatch.setattr(
+        message_crud, "_search_messages_external", fake_search_messages_external
+    )
+    monkeypatch.setattr(
+        message_crud, "_fetch_messages_by_ids", fake_fetch_messages_by_ids
+    )
+    monkeypatch.setattr(
+        message_crud, "_build_merged_snippets", fake_build_merged_snippets
+    )
+    monkeypatch.setattr(message_crud, "tracked_db", fake_tracked_db)
+
+    snippets = await message_crud.search_messages_temporal(
+        workspace_name="workspace",
+        session_name="session",
+        query="relevant query",
+        after_date=after_date,
+        before_date=before_date,
+        embedding=[0.1, 0.2, 0.3],
+    )
+
+    assert snippets == [([message], [message])]
+    assert call_order.index("external") < call_order.index("enter")
 
 
 @pytest.mark.asyncio

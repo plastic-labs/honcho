@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.config import settings
+from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
@@ -32,6 +33,20 @@ def _deduplicate_messages(
             if len(result) >= limit:
                 break
     return result
+
+
+def _expunge_snippets(
+    db: AsyncSession, snippets: list[tuple[list[models.Message], list[models.Message]]]
+) -> None:
+    """Detach snippet messages from the session, guarding against duplicates."""
+    seen: set[int] = set()
+    for matches, context in snippets:
+        for msg in [*matches, *context]:
+            obj_id = id(msg)
+            if obj_id in seen:
+                continue
+            db.expunge(msg)
+            seen.add(obj_id)
 
 
 def _apply_token_limit(
@@ -595,7 +610,6 @@ async def update_message(
 
 
 async def _search_messages_external(
-    db: AsyncSession,
     workspace_name: str,
     query_embedding: list[float],
     limit: int,
@@ -603,14 +617,11 @@ async def _search_messages_external(
     session_name: str | None = None,
     after_date: datetime | None = None,
     before_date: datetime | None = None,
-) -> list[models.Message]:
-    """Query the external vector store for messages and fetch them from the DB.
+) -> list[str]:
+    """Query the external vector store and return ordered message IDs.
 
     Multiple vector records can map to the same message (chunked embeddings),
     so we oversample from the vector store and deduplicate by message_id.
-
-    Date filters are applied at the DB level since external vector stores
-    don't support temporal filtering.
     """
     external_vector_store = get_external_vector_store()
     if external_vector_store is None:
@@ -648,7 +659,18 @@ async def _search_messages_external(
     if not message_ids:
         return []
 
-    # Fetch from DB with optional date filtering
+    return message_ids
+
+
+async def _fetch_messages_by_ids(
+    db: AsyncSession,
+    workspace_name: str,
+    message_ids: list[str],
+    *,
+    after_date: datetime | None = None,
+    before_date: datetime | None = None,
+) -> list[models.Message]:
+    """Fetch messages by ID, preserving the supplied ordering."""
     fetch_stmt = (
         select(models.Message)
         .where(models.Message.public_id.in_(message_ids))
@@ -662,12 +684,110 @@ async def _search_messages_external(
     result = await db.execute(fetch_stmt)
     messages_by_id = {msg.public_id: msg for msg in result.scalars().all()}
 
-    # Preserve vector store similarity order, apply limit
-    return [messages_by_id[mid] for mid in message_ids if mid in messages_by_id][:limit]
+    return [messages_by_id[mid] for mid in message_ids if mid in messages_by_id]
+
+
+async def _search_messages_pgvector(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str | None,
+    *,
+    query_embedding: list[float],
+    after_date: datetime | None = None,
+    before_date: datetime | None = None,
+    limit: int = 10,
+    context_window: int = 2,
+) -> list[tuple[list[models.Message], list[models.Message]]]:
+    """Run semantic message search against pgvector-backed embeddings."""
+    # pgvector path: cosine distance in SQL
+    # Oversample because a message with multiple embedding chunks can
+    # produce duplicate rows; we deduplicate in Python to preserve HNSW
+    # index usage (a DISTINCT ON subquery would prevent the index scan).
+    match_stmt = (
+        select(models.Message)
+        .join(
+            models.MessageEmbedding,
+            models.Message.public_id == models.MessageEmbedding.message_id,
+        )
+        .where(models.MessageEmbedding.workspace_name == workspace_name)
+        .order_by(models.MessageEmbedding.embedding.cosine_distance(query_embedding))
+        .limit(limit * 2)
+    )
+
+    if session_name:
+        match_stmt = match_stmt.where(
+            models.MessageEmbedding.session_name == session_name
+        )
+
+    if after_date:
+        match_stmt = match_stmt.where(models.Message.created_at >= after_date)
+    if before_date:
+        match_stmt = match_stmt.where(models.Message.created_at <= before_date)
+
+    result = await db.execute(match_stmt)
+    matched_messages = _deduplicate_messages(result.scalars().all(), limit)
+
+    return await _build_merged_snippets(
+        db, workspace_name, matched_messages, context_window
+    )
+
+
+async def _semantic_search_messages(
+    workspace_name: str,
+    session_name: str | None,
+    *,
+    query_embedding: list[float],
+    limit: int = 10,
+    context_window: int = 2,
+    operation_name: str,
+    after_date: datetime | None = None,
+    before_date: datetime | None = None,
+) -> list[tuple[list[models.Message], list[models.Message]]]:
+    """Run semantic message search with optional temporal filters."""
+    if settings.VECTOR_STORE.TYPE != "pgvector" and settings.VECTOR_STORE.MIGRATED:
+        message_ids = await _search_messages_external(
+            workspace_name,
+            query_embedding,
+            limit,
+            session_name=session_name,
+            after_date=after_date,
+            before_date=before_date,
+        )
+        if not message_ids:
+            return []
+
+        async with tracked_db(operation_name) as db:
+            matched_messages = (
+                await _fetch_messages_by_ids(
+                    db,
+                    workspace_name,
+                    message_ids,
+                    after_date=after_date,
+                    before_date=before_date,
+                )
+            )[:limit]
+            snippets = await _build_merged_snippets(
+                db, workspace_name, matched_messages, context_window
+            )
+            _expunge_snippets(db, snippets)
+            return snippets
+
+    async with tracked_db(operation_name) as db:
+        snippets = await _search_messages_pgvector(
+            db,
+            workspace_name,
+            session_name,
+            query_embedding=query_embedding,
+            after_date=after_date,
+            before_date=before_date,
+            limit=limit,
+            context_window=context_window,
+        )
+        _expunge_snippets(db, snippets)
+        return snippets
 
 
 async def search_messages(
-    db: AsyncSession,
     workspace_name: str,
     session_name: str | None,
     query: str,
@@ -682,7 +802,6 @@ async def search_messages(
     snippets within the same session are merged to avoid repetition.
 
     Args:
-        db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session (optional)
         query: Search query text
@@ -695,48 +814,20 @@ async def search_messages(
         Each snippet may contain multiple matches if they were close together.
         Context messages are ordered chronologically and include the matched messages.
     """
-    # Use provided embedding or generate one
     query_embedding = (
         embedding if embedding is not None else await embedding_client.embed(query)
     )
-
-    if settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED:
-        # pgvector path: cosine distance in SQL
-        # Oversample because a message with multiple embedding chunks can
-        # produce duplicate rows; we deduplicate in Python to preserve HNSW
-        # index usage (a DISTINCT ON subquery would prevent the index scan).
-        match_stmt = (
-            select(models.Message)
-            .join(
-                models.MessageEmbedding,
-                models.Message.public_id == models.MessageEmbedding.message_id,
-            )
-            .where(models.MessageEmbedding.workspace_name == workspace_name)
-            .order_by(
-                models.MessageEmbedding.embedding.cosine_distance(query_embedding)
-            )
-            .limit(limit * 2)
-        )
-
-        if session_name:
-            match_stmt = match_stmt.where(
-                models.MessageEmbedding.session_name == session_name
-            )
-
-        result = await db.execute(match_stmt)
-        matched_messages = _deduplicate_messages(result.scalars().all(), limit)
-    else:
-        # External vector store path
-        matched_messages = await _search_messages_external(
-            db, workspace_name, query_embedding, limit, session_name=session_name
-        )
-
-    return await _build_merged_snippets(
-        db, workspace_name, matched_messages, context_window
+    return await _semantic_search_messages(
+        workspace_name,
+        session_name,
+        query_embedding=query_embedding,
+        limit=limit,
+        context_window=context_window,
+        operation_name="message.search_messages",
     )
 
 
-async def grep_messages(
+async def _grep_messages_internal(
     db: AsyncSession,
     workspace_name: str,
     session_name: str | None,
@@ -744,24 +835,7 @@ async def grep_messages(
     limit: int = 10,
     context_window: int = 2,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
-    """
-    Search for messages containing specific text (case-insensitive substring match).
-
-    Unlike semantic search, this finds EXACT text matches. Useful for finding
-    specific names, dates, phrases, or keywords.
-
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-        session_name: Name of the session (optional - searches all sessions if None)
-        text: Text to search for (case-insensitive)
-        limit: Maximum number of matching messages to return
-        context_window: Number of messages before/after each match to include
-
-    Returns:
-        List of tuples: (matched_messages, context_messages)
-        Each snippet may contain multiple matches if they were close together.
-    """
+    """Internal implementation of exact-text message search."""
     # Build the base query with ILIKE for case-insensitive text search
     escaped_text = escape_ilike_pattern(text)
     match_stmt = (
@@ -783,6 +857,43 @@ async def grep_messages(
     return await _build_merged_snippets(
         db, workspace_name, matched_messages, context_window
     )
+
+
+async def grep_messages(
+    workspace_name: str,
+    session_name: str | None,
+    text: str,
+    limit: int = 10,
+    context_window: int = 2,
+) -> list[tuple[list[models.Message], list[models.Message]]]:
+    """
+    Search for messages containing specific text (case-insensitive substring match).
+
+    Unlike semantic search, this finds EXACT text matches. Useful for finding
+    specific names, dates, phrases, or keywords.
+
+    Args:
+        workspace_name: Name of the workspace
+        session_name: Name of the session (optional - searches all sessions if None)
+        text: Text to search for (case-insensitive)
+        limit: Maximum number of matching messages to return
+        context_window: Number of messages before/after each match to include
+
+    Returns:
+        List of tuples: (matched_messages, context_messages)
+        Each snippet may contain multiple matches if they were close together.
+    """
+    async with tracked_db("message.grep_messages") as db:
+        snippets = await _grep_messages_internal(
+            db,
+            workspace_name,
+            session_name,
+            text,
+            limit,
+            context_window,
+        )
+        _expunge_snippets(db, snippets)
+        return snippets
 
 
 async def get_messages_by_date_range(
@@ -830,7 +941,6 @@ async def get_messages_by_date_range(
 
 
 async def search_messages_temporal(
-    db: AsyncSession,
     workspace_name: str,
     session_name: str | None,
     query: str,
@@ -847,7 +957,6 @@ async def search_messages_temporal(
     to find recent mentions, or before_date to find what was said before a certain point.
 
     Args:
-        db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session (optional)
         query: Search query text
@@ -861,53 +970,16 @@ async def search_messages_temporal(
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
-    # Use provided embedding or generate one
     query_embedding = (
         embedding if embedding is not None else await embedding_client.embed(query)
     )
-
-    if settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED:
-        # pgvector path: cosine distance in SQL with date filters
-        # Oversample to handle chunk duplicates (see search_messages comment)
-        match_stmt = (
-            select(models.Message)
-            .join(
-                models.MessageEmbedding,
-                models.Message.public_id == models.MessageEmbedding.message_id,
-            )
-            .where(models.MessageEmbedding.workspace_name == workspace_name)
-        )
-
-        if session_name:
-            match_stmt = match_stmt.where(
-                models.MessageEmbedding.session_name == session_name
-            )
-
-        # Apply date filters on the Message table
-        if after_date:
-            match_stmt = match_stmt.where(models.Message.created_at >= after_date)
-        if before_date:
-            match_stmt = match_stmt.where(models.Message.created_at <= before_date)
-
-        # Order by similarity and limit
-        match_stmt = match_stmt.order_by(
-            models.MessageEmbedding.embedding.cosine_distance(query_embedding)
-        ).limit(limit * 2)
-
-        result = await db.execute(match_stmt)
-        matched_messages = _deduplicate_messages(result.scalars().all(), limit)
-    else:
-        # External vector store path with post-fetch date filtering
-        matched_messages = await _search_messages_external(
-            db,
-            workspace_name,
-            query_embedding,
-            limit,
-            session_name=session_name,
-            after_date=after_date,
-            before_date=before_date,
-        )
-
-    return await _build_merged_snippets(
-        db, workspace_name, matched_messages, context_window
+    return await _semantic_search_messages(
+        workspace_name,
+        session_name,
+        query_embedding=query_embedding,
+        after_date=after_date,
+        before_date=before_date,
+        limit=limit,
+        context_window=context_window,
+        operation_name="message.search_messages_temporal",
     )
