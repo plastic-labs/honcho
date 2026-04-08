@@ -1,8 +1,9 @@
-"""Session commands: list, inspect, messages, context, summaries."""
+"""Session commands: list, inspect, messages, context, summaries, peers, search, representation, metadata."""
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+from typing import List, Optional
 
 import typer
 
@@ -195,5 +196,225 @@ def summaries(
             "long_summary": s.long_summary if hasattr(s, "long_summary") else None,
         }
         print_result(result)
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
+@app.command()
+def delete(
+    session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Delete a session and all its data. Destructive — requires --yes or interactive confirm."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    sid = _get_session_id(session_id)
+    client, config = get_client()
+
+    if not yes:
+        typer.confirm(f"Delete session '{sid}' and all its messages, conclusions, and queue items?", abort=True)
+
+    sess = client.session(sid)
+
+    try:
+        sess.delete()
+        status(f"Session '{sid}' deleted")
+        print_result({"deleted": sid})
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
+@app.command("peers")
+def session_peers(
+    session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """List peers in a session."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    sid = _get_session_id(session_id)
+    client, config = get_client()
+    sess = client.session(sid)
+
+    try:
+        peers = sess.peers()
+        items = [{"id": p.id} for p in peers]
+        print_result(items, columns=["id"], title=f"Session peers ({sid})")
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
+@app.command("add-peers")
+def add_peers(
+    peer_ids: List[str] = typer.Argument(help="Peer IDs to add to the session"),
+    session_id: Optional[str] = typer.Option(None, "--session", "-s", help="Session ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Add peers to a session."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session_id)
+    sid = _get_session_id(session_id)
+    client, config = get_client()
+    sess = client.session(sid)
+
+    try:
+        sess.add_peers(peer_ids)
+        print_result({"session_id": sid, "added_peers": peer_ids})
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
+@app.command("remove-peers")
+def remove_peers(
+    peer_ids: List[str] = typer.Argument(help="Peer IDs to remove from the session"),
+    session_id: Optional[str] = typer.Option(None, "--session", "-s", help="Session ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Remove peers from a session."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session_id)
+    sid = _get_session_id(session_id)
+    client, config = get_client()
+    sess = client.session(sid)
+
+    try:
+        sess.remove_peers(peer_ids)
+        print_result({"session_id": sid, "removed_peers": peer_ids})
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
+@app.command()
+def search(
+    query: str = typer.Argument(help="Search query"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID (uses default if omitted)"),
+    limit: int = typer.Option(10, help="Max results"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Search messages in a session."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    sid = _get_session_id(session_id)
+    client, config = get_client()
+    sess = client.session(sid)
+
+    try:
+        results = sess.search(query, limit=limit)
+        items = [
+            {
+                "id": m.id,
+                "peer_id": m.peer_id,
+                "content": m.content[:200],
+                "created_at": str(m.created_at),
+            }
+            for m in results
+        ]
+        print_result(items, columns=["id", "peer_id", "content", "created_at"], title=f"Session search: {query}")
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
+@app.command()
+def representation(
+    peer_id: str = typer.Argument(help="Peer ID to get representation for"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID (uses default if omitted)"),
+    target: Optional[str] = typer.Option(None, help="Target peer (what peer_id knows about target)"),
+    search_query: Optional[str] = typer.Option(None, help="Semantic search query to filter conclusions"),
+    max_conclusions: Optional[int] = typer.Option(None, help="Maximum number of conclusions to include"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Get the representation of a peer within a session."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    sid = _get_session_id(session_id)
+    client, config = get_client()
+    sess = client.session(sid)
+
+    try:
+        result = sess.representation(
+            peer_id,
+            target=target,
+            search_query=search_query,
+            max_conclusions=max_conclusions,
+        )
+        print_result({"session_id": sid, "peer_id": peer_id, "target": target, "representation": result})
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
+@app.command("get-metadata")
+def get_metadata(
+    session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Get metadata for a session."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    sid = _get_session_id(session_id)
+    client, config = get_client()
+    sess = client.session(sid)
+
+    try:
+        result = sess.get_metadata()
+        print_result({"session_id": sid, "metadata": result})
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
+@app.command("set-metadata")
+def set_metadata(
+    metadata: str = typer.Argument(help="JSON metadata to set (e.g. '{\"key\": \"value\"}')"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Set metadata for a session."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    sid = _get_session_id(session_id)
+    client, config = get_client()
+
+    try:
+        parsed = json.loads(metadata)
+    except json.JSONDecodeError as e:
+        from honcho_cli.output import print_error
+        print_error("INVALID_JSON", f"metadata must be valid JSON: {e}", {})
+        raise typer.Exit(1)
+
+    sess = client.session(sid)
+
+    try:
+        sess.set_metadata(parsed)
+        print_result({"session_id": sid, "metadata": parsed})
     except Exception as e:
         _handle_error(e, "session", sid)

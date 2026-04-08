@@ -1,7 +1,8 @@
-"""Peer commands: list, inspect, card, chat, search."""
+"""Peer commands: list, inspect, card, chat, search, create, metadata, representation."""
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 import typer
@@ -175,5 +176,132 @@ def search(
             for m in results
         ]
         print_result(items, columns=["id", "session_id", "content", "created_at"], title=f"Peer search: {query}")
+    except Exception as e:
+        _handle_error(e, "peer", pid)
+
+
+@app.command("create")
+def create_peer(
+    peer_id: str = typer.Argument(help="Peer ID to create or get"),
+    observe_me: Optional[bool] = typer.Option(None, "--observe-me/--no-observe-me", help="Whether Honcho will form a representation of this peer"),
+    metadata: Optional[str] = typer.Option(None, "--metadata", help="JSON metadata to associate with the peer"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Create or get a peer."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+    from honcho.api_types import PeerConfig
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    pid = validate_resource_id(peer_id, "peer")
+    client, config = get_client()
+
+    parsed_metadata = None
+    if metadata:
+        try:
+            parsed_metadata = json.loads(metadata)
+        except json.JSONDecodeError as e:
+            from honcho_cli.output import print_error
+            print_error("INVALID_JSON", f"--metadata must be valid JSON: {e}", {})
+            raise typer.Exit(1)
+
+    peer_config = PeerConfig(observe_me=observe_me) if observe_me is not None else None
+
+    try:
+        p = client.peer(pid, configuration=peer_config, metadata=parsed_metadata)
+        result = {
+            "peer_id": p.id,
+            "metadata": parsed_metadata,
+            "configuration": {"observe_me": observe_me} if observe_me is not None else None,
+        }
+        print_result(result)
+    except Exception as e:
+        _handle_error(e, "peer", pid)
+
+
+@app.command("get-metadata")
+def get_metadata(
+    peer_id: Optional[str] = typer.Argument(None, help="Peer ID (uses default if omitted)"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Get metadata for a peer."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    pid = _get_peer_id(peer_id)
+    client, config = get_client()
+    p = client.peer(pid)
+
+    try:
+        result = p.get_metadata()
+        print_result({"peer_id": pid, "metadata": result})
+    except Exception as e:
+        _handle_error(e, "peer", pid)
+
+
+@app.command("set-metadata")
+def set_metadata(
+    peer_id: Optional[str] = typer.Argument(None, help="Peer ID (uses default if omitted)"),
+    metadata: str = typer.Option(..., "--metadata", "-m", help="JSON metadata to set (e.g. '{\"key\": \"value\"}')"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Set metadata for a peer."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    pid = _get_peer_id(peer_id)
+    client, config = get_client()
+
+    try:
+        parsed = json.loads(metadata)
+    except json.JSONDecodeError as e:
+        from honcho_cli.output import print_error
+        print_error("INVALID_JSON", f"metadata must be valid JSON: {e}", {})
+        raise typer.Exit(1)
+
+    p = client.peer(pid)
+
+    try:
+        p.set_metadata(parsed)
+        print_result({"peer_id": pid, "metadata": parsed})
+    except Exception as e:
+        _handle_error(e, "peer", pid)
+
+
+@app.command()
+def representation(
+    peer_id: Optional[str] = typer.Argument(None, help="Peer ID (uses default if omitted)"),
+    target: Optional[str] = typer.Option(None, help="Target peer to get representation about"),
+    session: Optional[str] = typer.Option(None, help="Scope representation to a session"),
+    search_query: Optional[str] = typer.Option(None, help="Semantic search query to filter conclusions"),
+    max_conclusions: Optional[int] = typer.Option(None, help="Maximum number of conclusions to include"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Get the formatted representation for a peer."""
+    from honcho_cli.common import handle_cmd_flags
+    from honcho_cli.main import get_client
+
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    pid = _get_peer_id(peer_id)
+    client, config = get_client()
+    p = client.peer(pid)
+
+    try:
+        result = p.representation(
+            target=target,
+            session=session,
+            search_query=search_query,
+            max_conclusions=max_conclusions,
+        )
+        print_result({"peer_id": pid, "target": target, "representation": result})
     except Exception as e:
         _handle_error(e, "peer", pid)

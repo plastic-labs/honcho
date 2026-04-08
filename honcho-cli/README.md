@@ -27,6 +27,14 @@ honcho peer list
 honcho peer inspect <peer_id>
 honcho session messages <session_id> --last 20
 
+# Peer management
+honcho peer create <peer_id>
+honcho peer create <peer_id> --observe-me --metadata '{"role": "user"}'
+honcho peer get-metadata <peer_id>
+honcho peer set-metadata <peer_id> --metadata '{"role": "user"}'
+honcho peer representation <peer_id>
+honcho peer representation <peer_id> --search-query "preferences" --max-conclusions 20
+
 # Debug
 honcho peer card <peer_id>
 honcho conclusion search "topic" --observer <peer_id>

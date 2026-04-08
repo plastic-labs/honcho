@@ -113,11 +113,16 @@ def inspect(
 @app.command()
 def delete(
     workspace_id: str = typer.Argument(help="Workspace ID to delete"),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt (for scripted/agent use)"),
+    cascade: bool = typer.Option(False, "--cascade", help="Delete all sessions before deleting the workspace"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without deleting"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
-    """Delete a workspace. Destructive — requires --yes or interactive confirm."""
+    """Delete a workspace. Use --dry-run first to see what will be deleted.
+
+    Requires --yes to skip confirmation, or will prompt interactively.
+    If sessions exist, requires --cascade to delete them first.
+    """
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
@@ -125,26 +130,44 @@ def delete(
 
     validate_resource_id(workspace_id, "workspace")
     client, config = get_client()
-    client = _with_workspace(client, workspace_id)
+    ws_client = _with_workspace(client, workspace_id)
+
+    # Always fetch sessions for dry-run or cascade
+    raw_sessions = _raw_list(ws_client.sessions()) if (dry_run or cascade) else []
 
     if dry_run:
-        sessions = list(client.sessions())
-        peers = list(client.peers())
         print_result({
             "dry_run": True,
             "workspace_id": workspace_id,
-            "sessions_to_delete": len(sessions),
-            "peers_to_delete": len(peers),
+            "sessions_to_delete": len(raw_sessions),
+            "session_ids": [s.id for s in raw_sessions],
+            "warning": "This action cannot be undone.",
         })
         return
 
     if not yes:
-        typer.confirm(f"Delete workspace '{workspace_id}' and all its data?", abort=True)
+        if cascade and raw_sessions:
+            typer.confirm(
+                f"Delete workspace '{workspace_id}' and {len(raw_sessions)} session(s)? This cannot be undone.",
+                abort=True,
+            )
+        else:
+            typer.confirm(f"Delete workspace '{workspace_id}'? This cannot be undone.", abort=True)
 
     try:
-        client.delete_workspace(workspace_id)
-        status(f"Workspace '{workspace_id}' deleted")
-        print_result({"deleted": workspace_id})
+        deleted_sessions = []
+        if cascade and raw_sessions:
+            for s in raw_sessions:
+                ws_client.session(s.id).delete()
+                deleted_sessions.append(s.id)
+                status(f"Deleted session '{s.id}'")
+
+        ws_client.delete_workspace(workspace_id)
+        status(f"Workspace '{workspace_id}' deletion accepted (processing in background)")
+        result = {"deleted_workspace": workspace_id, "status": "accepted"}
+        if cascade:
+            result["deleted_sessions"] = deleted_sessions
+        print_result(result)
     except Exception as e:
         _handle_error(e, "workspace", workspace_id)
 
