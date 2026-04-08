@@ -266,8 +266,9 @@ class OpenAIBackend:
                 params["verbosity"] = extra_params["verbosity"]
         else:
             params["max_tokens"] = max_tokens
-            if temperature is not None:
-                params["temperature"] = temperature
+
+        if temperature is not None:
+            params["temperature"] = temperature
 
         if thinking_effort:
             params["reasoning_effort"] = thinking_effort
@@ -356,7 +357,7 @@ class OpenAIBackend:
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if tools and tools[0].get("type") == "function":
+        if not tools or tools[0].get("type") == "function":
             return tools
         return [
             {

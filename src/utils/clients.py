@@ -49,16 +49,6 @@ from src.utils.types import SupportedProviders, set_current_iteration
 
 logger = logging.getLogger(__name__)
 
-# Gemini finish reasons that indicate the response was blocked by safety or policy
-# filters. When these occur, the response typically has no usable text content and
-# retrying with a backup provider is appropriate.
-GEMINI_BLOCKED_FINISH_REASONS = {
-    "SAFETY",
-    "RECITATION",
-    "PROHIBITED_CONTENT",
-    "BLOCKLIST",
-}
-
 
 @dataclass
 class IterationData:
