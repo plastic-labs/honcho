@@ -13,31 +13,21 @@ This page covers the current public-host-compatible Paperclip plugin. It support
 
 ## Install the Plugin
 
-### Local Checkout
-
-Install the plugin into Paperclip from a local checkout:
-
-```bash
-pnpm build
-pnpm paperclipai plugin install /absolute/path/to/paperclip-honcho
-```
-
-### Packed Tarball
-
-Or install it from a packed tarball:
-
-```bash
-pnpm paperclipai plugin install /absolute/path/to/honcho-ai-paperclip-honcho-0.1.0.tgz
-```
+1. In Paperclip, open `Instance Settings` -> `Plugins`.
+2. Click `Install Plugin`.
+3. Enter `@honcho-ai/paperclip-honcho`.
+4. Complete the install from the Paperclip UI.
 
 ## Quick Setup
 
 ### Minimal Path
 
-1. In Paperclip, open `Instance Settings` -> `Plugins` -> `Install Plugin`.
-2. Install `@honcho-ai/paperclip-honcho`.
-3. Create a Paperclip secret containing the Honcho API key.
-4. Open the Honcho plugin settings page in Paperclip.
+1. Create a Paperclip secret containing the Honcho API key.
+   - For self-hosted or local Honcho, use whatever credential your local startup expects.
+   - If your local dev setup does not require an API key, you can leave `honchoApiKeySecretRef` unset.
+2. Open the Honcho plugin settings page in Paperclip.
+3. If you are using Honcho Cloud, leave the deployment on the default cloud setting.
+4. If you are using a self-hosted or local Honcho instance, switch the deployment to `Self-hosted / local` and set `honchoApiBaseUrl`.
 5. Set `honchoApiKeySecretRef`.
 6. Save the settings.
 7. Run `Initialize memory for this company`.
@@ -53,6 +43,10 @@ pnpm paperclipai plugin install /absolute/path/to/honcho-ai-paperclip-honcho-0.1
    - `Repair mappings`
 
 `honchoApiKeySecretRef` is the only field required for the standard setup path. The other settings already have defaults.
+
+<Note>
+If you use a self-hosted or local Honcho deployment, `honchoApiBaseUrl` must be reachable from the Paperclip host runtime. If Paperclip is running in Docker, `localhost` may not point at your machine.
+</Note>
 
 ## Multi-Agent Hierarchy
 
@@ -111,7 +105,7 @@ The settings page exposes the main operator workflow directly:
 
 ### Required Setting
 
-Set `honchoApiKeySecretRef` first. Everything else can be left at the defaults until you have a reason to change it.
+Set `honchoApiKeySecretRef` first. If you are not using Honcho Cloud, also set `honchoApiBaseUrl`. Everything else can be left at the defaults until you have a reason to change it.
 
 ### Default Behavior
 
