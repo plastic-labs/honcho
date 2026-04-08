@@ -286,7 +286,7 @@ def test_app_settings_reject_non_1536_dimensions_while_pgvector_or_dual_write_ac
 
 
 def test_config_toml_example_uses_nested_model_config_sections() -> None:
-    config_path = Path(__file__).resolve().parents[3] / "config.toml.example"
+    config_path = Path(__file__).resolve().parents[2] / "config.toml.example"
     config_data = load_toml_config(str(config_path))
 
     deriver_config = ConfiguredModelSettings.model_validate(
@@ -334,7 +334,7 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
 
 
 def test_env_template_uses_nested_model_config_keys() -> None:
-    env_template_path = Path(__file__).resolve().parents[3] / ".env.template"
+    env_template_path = Path(__file__).resolve().parents[2] / ".env.template"
     env_template = env_template_path.read_text()
 
     assert "EMBEDDING_MODEL_CONFIG__MODEL" in env_template
