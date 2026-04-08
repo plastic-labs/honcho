@@ -854,6 +854,7 @@ async def get_observation_context(
     workspace_name: str,
     session_name: str | None,
     message_ids: list[str],
+    observer: str | None = None,
 ) -> list[models.Message]:
     """
     Retrieve messages for given message IDs along with surrounding context.
@@ -867,12 +868,25 @@ async def get_observation_context(
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         message_ids: List of message IDs to retrieve
+        observer: When provided and session_name is None, scope results
+            to sessions this peer belongs to
 
     Returns:
         List of messages in chronological order, including the requested messages and surrounding context
     """
     if not message_ids:
         return []
+
+    # Pre-fetch peer session scope if needed
+    allowed_session_names: list[str] | None = None
+    if observer and not session_name:
+        from src.crud.message import get_peer_session_names
+
+        allowed_session_names = await get_peer_session_names(
+            db, workspace_name, observer
+        )
+        if not allowed_session_names:
+            return []
 
     # Use a CTE to get seq_in_session values for target messages
     stmt = (
@@ -883,6 +897,8 @@ async def get_observation_context(
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
+    elif allowed_session_names is not None:
+        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
 
     target_seqs_cte = stmt.cte("target_seqs")
 
@@ -905,6 +921,8 @@ async def get_observation_context(
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
+    elif allowed_session_names is not None:
+        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
 
     result = await db.execute(stmt)
     messages = list(result.scalars().all())
@@ -916,6 +934,7 @@ async def extract_preferences(
     workspace_name: str,
     session_name: str | None,
     observed: str,
+    observer: str | None = None,
 ) -> dict[str, list[str]]:
     """
     Extract user preferences and standing instructions from conversation history.
@@ -927,6 +946,8 @@ async def extract_preferences(
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: The peer whose preferences to extract
+        observer: When provided and session_name is None, scope results
+            to sessions this peer belongs to
 
     Returns:
         Dict with 'messages' list containing potentially relevant messages
@@ -970,6 +991,7 @@ async def extract_preferences(
                     if query_embeddings_by_query is not None
                     else None
                 ),
+                observer=observer,
             )
             for matches, _ in snippets:
                 for msg in matches:
@@ -1270,6 +1292,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
                 limit=limit,
                 context_window=0,
                 embedding=query_embedding,
+                observer=ctx.observer,
             )
             if snippets:
                 message_output = _format_message_snippets(
@@ -1298,6 +1321,7 @@ async def _handle_get_observation_context(
             workspace_name=ctx.workspace_name,
             session_name=ctx.session_name,
             message_ids=tool_input["message_ids"],
+            observer=ctx.observer,
         )
         if not messages:
             return f"No messages found for IDs {tool_input['message_ids']}"
@@ -1329,6 +1353,7 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
         limit=limit,
         context_window=2,
         embedding=query_embedding,
+        observer=ctx.observer,
     )
     if not snippets:
         return f"No messages found for query '{query}'"
@@ -1352,6 +1377,7 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
         text=text,
         limit=limit,
         context_window=context_window,
+        observer=ctx.observer,
     )
     if not snippets:
         return f"No messages found containing '{text}'"
@@ -1415,6 +1441,7 @@ async def _handle_get_messages_by_date_range(
             before_date=before_date,
             limit=limit,
             order=order,
+            observer=ctx.observer,
         )
         msg_count = len(messages)
         messages_text = (
@@ -1482,6 +1509,7 @@ async def _handle_search_messages_temporal(
         limit=limit,
         context_window=context_window,
         embedding=query_embedding,
+        observer=ctx.observer,
     )
     date_filter: list[str] = []
     if after_date_str:
@@ -1645,6 +1673,7 @@ async def _handle_extract_preferences(
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
         observed=ctx.observed,
+        observer=ctx.observer,
     )
 
     messages = results.get("messages", [])

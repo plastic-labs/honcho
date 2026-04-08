@@ -535,8 +535,9 @@ class TestSearchMemory:
             limit: int = 10,
             context_window: int = 2,
             embedding: list[float] | None = None,
+            observer: str | None = None,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
-            _ = (workspace_name, session_name, query, limit, context_window)
+            _ = (workspace_name, session_name, query, limit, context_window, observer)
             fallback_embeddings.append(embedding)
             msg = models.Message(
                 workspace_name=ctx.workspace_name,
@@ -638,6 +639,7 @@ class TestSearchMessagesTemporal:
             limit: int = 10,
             context_window: int = 2,
             embedding: list[float] | None = None,
+            observer: str | None = None,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (
                 workspace_name,
@@ -647,6 +649,7 @@ class TestSearchMessagesTemporal:
                 before_date,
                 limit,
                 context_window,
+                observer,
             )
             forwarded_embeddings.append(embedding)
             msg = models.Message(
@@ -1067,8 +1070,9 @@ class TestExtractPreferences:
             limit: int,
             context_window: int,
             embedding: list[float] | None,
+            observer: str | None = None,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
-            _ = (limit, context_window)
+            _ = (limit, context_window, observer)
             embedding_args.append(embedding)
             msg = models.Message(
                 workspace_name=workspace_name,
@@ -1361,3 +1365,55 @@ class TestObservationLockRegistry:
         # All 100 entries should be cleaned up
         remaining = sum(1 for k in _observation_locks if k[0].startswith("ws_growth_"))
         assert remaining == 0
+
+
+@pytest.mark.asyncio
+class TestObserverPeerNameWiring:
+    """Tests that tool handlers pass observer to CRUD functions."""
+
+    async def test_grep_messages_passes_observer(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """_handle_grep_messages passes ctx.observer as observer."""
+        ctx = make_tool_context()
+        captured_kwargs: dict[str, Any] = {}
+
+        async def fake_grep_messages(
+            **kwargs: Any,
+        ) -> list[tuple[list[models.Message], list[models.Message]]]:
+            captured_kwargs.update(kwargs)
+            return []
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.grep_messages", fake_grep_messages
+        )
+
+        await _handle_grep_messages(ctx, {"text": "hello"})
+
+        assert captured_kwargs["observer"] == ctx.observer
+
+    async def test_get_messages_by_date_range_passes_observer(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """_handle_get_messages_by_date_range passes ctx.observer as observer."""
+        ctx = make_tool_context()
+        captured_kwargs: dict[str, Any] = {}
+
+        async def fake_get_messages_by_date_range(
+            _db: Any, **kwargs: Any
+        ) -> list[models.Message]:
+            captured_kwargs.update(kwargs)
+            return []
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.get_messages_by_date_range",
+            fake_get_messages_by_date_range,
+        )
+
+        await _handle_get_messages_by_date_range(ctx, {"after_date": "2024-01-01"})
+
+        assert captured_kwargs["observer"] == ctx.observer
