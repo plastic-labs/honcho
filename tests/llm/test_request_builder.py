@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from src.config import ModelConfig
 from src.llm.caching import PromptCachePolicy
 from src.llm.request_builder import execute_completion
-from tests.unit.llm.conftest import FakeBackend
+from tests.llm.conftest import FakeBackend
 
 
 class SampleResponse(BaseModel):
