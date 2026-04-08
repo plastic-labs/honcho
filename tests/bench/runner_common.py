@@ -441,10 +441,6 @@ class BaseRunner(ABC, Generic[ResultT]):
             f"{self.get_metrics_prefix()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
         self.logger: Logger = configure_logging()
-        # Semaphore for rate limiting concurrent item execution
-        self._concurrency_semaphore: asyncio.Semaphore | None = (
-            asyncio.Semaphore(config.max_concurrent) if config.max_concurrent else None
-        )
 
     # -------------------------------------------------------------------------
     # Abstract methods - must be implemented by subclasses
@@ -559,59 +555,64 @@ class BaseRunner(ABC, Generic[ResultT]):
             print(f"Limiting to {self.config.max_concurrent} concurrent item(s)")
 
         overall_start = time.time()
-        all_results: list[ResultT] = []
+        all_results: list[ResultT | None] = [None] * len(items)
 
-        # Process in batches
-        batch_size = self.config.batch_size
-        for i in range(0, len(items), batch_size):
-            batch = items[i : i + batch_size]
-            batch_num = (i // batch_size) + 1
-            total_batches = (len(items) + batch_size - 1) // batch_size
+        # Two-level concurrency:
+        # - inflight_sem limits how many items may be in the pipeline at once
+        # - active_sem limits how many items may actively hit Honcho at once
+        # Items release active_sem while waiting on queue polling so other work
+        # can progress, but inflight_sem prevents an unlimited thundering herd.
+        concurrency = self.config.max_concurrent or self.config.batch_size
+        inflight_sem = asyncio.Semaphore(concurrency)
+        active_sem = asyncio.Semaphore(concurrency)
 
-            print(f"\n{'=' * 60}")
-            print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} items)")
-            print(f"{'=' * 60}")
+        async def _run_item(index: int, item: Any) -> None:
+            async with inflight_sem:
+                result = await self.execute_item(
+                    item,
+                    self._get_honcho_url(index),
+                    active_sem=active_sem,
+                )
+                all_results[index] = result
 
-            # Run items in batch concurrently (with optional rate limiting)
-            batch_results = await asyncio.gather(
-                *[
-                    self._execute_item_with_limit(item, self._get_honcho_url(i + idx))
-                    for idx, item in enumerate(batch)
-                ]
-            )
-
-            all_results.extend(batch_results)
+        tasks = [
+            asyncio.create_task(_run_item(index, item))
+            for index, item in enumerate(items)
+        ]
+        await asyncio.gather(*tasks)
 
         overall_duration = time.time() - overall_start
 
         # Finalize metrics
         self.metrics_collector.finalize_collection()
 
-        return all_results, overall_duration
+        missing_indexes = [
+            index for index, result in enumerate(all_results) if result is None
+        ]
+        if missing_indexes:
+            raise RuntimeError(
+                f"Missing benchmark results for item indexes: {missing_indexes}"
+            )
 
-    async def _execute_item_with_limit(self, item: Any, honcho_url: str) -> ResultT:
-        """Wrapper that applies concurrency limiting if configured."""
-        if self._concurrency_semaphore:
-            async with self._concurrency_semaphore:
-                return await self.execute_item(item, honcho_url)
-        return await self.execute_item(item, honcho_url)
+        return [cast(ResultT, result) for result in all_results], overall_duration
 
-    async def execute_item(self, item: Any, honcho_url: str) -> ResultT:
+    async def execute_item(
+        self,
+        item: Any,
+        honcho_url: str,
+        active_sem: asyncio.Semaphore | None = None,
+    ) -> ResultT:
         """
         Execute a single benchmark item.
 
-        This method orchestrates the standard flow:
-        1. Create workspace and client
-        2. Setup peers and session
-        3. Ingest messages
-        4. Wait for queue to empty
-        5. Trigger dreams
-        6. Execute questions
-        7. Cleanup (if configured)
+        Active work (setup, ingest, dream scheduling, query execution) acquires
+        ``active_sem`` when provided. Idle queue polling releases that slot so
+        other items can continue making forward progress.
 
         Args:
             item: The item to process
             honcho_url: URL of the Honcho instance to use
+            active_sem: Optional semaphore limiting active I/O phases
 
         Returns:
             Result for this item
@@ -635,21 +636,22 @@ class BaseRunner(ABC, Generic[ResultT]):
         start_time = time.time()
 
         try:
-            # Setup peers
-            await self.setup_peers(ctx, item)
+            # Setup peers/session and ingest under the active semaphore.
+            if active_sem:
+                await active_sem.acquire()
+            try:
+                await self.setup_peers(ctx, item)
+                await self.setup_session(ctx, item)
 
-            # Setup session
-            await self.setup_session(ctx, item)
-
-            # Ingest messages
-            print(f"[{workspace_id}] Ingesting messages...")
-            message_count = await self.ingest_messages(ctx, item)
-            print(f"[{workspace_id}] Ingested {message_count} messages")
+                print(f"[{workspace_id}] Ingesting messages...")
+                message_count = await self.ingest_messages(ctx, item)
+                print(f"[{workspace_id}] Ingested {message_count} messages")
+            finally:
+                if active_sem:
+                    active_sem.release()
 
             # Wait for deriver queue
             print(f"[{workspace_id}] Waiting for deriver queue to empty...")
-            await asyncio.sleep(1)  # Give time for tasks to be queued
-
             queue_empty = await self._wait_for_queue_empty(ctx.honcho_client)
             if not queue_empty:
                 raise TimeoutError(
@@ -670,20 +672,72 @@ class BaseRunner(ABC, Generic[ResultT]):
                 + f"{len(dream_observers)} observer(s) across "
                 + f"{len(dream_session_ids)} session(s)..."
             )
-            for observer in dream_observers:
-                for dream_session_id in dream_session_ids:
-                    success = await self._trigger_dream(
-                        ctx.honcho_client, workspace_id, observer, dream_session_id
-                    )
-                    if not success:
+
+            if self.config.skip_dream:
+                print(f"[{workspace_id}] Skipping dreams (--skip-dream)")
+            else:
+
+                async def _schedule_dream(
+                    observer: str,
+                    session_id: str,
+                ) -> bool:
+                    try:
+                        if active_sem:
+                            await active_sem.acquire()
+                        try:
+                            await ctx.honcho_client.aio.schedule_dream(
+                                observer=observer,
+                                session=session_id,
+                                observed=observer,
+                            )
+                        finally:
+                            if active_sem:
+                                active_sem.release()
                         print(
-                            f"[{workspace_id}] Warning: Dream for {observer} in "
-                            + f"session {dream_session_id} did not complete"
+                            f"[{workspace_id}] Dream triggered for "
+                            + f"{observer}/{observer} in {session_id}"
                         )
+                        return True
+                    except Exception as e:
+                        print(
+                            f"[{workspace_id}] ERROR: Dream trigger exception "
+                            + f"for {observer} in {session_id}: {e}"
+                        )
+                        return False
+
+                dream_results = await asyncio.gather(
+                    *[
+                        _schedule_dream(observer, dream_session_id)
+                        for observer in dream_observers
+                        for dream_session_id in dream_session_ids
+                    ]
+                )
+
+                if all(dream_results):
+                    success = await self._wait_for_queue_empty(ctx.honcho_client)
+                    if success:
+                        print(f"[{workspace_id}] All dreams completed")
+                    else:
+                        print(f"[{workspace_id}] Dreams timed out")
+                elif any(dream_results):
+                    failed = [i for i, ok in enumerate(dream_results) if not ok]
+                    print(
+                        f"[{workspace_id}] Warning: {len(failed)} of "
+                        + f"{len(dream_results)} dream schedules failed"
+                    )
+                    await self._wait_for_queue_empty(ctx.honcho_client)
+                else:
+                    print(f"[{workspace_id}] Warning: No dreams were scheduled")
 
             # Execute questions
             print(f"[{workspace_id}] Executing questions...")
-            result = await self.execute_questions(ctx, item)
+            if active_sem:
+                await active_sem.acquire()
+            try:
+                result = await self.execute_questions(ctx, item)
+            finally:
+                if active_sem:
+                    active_sem.release()
 
             # Cleanup
             if self.config.cleanup_workspace:
@@ -765,13 +819,15 @@ class BaseRunner(ABC, Generic[ResultT]):
     async def _wait_for_queue_empty(
         self, honcho_client: Honcho, session_id: str | None = None
     ) -> bool:
-        """Wait for the deriver queue to be empty."""
+        """Wait for the deriver queue to be empty with exponential backoff."""
         start_time = time.time()
+        delay = 0.2
         while True:
             try:
                 status = await honcho_client.aio.queue_status(session=session_id)
             except Exception:
-                await asyncio.sleep(1)
+                await asyncio.sleep(delay)
+                delay = min(delay * 1.5, 2.0)
                 if time.time() - start_time >= self.config.timeout_seconds:
                     return False
                 continue
@@ -781,7 +837,8 @@ class BaseRunner(ABC, Generic[ResultT]):
 
             if time.time() - start_time >= self.config.timeout_seconds:
                 return False
-            await asyncio.sleep(1)
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 2.0)
 
     async def _trigger_dream(
         self,
@@ -815,8 +872,6 @@ class BaseRunner(ABC, Generic[ResultT]):
 
         print(f"[{workspace_id}] Dream triggered for {observer}/{observed}")
 
-        # Wait for dream to complete
-        await asyncio.sleep(2)
         success = await self._wait_for_queue_empty(honcho_client)
         if success:
             print(f"[{workspace_id}] Dream for {observer} completed")

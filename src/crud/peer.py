@@ -223,7 +223,11 @@ async def update_peer(
     db: AsyncSession, workspace_name: str, peer_name: str, peer: schemas.PeerUpdate
 ) -> models.Peer:
     """
-    Update a peer.
+    Get or create a peer, then apply metadata and configuration updates.
+
+    If the peer does not exist, the workspace and peer are created first.
+    Provided metadata and configuration replace the existing values when
+    present.
 
     Args:
         db: Database session
@@ -235,9 +239,8 @@ async def update_peer(
         The updated peer
 
     Raises:
-        ResourceNotFoundException: If the peer does not exist
-        ValidationException: If the update data is invalid
-        ConflictException: If the update violates a unique constraint
+        ConflictException: If concurrent creation prevents fetching or creating
+            the peer
     """
     peers_result = await get_or_create_peers(
         db, workspace_name, [schemas.PeerCreate(name=peer_name)]
@@ -269,7 +272,6 @@ async def update_peer(
         return honcho_peer
 
     await db.commit()
-    await db.refresh(honcho_peer)
     await peers_result.post_commit()
 
     cache_key = peer_cache_key(workspace_name, honcho_peer.name)
