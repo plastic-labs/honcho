@@ -10,7 +10,7 @@ class SampleResponse(BaseModel):
     answer: str
 
 
-async def test_gemini_explicit_budget_adjusts_transport_max_tokens(
+async def test_gemini_explicit_budget_passes_tokens_through_without_adjustment(
     fake_backend: FakeBackend,
 ) -> None:
     config = ModelConfig(
@@ -27,8 +27,9 @@ async def test_gemini_explicit_budget_adjusts_transport_max_tokens(
     )
 
     call = fake_backend.calls[0]
+    # No auto-adjustment — operators set explicit values
     assert call["max_output_tokens"] == 100
-    assert call["max_tokens"] == 356
+    assert call["max_tokens"] == 100
     assert call["thinking_budget_tokens"] == 256
 
 

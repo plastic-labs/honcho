@@ -199,17 +199,6 @@ ENABLED_TYPES = ["omni"]
 MAX_TOOL_ITERATIONS = 20
 HISTORY_TOKEN_LIMIT = 16384
 
-[dream.model_config]
-transport = "anthropic"
-model = "claude-sonnet-4-20250514"
-thinking_budget_tokens = 8192
-max_output_tokens = 16384
-
-# [dream.model_config.fallback]
-# transport = "gemini"
-# model = "gemini-2.5-flash"
-
-# Specialist model configs inherit omitted settings and overrides from dream.model_config
 [dream.deduction_model_config]
 transport = "anthropic"
 model = "claude-haiku-4-5"

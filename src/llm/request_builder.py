@@ -9,22 +9,7 @@ from src.config import ModelConfig
 
 from .backend import CompletionResult, ProviderBackend, StreamChunk
 from .caching import PromptCachePolicy
-from .capabilities import ModelCapabilities, get_model_capabilities
 from .credentials import resolve_credentials
-
-
-def _adjust_max_tokens_for_explicit_budget(
-    capabilities: ModelCapabilities,
-    max_tokens: int,
-    thinking_budget_tokens: int | None,
-) -> int:
-    if (
-        capabilities.shared_reasoning_budget
-        and thinking_budget_tokens is not None
-        and thinking_budget_tokens > 0
-    ):
-        return max_tokens + thinking_budget_tokens
-    return max_tokens
 
 
 def _build_config_extra_params(config: ModelConfig) -> dict[str, Any]:
@@ -59,7 +44,6 @@ async def execute_completion(
     cache_policy: PromptCachePolicy | None = None,
     extra_params: dict[str, Any] | None = None,
 ) -> CompletionResult:
-    capabilities = get_model_capabilities(config)
     credentials = resolve_credentials(config)
     thinking_budget_tokens = (
         config.thinking_budget_tokens
@@ -67,12 +51,7 @@ async def execute_completion(
         and config.thinking_budget_tokens > 0
         else None
     )
-    requested_output_tokens = config.max_output_tokens or max_tokens
-    effective_max_tokens = _adjust_max_tokens_for_explicit_budget(
-        capabilities,
-        requested_output_tokens,
-        thinking_budget_tokens,
-    )
+    effective_max_tokens = config.max_output_tokens or max_tokens
 
     merged_extra_params = {
         **_build_config_extra_params(config),
@@ -92,7 +71,7 @@ async def execute_completion(
         response_format=response_format,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_effort=config.thinking_effort,
-        max_output_tokens=requested_output_tokens,
+        max_output_tokens=effective_max_tokens,
         api_key=credentials.get("api_key"),
         api_base=credentials.get("api_base"),
         extra_params=merged_extra_params,
@@ -112,7 +91,6 @@ async def execute_stream(
     cache_policy: PromptCachePolicy | None = None,
     extra_params: dict[str, Any] | None = None,
 ) -> AsyncIterator[StreamChunk]:
-    capabilities = get_model_capabilities(config)
     credentials = resolve_credentials(config)
     thinking_budget_tokens = (
         config.thinking_budget_tokens
@@ -120,12 +98,7 @@ async def execute_stream(
         and config.thinking_budget_tokens > 0
         else None
     )
-    requested_output_tokens = config.max_output_tokens or max_tokens
-    effective_max_tokens = _adjust_max_tokens_for_explicit_budget(
-        capabilities,
-        requested_output_tokens,
-        thinking_budget_tokens,
-    )
+    effective_max_tokens = config.max_output_tokens or max_tokens
 
     merged_extra_params = {
         **_build_config_extra_params(config),
@@ -145,7 +118,7 @@ async def execute_stream(
         response_format=response_format,
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_effort=config.thinking_effort,
-        max_output_tokens=requested_output_tokens,
+        max_output_tokens=effective_max_tokens,
         api_key=credentials.get("api_key"),
         api_base=credentials.get("api_base"),
         extra_params=merged_extra_params,

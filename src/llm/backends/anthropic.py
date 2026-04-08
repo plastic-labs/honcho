@@ -71,20 +71,26 @@ class AnthropicBackend:
                 "type": "enabled",
                 "budget_tokens": thinking_budget_tokens,
             }
+        if extra_params:
+            for key in ("top_p", "top_k"):
+                if key in extra_params:
+                    params[key] = extra_params[key]
 
         use_json_prefill = (
             bool(response_format or self._json_mode(extra_params))
             and not thinking_budget_tokens
             and self._supports_assistant_prefill(model)
         )
-        if use_json_prefill:
+        if use_json_prefill and params["messages"]:
             if response_format and isinstance(response_format, type):
                 schema_json = json.dumps(response_format.model_json_schema(), indent=2)
                 params["messages"][-1]["content"] += (
                     f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
                 )
             params["messages"].append({"role": "assistant", "content": "{"})
-        elif response_format and isinstance(response_format, type):
+        elif (
+            response_format and isinstance(response_format, type) and params["messages"]
+        ):
             schema_json = json.dumps(response_format.model_json_schema(), indent=2)
             params["messages"][-1]["content"] += (
                 f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
@@ -119,7 +125,7 @@ class AnthropicBackend:
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         is_json_mode = self._json_mode(extra_params)
-        del max_output_tokens, api_key, api_base, extra_params
+        del max_output_tokens, api_key, api_base
         if thinking_effort is not None:
             raise ValueError(
                 "Anthropic backend does not support thinking_effort; use thinking_budget_tokens instead"
@@ -148,19 +154,25 @@ class AnthropicBackend:
                     "cache_control": {"type": "ephemeral"},
                 }
             ]
+        if extra_params:
+            for key in ("top_p", "top_k"):
+                if key in extra_params:
+                    params[key] = extra_params[key]
         use_json_prefill = (
             bool(response_format or is_json_mode)
             and not thinking_budget_tokens
             and self._supports_assistant_prefill(model)
         )
-        if use_json_prefill:
+        if use_json_prefill and params["messages"]:
             if response_format and isinstance(response_format, type):
                 schema_json = json.dumps(response_format.model_json_schema(), indent=2)
                 params["messages"][-1]["content"] += (
                     f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
                 )
             params["messages"].append({"role": "assistant", "content": "{"})
-        elif response_format and isinstance(response_format, type):
+        elif (
+            response_format and isinstance(response_format, type) and params["messages"]
+        ):
             schema_json = json.dumps(response_format.model_json_schema(), indent=2)
             params["messages"][-1]["content"] += (
                 f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"

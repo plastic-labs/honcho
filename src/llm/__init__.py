@@ -13,7 +13,6 @@ from .backend import CompletionResult, ProviderBackend, StreamChunk, ToolCallRes
 from .backends.anthropic import AnthropicBackend
 from .backends.gemini import GeminiBackend
 from .backends.openai import OpenAIBackend
-from .capabilities import ModelCapabilities, get_model_capabilities
 from .credentials import resolve_credentials
 
 
@@ -97,11 +96,9 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
 
 __all__ = [
     "CompletionResult",
-    "ModelCapabilities",
     "ProviderBackend",
     "StreamChunk",
     "ToolCallResult",
     "get_backend",
-    "get_model_capabilities",
     "resolve_credentials",
 ]

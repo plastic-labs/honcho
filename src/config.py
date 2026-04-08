@@ -405,85 +405,32 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
     )
 
 
+def _default_embedding_api_key(transport: EmbeddingTransport) -> str | None:
+    """Fall back to the global LLM API key for the matching transport."""
+    if transport == "openai":
+        return settings.LLM.OPENAI_API_KEY
+    if transport == "gemini":
+        return settings.LLM.GEMINI_API_KEY
+
+
 def resolve_embedding_model_config(
     configured: ConfiguredEmbeddingModelSettings,
 ) -> EmbeddingModelConfig:
     """Resolve persisted embedding settings into the runtime config."""
 
+    api_key = _resolve_secret(
+        configured.overrides.api_key,
+        configured.overrides.api_key_env,
+    )
+    if api_key is None:
+        api_key = _default_embedding_api_key(configured.transport)
+
     return EmbeddingModelConfig(
         model=configured.model,
         transport=configured.transport,
-        api_key=_resolve_secret(
-            configured.overrides.api_key,
-            configured.overrides.api_key_env,
-        ),
+        api_key=api_key,
         base_url=configured.overrides.base_url,
     )
-
-
-def _merge_override_defaults(
-    configured: ModelOverrideSettings,
-    defaults: ModelOverrideSettings,
-) -> ModelOverrideSettings:
-    update: dict[str, Any] = {}
-    configured_fields = configured.model_fields_set
-
-    for field in (
-        "api_key",
-        "api_key_env",
-        "base_url",
-    ):
-        if field not in configured_fields:
-            default_value = getattr(defaults, field)
-            if default_value is not None:
-                update[field] = default_value
-
-    merged_provider_params = {
-        **defaults.provider_params,
-        **configured.provider_params,
-    }
-    if merged_provider_params != configured.provider_params:
-        update["provider_params"] = merged_provider_params
-
-    return configured.model_copy(update=update) if update else configured
-
-
-def _merge_configured_model_defaults(
-    configured: ConfiguredModelSettings,
-    defaults: ConfiguredModelSettings,
-) -> ConfiguredModelSettings:
-    update: dict[str, Any] = {}
-    configured_fields = configured.model_fields_set
-
-    for field in (
-        "transport",
-        "temperature",
-        "top_p",
-        "top_k",
-        "frequency_penalty",
-        "presence_penalty",
-        "seed",
-        "thinking_effort",
-        "thinking_budget_tokens",
-        "max_output_tokens",
-        "stop_sequences",
-    ):
-        if field not in configured_fields:
-            default_value = getattr(defaults, field)
-            if default_value != getattr(configured, field):
-                update[field] = default_value
-
-    # Inherit fallback config from defaults if not explicitly set
-    if "fallback" not in configured_fields and defaults.fallback is not None:
-        update["fallback"] = defaults.fallback
-
-    merged_overrides = _merge_override_defaults(
-        configured.overrides, defaults.overrides
-    )
-    if merged_overrides != configured.overrides:
-        update["overrides"] = merged_overrides
-
-    return configured.model_copy(update=update) if update else configured
 
 
 def _fill_defaults_for_nested_field(
@@ -1081,17 +1028,6 @@ class DreamSettings(HonchoSettings):
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["omni"]
 
-    @staticmethod
-    def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
-        return ConfiguredModelSettings(
-            transport="anthropic",
-            model="claude-sonnet-4-20250514",
-            thinking_budget_tokens=8192,
-            max_output_tokens=16_384,
-        )
-
-    MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
-
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
 
@@ -1131,9 +1067,6 @@ class DreamSettings(HonchoSettings):
         if isinstance(data, dict):
             typed_data = cast(dict[str, Any], data)
             _fill_defaults_for_nested_field(
-                typed_data, "MODEL_CONFIG", cls._MODEL_CONFIG_DEFAULT
-            )
-            _fill_defaults_for_nested_field(
                 typed_data,
                 "DEDUCTION_MODEL_CONFIG",
                 cls._DEDUCTION_MODEL_CONFIG_DEFAULT,
@@ -1144,42 +1077,6 @@ class DreamSettings(HonchoSettings):
                 cls._INDUCTION_MODEL_CONFIG_DEFAULT,
             )
         return data  # pyright: ignore[reportUnknownVariableType]
-
-    @model_validator(mode="after")
-    def _merge_specialist_model_defaults(self) -> "DreamSettings":
-        object.__setattr__(
-            self,
-            "DEDUCTION_MODEL_CONFIG",
-            _merge_configured_model_defaults(
-                self.DEDUCTION_MODEL_CONFIG,
-                self.MODEL_CONFIG,
-            ),
-        )
-        object.__setattr__(
-            self,
-            "INDUCTION_MODEL_CONFIG",
-            _merge_configured_model_defaults(
-                self.INDUCTION_MODEL_CONFIG,
-                self.MODEL_CONFIG,
-            ),
-        )
-        return self
-
-    @model_validator(mode="after")
-    def _validate_token_budgets(self) -> "DreamSettings":
-        """Ensure the output token limit exceeds the thinking budget."""
-        max_output_tokens = self.MODEL_CONFIG.max_output_tokens
-        thinking_budget_tokens = self.MODEL_CONFIG.thinking_budget_tokens
-        if (
-            max_output_tokens is not None
-            and thinking_budget_tokens is not None
-            and max_output_tokens <= thinking_budget_tokens
-        ):
-            raise ValueError(
-                "dream.MODEL_CONFIG.max_output_tokens must be greater than "
-                + "dream.MODEL_CONFIG.thinking_budget_tokens"
-            )
-        return self
 
 
 class VectorStoreSettings(HonchoSettings):
