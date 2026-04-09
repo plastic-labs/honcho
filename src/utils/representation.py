@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -120,10 +120,45 @@ class PromptRepresentation(BaseModel):
 
     @field_validator("explicit", mode="before")
     @classmethod
-    def convert_none_to_empty_list(cls, v: Any) -> Any:
-        """Convert None to empty list - handles LLMs returning null instead of []."""
+    def normalize_explicit(cls, v: Any) -> Any:
+        """Normalize loose shapes emitted by OpenAI-compatible providers.
+
+        Some structured-output backends occasionally emit ``explicit`` as a
+        bare string or a list of strings instead of the declared list of
+        ``{"content": str}`` objects. When that happens the whole deriver
+        batch currently falls through to the empty-fallback representation,
+        dropping otherwise usable observations (see issue #524).
+
+        This validator coerces the following shapes into the declared one:
+
+        - ``None`` -> ``[]`` (preserves prior behavior)
+        - ``"User works remotely"`` -> ``[{"content": "User works remotely"}]``
+        - ``["A", "B"]`` -> ``[{"content": "A"}, {"content": "B"}]``
+        - ``["A", {"content": "B"}]`` -> mixed strings and dicts coexist
+        - blank/whitespace-only strings are dropped
+
+        Anything that is neither ``None``, ``str``, nor ``list`` is passed
+        through unchanged so Pydantic raises its normal validation error.
+        """
         if v is None:
             return []
+        if isinstance(v, str):
+            stripped = v.strip()
+            return [{"content": stripped}] if stripped else []
+        if isinstance(v, list):
+            normalized: list[Any] = []
+            for item in cast(list[Any], v):
+                if item is None:
+                    continue
+                if isinstance(item, str):
+                    stripped = item.strip()
+                    if stripped:
+                        normalized.append({"content": stripped})
+                    continue
+                # dicts, ExplicitObservationBase instances, etc. pass through
+                # to normal Pydantic validation.
+                normalized.append(item)
+            return normalized
         return v
 
 
