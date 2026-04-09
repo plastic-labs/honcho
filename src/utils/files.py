@@ -191,14 +191,15 @@ class AudioProcessor:
         return f"{filename}{suffix}"
 
     def _probe_audio_duration_seconds(self, content: bytes, suffix: str) -> float:
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
-            temp_file.write(content)
-            temp_path = Path(temp_file.name)
-
+        temp_path: Path | None = None
         try:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+                temp_path = Path(temp_file.name)
+                temp_file.write(content)
             return self.probe_audio_duration_seconds_from_path(temp_path)
         finally:
-            temp_path.unlink(missing_ok=True)
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
 
     def probe_audio_duration_seconds_from_path(self, path: Path) -> float:
         try:

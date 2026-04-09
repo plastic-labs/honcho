@@ -30,6 +30,37 @@ def test_audio_defaults_use_openai_whisper_without_backup():
     assert settings.AUDIO.MODEL == "whisper-1"
 
 
+def test_probe_audio_duration_cleans_up_temp_file_on_write_failure():
+    processor = AudioProcessor()
+
+    class FailingTempFile:
+        name: str = "/tmp/test-audio-probe.mp3"
+
+        def __enter__(self) -> "FailingTempFile":
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> bool:
+            return False
+
+        def write(self, _content: bytes) -> int:
+            raise OSError("disk full")
+
+    with (
+        patch("src.utils.files.tempfile.NamedTemporaryFile", return_value=FailingTempFile()),
+        patch("src.utils.files.Path.unlink") as mock_unlink,
+        pytest.raises(OSError, match="disk full"),
+    ):
+        probe_audio_duration_seconds = getattr(processor, "_probe_audio_duration_seconds")
+        probe_audio_duration_seconds(b"audio-bytes", ".mp3")
+
+    mock_unlink.assert_called_once_with(missing_ok=True)
+
+
 @pytest.mark.asyncio
 async def test_audio_upload_requires_openai_client_before_processing():
     file = UploadFile(
