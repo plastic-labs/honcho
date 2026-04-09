@@ -1,9 +1,9 @@
 # HorizontalPodAutoscaler for the Honcho API.
 #
-# Prerequisites: metrics-server must be installed in the cluster.
-#   kind/k3s:          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-#   Docker Desktop:    enabled by default
+# Prerequisites: metrics-server must be running in the cluster.
+#   Docker Desktop:    included by default
 #   k3s:               included by default
+#   kind:              install manually — kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 #
 # Scales the API between 1 and 5 replicas targeting 70% average CPU utilization.
 # Adjust maxReplicas and targetAverageUtilization to match your workload.

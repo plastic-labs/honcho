@@ -38,8 +38,14 @@ spec:
             - sh
             - -c
             - |
+              MAX_RETRIES=60; RETRY=0
               until nc -z postgres 5432; do
-                echo "Waiting for postgres..."
+                RETRY=$((RETRY + 1))
+                if [ "$RETRY" -ge "$MAX_RETRIES" ]; then
+                  echo "ERROR: postgres not reachable after $MAX_RETRIES attempts (120 s)"
+                  exit 1
+                fi
+                echo "Waiting for postgres... ($RETRY/$MAX_RETRIES)"
                 sleep 2
               done
               echo "PostgreSQL is ready."
@@ -68,8 +74,14 @@ spec:
             - sh
             - -c
             - |
+              MAX_RETRIES=60; RETRY=0
               until nc -z redis 6379; do
-                echo "Waiting for redis..."
+                RETRY=$((RETRY + 1))
+                if [ "$RETRY" -ge "$MAX_RETRIES" ]; then
+                  echo "ERROR: redis not reachable after $MAX_RETRIES attempts (120 s)"
+                  exit 1
+                fi
+                echo "Waiting for redis... ($RETRY/$MAX_RETRIES)"
                 sleep 2
               done
               echo "Redis is ready."

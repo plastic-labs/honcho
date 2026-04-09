@@ -17,6 +17,8 @@ spec:
       labels:
         app: redis
     spec:
+      # redis pods don't call the Kubernetes API.
+      automountServiceAccountToken: false
       containers:
         - name: redis
           image: redis:8.2

@@ -137,7 +137,7 @@ kubectl apply -f k8s/secrets.yaml
 kubectl apply -k k8s/
 ```
 
-Kustomize applies all resources in dependency order. Watch pods come up:
+Kustomize assembles and applies all resources in a single API call — it does **not** guarantee startup ordering. Startup ordering is handled by the init containers in the API and Deriver Deployments (they wait for Postgres and Redis to be ready before the main container starts). Watch pods come up:
 
 ```bash
 kubectl get pods -n honcho --watch

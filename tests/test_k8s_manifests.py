@@ -29,9 +29,12 @@ def manifests() -> list[dict[str, Any]]:
             ["kubectl", "kustomize", str(K8S_DIR)],
             capture_output=True,
             text=True,
+            timeout=30,
         )
     except FileNotFoundError:
         pytest.skip("kubectl not found on PATH — skipping k8s manifest tests")
+    except subprocess.TimeoutExpired:
+        pytest.fail("kubectl kustomize timed out after 30 s")
     assert result.returncode == 0, (
         f"kubectl kustomize failed:\n{result.stderr}"
     )
@@ -434,14 +437,20 @@ def test_init_containers_run_as_nobody(manifests: list[dict[str, Any]]):
             )
 
 
-def test_deployments_no_service_account_token(manifests: list[dict[str, Any]]):
-    """Neither the API nor the deriver must mount a service account token."""
-    for deployment_name in ("honcho-api", "honcho-deriver"):
-        deployment = _by_kind_name(manifests, "Deployment", deployment_name)
+def test_all_workloads_no_service_account_token(manifests: list[dict[str, Any]]):
+    """No workload pod should mount a service account token."""
+    workloads = [
+        ("Deployment", "honcho-api"),
+        ("Deployment", "honcho-deriver"),
+        ("StatefulSet", "postgres"),
+        ("StatefulSet", "redis"),
+    ]
+    for kind, name in workloads:
+        workload = _by_kind_name(manifests, kind, name)
         assert (
-            deployment["spec"]["template"]["spec"].get("automountServiceAccountToken")
+            workload["spec"]["template"]["spec"].get("automountServiceAccountToken")
             is False
-        ), f"{deployment_name} must set automountServiceAccountToken: false"
+        ), f"{kind}/{name} must set automountServiceAccountToken: false"
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +522,7 @@ def _assert_has_resource_limits(container: dict[str, Any], label: str):
     assert "limits" in resources, f"{label}: missing resource limits"
     assert "requests" in resources, f"{label}: missing resource requests"
     for kind in ("limits", "requests"):
-        for field in ("memory", "cpu"):
+        for field in ("memory", "cpu", "ephemeral-storage"):
             assert field in resources[kind], (
                 f"{label}: missing resources.{kind}.{field}"
             )
