@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from fastapi import UploadFile
 from nanoid import generate as generate_nanoid
 from openai import APIError
+import sentry_sdk
 from sqlalchemy import Integer, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -165,6 +166,7 @@ class AudioProcessor:
                 content_type=normalized_content_type,
             )
         except APIError as exc:
+            sentry_sdk.capture_exception(exc)
             raise FileProcessingError("Audio transcription failed") from exc
         return ExtractedFileText(
             text=text,
@@ -231,7 +233,8 @@ class AudioProcessor:
                 "Audio uploads require ffmpeg and ffprobe to be installed on the server"
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise ValidationException("Audio validation timed out") from exc
+            sentry_sdk.capture_exception(exc)
+            raise FileProcessingError("Audio validation timed out") from exc
         except (subprocess.CalledProcessError, ValueError) as exc:
             raise ValidationException("Uploaded audio is invalid or unreadable") from exc
 

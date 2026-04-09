@@ -67,13 +67,16 @@ def test_probe_audio_duration_timeout_raises_validation_exception():
     processor = AudioProcessor()
 
     with (
+        patch("src.utils.files.sentry_sdk.capture_exception") as mock_capture,
         patch(
             "src.utils.files.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=10),
         ),
-        pytest.raises(ValidationException, match="Audio validation timed out"),
+        pytest.raises(FileProcessingError, match="Audio validation timed out"),
     ):
         processor.probe_audio_duration_seconds_from_path(Path("/tmp/audio.mp3"))
+
+    mock_capture.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -203,6 +206,7 @@ async def test_audio_processor_extract_text_wraps_provider_errors():
     request = httpx.Request("POST", "https://api.openai.com/v1/audio/transcriptions")
 
     with (
+        patch("src.utils.files.sentry_sdk.capture_exception") as mock_capture,
         patch.object(processor, "_probe_audio_duration_seconds", return_value=1.0),
         patch(
             "src.utils.files.transcribe_audio",
@@ -215,6 +219,8 @@ async def test_audio_processor_extract_text_wraps_provider_errors():
             filename="seg-0.mp3",
             content_type="audio/mpeg",
         )
+
+    mock_capture.assert_called_once()
 
 
 @pytest.mark.asyncio
