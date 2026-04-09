@@ -70,17 +70,17 @@ class GeminiBackend:
             if extra_params and "cache_policy" in extra_params
             else None
         )
-        if isinstance(cache_policy, PromptCachePolicy):
+        if isinstance(cache_policy, PromptCachePolicy) and isinstance(contents, list):
+            # Cache the history prefix; only the last turn is sent as new input.
+            cacheable = contents[:-1] if contents else []
             await self._attach_cached_content(
                 model=model,
                 config=config,
                 cache_policy=cache_policy,
-                contents=contents if isinstance(contents, list) else [],
+                contents=cacheable,
                 tools=tools,
             )
-            # When cached_content is attached, the cached material is served
-            # via the handle — only send the final user message as new input.
-            if "cached_content" in config and isinstance(contents, list) and contents:
+            if "cached_content" in config and contents:
                 contents = contents[-1:]
 
         if isinstance(contents, list) and not contents:
@@ -342,7 +342,13 @@ class GeminiBackend:
         contents: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> None:
-        if cache_policy.mode != "gemini_cached_content" or not contents:
+        if cache_policy.mode != "gemini_cached_content":
+            return
+        # Worth caching if there are history messages, system instruction, or tools
+        has_cacheable = bool(
+            contents or config.get("system_instruction") or config.get("tools")
+        )
+        if not has_cacheable:
             return
 
         cache_key = build_cache_key(
@@ -354,15 +360,17 @@ class GeminiBackend:
         cached_handle = gemini_cache_store.get(cache_key)
         if cached_handle is None:
             ttl_seconds = cache_policy.ttl_seconds or 300
+            cache_config: dict[str, Any] = {
+                "system_instruction": config.get("system_instruction"),
+                "tools": config.get("tools"),
+                "tool_config": config.get("tool_config"),
+                "ttl": f"{ttl_seconds}s",
+            }
+            if contents:
+                cache_config["contents"] = contents
             cached_content = await self._client.aio.caches.create(
                 model=model,
-                config={
-                    "contents": contents,
-                    "system_instruction": config.get("system_instruction"),
-                    "tools": config.get("tools"),
-                    "tool_config": config.get("tool_config"),
-                    "ttl": f"{ttl_seconds}s",
-                },
+                config=cache_config,
             )
             expires_at = getattr(cached_content, "expire_time", None)
             if expires_at is None:

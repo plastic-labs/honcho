@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
 from openai import BadRequestError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
+from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.structured_output import (
     repair_response_model_json,
     validate_structured_output,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def extract_openai_reasoning_content(response: Any) -> str | None:
@@ -111,7 +115,7 @@ class OpenAIBackend:
     ) -> CompletionResult:
         del api_key, api_base
         if thinking_budget_tokens is not None:
-            raise ValueError(
+            raise ValidationException(
                 "OpenAI backend does not support thinking_budget_tokens; use thinking_effort instead"
             )
 
@@ -207,7 +211,7 @@ class OpenAIBackend:
     ) -> AsyncIterator[StreamChunk]:
         del api_key, api_base
         if thinking_budget_tokens is not None:
-            raise ValueError(
+            raise ValidationException(
                 "OpenAI backend does not support thinking_budget_tokens; use thinking_effort instead"
             )
 
@@ -318,13 +322,22 @@ class OpenAIBackend:
         message = response.choices[0].message
         if getattr(message, "tool_calls", None):
             for tool_call in message.tool_calls:
+                tool_input: dict[str, Any] = {}
+                if tool_call.function.arguments:
+                    try:
+                        tool_input = json.loads(tool_call.function.arguments)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(
+                            "Malformed tool arguments for %s (id=%s): %s",
+                            tool_call.function.name,
+                            tool_call.id,
+                            tool_call.function.arguments,
+                        )
                 tool_calls.append(
                     ToolCallResult(
                         id=tool_call.id,
                         name=tool_call.function.name,
-                        input=json.loads(tool_call.function.arguments)
-                        if tool_call.function.arguments
-                        else {},
+                        input=tool_input,
                     )
                 )
 

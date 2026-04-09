@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from src.exceptions import ValidationException
 from src.llm.backends.openai import OpenAIBackend
 
 
@@ -108,7 +109,9 @@ async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models
 async def test_openai_backend_rejects_thinking_budget_tokens() -> None:
     backend = OpenAIBackend(Mock())
 
-    with pytest.raises(ValueError, match="does not support thinking_budget_tokens"):
+    with pytest.raises(
+        ValidationException, match="does not support thinking_budget_tokens"
+    ):
         await backend.complete(
             model="gpt-5-mini",
             messages=[{"role": "user", "content": "Hello"}],
