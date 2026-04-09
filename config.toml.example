@@ -75,10 +75,7 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 [audio]
 PROVIDER = "openai"
 MODEL = "whisper-1"
-MAX_FILE_SIZE_BYTES = 9500000  # 9.5MB
-MAX_CHUNK_DURATION_SECONDS = 55
-MAX_CHUNK_BYTES = 5242880
-TRANSCRIPTION_CONCURRENCY = 4
+MAX_FILE_SIZE_BYTES = 25000000  # 25MB
 
 # Deriver settings
 [deriver]
