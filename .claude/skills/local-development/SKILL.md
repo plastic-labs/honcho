@@ -24,7 +24,7 @@ Guide for setting up, running, and developing on Honcho locally across macOS, Li
 ## Prerequisites
 
 - **Python**: 3.10+ required (tested through 3.13; newer versions like 3.14 may lack pre-built wheels for some dependencies)
-- **uv**: 0.4.9+ (package manager). Install: `curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS/Linux/WSL2) or `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"` (Windows PowerShell)
+- **uv**: 0.5.0+ (package manager). Install: `curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS/Linux/WSL2) or `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"` (Windows PowerShell)
 - **Docker**: Required for the local Postgres + pgvector database (alternative: external Postgres via Supabase)
 - **Git**: For cloning and branch management
 
@@ -246,7 +246,6 @@ uv run basedpyright
 Install hooks (covers pre-commit, commit-msg, and pre-push stages):
 
 ```bash
-uv add --dev pre-commit
 uv run pre-commit install \
     --hook-type pre-commit \
     --hook-type commit-msg \
