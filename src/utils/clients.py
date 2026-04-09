@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -256,6 +257,14 @@ if settings.LLM.ANTHROPIC_API_KEY:
         timeout=600.0,  # 10 minutes timeout for long-running operations
     )
     CLIENTS["anthropic"] = anthropic
+elif os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID"):
+    from anthropic import AsyncAnthropicVertex
+    anthropic = AsyncAnthropicVertex(
+        project_id=os.environ["ANTHROPIC_VERTEX_PROJECT_ID"],
+        region=os.environ.get("ANTHROPIC_VERTEX_REGION", "global"),
+        timeout=600.0,
+    )
+    CLIENTS["anthropic"] = anthropic
 
 if settings.LLM.OPENAI_API_KEY:
     openai_client = AsyncOpenAI(
@@ -278,6 +287,9 @@ if settings.LLM.VLLM_API_KEY and settings.LLM.VLLM_BASE_URL:
 
 if settings.LLM.GEMINI_API_KEY:
     google = genai.client.Client(api_key=settings.LLM.GEMINI_API_KEY)
+    CLIENTS["google"] = google
+elif os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true":
+    google = genai.client.Client(vertexai=True)
     CLIENTS["google"] = google
 
 if settings.LLM.GROQ_API_KEY:
