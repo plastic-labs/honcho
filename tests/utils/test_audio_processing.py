@@ -55,8 +55,7 @@ def test_probe_audio_duration_cleans_up_temp_file_on_write_failure():
         patch("src.utils.files.Path.unlink") as mock_unlink,
         pytest.raises(OSError, match="disk full"),
     ):
-        probe_audio_duration_seconds = getattr(processor, "_probe_audio_duration_seconds")
-        probe_audio_duration_seconds(b"audio-bytes", ".mp3")
+        processor._probe_audio_duration_seconds(b"audio-bytes", ".mp3")  # pyright: ignore[reportPrivateUsage]
 
     mock_unlink.assert_called_once_with(missing_ok=True)
 
