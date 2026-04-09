@@ -208,6 +208,10 @@ class LLMSettings(HonchoSettings):
     GEMINI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
+    # Optional dedicated embedding endpoint/key. Useful when chat traffic goes
+    # through one OpenAI-compatible provider but embeddings must use another.
+    EMBEDDING_API_KEY: str | None = None
+    EMBEDDING_BASE_URL: str | None = None
 
     # Separate vLLM endpoint (for local models)
     VLLM_API_KEY: str | None = None

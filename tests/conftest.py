@@ -72,6 +72,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/bench/",
     "tests/alembic/",
     "tests/unified/",
+    # Pure unit test with no DB/cache/runtime dependencies.
+    "tests/test_embedding_client.py",
 )
 
 
@@ -721,7 +723,7 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
+def mock_tracked_db(request: pytest.FixtureRequest):
     """Mock tracked_db to create fresh sessions per call.
 
     Using a session factory instead of a shared session avoids asyncio lock
@@ -730,6 +732,8 @@ def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
     if not _requires_runtime_mocks(_get_nodeid(request)):
         yield
         return
+
+    db_engine: AsyncEngine = request.getfixturevalue("db_engine")
 
     from contextlib import asynccontextmanager
 
