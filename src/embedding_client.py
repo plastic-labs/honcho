@@ -26,7 +26,12 @@ class _EmbeddingClient:
     Embedding client supporting OpenAI and Gemini with chunking and batching support.
     """
 
-    def __init__(self, api_key: str | None = None, provider: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        provider: str | None = None,
+        base_url: str | None = None,
+    ):
         self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
 
         if self.provider == "gemini":
@@ -48,10 +53,12 @@ class _EmbeddingClient:
                 )
             if not api_key:
                 raise ValueError(
-                    "OpenRouter API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
+                    "OpenRouter API key (LLM_EMBEDDING_API_KEY or "
+                    "LLM_OPENAI_COMPATIBLE_API_KEY) is required"
                 )
             base_url = (
-                settings.LLM.EMBEDDING_BASE_URL
+                base_url
+                or settings.LLM.EMBEDDING_BASE_URL
                 or settings.LLM.OPENAI_COMPATIBLE_BASE_URL
                 or "https://openrouter.ai/api/v1"
             )
@@ -382,6 +389,7 @@ class EmbeddingClient:
             with self._lock:
                 if self._instance is None:
                     provider = settings.LLM.EMBEDDING_PROVIDER
+                    base_url: str | None = None
                     if provider == "gemini":
                         api_key = settings.LLM.GEMINI_API_KEY
                     elif provider == "openrouter":
@@ -389,11 +397,16 @@ class EmbeddingClient:
                             settings.LLM.EMBEDDING_API_KEY
                             or settings.LLM.OPENAI_COMPATIBLE_API_KEY
                         )
+                        base_url = (
+                            settings.LLM.EMBEDDING_BASE_URL
+                            or settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+                            or "https://openrouter.ai/api/v1"
+                        )
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
 
                     self._instance = _EmbeddingClient(
-                        api_key=api_key, provider=provider
+                        api_key=api_key, provider=provider, base_url=base_url
                     )
                     logger.debug(
                         f"Initialized embedding client with provider: {provider}"
