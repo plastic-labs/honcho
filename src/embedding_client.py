@@ -2,7 +2,7 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import tiktoken
 from google import genai
@@ -60,7 +60,14 @@ class _EmbeddingClient:
                 api_key = settings.LLM.OPENAI_API_KEY
             if not api_key:
                 raise ValueError("OpenAI API key is required")
-            self.client = AsyncOpenAI(api_key=api_key)
+            _emb_kwargs: dict[str, Any] = {"api_key": api_key}
+            if settings.LLM.OPENAI_BASE_URL:
+                _emb_kwargs["base_url"] = settings.LLM.OPENAI_BASE_URL
+                if settings.LLM.CF_GATEWAY_AUTH_TOKEN:
+                    _emb_kwargs["default_headers"] = {
+                        "cf-aig-authorization": f"Bearer {settings.LLM.CF_GATEWAY_AUTH_TOKEN}"
+                    }
+            self.client = AsyncOpenAI(**_emb_kwargs)
             self.model = "text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # OpenAI batch limit

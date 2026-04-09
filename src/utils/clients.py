@@ -258,15 +258,34 @@ if settings.LLM.ANTHROPIC_API_KEY:
     CLIENTS["anthropic"] = anthropic
 
 if settings.LLM.OPENAI_API_KEY:
-    openai_client = AsyncOpenAI(
-        api_key=settings.LLM.OPENAI_API_KEY,
-    )
-    CLIENTS["openai"] = openai_client
+    _openai_kwargs: dict[str, Any] = {"api_key": settings.LLM.OPENAI_API_KEY}
+    if settings.LLM.OPENAI_BASE_URL:
+        _openai_kwargs["base_url"] = settings.LLM.OPENAI_BASE_URL
+        if settings.LLM.CF_GATEWAY_AUTH_TOKEN:
+            _openai_kwargs["default_headers"] = {
+                "cf-aig-authorization": f"Bearer {settings.LLM.CF_GATEWAY_AUTH_TOKEN}"
+            }
+    CLIENTS["openai"] = AsyncOpenAI(**_openai_kwargs)
 
 if settings.LLM.OPENAI_COMPATIBLE_API_KEY and settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
     CLIENTS["custom"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_COMPATIBLE_API_KEY,
         base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
+    )
+
+# Cloudflare AI Gateway (OpenAI-compatible universal endpoint)
+# CF_GATEWAY_API_KEY = provider key passed in Authorization (e.g. Gemini key for google-ai-studio/)
+# CF_GATEWAY_AUTH_TOKEN = cfut_ gateway token passed in cf-aig-authorization (optional, for gateway auth)
+if settings.LLM.CF_GATEWAY_API_KEY and settings.LLM.CF_GATEWAY_BASE_URL:
+    _cf_extra_headers: dict[str, str] = {}
+    if settings.LLM.CF_GATEWAY_AUTH_TOKEN:
+        _cf_extra_headers["cf-aig-authorization"] = (
+            f"Bearer {settings.LLM.CF_GATEWAY_AUTH_TOKEN}"
+        )
+    CLIENTS["cf"] = AsyncOpenAI(
+        api_key=settings.LLM.CF_GATEWAY_API_KEY,
+        base_url=settings.LLM.CF_GATEWAY_BASE_URL,
+        default_headers=_cf_extra_headers,
     )
 
 # vLLM uses separate settings for local model serving
@@ -334,9 +353,9 @@ def convert_tools_for_provider(
     if provider == "anthropic":
         # Anthropic format: input_schema
         return tools
-    elif provider in ("openai", "custom", "vllm"):
+    elif provider in ("openai", "custom", "vllm", "cf"):
         # OpenAI format: parameters instead of input_schema
-        # custom and vllm use AsyncOpenAI client so need OpenAI format
+        # custom, vllm, and cf use AsyncOpenAI client so need OpenAI format
         return [
             {
                 "type": "function",
@@ -1103,16 +1122,20 @@ def _format_assistant_tool_message(
         # OpenAI format - must include tool_calls in the assistant message
         openai_tool_calls: list[Any] = []
         for tool_call in tool_calls:
-            openai_tool_calls.append(
-                {
-                    "id": tool_call["id"],
-                    "type": "function",
-                    "function": {
-                        "name": tool_call["name"],
-                        "arguments": json.dumps(tool_call["input"]),
-                    },
-                }
-            )
+            oa_call: dict[str, Any] = {
+                "id": tool_call["id"],
+                "type": "function",
+                "function": {
+                    "name": tool_call["name"],
+                    "arguments": json.dumps(tool_call["input"]),
+                },
+            }
+            # Preserve thought_signature for Gemini thinking models via CF Gateway.
+            # Required for multi-turn tool use — Gemini rejects requests where a
+            # function call in the history is missing its thought_signature.
+            if "thought_signature" in tool_call:
+                oa_call["thought_signature"] = tool_call["thought_signature"]
+            openai_tool_calls.append(oa_call)
         msg: dict[str, Any] = {
             "role": "assistant",
             "content": content if isinstance(content, str) else None,
@@ -2046,15 +2069,23 @@ async def honcho_llm_call_inner(
                 tool_calls_list: list[dict[str, Any]] = []
                 if response.choices[0].message.tool_calls:  # pyright: ignore
                     for tool_call in response.choices[0].message.tool_calls:  # pyright: ignore
-                        tool_calls_list.append(
-                            {
-                                "id": tool_call.id,  # pyright: ignore
-                                "name": tool_call.function.name,  # pyright: ignore
-                                "input": json.loads(tool_call.function.arguments)  # pyright: ignore
-                                if tool_call.function.arguments  # pyright: ignore
-                                else {},
-                            }
+                        call_data: dict[str, Any] = {
+                            "id": tool_call.id,  # pyright: ignore
+                            "name": tool_call.function.name,  # pyright: ignore
+                            "input": json.loads(tool_call.function.arguments)  # pyright: ignore
+                            if tool_call.function.arguments  # pyright: ignore
+                            else {},
+                        }
+                        # Preserve thought_signature for Gemini thinking models via CF
+                        # Gateway — required for multi-turn tool use replay.
+                        thought_sig = getattr(tool_call, "thought_signature", None) or (  # pyright: ignore
+                            tool_call.model_extra.get("thought_signature")  # pyright: ignore
+                            if getattr(tool_call, "model_extra", None)  # pyright: ignore
+                            else None
                         )
+                        if thought_sig:
+                            call_data["thought_signature"] = thought_sig
+                        tool_calls_list.append(call_data)
 
                 cache_creation, cache_read = extract_openai_cache_tokens(usage)
                 return HonchoLLMCallResponse(

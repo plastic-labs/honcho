@@ -208,10 +208,18 @@ class LLMSettings(HonchoSettings):
     GEMINI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
+    OPENAI_BASE_URL: str | None = None  # Route OpenAI calls through a proxy/gateway
 
     # Separate vLLM endpoint (for local models)
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
+
+    # Cloudflare AI Gateway (OpenAI-compatible universal endpoint)
+    # CF_GATEWAY_API_KEY = provider API key (e.g. Gemini key for google-ai-studio/ models)
+    # CF_GATEWAY_AUTH_TOKEN = cfut_ gateway token → sent in cf-aig-authorization header
+    CF_GATEWAY_API_KEY: str | None = None
+    CF_GATEWAY_BASE_URL: str | None = None
+    CF_GATEWAY_AUTH_TOKEN: str | None = None
 
     EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
     EMBEDDING_MODEL: str | None = None
@@ -261,7 +269,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     LOG_OBSERVATIONS: bool = False
 
-    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=200_000)] = 23000
 
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
