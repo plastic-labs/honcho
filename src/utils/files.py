@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from fastapi import UploadFile
 from nanoid import generate as generate_nanoid
+from openai import APIError
 from sqlalchemy import Integer, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +35,7 @@ AUDIO_EXTENSION_CONTENT_TYPES = {
     ".wav": "audio/wav",
 }
 UPLOAD_VALIDATION_CHUNK_BYTES = 1024 * 1024
+AUDIO_PROBE_TIMEOUT_SECONDS = 10
 GENERIC_CONTENT_TYPES = {
     "",
     "application/octet-stream",
@@ -156,11 +158,14 @@ class AudioProcessor:
             content,
             suffix,
         )
-        text = await transcribe_audio(
-            content,
-            filename=normalized_filename,
-            content_type=normalized_content_type,
-        )
+        try:
+            text = await transcribe_audio(
+                content,
+                filename=normalized_filename,
+                content_type=normalized_content_type,
+            )
+        except APIError as exc:
+            raise FileProcessingError("Audio transcription failed") from exc
         return ExtractedFileText(
             text=text,
             metadata={
@@ -218,12 +223,15 @@ class AudioProcessor:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=AUDIO_PROBE_TIMEOUT_SECONDS,
             )
             return max(float(result.stdout.strip()), 0.0)
         except FileNotFoundError as exc:
             raise ValidationException(
                 "Audio uploads require ffmpeg and ffprobe to be installed on the server"
             ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ValidationException("Audio validation timed out") from exc
         except (subprocess.CalledProcessError, ValueError) as exc:
             raise ValidationException("Uploaded audio is invalid or unreadable") from exc
 

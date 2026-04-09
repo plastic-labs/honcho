@@ -1,16 +1,19 @@
 import asyncio
 import io
+import subprocess
+from pathlib import Path
 from types import TracebackType
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from fastapi import UploadFile
-from openai import AsyncOpenAI
+from openai import APIError, AsyncOpenAI
 from starlette.datastructures import Headers
 
 import src.utils.files as file_utils
 from src.config import settings
-from src.exceptions import ValidationException
+from src.exceptions import FileProcessingError, ValidationException
 from src.utils.clients import CLIENTS, transcribe_audio
 from src.utils.files import AudioProcessor, FileProcessingService
 
@@ -58,6 +61,19 @@ def test_probe_audio_duration_cleans_up_temp_file_on_write_failure():
         processor._probe_audio_duration_seconds(b"audio-bytes", ".mp3")  # pyright: ignore[reportPrivateUsage]
 
     mock_unlink.assert_called_once_with(missing_ok=True)
+
+
+def test_probe_audio_duration_timeout_raises_validation_exception():
+    processor = AudioProcessor()
+
+    with (
+        patch(
+            "src.utils.files.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=10),
+        ),
+        pytest.raises(ValidationException, match="Audio validation timed out"),
+    ):
+        processor.probe_audio_duration_seconds_from_path(Path("/tmp/audio.mp3"))
 
 
 @pytest.mark.asyncio
@@ -179,6 +195,26 @@ async def test_audio_processor_extract_text_transcribes_directly():
     assert extracted.metadata["audio_segment_count"] == 1
     assert extracted.metadata["transcription_provider"] == "openai"
     assert "transcription_fallback_used" not in extracted.metadata
+
+
+@pytest.mark.asyncio
+async def test_audio_processor_extract_text_wraps_provider_errors():
+    processor = AudioProcessor()
+    request = httpx.Request("POST", "https://api.openai.com/v1/audio/transcriptions")
+
+    with (
+        patch.object(processor, "_probe_audio_duration_seconds", return_value=1.0),
+        patch(
+            "src.utils.files.transcribe_audio",
+            side_effect=APIError("provider failed", request=request, body=None),
+        ),
+        pytest.raises(FileProcessingError, match="Audio transcription failed"),
+    ):
+        await processor.extract_text(
+            b"audio-bytes",
+            filename="seg-0.mp3",
+            content_type="audio/mpeg",
+        )
 
 
 @pytest.mark.asyncio
