@@ -268,9 +268,13 @@ if settings.LLM.OPENAI_API_KEY:
     CLIENTS["openai"] = AsyncOpenAI(**_openai_kwargs)
 
 if settings.LLM.OPENAI_COMPATIBLE_API_KEY and settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
+    _custom_headers: dict[str, str] = {}
+    if settings.LLM.CF_GATEWAY_AUTH_TOKEN:
+        _custom_headers["cf-aig-authorization"] = f"Bearer {settings.LLM.CF_GATEWAY_AUTH_TOKEN}"
     CLIENTS["custom"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_COMPATIBLE_API_KEY,
         base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
+        default_headers=_custom_headers if _custom_headers else None,
     )
 
 # Cloudflare AI Gateway (OpenAI-compatible universal endpoint)
