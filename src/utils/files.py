@@ -151,7 +151,8 @@ class AudioProcessor:
         suffix = self.get_output_suffix(filename, content_type)
         normalized_filename = self.ensure_audio_filename(filename, suffix)
         normalized_content_type = self.normalize_content_type(filename, content_type)
-        self._probe_audio_duration_seconds(
+        await asyncio.to_thread(
+            self._probe_audio_duration_seconds,
             content,
             suffix,
         )

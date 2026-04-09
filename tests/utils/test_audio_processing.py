@@ -150,6 +150,31 @@ async def test_audio_processor_extract_text_transcribes_directly():
 
 
 @pytest.mark.asyncio
+async def test_audio_processor_extract_text_probes_in_background_thread():
+    processor = AudioProcessor()
+    mock_probe = AsyncMock(return_value=1.0)
+    to_thread = AsyncMock(return_value=1.0)
+
+    with (
+        patch.object(processor, "_probe_audio_duration_seconds", mock_probe),
+        patch("src.utils.files.asyncio.to_thread", to_thread),
+        patch("src.utils.files.transcribe_audio", new=AsyncMock(return_value="ok")),
+    ):
+        extracted = await processor.extract_text(
+            b"bytes",
+            filename="voice-note.mp3",
+            content_type="audio/mpeg",
+        )
+
+    to_thread.assert_awaited_once_with(
+        mock_probe,
+        b"bytes",
+        ".mp3",
+    )
+    assert extracted.text == "ok"
+
+
+@pytest.mark.asyncio
 async def test_audio_processor_extract_text_allows_empty_transcript():
     processor = AudioProcessor()
 
