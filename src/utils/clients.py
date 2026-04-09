@@ -10,7 +10,7 @@ from anthropic import AsyncAnthropic
 try:
     from anthropic import AsyncAnthropicVertex
 except ImportError:
-    AsyncAnthropicVertex = type(None)
+    AsyncAnthropicVertex = type("_Unavailable", (), {})
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from anthropic.types.message import Message as AnthropicMessage
 from anthropic.types.usage import Usage
