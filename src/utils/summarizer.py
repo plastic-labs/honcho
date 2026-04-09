@@ -106,6 +106,7 @@ You are a system that summarizes parts of a conversation to create a concise and
 4. Core topics discussed
 
 If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
+Prioritize facts that are uniquely useful for later retrieval: relationship status, plans, commitments, one-off events, named people, places, organizations, distinctive objects in shared art or photos, and explicit time references exactly as stated (for example "last Saturday," "next month," "three years ago"). Compress repeated emotional support themes and repeated general reflections into brief summaries so they do not crowd out unique facts. Prefer short factual clauses over explanatory prose.
 
 Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
 
@@ -140,6 +141,7 @@ You are a system that creates thorough, comprehensive summaries of conversations
 6. Important themes and patterns across the conversation
 
 If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
+Prioritize facts that are uniquely useful for later retrieval: relationship status, plans, commitments, one-off events, named people, places, organizations, distinctive objects in shared art or photos, and explicit time references exactly as stated (for example "last Saturday," "next month," "three years ago"). Compress repeated emotional support themes and repeated general reflections into brief summaries so they do not crowd out unique facts. Prefer short factual clauses over explanatory prose.
 
 Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
 
