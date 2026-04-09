@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
+try:
+    from anthropic import AsyncAnthropicVertex
+except ImportError:
+    AsyncAnthropicVertex = type(None)
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from anthropic.types.message import Message as AnthropicMessage
 from anthropic.types.usage import Usage
@@ -1691,7 +1695,7 @@ async def honcho_llm_call_inner(
     non_system_messages: list[dict[str, Any]] = []
 
     match client:
-        case AsyncAnthropic():
+        case AsyncAnthropic() | AsyncAnthropicVertex():
             # Anthropic requires system messages to be passed as a top-level parameter
             # Extract system messages and non-system messages
             for msg in params["messages"]:
@@ -2379,7 +2383,7 @@ async def handle_streaming_response(
         HonchoLLMCallStreamChunk: Individual chunks of the streaming response
     """
     match client:
-        case AsyncAnthropic():
+        case AsyncAnthropic() | AsyncAnthropicVertex():
             # Anthropic requires system messages as a top-level parameter
             messages = params["messages"]
             system_content = "\n\n".join(
