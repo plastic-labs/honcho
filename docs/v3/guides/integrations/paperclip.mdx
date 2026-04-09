@@ -42,7 +42,7 @@ This page covers the current public-host-compatible Paperclip plugin. It support
    - `Import history`
    - `Repair mappings`
 
-`honchoApiKeySecretRef` is the only field required for the standard setup path. The other settings already have defaults.
+`honchoApiKeySecretRef` is the only field required for the standard setup path if you are using cloud-based Honcho. `honchoApiBaseUrl` is the only field required if you are running Honcho locally. The other settings already have defaults.
 
 <Note>
 If you use a self-hosted or local Honcho deployment, `honchoApiBaseUrl` must be reachable from the Paperclip host runtime. If Paperclip is running in Docker, `localhost` may not point at your machine.
@@ -105,7 +105,7 @@ The settings page exposes the main operator workflow directly:
 
 ### Required Setting
 
-Set `honchoApiKeySecretRef` first. If you are not using Honcho Cloud, also set `honchoApiBaseUrl`. Everything else can be left at the defaults until you have a reason to change it.
+If you are not using Honcho Cloud, set `honchoApiBaseUrl`. Set `honchoApiKeySecretRef` if you are using Honcho Cloud. Default `honchoApiBaseUrl` is already set to api.honcho.dev. Everything else can be left at the defaults until you have a reason to change it.
 
 ### Default Behavior
 
