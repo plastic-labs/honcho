@@ -257,13 +257,10 @@ if settings.LLM.ANTHROPIC_API_KEY:
         timeout=600.0,  # 10 minutes timeout for long-running operations
     )
     CLIENTS["anthropic"] = anthropic
-elif os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID") and os.environ.get("ANTHROPIC_VERTEX_REGION"):
+elif os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID") and os.environ.get("CLOUD_ML_REGION"):
     from anthropic import AsyncAnthropicVertex
-    anthropic = AsyncAnthropicVertex(
-        project_id=os.environ["ANTHROPIC_VERTEX_PROJECT_ID"],
-        region=os.environ["ANTHROPIC_VERTEX_REGION"],
-        timeout=600.0,
-    )
+    # SDK reads ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION from env
+    anthropic = AsyncAnthropicVertex(timeout=600.0)
     CLIENTS["anthropic"] = anthropic
 
 if settings.LLM.OPENAI_API_KEY:

@@ -33,12 +33,12 @@ class _EmbeddingClient:
         if self.provider == "gemini":
             if api_key is None:
                 api_key = settings.LLM.GEMINI_API_KEY
-            if not api_key and os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true":
-                self.client: genai.Client | AsyncOpenAI = genai.Client(vertexai=True)
-            elif not api_key:
-                raise ValueError("Gemini API key is required")
+            if api_key:
+                self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
+            elif os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() == "true":
+                self.client = genai.Client(vertexai=True)
             else:
-                self.client = genai.Client(api_key=api_key)
+                raise ValueError("Gemini API key is required")
             self.model: str = settings.LLM.EMBEDDING_MODEL or "gemini-embedding-001"
             # Gemini has a 2048 token limit
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
