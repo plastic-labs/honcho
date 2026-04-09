@@ -151,15 +151,15 @@ async def create_messages_with_file(
 
     # Validate file size
     max_file_size = settings.MAX_FILE_SIZE
-    if (
-        file.size
-        and file.size > settings.MAX_FILE_SIZE
-        and is_audio_transcription_enabled()
-        and is_audio_upload(file)
-        and file.size <= settings.AUDIO.MAX_FILE_SIZE_BYTES
-        and await is_validated_audio_upload(file)
-    ):
-        max_file_size = settings.AUDIO.MAX_FILE_SIZE_BYTES
+    if file.size and file.size > settings.MAX_FILE_SIZE:
+        is_valid_audio_upload = (
+            is_audio_transcription_enabled()
+            and is_audio_upload(file)
+            and file.size <= settings.AUDIO.MAX_FILE_SIZE_BYTES
+            and await is_validated_audio_upload(file)
+        )
+        if is_valid_audio_upload:
+            max_file_size = settings.AUDIO.MAX_FILE_SIZE_BYTES
 
     if file.size and file.size > max_file_size:
         raise FileTooLargeError(

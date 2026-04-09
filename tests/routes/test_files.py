@@ -18,7 +18,7 @@ from src import models, schemas
 from src.config import settings
 from src.models import Peer, Workspace
 from src.routers.messages import create_messages_with_file
-from src.utils.files import ExtractedFileText
+from src.utils.files import FileExtractionResult
 
 
 async def _create_test_session(
@@ -637,7 +637,7 @@ async def test_create_messages_with_mp3_file(
     files = {"file": ("call.mp3", file_data, "audio/mpeg")}
     form_data = {"peer_id": test_peer.name}
 
-    extracted = ExtractedFileText(
+    extracted = FileExtractionResult(
         text="First sentence.\nSecond sentence.",
         metadata={
             "processing_type": "audio_transcription",
@@ -686,7 +686,7 @@ async def test_audio_upload_over_generic_limit_uses_audio_size_limit_when_valida
     original_audio_max = settings.AUDIO.MAX_FILE_SIZE_BYTES
     settings.MAX_FILE_SIZE = 5
     settings.AUDIO.MAX_FILE_SIZE_BYTES = 10
-    extracted = ExtractedFileText(
+    extracted = FileExtractionResult(
         text="Transcribed audio",
         metadata={
             "processing_type": "audio_transcription",
@@ -736,7 +736,7 @@ async def test_extension_only_audio_upload_over_generic_limit_uses_audio_size_li
     original_audio_max = settings.AUDIO.MAX_FILE_SIZE_BYTES
     settings.MAX_FILE_SIZE = 5
     settings.AUDIO.MAX_FILE_SIZE_BYTES = 10
-    extracted = ExtractedFileText(
+    extracted = FileExtractionResult(
         text="Transcribed extension-only audio",
         metadata={
             "processing_type": "audio_transcription",
@@ -906,7 +906,7 @@ async def test_create_messages_with_wav_file_accepts_audio_wave_mime(
     files = {"file": ("call.wav", file_data, "audio/wave")}
     form_data = {"peer_id": test_peer.name}
 
-    extracted = ExtractedFileText(
+    extracted = FileExtractionResult(
         text="WAV transcript",
         metadata={
             "processing_type": "audio_transcription",
@@ -991,7 +991,7 @@ async def test_large_audio_upload_applies_audio_metadata_to_all_message_chunks(
     form_data = {"peer_id": test_peer.name}
 
     long_text = "Segment line. " * 4000
-    extracted = ExtractedFileText(
+    extracted = FileExtractionResult(
         text=long_text,
         metadata={
             "processing_type": "audio_transcription",
