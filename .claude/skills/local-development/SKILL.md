@@ -23,7 +23,7 @@ Guide for setting up, running, and developing on Honcho locally across macOS, Li
 
 ## Prerequisites
 
-- **Python**: 3.9+ required (tested through 3.13; newer versions like 3.14 may lack pre-built wheels for some dependencies)
+- **Python**: 3.10+ required (tested through 3.13; newer versions like 3.14 may lack pre-built wheels for some dependencies)
 - **uv**: 0.4.9+ (package manager). Install: `curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS/Linux/WSL2) or `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"` (Windows PowerShell)
 - **Docker**: Required for the local Postgres + pgvector database (alternative: external Postgres via Supabase)
 - **Git**: For cloning and branch management
@@ -84,11 +84,36 @@ Edit `.env` and set the required values. The method for setting environment vari
 # Database connection (must use postgresql+psycopg prefix — this is a SQLAlchemy requirement)
 DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 
-# LLM provider keys — Anthropic and Gemini are the primary required keys
-LLM_ANTHROPIC_API_KEY=your-key-here    # Used for dialectic (chat endpoint) and deriver
-LLM_GEMINI_API_KEY=your-key-here       # Used for summary and deriver
-LLM_GROQ_API_KEY=your-key-here         # Used for query generation
-LLM_OPENAI_API_KEY=your-key-here       # Optional, for embeddings if EMBED_MESSAGES=true
+# LLM provider — Honcho defaults to an OpenAI-compatible custom endpoint.
+# Set these two to use any OpenAI-compatible provider (OpenRouter, local Ollama, etc.)
+LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
+LLM_OPENAI_COMPATIBLE_API_KEY=your-api-key-here
+
+# Direct vendor keys (alternatives — all optional if using the custom endpoint above)
+# LLM_ANTHROPIC_API_KEY=your-key-here       # Anthropic
+# LLM_GEMINI_API_KEY=your-key-here          # Google Gemini
+# LLM_OPENAI_API_KEY=your-key-here          # OpenAI directly
+# LLM_GROQ_API_KEY=your-key-here            # Groq
+
+# Per-subsystem provider + model (each defaults to the custom endpoint above)
+DERIVER_PROVIDER=custom
+DERIVER_MODEL=your-model-here             # e.g. google/gemini-2.5-flash
+SUMMARY_PROVIDER=custom
+SUMMARY_MODEL=your-model-here
+DREAM_PROVIDER=custom
+DREAM_MODEL=your-model-here
+
+# Dialectic chat (/peers/{id}/chat) — requires provider + model per level.
+# At minimum set one level; see .env.template for all five (minimal, low, medium, high, max).
+DIALECTIC_LEVELS__medium__PROVIDER=custom
+DIALECTIC_LEVELS__medium__MODEL=your-model-here
+
+# Embedding configuration
+LLM_EMBEDDING_PROVIDER=openrouter         # Valid values: openai, gemini, openrouter
+
+# Thinking budget — each subsystem has its own setting (all optional, have defaults):
+#   DERIVER_THINKING_BUDGET_TOKENS, SUMMARY_THINKING_BUDGET_TOKENS,
+#   DREAM_THINKING_BUDGET_TOKENS, DIALECTIC_LEVELS__<level>__THINKING_BUDGET_TOKENS
 
 # Recommended for local dev (both default to false, but setting explicitly avoids confusion)
 AUTH_USE_AUTH=false
@@ -101,12 +126,14 @@ If you need to set environment variables directly in your shell (e.g., for one-o
 
 ```bash
 export DB_CONNECTION_URI="postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+export LLM_OPENAI_COMPATIBLE_API_KEY="your-api-key-here"
 ```
 
 **Windows PowerShell:**
 
 ```powershell
 $env:DB_CONNECTION_URI="postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+$env:LLM_OPENAI_COMPATIBLE_API_KEY="your-api-key-here"
 ```
 
 ### 3. Start the Database
@@ -153,6 +180,14 @@ uv run fastapi dev src/main.py
 ```
 
 This runs a development server with hot reload at `http://localhost:8000`. API docs are available at `http://localhost:8000/docs`.
+
+Verify the server is up:
+
+```bash
+curl http://localhost:8000/health
+```
+
+A healthy response returns `{"status": "ok"}`. If it fails, check the terminal for startup errors before proceeding.
 
 ### Start the Deriver (Background Worker)
 
@@ -383,13 +418,14 @@ Check that the credentials in your `.env` match what is configured in `docker-co
 
 **"API key not found" or LLM provider errors**
 
-Honcho uses different LLM providers for different subsystems:
+Honcho defaults to an OpenAI-compatible custom endpoint. The primary required variables are:
 
-- Anthropic: dialectic (chat endpoint) and deriver
-- Gemini: summary and deriver
-- Groq: query generation
+```env
+LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
+LLM_OPENAI_COMPATIBLE_API_KEY=your-api-key-here
+```
 
-Anthropic and Gemini are the primary required keys. Check which subsystem is failing from the error message and add the corresponding key to `.env`. Restart both the API server and the deriver after changing `.env`.
+Direct vendor keys (`LLM_ANTHROPIC_API_KEY`, `LLM_GEMINI_API_KEY`, `LLM_OPENAI_API_KEY`, `LLM_GROQ_API_KEY`) are alternatives. Use `DERIVER_PROVIDER`, `SUMMARY_PROVIDER`, and `DREAM_PROVIDER` to route specific subsystems to a different provider. Restart both the API server and the deriver after changing `.env`.
 
 ### Dependency Install Failures
 
@@ -411,7 +447,7 @@ On Linux, install system dev packages: `sudo apt install python3-dev libpq-dev` 
 2. Confirm Redis is running: `docker compose ps` — the deriver requires Redis
 3. Check deriver logs for errors (connection issues, missing API keys)
 4. Verify the database is accessible from the deriver process
-5. Make sure you have the required LLM API key for the deriver (Anthropic or Gemini)
+5. Make sure you have a valid LLM API key configured — by default the deriver uses `LLM_OPENAI_COMPATIBLE_API_KEY`, or override with `DERIVER_PROVIDER` and `DERIVER_MODEL`
 
 ### Pre-commit Hook Failures
 
@@ -519,6 +555,7 @@ uv run alembic upgrade head
 | Start database + Redis (Docker) | `docker compose up -d database redis` |
 | Run migrations | `uv run alembic upgrade head` |
 | Start API server | `uv run fastapi dev src/main.py` |
+| Verify server health | `curl http://localhost:8000/health` |
 | Start deriver | `uv run python -m src.deriver` |
 | Run all tests | `uv run pytest tests/` |
 | Run TS SDK tests | `uv run pytest tests/ -k typescript` |
