@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 import logging
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Protocol
@@ -6,13 +7,7 @@ import tomllib
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
-from pydantic_settings import (
-    BaseSettings,
-    DotEnvSettingsSource,
-    EnvSettingsSource,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-)
+from pydantic_settings import BaseSettings, DotEnvSettingsSource, EnvSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
 
 from src.utils.types import SupportedProviders
 
@@ -238,12 +233,7 @@ class AudioSettings(HonchoSettings):
 
     PROVIDER: Literal["openai"] = "openai"
     MODEL: str = "whisper-1"
-    MAX_FILE_SIZE_BYTES: Annotated[int, Field(default=9_500_000, gt=0)] = 9_500_000
-    MAX_CHUNK_DURATION_SECONDS: Annotated[int, Field(default=55, gt=0, le=3600)] = (
-        55
-    )
-    MAX_CHUNK_BYTES: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880
-    TRANSCRIPTION_CONCURRENCY: Annotated[int, Field(default=4, gt=0, le=16)] = 4
+    MAX_FILE_SIZE_BYTES: Annotated[int, Field(default=25_000_000, gt=0)] = 25_000_000
 
 
 class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):

@@ -1,9 +1,5 @@
 import asyncio
 import io
-import math
-import subprocess
-import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -14,38 +10,7 @@ from starlette.datastructures import Headers
 from src.config import settings
 from src.exceptions import ValidationException
 from src.utils.clients import CLIENTS, transcribe_audio
-from src.utils.files import (
-    AudioProcessor,
-    AudioSegment,
-    FileProcessingService,
-)
-
-
-def _generate_test_audio_bytes(
-    audio_format: str,
-    duration_seconds: int = 1,
-    *,
-    audio_bitrate: str | None = None,
-) -> bytes:
-    suffix = f".{audio_format}"
-    with tempfile.TemporaryDirectory(prefix="honcho-audio-test-") as temp_dir:
-        output_path = Path(temp_dir) / f"tone{suffix}"
-        command = [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            f"sine=frequency=440:duration={duration_seconds}",
-        ]
-        if audio_bitrate is not None:
-            command.extend(["-b:a", audio_bitrate])
-        command.append(str(output_path))
-        subprocess.run(command, check=True, capture_output=True, text=True)
-        return output_path.read_bytes()
+from src.utils.files import AudioProcessor, FileProcessingService
 
 
 def test_audio_processor_supports_mp3_and_wav_content_types():
@@ -153,13 +118,8 @@ async def test_transcribe_audio_raises_when_openai_fails():
 
 
 @pytest.mark.asyncio
-async def test_transcribe_segments_preserves_order_when_tasks_finish_out_of_order():
+async def test_audio_processor_extract_text_transcribes_directly():
     processor = AudioProcessor()
-    segments = [
-        AudioSegment(index=0, filename="seg-0.mp3", content=b"0"),
-        AudioSegment(index=1, filename="seg-1.mp3", content=b"1"),
-        AudioSegment(index=2, filename="seg-2.mp3", content=b"2"),
-    ]
 
     async def fake_transcribe(
         _content: bytes,
@@ -168,37 +128,30 @@ async def test_transcribe_segments_preserves_order_when_tasks_finish_out_of_orde
         **_: object,
     ):
         assert content_type == "audio/mpeg"
-        if filename == "seg-0.mp3":
-            await asyncio.sleep(0.03)
-            return "first"
-        if filename == "seg-1.mp3":
-            await asyncio.sleep(0.0)
-            return "second"
+        assert filename == "seg-0.mp3"
         await asyncio.sleep(0.01)
-        return "third"
+        return "first"
 
-    with patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe):
-        extracted = await processor.transcribe_segments(
-            segments,
+    with (
+        patch.object(processor, "_probe_audio_duration_seconds", return_value=1.0),
+        patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe),
+    ):
+        extracted = await processor.extract_text(
+            b"audio-bytes",
+            filename="seg-0.mp3",
             content_type="audio/mpeg",
-            concurrency=3,
         )
 
-    assert extracted.text == "first\nsecond\nthird"
+    assert extracted.text == "first"
     assert extracted.metadata["processing_type"] == "audio_transcription"
-    assert extracted.metadata["audio_segment_count"] == 3
+    assert extracted.metadata["audio_segment_count"] == 1
     assert extracted.metadata["transcription_provider"] == "openai"
     assert "transcription_fallback_used" not in extracted.metadata
 
 
 @pytest.mark.asyncio
-async def test_transcribe_segments_ignores_empty_silent_segments():
+async def test_audio_processor_extract_text_allows_empty_transcript():
     processor = AudioProcessor()
-    segments = [
-        AudioSegment(index=0, filename="seg-0.mp3", content=b"0"),
-        AudioSegment(index=1, filename="seg-1.mp3", content=b"1"),
-        AudioSegment(index=2, filename="seg-2.mp3", content=b"2"),
-    ]
 
     async def fake_transcribe(
         _content: bytes,
@@ -207,21 +160,21 @@ async def test_transcribe_segments_ignores_empty_silent_segments():
         **_: object,
     ):
         assert content_type == "audio/mpeg"
-        if filename == "seg-0.mp3":
-            return "first"
-        if filename == "seg-1.mp3":
-            return ""
-        return "third"
+        assert filename == "voice-note.mp3"
+        return ""
 
-    with patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe):
-        extracted = await processor.transcribe_segments(
-            segments,
+    with (
+        patch.object(processor, "_probe_audio_duration_seconds", return_value=1.0),
+        patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe),
+    ):
+        extracted = await processor.extract_text(
+            b"bytes",
+            filename="voice-note.mp3",
             content_type="audio/mpeg",
-            concurrency=3,
         )
 
-    assert extracted.text == "first\nthird"
-    assert extracted.metadata["audio_segment_count"] == 3
+    assert extracted.text == ""
+    assert extracted.metadata["audio_segment_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -238,11 +191,10 @@ async def test_audio_processor_normalizes_octet_stream_mp3_uploads():
         assert content_type == "audio/mpeg"
         return "normalized"
 
-    with patch.object(
-        processor,
-        "split_audio_segments",
-        return_value=[AudioSegment(index=0, filename="voice-note.mp3", content=b"bytes")],
-    ), patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe):
+    with (
+        patch.object(processor, "_probe_audio_duration_seconds", return_value=1.0),
+        patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe),
+    ):
         extracted = await processor.extract_text(
             b"bytes",
             filename="voice-note.mp3",
@@ -256,11 +208,7 @@ async def test_audio_processor_normalizes_octet_stream_mp3_uploads():
 async def test_empty_audio_upload_is_rejected_before_transcription():
     processor = AudioProcessor()
 
-    with patch.object(
-        processor,
-        "transcribe_segments",
-        new=AsyncMock(),
-    ) as mock_transcribe, pytest.raises(
+    with patch("src.utils.files.transcribe_audio", new=AsyncMock()) as mock_transcribe, pytest.raises(
         ValidationException,
         match="Audio upload is empty",
     ):
@@ -287,11 +235,10 @@ async def test_audio_wave_mime_is_accepted_for_wav_uploads():
         assert content_type == "audio/wave"
         return "wav accepted"
 
-    with patch.object(
-        processor,
-        "split_audio_segments",
-        return_value=[AudioSegment(index=0, filename="recording.wav", content=b"bytes")],
-    ), patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe):
+    with (
+        patch.object(processor, "_probe_audio_duration_seconds", return_value=1.0),
+        patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe),
+    ):
         extracted = await processor.extract_text(
             b"bytes",
             filename="recording.wav",
@@ -301,148 +248,29 @@ async def test_audio_wave_mime_is_accepted_for_wav_uploads():
     assert extracted.text == "wav accepted"
 
 
-def test_split_audio_segments_raises_validation_when_ffprobe_missing():
+@pytest.mark.asyncio
+async def test_audio_processor_normalizes_small_mime_only_audio_filename():
     processor = AudioProcessor()
+
+    async def fake_transcribe(
+        _content: bytes,
+        filename: str,
+        content_type: str,
+        **_: object,
+    ) -> str:
+        assert filename == "blob.mp3"
+        assert content_type == "audio/mpeg"
+        return "normalized"
 
     with (
-        patch("src.utils.files.subprocess.run", side_effect=FileNotFoundError("ffprobe")),
-        pytest.raises(
-            ValidationException,
-            match="Audio uploads require ffmpeg and ffprobe to be installed",
-        ),
+        patch.object(processor, "_probe_audio_duration_seconds", return_value=1.0),
+        patch("src.utils.files.transcribe_audio", side_effect=fake_transcribe),
     ):
-        processor.split_audio_segments(
+        extracted = await processor.extract_text(
             b"audio-bytes",
-            filename="voice.mp3",
+            filename="blob",
             content_type="audio/mpeg",
         )
 
-
-def test_split_audio_segments_splits_long_wav_when_duration_exceeds_limit():
-    processor = AudioProcessor()
-    wav_bytes = _generate_test_audio_bytes("wav", duration_seconds=3)
-
-    original_duration_limit = settings.AUDIO.MAX_CHUNK_DURATION_SECONDS
-    original_chunk_bytes = settings.AUDIO.MAX_CHUNK_BYTES
-    settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = 1
-    settings.AUDIO.MAX_CHUNK_BYTES = max(len(wav_bytes) * 2, 1)
-    try:
-        segments = processor.split_audio_segments(
-            wav_bytes,
-            filename="long.wav",
-            content_type="audio/wav",
-        )
-    finally:
-        settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = original_duration_limit
-        settings.AUDIO.MAX_CHUNK_BYTES = original_chunk_bytes
-
-    assert len(segments) >= 3
-    assert [segment.index for segment in segments] == list(range(len(segments)))
-    assert all(segment.filename.endswith(".wav") for segment in segments)
-    assert all(segment.content for segment in segments)
-
-
-def test_split_audio_segments_normalizes_small_mime_only_audio_filename():
-    processor = AudioProcessor()
-
-    original_duration_limit = settings.AUDIO.MAX_CHUNK_DURATION_SECONDS
-    original_chunk_bytes = settings.AUDIO.MAX_CHUNK_BYTES
-    settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = 60
-    settings.AUDIO.MAX_CHUNK_BYTES = 1024
-    try:
-        with patch.object(
-            processor,
-            "_probe_audio_duration_seconds",
-            return_value=0.5,
-        ):
-            segments = processor.split_audio_segments(
-                b"audio-bytes",
-                filename="blob",
-                content_type="audio/mpeg",
-            )
-    finally:
-        settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = original_duration_limit
-        settings.AUDIO.MAX_CHUNK_BYTES = original_chunk_bytes
-
-    assert len(segments) == 1
-    assert segments[0].filename == "blob.mp3"
-
-
-def test_split_audio_segments_falls_back_to_mp3_when_wav_floor_exceeds_byte_limit():
-    processor = AudioProcessor()
-
-    original_duration_limit = settings.AUDIO.MAX_CHUNK_DURATION_SECONDS
-    original_chunk_bytes = settings.AUDIO.MAX_CHUNK_BYTES
-    settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = 60
-    settings.AUDIO.MAX_CHUNK_BYTES = 200_000
-    build_segments = [
-        [AudioSegment(index=0, filename="segment_000.wav", content=b"x" * 200_001)],
-        [AudioSegment(index=0, filename="segment_000.mp3", content=b"x" * 10)],
-    ]
-    try:
-        with (
-            patch.object(
-                processor,
-                "_probe_audio_duration_seconds",
-                return_value=1.0,
-            ),
-            patch.object(
-                processor,
-                "_build_audio_segments",
-                side_effect=build_segments,
-            ) as mock_build,
-        ):
-            segments = processor.split_audio_segments(
-                b"x" * 200_001,
-                filename="clip.wav",
-                content_type="audio/wav",
-            )
-    finally:
-        settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = original_duration_limit
-        settings.AUDIO.MAX_CHUNK_BYTES = original_chunk_bytes
-
-    assert len(segments) == 1
-    assert segments[0].filename.endswith(".mp3")
-    assert mock_build.call_args_list[0].kwargs["suffix"] == ".wav"
-    assert mock_build.call_args_list[1].kwargs["suffix"] == ".mp3"
-
-
-def test_split_audio_segments_raises_validation_for_invalid_audio_bytes():
-    processor = AudioProcessor()
-
-    with pytest.raises(
-        ValidationException,
-        match="Uploaded audio is invalid or unreadable",
-    ):
-        processor.split_audio_segments(
-            b"not-valid-audio",
-            filename="broken.mp3",
-            content_type="audio/mpeg",
-        )
-
-
-def test_split_audio_segments_keep_low_bitrate_mp3_chunks_under_limit():
-    processor = AudioProcessor()
-    mp3_bytes = _generate_test_audio_bytes(
-        "mp3",
-        duration_seconds=12,
-        audio_bitrate="64k",
-    )
-
-    original_duration_limit = settings.AUDIO.MAX_CHUNK_DURATION_SECONDS
-    original_chunk_bytes = settings.AUDIO.MAX_CHUNK_BYTES
-    max_chunk_bytes = max(math.ceil(len(mp3_bytes) / 2), 1)
-    settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = 60
-    settings.AUDIO.MAX_CHUNK_BYTES = max_chunk_bytes
-    try:
-        segments = processor.split_audio_segments(
-            mp3_bytes,
-            filename="voice-note.mp3",
-            content_type="audio/mpeg",
-        )
-    finally:
-        settings.AUDIO.MAX_CHUNK_DURATION_SECONDS = original_duration_limit
-        settings.AUDIO.MAX_CHUNK_BYTES = original_chunk_bytes
-
-    assert len(segments) >= 3
-    assert all(len(segment.content) <= max_chunk_bytes for segment in segments)
+    assert extracted.text == "normalized"
+    assert extracted.metadata["audio_segment_count"] == 1
