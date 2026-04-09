@@ -1,7 +1,7 @@
 ---
 name: local-development
 description: Set up and run Honcho locally for development. Use when a contributor needs help with environment setup, running the API server or deriver, database configuration, running tests, pre-commit hooks, creating migrations, or troubleshooting common local development issues.
-allowed-tools: Read, Glob, Grep, Bash(uv:*), Bash(docker:*), Bash(cp:*), Bash(alembic:*), Edit, Write
+allowed-tools: Read, Glob, Grep, Bash(uv:*), Bash(docker:*), Bash(cp:*), Bash(alembic:*), Bash(git:*), Bash(curl:*), Bash(lsof:*), Bash(kill:*), Bash(netstat:*), Bash(taskkill:*), Edit, Write
 ---
 
 # Local Honcho Development
