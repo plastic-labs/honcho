@@ -862,13 +862,17 @@ class DialecticSettings(HonchoSettings):
             level_override = cast(dict[str, Any], level_override_val)
             if level_name in defaults:
                 base: dict[str, Any] = defaults[level_name].model_dump(by_alias=True)
-                # Recursively merge nested MODEL_CONFIG / model_config too
+                # Recursively merge nested MODEL_CONFIG / model_config too.
+                # model_dump() always produces the Python field name
+                # ("MODEL_CONFIG"), but TOML overrides arrive as lowercase
+                # ("model_config").  Check both casings in the override and
+                # resolve the base value from whichever casing is present.
                 for mc_key in ("MODEL_CONFIG", "model_config"):
                     if mc_key in level_override and isinstance(
                         level_override[mc_key], dict
                     ):
-                        base_mc: dict[str, Any] = base.get(mc_key) or base.get(
-                            "model_config", {}
+                        base_mc: dict[str, Any] = (
+                            base.get("MODEL_CONFIG") or base.get("model_config") or {}
                         )
                         level_override[mc_key] = {**base_mc, **level_override[mc_key]}
                 levels_raw[level_name] = {**base, **level_override}
@@ -879,7 +883,12 @@ class DialecticSettings(HonchoSettings):
         """Ensure the output token limit exceeds all thinking budgets."""
         for level, level_settings in self.LEVELS.items():
             thinking_budget = level_settings.MODEL_CONFIG.thinking_budget_tokens or 0
-            if thinking_budget > 0 and thinking_budget >= self.MAX_OUTPUT_TOKENS:
+            effective_max = (
+                level_settings.MAX_OUTPUT_TOKENS
+                if level_settings.MAX_OUTPUT_TOKENS is not None
+                else self.MAX_OUTPUT_TOKENS
+            )
+            if thinking_budget > 0 and thinking_budget >= effective_max:
                 raise ValueError(
                     "MAX_OUTPUT_TOKENS must be greater than MODEL_CONFIG."
                     + f"thinking_budget_tokens for level '{level}'"

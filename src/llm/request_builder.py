@@ -45,12 +45,9 @@ async def execute_completion(
     extra_params: dict[str, Any] | None = None,
 ) -> CompletionResult:
     credentials = resolve_credentials(config)
-    thinking_budget_tokens = (
-        config.thinking_budget_tokens
-        if config.thinking_budget_tokens is not None
-        and config.thinking_budget_tokens > 0
-        else None
-    )
+    # Preserve 0 as an explicit "disable thinking" value (used by Gemini);
+    # only convert to None when the field is truly unset.
+    thinking_budget_tokens = config.thinking_budget_tokens
     effective_max_tokens = config.max_output_tokens or max_tokens
 
     merged_extra_params = {
@@ -92,12 +89,7 @@ async def execute_stream(
     extra_params: dict[str, Any] | None = None,
 ) -> AsyncIterator[StreamChunk]:
     credentials = resolve_credentials(config)
-    thinking_budget_tokens = (
-        config.thinking_budget_tokens
-        if config.thinking_budget_tokens is not None
-        and config.thinking_budget_tokens > 0
-        else None
-    )
+    thinking_budget_tokens = config.thinking_budget_tokens
     effective_max_tokens = config.max_output_tokens or max_tokens
 
     merged_extra_params = {

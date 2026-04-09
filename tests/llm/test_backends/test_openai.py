@@ -174,6 +174,7 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
                     "properties": {"city": {"type": "string"}},
                     "required": ["city"],
                 },
+                "strict": True,
             },
         }
     ]

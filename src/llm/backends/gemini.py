@@ -83,6 +83,13 @@ class GeminiBackend:
             if "cached_content" in config and isinstance(contents, list) and contents:
                 contents = contents[-1:]
 
+        if isinstance(contents, list) and not contents:
+            raise LLMError(
+                "No non-system messages to send to Gemini",
+                provider="google",
+                model=model,
+            )
+
         response = await self._client.aio.models.generate_content(
             model=model,
             contents=contents,
@@ -130,6 +137,13 @@ class GeminiBackend:
         )
         if system_instruction:
             config["system_instruction"] = system_instruction
+
+        if isinstance(contents, list) and not contents:
+            raise LLMError(
+                "No non-system messages to send to Gemini",
+                provider="google",
+                model=model,
+            )
 
         stream = await self._client.aio.models.generate_content_stream(
             model=model,

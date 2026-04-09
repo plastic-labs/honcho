@@ -167,6 +167,12 @@ class OpenAIBackend:
                 )
                 return self._normalize_response(response, content_override=content)
             if parsed is None:
+                refusal = getattr(response.choices[0].message, "refusal", None)
+                if refusal:
+                    return self._normalize_response(
+                        response,
+                        content_override=refusal,
+                    )
                 raise ValueError("No parsed content in structured response")
             return self._normalize_response(
                 response,
@@ -218,7 +224,17 @@ class OpenAIBackend:
         )
         params["stream"] = True
         params["stream_options"] = {"include_usage": True}
-        if response_format is not None:
+        if isinstance(response_format, type):
+            # parse() supports BaseModel types but streaming create() does not —
+            # convert to a json_schema dict so the streaming path works.
+            params["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": response_format.__name__,
+                    "schema": response_format.model_json_schema(),
+                },
+            }
+        elif response_format is not None:
             params["response_format"] = response_format
         elif extra_params and extra_params.get("json_mode"):
             params["response_format"] = {"type": "json_object"}
@@ -349,10 +365,13 @@ class OpenAIBackend:
         response: Any,
         response_format: type[BaseModel],
         model: str,
-    ) -> BaseModel:
+    ) -> BaseModel | str:
         raw_content = response.choices[0].message.content or ""
         if raw_content:
             return repair_response_model_json(raw_content, response_format, model)
+        refusal = getattr(response.choices[0].message, "refusal", None)
+        if refusal:
+            return refusal
         raise ValueError("No raw content available for structured output repair")
 
     @staticmethod
@@ -366,6 +385,7 @@ class OpenAIBackend:
                     "name": tool["name"],
                     "description": tool["description"],
                     "parameters": tool["input_schema"],
+                    "strict": True,
                 },
             }
             for tool in tools

@@ -84,16 +84,18 @@ class AnthropicBackend:
         if use_json_prefill and params["messages"]:
             if response_format and isinstance(response_format, type):
                 schema_json = json.dumps(response_format.model_json_schema(), indent=2)
-                params["messages"][-1]["content"] += (
-                    f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                self._append_text_to_last_message(
+                    params["messages"],
+                    f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
                 )
             params["messages"].append({"role": "assistant", "content": "{"})
         elif (
             response_format and isinstance(response_format, type) and params["messages"]
         ):
             schema_json = json.dumps(response_format.model_json_schema(), indent=2)
-            params["messages"][-1]["content"] += (
-                f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+            self._append_text_to_last_message(
+                params["messages"],
+                f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
             )
 
         response = await self._client.messages.create(**params)
@@ -166,16 +168,18 @@ class AnthropicBackend:
         if use_json_prefill and params["messages"]:
             if response_format and isinstance(response_format, type):
                 schema_json = json.dumps(response_format.model_json_schema(), indent=2)
-                params["messages"][-1]["content"] += (
-                    f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                self._append_text_to_last_message(
+                    params["messages"],
+                    f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
                 )
             params["messages"].append({"role": "assistant", "content": "{"})
         elif (
             response_format and isinstance(response_format, type) and params["messages"]
         ):
             schema_json = json.dumps(response_format.model_json_schema(), indent=2)
-            params["messages"][-1]["content"] += (
-                f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+            self._append_text_to_last_message(
+                params["messages"],
+                f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
             )
         if thinking_budget_tokens:
             params["thinking"] = {
@@ -323,6 +327,24 @@ class AnthropicBackend:
         if tool_choice == "none":
             return {"type": "none"}
         return {"type": "tool", "name": tool_choice}
+
+    @staticmethod
+    def _append_text_to_last_message(
+        messages: list[dict[str, Any]], suffix: str
+    ) -> None:
+        """Append text to the last message, handling both string and list content."""
+        last = messages[-1]
+        content = last.get("content")
+        if isinstance(content, str):
+            last["content"] = content + suffix
+        elif isinstance(content, list):
+            # Content block list — append to the last text block or add one
+            blocks: list[dict[str, Any]] = content  # pyright: ignore[reportUnknownVariableType]
+            for block in reversed(blocks):
+                if block.get("type") == "text":
+                    block["text"] = block["text"] + suffix
+                    return
+            blocks.append({"type": "text", "text": suffix})
 
     @staticmethod
     def _json_mode(extra_params: dict[str, Any] | None) -> bool:
