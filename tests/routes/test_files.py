@@ -16,7 +16,7 @@ from starlette.datastructures import Headers
 
 from src import models, schemas
 from src.config import settings
-from src.exceptions import ValidationException
+from src.exceptions import FileProcessingError, ValidationException
 from src.models import Peer, Workspace
 from src.routers.messages import create_messages_with_file
 from src.utils.files import ExtractedFileText
@@ -793,6 +793,41 @@ async def test_audio_upload_over_generic_limit_keeps_generic_limit_without_trans
         form_data = {"peer_id": test_peer.name}
 
         with patch.dict("src.utils.files.CLIENTS", {}, clear=True):
+            url = _get_upload_url(test_workspace.name, session_name)
+            response = client.post(url, files=files, data=form_data)
+    finally:
+        settings.MAX_FILE_SIZE = original_generic_max
+        settings.AUDIO.MAX_FILE_SIZE_BYTES = original_audio_max
+
+    assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_audio_upload_over_generic_limit_keeps_generic_limit_on_probe_timeout(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    original_generic_max = settings.MAX_FILE_SIZE
+    original_audio_max = settings.AUDIO.MAX_FILE_SIZE_BYTES
+    settings.MAX_FILE_SIZE = 5
+    settings.AUDIO.MAX_FILE_SIZE_BYTES = 10
+    try:
+        file_data = io.BytesIO(b"123456")
+        files = {"file": ("call.mp3", file_data, "audio/mpeg")}
+        form_data = {"peer_id": test_peer.name}
+
+        with (
+            patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=True),
+            patch(
+                "src.utils.files.AudioProcessor.probe_audio_duration_seconds_from_path",
+                side_effect=FileProcessingError("Audio validation timed out"),
+            ),
+        ):
             url = _get_upload_url(test_workspace.name, session_name)
             response = client.post(url, files=files, data=form_data)
     finally:

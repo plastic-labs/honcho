@@ -264,6 +264,10 @@ async def is_validated_audio_upload(file: UploadFile) -> bool:
         if str(exc) == "Uploaded audio is invalid or unreadable":
             return False
         raise
+    except FileProcessingError as exc:
+        if exc.detail == "Audio validation timed out":
+            return False
+        raise
     finally:
         await file.seek(0)
         if temp_path is not None:

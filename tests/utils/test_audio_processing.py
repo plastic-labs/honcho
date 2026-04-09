@@ -367,3 +367,22 @@ async def test_validated_audio_upload_cleans_up_temp_file_on_write_failure():
 
     mock_unlink.assert_called_once_with(missing_ok=True)
     assert file.file.tell() == 0
+
+
+@pytest.mark.asyncio
+async def test_validated_audio_upload_returns_false_on_probe_timeout():
+    file = UploadFile(
+        file=io.BytesIO(b"audio-bytes"),
+        filename="voice.mp3",
+        headers=Headers({"content-type": "audio/mpeg"}),
+    )
+
+    with patch.object(
+        AudioProcessor,
+        "probe_audio_duration_seconds_from_path",
+        side_effect=FileProcessingError("Audio validation timed out"),
+    ):
+        is_valid = await file_utils.is_validated_audio_upload(file)
+
+    assert is_valid is False
+    assert file.file.tell() == 0
