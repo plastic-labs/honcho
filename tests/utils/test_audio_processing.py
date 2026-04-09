@@ -1,5 +1,6 @@
 import asyncio
 import io
+from types import TracebackType
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -7,6 +8,7 @@ from fastapi import UploadFile
 from openai import AsyncOpenAI
 from starlette.datastructures import Headers
 
+import src.utils.files as file_utils
 from src.config import settings
 from src.exceptions import ValidationException
 from src.utils.clients import CLIENTS, transcribe_audio
@@ -299,3 +301,39 @@ async def test_audio_processor_normalizes_small_mime_only_audio_filename():
 
     assert extracted.text == "normalized"
     assert extracted.metadata["audio_segment_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_validated_audio_upload_cleans_up_temp_file_on_write_failure():
+    file = UploadFile(
+        file=io.BytesIO(b"audio-bytes"),
+        filename="voice.mp3",
+        headers=Headers({"content-type": "audio/mpeg"}),
+    )
+
+    class FailingTempFile:
+        name: str = "/tmp/test-audio-validation.mp3"
+
+        def __enter__(self) -> "FailingTempFile":
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> bool:
+            return False
+
+        def write(self, _chunk: bytes) -> int:
+            raise OSError("disk full")
+
+    with (
+        patch("src.utils.files.tempfile.NamedTemporaryFile", return_value=FailingTempFile()),
+        patch("src.utils.files.Path.unlink") as mock_unlink,
+        pytest.raises(OSError, match="disk full"),
+    ):
+        await file_utils.is_validated_audio_upload(file)
+
+    mock_unlink.assert_called_once_with(missing_ok=True)
+    assert file.file.tell() == 0

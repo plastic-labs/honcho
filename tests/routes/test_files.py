@@ -16,6 +16,7 @@ from starlette.datastructures import Headers
 
 from src import models, schemas
 from src.config import settings
+from src.exceptions import ValidationException
 from src.models import Peer, Workspace
 from src.routers.messages import create_messages_with_file
 from src.utils.files import FileExtractionResult
@@ -946,7 +947,13 @@ async def test_malformed_audio_upload_returns_validation_error(
     form_data = {"peer_id": test_peer.name}
 
     url = _get_upload_url(test_workspace.name, session_name)
-    with patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False):
+    with (
+        patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False),
+        patch(
+            "src.utils.files.AudioProcessor._probe_audio_duration_seconds",
+            side_effect=ValidationException("Uploaded audio is invalid or unreadable"),
+        ),
+    ):
         response = client.post(url, files=files, data=form_data)
 
     assert response.status_code == 422

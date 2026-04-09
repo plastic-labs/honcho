@@ -103,7 +103,7 @@ Our approach involves...
 
 **JSON Files**: Structured data is converted to string format.
 
-**Audio Files**: `.mp3` and `.wav` uploads are transcribed by OpenAI during upload using `whisper-1` by default. Large audio files may be split into multiple audio segments before transcription and then merged back into ordered transcript text before message chunking.
+**Audio Files**: `.mp3` and `.wav` uploads are transcribed directly by OpenAI during upload using `whisper-1` by default. The resulting transcript is then split into normal message-sized text chunks before messages are created.
 
 ### Chunking Strategy
 
