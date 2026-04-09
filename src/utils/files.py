@@ -246,16 +246,14 @@ async def is_validated_audio_upload(file: UploadFile) -> bool:
 
     content_type = processor.normalize_content_type(filename, file.content_type or "")
     suffix = processor.get_output_suffix(filename, content_type)
-
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
-        temp_path = Path(temp_file.name)
-        try:
-            while chunk := await file.read(UPLOAD_VALIDATION_CHUNK_BYTES):
-                temp_file.write(chunk)
-        finally:
-            await file.seek(0)
+    temp_path: Path | None = None
 
     try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+            while chunk := await file.read(UPLOAD_VALIDATION_CHUNK_BYTES):
+                temp_file.write(chunk)
+
         await asyncio.to_thread(
             processor.probe_audio_duration_seconds_from_path,
             temp_path,
@@ -266,7 +264,9 @@ async def is_validated_audio_upload(file: UploadFile) -> bool:
             return False
         raise
     finally:
-        temp_path.unlink(missing_ok=True)
+        await file.seek(0)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 class FileProcessingService:
