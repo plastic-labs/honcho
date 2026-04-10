@@ -39,7 +39,9 @@ A Cloudflare Worker that implements the [Model Context Protocol (MCP)](https://m
 
 ## Self-Hosted Instances
 
-If you run your own Honcho server, pass `X-Honcho-Base-URL` to point the MCP Worker at it:
+If you run your own Honcho server, pass `X-Honcho-Base-URL` to point the MCP Worker at it.
+
+> **Note:** `http://localhost:8000` resolves from the MCP Worker's runtime (Cloudflare's edge), not from your local machine. To reach a locally running Honcho server, expose it with a tunnel (e.g. [ngrok](https://ngrok.com/), [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)) and use the tunnel URL as `X-Honcho-Base-URL`.
 
 ```json
 {

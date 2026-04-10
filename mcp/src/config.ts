@@ -8,6 +8,27 @@ export interface HonchoConfig {
   workspaceId: string;
 }
 
+const DEFAULT_BASE_URL = "https://api.honcho.dev";
+
+/**
+ * Validate and return the base URL from the X-Honcho-Base-URL header.
+ * Accepts only http/https URLs. Falls back to the default if the header is
+ * absent or malformed — never propagates an invalid URL to the client.
+ */
+function parseBaseUrl(raw: string | null): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return DEFAULT_BASE_URL;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return DEFAULT_BASE_URL;
+    }
+    return trimmed;
+  } catch {
+    return DEFAULT_BASE_URL;
+  }
+}
+
 /**
  * Parse configuration from request headers.
  * Throws on missing required fields so callers get clear errors.
@@ -37,7 +58,7 @@ export function parseConfig(request: Request): HonchoConfig {
     apiKey,
     userName,
     assistantName: request.headers.get("X-Honcho-Assistant-Name")?.trim() || "Assistant",
-    baseUrl: request.headers.get("X-Honcho-Base-URL")?.trim() || "https://api.honcho.dev",
+    baseUrl: parseBaseUrl(request.headers.get("X-Honcho-Base-URL")),
     workspaceId: request.headers.get("X-Honcho-Workspace-ID")?.trim() || "default",
   };
 }
