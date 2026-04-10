@@ -16,10 +16,14 @@ export function makeQueryMemoryTool(ctx: HonchoContext) {
         ),
     }),
     execute: async ({ query }) => {
-      const honcho = getClient();
-      const peer = honcho.peer(ctx.userId);
-      const response = await peer.chat(query);
-      return response ?? "No relevant information found in memory.";
+      try {
+        const honcho = getClient();
+        const peer = honcho.peer(ctx.userId);
+        const response = await peer.chat(query);
+        return response ?? "No relevant information found in memory.";
+      } catch (err) {
+        throw new Error(`Failed to query Honcho memory: ${err instanceof Error ? err.message : String(err)}`);
+      }
     },
   });
 }
