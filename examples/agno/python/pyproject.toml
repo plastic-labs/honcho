@@ -5,7 +5,7 @@ description = "Agno integration with Honcho for persistent memory"
 requires-python = ">=3.10"
 dependencies = [
     "agno>=1.4.0",
-    "honcho-ai>=2.0.0",
+    "honcho-ai>=2.1.0",
     "python-dotenv>=1.0.0",
     "openai>=1.0.0",
 ]

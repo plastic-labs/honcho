@@ -2,6 +2,8 @@
 
 from .client import get_client
 
+_VALID_ROLES = {"user", "assistant"}
+
 
 def save_memory(
     user_id: str,
@@ -21,9 +23,14 @@ def save_memory(
 
     Returns:
         A confirmation string describing what was saved.
+
+    Raises:
+        ValueError: If content is empty or role is not ``"user"`` or ``"assistant"``.
     """
     if not content:
         raise ValueError("content must not be empty")
+    if role not in _VALID_ROLES:
+        raise ValueError(f"role must be 'user' or 'assistant', got '{role}'")
 
     honcho = get_client()
     user_peer = honcho.peer(user_id)
