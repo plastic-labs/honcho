@@ -1,16 +1,31 @@
 [project]
-name = "honcho-cli"
+name = "honcho-ai-cli"
 version = "0.1.0"
 description = "Agent-first admin & debugging CLI for Honcho"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+authors = [
+    { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = [
     "typer>=0.15.0",
-    "honcho-ai>=0.1.0",
+    "honcho-ai>=2.0.0",
     "rich>=13.0.0",
     "httpx>=0.27.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/plastic-labs/honcho"
+Repository = "https://github.com/plastic-labs/honcho"
 
 [project.scripts]
 honcho = "honcho_cli.main:app"
@@ -30,3 +45,9 @@ dev = [
     "pytest>=8.0.0",
     "pytest-mock>=3.14.0",
 ]
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true

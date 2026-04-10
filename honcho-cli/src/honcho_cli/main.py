@@ -12,22 +12,33 @@ import typer
 from honcho_cli import __version__
 from honcho_cli.output import set_json_mode, set_quiet_mode
 
+BANNER = r"""
+██╗  ██╗ ██████╗ ███╗   ██╗ ██████╗██╗  ██╗ ██████╗
+██║  ██║██╔═══██╗████╗  ██║██╔════╝██║  ██║██╔═══██╗
+███████║██║   ██║██╔██╗ ██║██║     ███████║██║   ██║
+██╔══██║██║   ██║██║╚██╗██║██║     ██╔══██║██║   ██║
+██║  ██║╚██████╔╝██║ ╚████║╚██████╗██║  ██║╚██████╔╝
+╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝
+""".strip()
+
 app = typer.Typer(
     name="honcho",
     help="Agent-first admin & debugging CLI for Honcho.",
-    no_args_is_help=True,
+    invoke_without_command=True,
     pretty_exceptions_enable=False,
 )
 
 
 def version_callback(value: bool) -> None:
     if value:
-        print(f"honcho-cli {__version__}")
+        print(BANNER)
+        print(f"  honcho-cli {__version__}")
         raise typer.Exit()
 
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", envvar="HONCHO_WORKSPACE_ID", help="Override workspace ID"),
@@ -43,6 +54,15 @@ def main(
     _global_overrides["workspace"] = workspace
     _global_overrides["peer"] = peer
     _global_overrides["session"] = session
+
+    if ctx.invoked_subcommand is None:
+        from rich.console import Console
+
+        console = Console()
+        console.print(f"[bold cyan]{BANNER}[/bold cyan]")
+        console.print(f"  [dim]v{__version__}[/dim]\n")
+        console.print(ctx.get_help())
+        raise typer.Exit()
 
 
 # Global overrides from flags (commands read these)
