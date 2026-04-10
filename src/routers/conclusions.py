@@ -6,6 +6,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
+from src.crud.document import _uses_pgvector
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import require_auth
@@ -106,10 +107,11 @@ async def query_conclusions(
         observer = body.filters.get("observer") or body.filters.get("observer_id")
         observed = body.filters.get("observed") or body.filters.get("observed_id")
 
-    if not observer or not observed:
-        raise ValidationException(
-            "observer and observed must be specified for semantic search"
-        )
+    if not _uses_pgvector():
+        if not observer or not observed:
+            raise ValidationException(
+                "observer and observed must be specified for semantic search on external vector stores"
+            )
 
     documents = await crud.query_documents(
         db,

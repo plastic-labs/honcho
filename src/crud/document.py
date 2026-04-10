@@ -278,8 +278,8 @@ async def fetch_documents_by_ids(
 async def _query_documents_pgvector(
     db: AsyncSession,
     workspace_name: str,
-    observer: str,
-    observed: str,
+    observer: str | None,
+    observed: str | None,
     embedding: list[float],
     filters: dict[str, Any] | None,
     max_distance: float | None,
@@ -289,11 +289,14 @@ async def _query_documents_pgvector(
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.observer == observer)
-        .where(models.Document.observed == observed)
         .where(models.Document.embedding.isnot(None))
         .where(models.Document.deleted_at.is_(None))
     )
+
+    if observer:
+        stmt = stmt.where(models.Document.observer == observer)
+    if observed:
+        stmt = stmt.where(models.Document.observed == observed)
 
     if max_distance is not None:
         stmt = stmt.where(
@@ -314,8 +317,8 @@ async def query_documents(
     workspace_name: str,
     query: str,
     *,
-    observer: str,
-    observed: str,
+    observer: str | None = None,
+    observed: str | None = None,
     filters: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
@@ -378,6 +381,11 @@ async def query_documents(
             for doc in docs:
                 managed_db.expunge(doc)
             return docs
+
+    if not observer or not observed:
+        raise ValidationException(
+            "observer and observed must be specified for semantic search on external vector stores"
+        )
 
     # External vector store — network call first, DB only for the ID fetch
     document_ids = await query_external_vector_document_ids(
