@@ -19,6 +19,9 @@ def get_context(
         A list of message dicts: ``[{"role": "user" | "assistant", "content": "..."}]``.
         Returns an empty list if the session has no messages yet.
     """
+    if tokens <= 0:
+        raise ValueError("tokens must be a positive integer")
+
     honcho = get_client()
     user_peer = honcho.peer(ctx.user_id)
     assistant_peer = honcho.peer(ctx.assistant_id)

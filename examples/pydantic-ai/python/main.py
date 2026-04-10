@@ -116,7 +116,10 @@ async def chat(
     ctx = HonchoContext(user_id=user_id, session_id=session_id)
     deps = HonchoAgentDeps(ctx=ctx)
 
-    save_memory(user_id, message, "user", session_id)
+    try:
+        save_memory(user_id, message, "user", session_id)
+    except Exception as exc:
+        print(f"Warning: failed to save user message — {exc}")
 
     result = await honcho_agent.run(
         message,
@@ -125,7 +128,10 @@ async def chat(
     )
     response = str(result.output)
 
-    save_memory(user_id, response, "assistant", session_id)
+    try:
+        save_memory(user_id, response, "assistant", session_id)
+    except Exception as exc:
+        print(f"Warning: failed to save assistant response — {exc}")
 
     return response, result.all_messages()
 
