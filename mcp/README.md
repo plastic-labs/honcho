@@ -34,6 +34,54 @@ A Cloudflare Worker that implements the [Model Context Protocol (MCP)](https://m
 | Header | Default | Description |
 | --- | --- | --- |
 | `X-Honcho-Workspace-ID` | `"default"` | Workspace to operate in |
+| `X-Honcho-Assistant-Name` | `"Assistant"` | Peer ID for the assistant |
+| `X-Honcho-Base-URL` | `"https://api.honcho.dev"` | Honcho API base URL — override for self-hosted instances |
+
+## Self-Hosted Instances
+
+If you run your own Honcho server, pass `X-Honcho-Base-URL` to point the MCP Worker at it:
+
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "bunx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}",
+        "--header",
+        "X-Honcho-Base-URL:${HONCHO_BASE_URL}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>",
+        "HONCHO_BASE_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+For Cursor or other clients with native HTTP MCP support:
+
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "url": "https://mcp.honcho.dev",
+      "headers": {
+        "Authorization": "Bearer <your-honcho-key>",
+        "X-Honcho-User-Name": "<your-name>",
+        "X-Honcho-Base-URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
 
 ## Available Tools
 
