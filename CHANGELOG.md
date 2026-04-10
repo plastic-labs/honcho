@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.6] - 2026-04-10
+
+### Changed
+
+- Tightened transaction scopes across search, agent tools, queue manager, and webhook delivery to minimize DB connection hold time during external operations (#525)
+- Search operations refactored to two-phase pattern — external work (embeddings, LLM calls) completes before opening a transaction (#525)
+- Agent tool executor performs external operations before acquiring DB sessions (#525)
+- Queue manager transaction scope reduced to only the critical section (#525)
+- Webhook delivery no longer holds a DB session parameter (#525)
+
+### Fixed
+
+- Session leakage in non-session-scoped dialectic chat calls (#526)
+
+### Added
+
+- Health check endpoint (`/health`) for container orchestration and load balancer probes (#510)
+
 ## [3.0.5] - 2026-04-03
 
 ### Fixed
