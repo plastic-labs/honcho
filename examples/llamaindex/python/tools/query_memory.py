@@ -27,12 +27,17 @@ def make_query_memory_tool(ctx: HonchoContext) -> FunctionTool:
         Returns:
             A natural language answer from Honcho's memory.
         """
-        if not query:
-            raise ValueError("query must not be empty")
+        trimmed = query.strip()
+        if not trimmed:
+            raise ValueError("query must not be empty or whitespace")
 
-        honcho = get_client()
-        peer = honcho.peer(ctx.user_id)
-        response = peer.chat(query=query)
+        try:
+            honcho = get_client()
+            peer = honcho.peer(ctx.user_id)
+            response = peer.chat(query=trimmed)
+        except Exception as exc:
+            raise RuntimeError("Failed to query Honcho memory") from exc
+
         return str(response) if response else "No relevant information found in memory."
 
     return FunctionTool.from_defaults(fn=query_memory)
