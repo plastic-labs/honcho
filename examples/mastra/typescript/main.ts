@@ -44,7 +44,7 @@ async function buildInstructions(ctx: HonchoContext): Promise<string> {
   return `${base}\n\n## Conversation History\n${formatted}`;
 }
 
-async function chat(
+export async function chat(
   userId: string,
   message: string,
   sessionId: string
@@ -86,8 +86,12 @@ async function main() {
       rl.close();
       break;
     }
-    const response = await chat(userId, userInput, sessionId);
-    console.log(`Agent: ${response}\n`);
+    try {
+      const response = await chat(userId, userInput, sessionId);
+      console.log(`Agent: ${response}\n`);
+    } catch (err) {
+      console.error(`Error: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
 }
 
