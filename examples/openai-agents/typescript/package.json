@@ -1,0 +1,32 @@
+{
+  "name": "honcho-openai-agents-example",
+  "version": "1.0.0",
+  "description": "OpenAI Agents SDK (TypeScript) integration with Honcho for persistent memory",
+  "main": "main.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run main.ts",
+    "dev": "bun --watch main.ts",
+    "typecheck": "bun run tsc --noEmit"
+  },
+  "keywords": [
+    "honcho",
+    "openai-agents",
+    "openai",
+    "chatbot",
+    "ai",
+    "memory"
+  ],
+  "author": "",
+  "license": "AGPL-3.0-or-later",
+  "dependencies": {
+    "@honcho-ai/sdk": "^2.0.0",
+    "@openai/agents": "^0.0.11",
+    "dotenv": "^17.2.3",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

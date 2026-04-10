@@ -1,15 +1,53 @@
 # Honcho Memory Integration for the OpenAI Agents SDK
 
-Give your [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) agents persistent memory using [Honcho](https://honcho.dev).
+Give your [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) agents persistent memory using [Honcho](https://honcho.dev). Available in both Python and TypeScript.
 
 ## Features
 
 - **Persistent Memory**: Every conversation turn is saved to Honcho and automatically injected into the agent's instructions on the next turn.
 - **Natural Language Recall**: The agent can query Honcho's Dialectic API to answer questions like "What are my hobbies?" or "What did we talk about last time?"
 - **Context Injection**: Conversation history is retrieved from Honcho and formatted for the LLM before every request via dynamic `instructions`.
-- **Zero Boilerplate**: Pass a `HonchoContext` to `Runner.run()` — the tools and instructions handle the rest.
+- **Zero Boilerplate**: Pass a context object to `Runner.run()` — the tools and instructions handle the rest.
 
-## Installation
+## Structure
+
+```
+openai-agents/
+├── python/          # Python implementation (openai-agents package)
+│   ├── main.py
+│   ├── pyproject.toml
+│   └── tools/
+│       ├── client.py
+│       ├── save_memory.py
+│       ├── query_memory.py
+│       └── get_context.py
+└── typescript/      # TypeScript implementation (@openai/agents package)
+    ├── main.ts
+    ├── package.json
+    └── tools/
+        ├── client.ts
+        ├── saveMemory.ts
+        ├── queryMemory.ts
+        └── getContext.ts
+```
+
+## Environment Variables
+
+Create a `.env` file in whichever subdirectory you run from:
+
+```env
+HONCHO_API_KEY=your-honcho-api-key
+HONCHO_WORKSPACE_ID=default
+OPENAI_API_KEY=your-openai-api-key
+```
+
+Get your Honcho API key at [honcho.dev](https://honcho.dev).
+
+---
+
+## Python
+
+### Installation
 
 ```bash
 pip install honcho-ai openai-agents python-dotenv
@@ -21,19 +59,7 @@ Or with uv:
 uv add honcho-ai openai-agents python-dotenv
 ```
 
-## Environment Variables
-
-Create a `.env` file:
-
-```env
-HONCHO_API_KEY=your-honcho-api-key
-HONCHO_WORKSPACE_ID=default
-OPENAI_API_KEY=your-openai-api-key
-```
-
-Get your Honcho API key at [honcho.dev](https://honcho.dev).
-
-## Quick Start
+### Quick Start
 
 ```python
 import asyncio
@@ -70,22 +96,99 @@ async def chat(user_id: str, message: str, session_id: str) -> str:
     return response
 
 
-# Run a conversation turn
 response = asyncio.run(chat("alice", "I love hiking in the mountains", "session-1"))
 print(response)
 ```
 
-Run the interactive demo:
+### Run the demo
 
 ```bash
+cd python
 python main.py
 ```
+
+### Tests
+
+```bash
+cd python
+# Structural tests (no API keys required)
+pytest tests/test_basic.py -v
+
+# Integration tests (requires HONCHO_API_KEY)
+pytest tests/test_integration.py -v
+```
+
+---
+
+## TypeScript
+
+### Installation
+
+```bash
+cd typescript
+bun install
+# or: npm install
+```
+
+### Quick Start
+
+```typescript
+import { Agent, run } from '@openai/agents';
+import type { RunContext } from '@openai/agents';
+import { createContext, HonchoContext } from './tools/client.js';
+import { getContext } from './tools/getContext.js';
+import { queryMemory } from './tools/queryMemory.js';
+import { saveMemory } from './tools/saveMemory.js';
+
+async function honchoInstructions(runContext: RunContext<HonchoContext>): Promise<string> {
+  const base = 'You are a helpful assistant with persistent memory powered by Honcho.';
+  const history = await getContext(runContext.context, 2000);
+  if (history.length === 0) return base;
+  const formatted = history.map(m => `${m.role}: ${m.content}`).join('\n');
+  return `${base}\n\n## Conversation History\n${formatted}`;
+}
+
+const agent = new Agent<HonchoContext>({
+  name: 'HonchoMemoryAgent',
+  instructions: honchoInstructions,
+  tools: [queryMemory],
+  model: 'gpt-4.1-mini',
+});
+
+async function chat(userId: string, message: string, sessionId: string): Promise<string> {
+  const ctx = createContext(userId, sessionId);
+  await saveMemory(userId, message, 'user', sessionId);
+  const result = await run(agent, message, { context: ctx });
+  const response = String(result.finalOutput);
+  await saveMemory(userId, response, 'assistant', sessionId);
+  return response;
+}
+
+const response = await chat('alice', 'I love hiking in the mountains', 'session-1');
+console.log(response);
+```
+
+### Run the demo
+
+```bash
+cd typescript
+bun run main.ts
+```
+
+### Type-check
+
+```bash
+cd typescript
+bun run tsc --noEmit
+```
+
+---
 
 ## How It Works
 
 ### 1. Dynamic Instructions
 
-The agent uses a callable `instructions` function instead of a static string. Before every LLM call, the SDK invokes this function with the current `RunContextWrapper`. The function calls `get_context()` to fetch recent messages from Honcho and injects them into the system prompt:
+The agent uses a callable `instructions` function instead of a static string. Before every LLM call, the SDK invokes this function with the current run context. The function calls `getContext()` to fetch recent messages from Honcho and injects them into the system prompt:
 
 ```
 You are a helpful assistant with persistent memory powered by Honcho.
@@ -97,84 +200,20 @@ Assistant: That sounds wonderful! Do you have a favorite trail?
 
 ### 2. Memory Tools
 
-The `query_memory` tool is exposed to the LLM via `@function_tool`. When the user asks "What do you remember about me?", the agent calls this tool to query Honcho's Dialectic API — a semantic memory layer that synthesizes observations about the user into a natural language answer.
+The `queryMemory` tool is exposed to the LLM. When the user asks "What do you remember about me?", the agent calls this tool to query Honcho's Dialectic API — a semantic memory layer that synthesizes observations about the user into a natural language answer.
 
 ### 3. Auto-Save
 
-The `chat()` helper in `main.py` wraps `Runner.run()` to save the user message before the run and the assistant response after. This keeps Honcho in sync with every conversation turn.
-
-## API Reference
-
-### `HonchoContext`
-
-```python
-@dataclass
-class HonchoContext:
-    user_id: str       # Unique identifier for the human peer
-    session_id: str    # Identifier for the current conversation session
-    assistant_id: str  # Peer ID for the assistant (default: "assistant")
-```
-
-Pass this as the `context` argument to `Runner.run()`.
-
----
-
-### `save_memory(user_id, content, role, session_id, assistant_id="assistant")`
-
-Saves a message to Honcho. Creates the peer and session if they don't exist.
-
-| Param | Type | Description |
-|---|---|---|
-| `user_id` | `str` | Unique user identifier |
-| `content` | `str` | Message text |
-| `role` | `str` | `"user"` or `"assistant"` |
-| `session_id` | `str` | Session identifier |
-| `assistant_id` | `str` | Peer ID for the assistant (default: `"assistant"`) |
-
----
-
-### `get_context(ctx, tokens=2000)`
-
-Returns recent conversation history from Honcho as OpenAI-format message dicts.
-
-| Param | Type | Description |
-|---|---|---|
-| `ctx` | `HonchoContext` | Context with user, session, and assistant IDs |
-| `tokens` | `int` | Max tokens to include (default: `2000`) |
-
-Returns `list[dict[str, str]]` — suitable for direct use as LLM input.
-
----
-
-### `query_memory` (agent tool)
-
-A `@function_tool` decorated function the agent calls to query Honcho's Dialectic API.
-
-| Param | Type | Description |
-|---|---|---|
-| `ctx` | `RunContextWrapper[HonchoContext]` | Injected automatically by the SDK |
-| `query` | `str` | Natural language question about the user |
-
-Returns a natural language answer from Honcho's memory.
+The `chat()` helper wraps `Runner.run()` (Python) / `run()` (TypeScript) to save the user message before the run and the assistant response after. This keeps Honcho in sync with every conversation turn.
 
 ## Concept Mapping
 
 | OpenAI Agents SDK | Honcho |
 |---|---|
-| `context.user_id` | Peer (human) |
-| `context.assistant_id` | Peer (agent) |
-| `context.session_id` | Session |
-| `Runner.run()` input | Message |
-
-## Running Tests
-
-```bash
-# Structural tests (no API keys required)
-pytest tests/test_basic.py -v
-
-# Integration tests (requires HONCHO_API_KEY)
-pytest tests/test_integration.py -v
-```
+| `context.userId` | Peer (human) |
+| `context.assistantId` | Peer (agent) |
+| `context.sessionId` | Session |
+| Agent input | Message |
 
 ## License
 
