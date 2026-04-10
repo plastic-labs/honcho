@@ -134,8 +134,9 @@ async def chat(user_id: str, message: str, session_id: str) -> str:
         if event.is_final_response() and event.content and event.content.parts:
             response_text = event.content.parts[0].text or ""
 
-    # Persist assistant response after the run
-    save_memory(user_id, response_text, "assistant", session_id)
+    # Persist assistant response after the run — only when the agent produced output
+    if response_text:
+        save_memory(user_id, response_text, "assistant", session_id)
 
     return response_text
 

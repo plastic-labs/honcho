@@ -16,13 +16,21 @@ def query_memory(user_id: str, query: str) -> str:
     Returns:
         A natural language answer drawn from Honcho's memory, or a fallback
         message if no relevant information was found.
-    """
-    if not query:
-        raise ValueError("query must not be empty")
 
-    honcho = get_client()
-    peer = honcho.peer(user_id)
-    response = peer.chat(query=query)
+    Raises:
+        ValueError: If query is empty or whitespace-only.
+        RuntimeError: If the Dialectic API call fails.
+    """
+    trimmed = query.strip()
+    if not trimmed:
+        raise ValueError("query must not be empty or whitespace")
+
+    try:
+        honcho = get_client()
+        peer = honcho.peer(user_id)
+        response = peer.chat(query=trimmed)
+    except Exception as exc:
+        raise RuntimeError("Failed to query Honcho memory") from exc
 
     if response:
         return str(response)
