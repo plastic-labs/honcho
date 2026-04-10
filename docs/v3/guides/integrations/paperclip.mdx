@@ -29,17 +29,7 @@ This page covers the current public-host-compatible Paperclip plugin. It support
 4. If you are using a local Honcho instance, switch the deployment to `Self-hosted / local` and set `honchoApiBaseUrl`.
 5. Set `honchoApiKey`.
 6. Save the settings.
-7. Run `Initialize memory for this company`.
-
-### Optional Checks And Follow-Up Actions
-
-8. Optionally run:
-   - `Validate config`
-   - `Test connection`
-   - `Preview prompt context`
-   - `Rescan migration sources`
-   - `Import history`
-   - `Repair mappings`
+7. Run `Initialize Honcho memory`.
 
 `honchoApiKey` is the only field required for the standard setup path. The other settings already have defaults.
 
@@ -67,12 +57,6 @@ The current plugin gives agent peers explicit observation settings:
 - `observe_others` defaults to `true`
 
 In practice, that means agent peers can both be observed by Honcho and form representations of other peers they interact with. 
-
-### When Hierarchy Context Is Available
-
-Hierarchy is still partly host-dependent. `honcho_get_hierarchy_context` is available, but it only returns delegated-work context when the Paperclip host provides lineage metadata. The tool degrades gracefully when that metadata is unavailable.
-
-Prompt context is still more conservative than in integrations like OpenClaw. The recommended starting configuration keeps `enablePromptContext: false`, and operators use `Preview prompt context` for manual prompt probes instead of relying on automatic injection hooks.
 
 ## How It Works
 
