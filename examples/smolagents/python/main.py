@@ -82,5 +82,8 @@ if __name__ == "__main__":
             continue
         if _user_input.lower() in ("quit", "exit"):
             break
-        _response = chat(_user_id, _user_input, _session_id)
-        print(f"Agent: {_response}\n")
+        try:
+            _response = chat(_user_id, _user_input, _session_id)
+            print(f"Agent: {_response}\n")
+        except Exception as exc:
+            print(f"Error: {exc}\n")

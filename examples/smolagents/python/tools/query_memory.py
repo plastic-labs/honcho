@@ -37,8 +37,20 @@ class QueryMemoryTool(Tool):
 
         Returns:
             A natural language answer from Honcho's memory.
+
+        Raises:
+            ValueError: If query is empty or whitespace-only.
+            RuntimeError: If the Dialectic API call fails.
         """
-        honcho = get_client()
-        peer = honcho.peer(self.user_id)
-        response = peer.chat(query=query)
+        trimmed = query.strip()
+        if not trimmed:
+            raise ValueError("query must not be empty or whitespace")
+
+        try:
+            honcho = get_client()
+            peer = honcho.peer(self.user_id)
+            response = peer.chat(query=trimmed)
+        except Exception as exc:
+            raise RuntimeError("Failed to query Honcho memory") from exc
+
         return str(response) if response else "No relevant information found in memory."
