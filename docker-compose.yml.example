@@ -33,12 +33,6 @@ services:
       - path: .env
         required: false
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 30s
-      timeout: 10s
-      start_period: 5s
-      retries: 3
 
   deriver:
     build:
@@ -62,6 +56,10 @@ services:
       - path: .env
         required: false
     restart: unless-stopped
+    # deriver is a background worker with no HTTP server — disable the
+    # image-level HTTP healthcheck so Docker does not report it as unhealthy.
+    healthcheck:
+      disable: true
 
   database:
     image: pgvector/pgvector:pg15
