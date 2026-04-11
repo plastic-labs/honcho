@@ -4,6 +4,7 @@ import threading
 from collections import defaultdict
 from typing import NamedTuple
 
+import httpx
 import tiktoken
 from google import genai
 from openai import AsyncOpenAI
@@ -23,11 +24,14 @@ class BatchItem(NamedTuple):
 
 class _EmbeddingClient:
     """
-    Embedding client supporting OpenAI and Gemini with chunking and batching support.
+    Embedding client supporting local endpoints, OpenAI, Gemini,
+    and OpenRouter with chunking and batching support.
     """
 
     def __init__(self, api_key: str | None = None, provider: str | None = None):
         self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+        self.base_url: str | None = None
+        self.api_key: str | None = None
 
         if self.provider == "gemini":
             if api_key is None:
@@ -35,7 +39,7 @@ class _EmbeddingClient:
             if not api_key:
                 raise ValueError("Gemini API key is required")
             self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
-            self.model: str = "gemini-embedding-001"
+            self.model: str = settings.LLM.EMBEDDING_MODEL or "gemini-embedding-001"
             # Gemini has a 2048 token limit
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
@@ -47,21 +51,30 @@ class _EmbeddingClient:
                 raise ValueError(
                     "OpenRouter API key (LLM_OPENAI_COMPATIBLE_API_KEY) is required"
                 )
-            base_url = (
-                settings.LLM.OPENAI_COMPATIBLE_BASE_URL
-                or "https://openrouter.ai/api/v1"
-            )
+            base_url = settings.LLM.OPENAI_COMPATIBLE_BASE_URL or "https://openrouter.ai/api/v1"
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
+            self.model = settings.LLM.EMBEDDING_MODEL or "openai/text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
+        elif self.provider == "local":
+            base_url = settings.LLM.EMBEDDING_BASE_URL
+            if not base_url:
+                raise ValueError("LLM_EMBEDDING_BASE_URL is required for local embeddings")
+            if api_key is None:
+                api_key = settings.LLM.EMBEDDING_API_KEY
+            self.client = None
+            self.base_url = base_url.rstrip("/")
+            self.api_key = api_key
+            self.model = settings.LLM.EMBEDDING_MODEL or "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ"
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 1024
         else:  # openai
             if api_key is None:
                 api_key = settings.LLM.OPENAI_API_KEY
             if not api_key:
                 raise ValueError("OpenAI API key is required")
             self.client = AsyncOpenAI(api_key=api_key)
-            self.model = "text-embedding-3-small"
+            self.model = settings.LLM.EMBEDDING_MODEL or "text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # OpenAI batch limit
 
@@ -87,11 +100,11 @@ class _EmbeddingClient:
             if not response.embeddings or not response.embeddings[0].values:
                 raise ValueError("No embedding returned from Gemini API")
             return response.embeddings[0].values
-        else:  # openai
-            response = await self.client.embeddings.create(
-                model=self.model, input=query
-            )
-            return response.data[0].embedding
+        if self.provider == "local":
+            return await self._embed_local_single(query)
+
+        response = await self.client.embeddings.create(model=self.model, input=query)
+        return response.data[0].embedding
 
     async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
         """
@@ -122,6 +135,8 @@ class _EmbeddingClient:
                         for emb in response.embeddings:
                             if emb.values:
                                 embeddings.append(emb.values)
+                elif self.provider == "local":
+                    embeddings.extend(await self._embed_local_batch(batch))
                 else:  # openai
                     response = await self.client.embeddings.create(
                         input=batch,
@@ -137,6 +152,44 @@ class _EmbeddingClient:
                 raise
 
         return embeddings
+
+    async def _embed_local_single(self, text: str) -> list[float]:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{self.base_url}/embed",
+                json={"text": text, "model": self.model},
+                headers=self._local_headers(),
+            )
+            response.raise_for_status()
+            data = response.json()
+        embedding = data.get("embedding")
+        if not isinstance(embedding, list):
+            raise ValueError("No embedding returned from local embedding server")
+        return embedding
+
+    async def _embed_local_batch(self, texts: list[str]) -> list[list[float]]:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{self.base_url}/embed_batch",
+                json={"texts": texts, "model": self.model},
+                headers=self._local_headers(),
+            )
+            response.raise_for_status()
+            data = response.json()
+        embeddings = data.get("embeddings")
+        if not isinstance(embeddings, list):
+            raise ValueError("No embeddings returned from local embedding server")
+        if len(embeddings) != len(texts):
+            raise ValueError(
+                "Local embedding server returned mismatched embedding count "
+                f"(expected {len(texts)}, got {len(embeddings)})"
+            )
+        return embeddings
+
+    def _local_headers(self) -> dict[str, str]:
+        if not self.api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     async def batch_embed(
         self, id_resource_dict: dict[str, tuple[str, list[int]]]
@@ -262,6 +315,10 @@ class _EmbeddingClient:
                                 result[item.text_id][item.chunk_index] = (
                                     embedding.values
                                 )
+                elif self.provider == "local":
+                    embeddings = await self._embed_local_batch([item.text for item in batch])
+                    for item, embedding in zip(batch, embeddings, strict=True):
+                        result[item.text_id][item.chunk_index] = embedding
                 else:  # openai / openrouter
                     response = await self.client.embeddings.create(
                         model=self.model, input=[item.text for item in batch]
@@ -382,6 +439,8 @@ class EmbeddingClient:
                         api_key = settings.LLM.GEMINI_API_KEY
                     elif provider == "openrouter":
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
+                    elif provider == "local":
+                        api_key = settings.LLM.EMBEDDING_API_KEY
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
 
