@@ -51,4 +51,11 @@ USER app
 
 EXPOSE 8000
 
+# HTTP healthcheck for the API server. Services that do not expose HTTP
+# (e.g. the deriver worker) should disable this in their compose config:
+#   healthcheck:
+#     disable: true
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
 CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
