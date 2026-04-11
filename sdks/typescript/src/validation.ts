@@ -349,6 +349,7 @@ export const ContextParamsSchema = z
   .object({
     summary: z.boolean().optional(),
     tokens: z.int('Token limit must be an integer').optional(),
+    maxMessages: z.number().int().min(1, 'maxMessages must be at least 1').optional(),
     peerTarget: PeerIdSchema.optional(),
     peerPerspective: PeerIdSchema.optional(),
     limitToSession: z.boolean().optional(),

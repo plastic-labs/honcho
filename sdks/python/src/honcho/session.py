@@ -600,6 +600,11 @@ class Session(SessionBase, MetadataConfigMixin):
             le=100,
             description="Maximum number of conclusions to include in the representation.",
         ),
+        max_messages: int | None = Field(
+            None,
+            ge=1,
+            description="The maximum number of actual messages to include in the context (from most recent).",
+        ),
     ) -> SessionContext:
         """
         Get optimized context for this session within a token limit.
@@ -621,6 +626,7 @@ class Session(SessionBase, MetadataConfigMixin):
             search_max_distance: Maximum semantic distance for search results.
             include_most_frequent: Whether to include the most frequent conclusions.
             max_conclusions: Maximum number of conclusions to include.
+            max_messages: Maximum number of messages to include in context.
 
         Returns:
             A SessionContext object containing the optimized message history and
@@ -667,6 +673,8 @@ class Session(SessionBase, MetadataConfigMixin):
             query["include_most_frequent"] = include_most_frequent
         if max_conclusions is not None:
             query["max_conclusions"] = max_conclusions
+        if max_messages is not None:
+            query["max_messages"] = max_messages
 
         data = self._honcho._http.get(
             routes.session_context(self.workspace_id, self.id),

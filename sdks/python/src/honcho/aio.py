@@ -1128,6 +1128,11 @@ class SessionAio(AsyncMetadataConfigMixin):
             le=100,
             description="Maximum number of conclusions to include in the representation.",
         ),
+        max_messages: int | None = Field(
+            None,
+            ge=1,
+            description="The maximum number of actual messages to include in the context (from most recent).",
+        ),
     ) -> SessionContext:
         """Get optimized context for this session asynchronously."""
         await self._session._honcho._ensure_workspace_async()
@@ -1165,6 +1170,8 @@ class SessionAio(AsyncMetadataConfigMixin):
             query["include_most_frequent"] = include_most_frequent
         if max_conclusions is not None:
             query["max_conclusions"] = max_conclusions
+        if max_messages is not None:
+            query["max_messages"] = max_messages
 
         data = await self._session._honcho._async_http_client.get(
             routes.session_context(self._session.workspace_id, self._session.id),
