@@ -102,7 +102,17 @@ def _is_tool_use_message(msg: dict[str, Any]) -> bool:
                 return True
 
     # OpenAI format: tool_calls field on assistant message
-    return bool(msg.get("tool_calls"))
+    if msg.get("tool_calls"):
+        return True
+
+    # Google format: parts list with function_call entries
+    parts = msg.get("parts")
+    if isinstance(parts, list):
+        for part in parts:
+            if isinstance(part, dict) and "function_call" in part:
+                return True
+
+    return False
 
 
 def _is_tool_result_message(msg: dict[str, Any]) -> bool:
@@ -115,7 +125,17 @@ def _is_tool_result_message(msg: dict[str, Any]) -> bool:
                 return True
 
     # OpenAI format: role is "tool"
-    return msg.get("role") == "tool"
+    if msg.get("role") == "tool":
+        return True
+
+    # Google format: parts list with function_response entries
+    parts = msg.get("parts")
+    if isinstance(parts, list):
+        for part in parts:
+            if isinstance(part, dict) and "function_response" in part:
+                return True
+
+    return False
 
 
 def _group_into_units(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
