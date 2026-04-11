@@ -41,6 +41,7 @@ RUN addgroup --system app && adduser --system --group app && mkdir -p /tmp/uv-ca
 COPY --chown=app:app src/ /app/src/
 COPY --chown=app:app migrations/ /app/migrations/
 COPY --chown=app:app scripts/ /app/scripts/
+COPY --chown=app:app docker/ /app/docker/
 COPY --chown=app:app alembic.ini /app/alembic.ini
 # Copy config files - this will copy config.toml if it exists, and config.toml.example
 COPY --chown=app:app config.toml* /app/
@@ -49,8 +50,5 @@ COPY --chown=app:app config.toml* /app/
 USER app
 
 EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')" || exit 1
 
 CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
