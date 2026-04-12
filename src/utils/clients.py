@@ -253,6 +253,7 @@ CLIENTS: dict[
 if settings.LLM.ANTHROPIC_API_KEY:
     anthropic = AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
+        base_url=settings.LLM.ANTHROPIC_BASE_URL,
         timeout=600.0,  # 10 minutes timeout for long-running operations
     )
     CLIENTS["anthropic"] = anthropic

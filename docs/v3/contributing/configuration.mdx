@@ -57,7 +57,7 @@ You can mix providers freely — for example, use Gemini for the deriver and Cla
 | `custom` | Any OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, Ollama) | `LLM_OPENAI_COMPATIBLE_API_KEY` + `LLM_OPENAI_COMPATIBLE_BASE_URL` |
 | `vllm` | vLLM self-hosted models | `LLM_VLLM_API_KEY` + `LLM_VLLM_BASE_URL` |
 | `google` | Google Gemini (direct) | `LLM_GEMINI_API_KEY` |
-| `anthropic` | Anthropic Claude (direct) | `LLM_ANTHROPIC_API_KEY` |
+| `anthropic` | Anthropic Claude (direct or custom endpoint) | `LLM_ANTHROPIC_API_KEY` + `LLM_ANTHROPIC_BASE_URL` |
 | `openai` | OpenAI (direct) | `LLM_OPENAI_API_KEY` |
 | `groq` | Groq (direct) | `LLM_GROQ_API_KEY` |
 
@@ -101,6 +101,7 @@ Instead of an OpenAI-compatible proxy, you can use vendor APIs directly. Leave `
 ```bash
 LLM_GEMINI_API_KEY=...       # deriver, summary, dialectic minimal/low
 LLM_ANTHROPIC_API_KEY=...    # dialectic medium/high/max, dream
+LLM_ANTHROPIC_BASE_URL=...   # Optional: custom Anthropic-compatible endpoint
 LLM_OPENAI_API_KEY=...       # embeddings
 ```
 
@@ -118,6 +119,10 @@ LLM_OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
 LLM_OPENAI_COMPATIBLE_API_KEY=ollama
 DERIVER_PROVIDER=custom
 DERIVER_MODEL=llama3.3:70b
+
+# Ollama embeddings
+LLM_EMBEDDING_PROVIDER=ollama
+LLM_EMBEDDING_MODEL=nomic-embed-text  # Optional, defaults to nomic-embed-text
 ```
 
 Set `PROVIDER` and `MODEL` for each feature the same way.

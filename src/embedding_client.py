@@ -28,6 +28,7 @@ class _EmbeddingClient:
 
     def __init__(self, api_key: str | None = None, provider: str | None = None):
         self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+        self.model: str = settings.LLM.EMBEDDING_MODEL or ""  # Will be set per-provider below
 
         if self.provider == "gemini":
             if api_key is None:
@@ -35,7 +36,7 @@ class _EmbeddingClient:
             if not api_key:
                 raise ValueError("Gemini API key is required")
             self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
-            self.model: str = "gemini-embedding-001"
+            self.model = self.model or "gemini-embedding-001"
             # Gemini has a 2048 token limit
             self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
             # Gemini batch size is not documented, using conservative estimate
@@ -52,16 +53,27 @@ class _EmbeddingClient:
                 or "https://openrouter.ai/api/v1"
             )
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-            self.model = "openai/text-embedding-3-small"
+            self.model = self.model or "openai/text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
+        elif self.provider == "ollama":
+            if api_key is None:
+                api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY or "ollama"
+            base_url = (
+                settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+                or "http://localhost:11434/v1"
+            )
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self.model = self.model or "nomic-embed-text"
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048
         else:  # openai
             if api_key is None:
                 api_key = settings.LLM.OPENAI_API_KEY
             if not api_key:
                 raise ValueError("OpenAI API key is required")
             self.client = AsyncOpenAI(api_key=api_key)
-            self.model = "text-embedding-3-small"
+            self.model = self.model or "text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # OpenAI batch limit
 
@@ -382,6 +394,8 @@ class EmbeddingClient:
                         api_key = settings.LLM.GEMINI_API_KEY
                     elif provider == "openrouter":
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
+                    elif provider == "ollama":
+                        api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY or "ollama"
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
 

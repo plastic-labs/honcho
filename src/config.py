@@ -203,6 +203,7 @@ class LLMSettings(HonchoSettings):
 
     # API Keys for LLM providers
     ANTHROPIC_API_KEY: str | None = None
+    ANTHROPIC_BASE_URL: str | None = None  # Custom Anthropic-compatible endpoint
     OPENAI_API_KEY: str | None = None
     OPENAI_COMPATIBLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
@@ -213,7 +214,8 @@ class LLMSettings(HonchoSettings):
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter", "ollama"] = "openai"
+    EMBEDDING_MODEL: str | None = None  # None means provider default
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
