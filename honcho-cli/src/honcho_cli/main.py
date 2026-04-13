@@ -59,7 +59,7 @@ def main(
         from rich.console import Console
 
         console = Console()
-        console.print(f"[bold cyan]{BANNER}[/bold cyan]")
+        console.print(f"[bold #B6DAFD]{BANNER}[/bold #B6DAFD]")
         console.print(f"  [dim]v{__version__}[/dim]\n")
         console.print(ctx.get_help())
         raise typer.Exit()
@@ -99,6 +99,12 @@ def get_client():
     return Honcho(**get_client_kwargs(config)), config
 
 
+# Register top-level commands
+from honcho_cli.commands.setup import doctor, init
+
+app.command()(init)
+app.command()(doctor)
+
 # Register command groups
 from honcho_cli.commands.config_cmd import app as config_app
 from honcho_cli.commands.conclusion import app as conclusion_app
@@ -107,10 +113,8 @@ from honcho_cli.commands.key import app as key_app
 from honcho_cli.commands.message import app as message_app
 from honcho_cli.commands.peer import app as peer_app
 from honcho_cli.commands.session import app as session_app
-from honcho_cli.commands.setup import app as setup_app
 from honcho_cli.commands.workspace import app as workspace_app
 
-app.add_typer(setup_app, name="setup")
 app.add_typer(config_app, name="config")
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(peer_app, name="peer")

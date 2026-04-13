@@ -1,7 +1,7 @@
-"""Setup commands: init wizard and doctor health check.
+"""Top-level onboarding and health-check commands.
 
-`honcho setup init`    — interactive onboarding (human) or flags (agent/CI)
-`honcho setup doctor`  — verify connectivity, config validity, queue health
+`honcho init`    — interactive onboarding (human) or flags (agent/CI)
+`honcho doctor`  — verify connectivity, config validity, queue health
 """
 
 from __future__ import annotations
@@ -10,34 +10,34 @@ from typing import Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 
+from honcho_cli import __version__
 from honcho_cli.config import CLIConfig, CONFIG_FILE
+from honcho_cli.main import BANNER
 from honcho_cli.output import print_error, print_result, status
-
-app = typer.Typer(help="Onboarding and health checks.")
 
 _console = Console(stderr=True)
 
 
 def _test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
-    """Test connectivity to Honcho API. Returns (ok, detail)."""
-    import httpx
-
-    headers = {}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
+    """Test connectivity to Honcho API by listing workspaces via SDK."""
     try:
-        resp = httpx.get(f"{base_url.rstrip('/')}/health", headers=headers, timeout=10)
-        if resp.status_code < 400:
-            return True, f"OK ({resp.status_code})"
-        return False, f"HTTP {resp.status_code}"
-    except httpx.ConnectError:
-        return False, "Connection refused — is the server running?"
-    except httpx.TimeoutException:
-        return False, "Request timed out"
+        from honcho import Honcho
+
+        client = Honcho(base_url=base_url, api_key=api_key)
+        # List workspaces as a connectivity + auth check
+        list(client.workspaces())
+        return True, "OK"
     except Exception as e:
-        return False, str(e)
+        msg = str(e)
+        if "ConnectError" in msg or "Connection refused" in msg:
+            return False, "Connection refused — is the server running?"
+        if "timed out" in msg.lower() or "Timeout" in msg:
+            return False, "Request timed out"
+        if "401" in msg or "Unauthorized" in msg:
+            return False, "Unauthorized — check your API key"
+        return False, msg
 
 
 def _list_workspaces(base_url: str, api_key: str) -> list[str]:
@@ -57,7 +57,6 @@ def _list_peers(base_url: str, api_key: str, workspace_id: str) -> list:
     return list(page)
 
 
-@app.command()
 def init(
     api_key: Optional[str] = typer.Option(None, "--api-key", envvar="HONCHO_API_KEY", help="API key (admin JWT)"),
     base_url: str = typer.Option("https://api.honcho.dev", "--base-url", envvar="HONCHO_BASE_URL", help="Honcho API base URL"),
@@ -69,10 +68,10 @@ def init(
     """Configure the CLI to talk to a Honcho deployment.
 
     Interactive wizard (human):
-        honcho setup init
+        honcho init
 
     Agent/CI-safe:
-        honcho setup init --api-key $KEY --workspace my-app --yes
+        honcho init --api-key $KEY --workspace my-app --yes
     """
     from honcho_cli.output import set_json_mode, use_json
 
@@ -105,26 +104,31 @@ def init(
         return
 
     # --- Interactive wizard ---
-    _console.print("\n[bold]Honcho CLI Setup[/bold]\n")
+    banner_content = f"[bold #B6DAFD]{BANNER}[/bold #B6DAFD]\n\n     The Memory Layer for AI Agents"
+    _console.print()
+    _console.print(Panel(banner_content, expand=False, subtitle=f"Python SDK · v{__version__}"))
+    _console.print()
+
+    _console.print("[bold]Welcome! Let's set up your Honcho CLI.[/bold]\n")
 
     # Step 1: Base URL
-    base_url = typer.prompt("Base URL", default=base_url)
+    base_url = typer.prompt("  Base URL", default=base_url)
 
     # Step 2: API key
     if not api_key:
-        api_key = typer.prompt("API key")
+        api_key = typer.prompt("  API key")
     if not api_key:
         print_error("MISSING_VALUE", "API key is required", {})
         raise typer.Exit(1)
 
     # Step 3: Test connection
-    _console.print("[dim]Testing connection...[/dim]", end=" ")
+    _console.print("\n  [dim]Testing connection...[/dim]", end=" ")
     ok, detail = _test_connection(base_url, api_key)
     if ok:
         _console.print(f"[green]Connected[/green] ({detail})")
     else:
         _console.print(f"[red]Failed[/red]: {detail}")
-        if not typer.confirm("Continue anyway?", default=False):
+        if not typer.confirm("  Continue anyway?", default=False):
             raise typer.Exit(1)
 
     # Step 4: Workspace selection
@@ -136,13 +140,13 @@ def init(
             workspaces = []
 
         if workspaces:
-            _console.print(f"\n[bold]Available workspaces[/bold] ({len(workspaces)}):")
+            _console.print(f"\n  [bold]Available workspaces[/bold] ({len(workspaces)}):")
             for i, ws in enumerate(workspaces[:20], 1):
-                _console.print(f"  {i}. {ws}")
+                _console.print(f"    {i}. {ws}")
             _console.print()
 
             choice = typer.prompt(
-                "Enter workspace ID or number from list",
+                "  Enter workspace ID or number from list",
                 default=str(workspaces[0]) if len(workspaces) == 1 else "",
             )
 
@@ -156,7 +160,7 @@ def init(
             except ValueError:
                 workspace_id = choice
         else:
-            workspace_id = typer.prompt("Workspace ID")
+            workspace_id = typer.prompt("  Workspace ID")
 
     # Step 5: Peer selection
     peer_id = peer
@@ -167,13 +171,14 @@ def init(
             peers = []
 
         if peers:
-            _console.print(f"\n[bold]Peers in workspace[/bold] ({len(peers)}):")
+            _console.print(f"\n  [bold]Peers in workspace[/bold] ({len(peers)}):")
+            _console.print("  [dim]Select the peer whose memory and conclusions you want to query by default.[/dim]")
             for i, p in enumerate(peers[:20], 1):
-                _console.print(f"  {i}. {p.id}")
+                _console.print(f"    {i}. {p.id}")
             _console.print()
 
             choice = typer.prompt(
-                "Default peer ID or number (leave blank to skip)",
+                "  Default peer ID or number (leave blank to skip)",
                 default="",
             )
 
@@ -187,7 +192,7 @@ def init(
                 except ValueError:
                     peer_id = choice
         else:
-            peer_id = typer.prompt("Default peer ID (leave blank to skip)", default="")
+            peer_id = typer.prompt("  Default peer ID (leave blank to skip)", default="")
 
     # Step 6: Confirm and write
     config = CLIConfig(
@@ -197,22 +202,26 @@ def init(
         peer_id=peer_id or "",
     )
 
-    _console.print("\n[bold]Configuration:[/bold]")
+    _console.print("\n  [bold]Configuration:[/bold]")
     for k, v in config.redacted().items():
         if v:
-            _console.print(f"  {k}: {v}")
+            _console.print(f"    {k}: {v}")
 
-    _console.print(f"\n  Config file: {CONFIG_FILE}")
-    if not typer.confirm("\nSave this configuration?", default=True):
-        _console.print("[dim]Aborted.[/dim]")
+    _console.print(f"\n    Config file: {CONFIG_FILE}")
+    if not typer.confirm("\n  Save this configuration?", default=True):
+        _console.print("  [dim]Aborted.[/dim]")
         raise typer.Exit(0)
 
     config.save()
-    _console.print(f"\n[green]Config saved to {CONFIG_FILE}[/green]")
-    _console.print("[dim]Run `honcho setup doctor` to verify everything works.[/dim]\n")
+    _console.print(f"\n  [green]Config saved to {CONFIG_FILE}[/green]")
+    _console.print("\n  Get started:")
+    _console.print("    honcho doctor                      Verify your setup")
+    _console.print("    honcho workspace list              List workspaces")
+    _console.print("    honcho conclusion list             Browse stored conclusions")
+    _console.print("    honcho peer list                   List peers in workspace")
+    _console.print()
 
 
-@app.command()
 def doctor(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
@@ -251,7 +260,7 @@ def doctor(
 
     # 2. API key present
     has_key = bool(config.api_key)
-    _check("API key configured", has_key, "set" if has_key else "missing — run `honcho setup init`")
+    _check("API key configured", has_key, "set" if has_key else "missing — run `honcho init`")
 
     # 3. Connectivity
     if config.base_url and config.api_key:
@@ -298,7 +307,8 @@ def doctor(
     if ws_ok:
         try:
             q = client.queue_status()
-            _check("Queue health", True, str(q) if q else "OK")
+            summary = f"{q.completed_work_units}/{q.total_work_units} completed, {q.pending_work_units} pending"
+            _check("Queue health", True, summary)
         except Exception:
             _check("Queue health", True, "endpoint not available (non-critical)")
     else:
