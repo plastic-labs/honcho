@@ -51,13 +51,15 @@ def list_conclusions(
             {
                 "id": c.id,
                 "content": c.content[:200],
+                "workspace_id": config.workspace_id,
                 "observer_id": c.observer_id,
                 "observed_id": c.observed_id,
+                "session_id": c.session_id,
                 "created_at": str(c.created_at),
             }
             for c in conclusions
         ]
-        print_result(items, columns=["id", "content", "observer_id", "observed_id", "created_at"], title="Conclusions")
+        print_result(items, columns=["id", "content", "workspace_id", "observer_id", "observed_id", "session_id", "created_at"], title="Conclusions")
     except Exception as e:
         _handle_error(e, "conclusion", "list")
 
@@ -98,13 +100,15 @@ def search(
             {
                 "id": c.id,
                 "content": c.content[:200],
+                "workspace_id": config.workspace_id,
                 "observer_id": c.observer_id,
                 "observed_id": c.observed_id,
+                "session_id": c.session_id,
                 "created_at": str(c.created_at),
             }
             for c in results
         ]
-        print_result(items, columns=["id", "content", "created_at"], title=f"Conclusion search: {query}")
+        print_result(items, columns=["id", "content", "workspace_id", "session_id", "created_at"], title=f"Conclusion search: {query}")
     except Exception as e:
         _handle_error(e, "conclusion", "search")
 
@@ -147,12 +151,21 @@ def create(
         else:
             scope = p.conclusions
 
-        result = scope.create(content, session_id=session_id)
+        params: dict[str, object] = {"content": content}
+        if session_id:
+            params["session_id"] = session_id
+        results = scope.create([params])
+        result = results[0] if results else None
+        if result is None:
+            print_error("CREATE_FAILED", "Conclusion create returned no results")
+            raise typer.Exit(1)
         print_result({
             "id": result.id,
             "content": result.content,
+            "workspace_id": config.workspace_id,
             "observer_id": result.observer_id,
             "observed_id": result.observed_id,
+            "session_id": result.session_id,
             "created_at": str(result.created_at),
         })
     except Exception as e:

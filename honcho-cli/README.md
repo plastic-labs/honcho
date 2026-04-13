@@ -107,13 +107,12 @@ honcho             # show banner + command list
 |---------|-------------|
 | `honcho key generate` | Generate a scoped JWT (workspace/peer/session) |
 
-### Config & schema
+### Config
 
 | Command | Description |
 |---------|-------------|
 | `honcho config show` | Show current config (API key redacted) |
 | `honcho config set <key> <value>` | Set a single config value |
-| `honcho describe resource <name>` | Schema introspection from live server |
 
 ## Agent Usage
 
@@ -148,13 +147,6 @@ HONCHO_API_KEY=xxx honcho init --yes --workspace my-ws
 
 # If config already exists, this just validates and exits 0
 honcho init --yes
-```
-
-Schema discovery for agents that need to build requests dynamically:
-
-```bash
-honcho describe resource peer --json
-honcho describe resource session --json
 ```
 
 ## Context Threading

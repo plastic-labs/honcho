@@ -8,7 +8,6 @@ description: Debug Honcho peer representations and memory
 
 ## Rules
 
-- Use `honcho describe <resource>` to understand schema before constructing queries
 - Check queue status when derivation seems stalled
 - Compare peer card with conclusions to understand memory state
 
