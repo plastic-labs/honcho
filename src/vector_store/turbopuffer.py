@@ -13,6 +13,7 @@ from turbopuffer.lib.namespace import AsyncNamespace
 from turbopuffer.types import Filter
 
 from src.config import settings
+from src.exceptions import VectorStoreError
 
 from . import VectorQueryResult, VectorRecord, VectorStore
 
@@ -92,13 +93,15 @@ class TurbopufferVectorStore(VectorStore):
             return
         except InternalServerError as exc:
             # Turbopuffer unavailable. SDK implicitly retries 5xx responses,
-            # so re-raise and let callers leave writes unsynced.
+            # so raise a vector store error and let callers leave writes unsynced.
             logger.warning(
                 "Turbopuffer unavailable for upsert to namespace %s (%s after retries)",
                 namespace,
                 exc.status_code,
             )
-            raise
+            raise VectorStoreError(
+                f"Turbopuffer unavailable for upsert to namespace {namespace}"
+            ) from exc
         except Exception:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
@@ -272,7 +275,9 @@ class TurbopufferVectorStore(VectorStore):
                 namespace,
                 exc.status_code,
             )
-            raise
+            raise VectorStoreError(
+                f"Turbopuffer unavailable while deleting vectors in namespace {namespace}"
+            ) from exc
         except Exception:
             logger.exception(
                 f"Failed to delete {len(ids)} vectors from namespace {namespace}"

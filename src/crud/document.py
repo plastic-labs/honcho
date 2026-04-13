@@ -23,7 +23,6 @@ from src.vector_store import (
     VectorRecord,
     VectorStore,
     get_external_vector_store,
-    upsert_with_retry,
 )
 
 logger = getLogger(__name__)
@@ -559,11 +558,9 @@ async def create_documents(
                         )
                     )
 
-                # Upsert to external vector store with retry and update sync state
+                # Upsert to external vector store and update sync state
                 try:
-                    await upsert_with_retry(
-                        external_vector_store, namespace, vector_records
-                    )
+                    await external_vector_store.upsert_many(namespace, vector_records)
                     # Success: mark as synced
                     await db.execute(
                         update(models.Document)
@@ -845,11 +842,9 @@ async def create_observations(
                         )
                     )
 
-                # Upsert to external vector store with retry and update sync state
+                # Upsert to external vector store and update sync state
                 try:
-                    await upsert_with_retry(
-                        external_vector_store, namespace, vector_records
-                    )
+                    await external_vector_store.upsert_many(namespace, vector_records)
                     # Success: mark as synced
                     await db.execute(
                         update(models.Document)

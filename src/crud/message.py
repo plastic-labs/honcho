@@ -13,7 +13,7 @@ from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
-from src.vector_store import VectorRecord, get_external_vector_store, upsert_with_retry
+from src.vector_store import VectorRecord, get_external_vector_store
 
 from .session import get_or_create_session
 
@@ -349,11 +349,11 @@ async def create_messages(
                         )
                     )
 
-                # Upsert to external vector store with retry and update sync state
+                # Upsert to external vector store and update sync state
                 if vector_records:
                     try:
-                        await upsert_with_retry(
-                            external_vector_store, namespace, vector_records
+                        await external_vector_store.upsert_many(
+                            namespace, vector_records
                         )
                         # Success: mark as synced if we have DB rows
                         if embedding_ids:

@@ -181,9 +181,6 @@ class VectorStore(ABC):
         ...
 
 
-from src.vector_store.utils import upsert_with_retry  # noqa: E402
-
-
 def _create_store_by_type(store_type: str) -> VectorStore:
     """Create a vector store instance by type name."""
     if store_type == "turbopuffer":
@@ -242,6 +239,5 @@ __all__ = [
     "VectorQueryResult",
     "get_external_vector_store",
     "close_external_vector_store",
-    "upsert_with_retry",
     "_hash_namespace_components",
 ]
