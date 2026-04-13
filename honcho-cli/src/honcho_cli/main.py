@@ -108,7 +108,6 @@ app.command()(doctor)
 # Register command groups
 from honcho_cli.commands.config_cmd import app as config_app
 from honcho_cli.commands.conclusion import app as conclusion_app
-from honcho_cli.commands.key import app as key_app
 from honcho_cli.commands.message import app as message_app
 from honcho_cli.commands.peer import app as peer_app
 from honcho_cli.commands.session import app as session_app
@@ -120,7 +119,6 @@ app.add_typer(peer_app, name="peer")
 app.add_typer(session_app, name="session")
 app.add_typer(message_app, name="message")
 app.add_typer(conclusion_app, name="conclusion")
-app.add_typer(key_app, name="key")
 
 
 if __name__ == "__main__":

@@ -302,10 +302,9 @@ def remove_peers(
 @app.command()
 def search(
     query: str = typer.Argument(help="Search query"),
-    session_id: Optional[str] = typer.Option(None, help="Session ID (uses default if omitted)"),
     limit: int = typer.Option(10, help="Max results"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Session ID (uses default if omitted)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search messages in a session."""
@@ -313,7 +312,7 @@ def search(
     from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
-    sid = _get_session_id(session_id)
+    sid = _get_session_id(None)
     client, config = get_client()
     sess = client.session(sid)
 
@@ -336,12 +335,11 @@ def search(
 @app.command()
 def representation(
     peer_id: str = typer.Argument(help="Peer ID to get representation for"),
-    session_id: Optional[str] = typer.Option(None, help="Session ID (uses default if omitted)"),
     target: Optional[str] = typer.Option(None, help="Target peer (what peer_id knows about target)"),
     search_query: Optional[str] = typer.Option(None, help="Semantic search query to filter conclusions"),
     max_conclusions: Optional[int] = typer.Option(None, help="Maximum number of conclusions to include"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Session ID (uses default if omitted)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get the representation of a peer within a session."""
@@ -349,7 +347,7 @@ def representation(
     from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
-    sid = _get_session_id(session_id)
+    sid = _get_session_id(None)
     client, config = get_client()
     sess = client.session(sid)
 
@@ -391,9 +389,8 @@ def get_metadata(
 @app.command("set-metadata")
 def set_metadata(
     metadata: str = typer.Argument(help="JSON metadata to set (e.g. '{\"key\": \"value\"}')"),
-    session_id: Optional[str] = typer.Option(None, help="Session ID (uses default if omitted)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Session ID (uses default if omitted)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Set metadata for a session."""
@@ -401,7 +398,7 @@ def set_metadata(
     from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
-    sid = _get_session_id(session_id)
+    sid = _get_session_id(None)
     client, config = get_client()
 
     try:

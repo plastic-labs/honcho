@@ -41,4 +41,3 @@ honcho config set peer_id my-peer
 - `honcho session` — Inspect, messages, context, summaries
 - `honcho message` — List and get messages
 - `honcho conclusion` — List, search, create, delete conclusions
-- `honcho key` — Generate scoped JWT keys

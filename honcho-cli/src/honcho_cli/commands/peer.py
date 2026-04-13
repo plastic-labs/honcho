@@ -123,11 +123,10 @@ def card(
 @app.command()
 def chat(
     query: str = typer.Argument(help="Question to ask about the peer"),
-    peer_id: Optional[str] = typer.Option(None, help="Peer ID (uses default if omitted)"),
     target: Optional[str] = typer.Option(None, help="Target peer for perspective"),
     session: Optional[str] = typer.Option(None, help="Session context"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Peer ID (uses default if omitted)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Query the dialectic about a peer."""
@@ -135,7 +134,7 @@ def chat(
     from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
-    pid = _get_peer_id(peer_id)
+    pid = _get_peer_id(None)
     client, config = get_client()
     p = client.peer(pid)
 
@@ -149,10 +148,9 @@ def chat(
 @app.command()
 def search(
     query: str = typer.Argument(help="Search query"),
-    peer_id: Optional[str] = typer.Option(None, help="Peer ID (uses default if omitted)"),
     limit: int = typer.Option(10, help="Max results"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Peer ID (uses default if omitted)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search a peer's messages."""
@@ -160,7 +158,7 @@ def search(
     from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
-    pid = _get_peer_id(peer_id)
+    pid = _get_peer_id(None)
     client, config = get_client()
     p = client.peer(pid)
 
@@ -245,10 +243,9 @@ def get_metadata(
 
 @app.command("set-metadata")
 def set_metadata(
-    peer_id: Optional[str] = typer.Argument(None, help="Peer ID (uses default if omitted)"),
-    metadata: str = typer.Option(..., "--metadata", "-m", help="JSON metadata to set (e.g. '{\"key\": \"value\"}')"),
+    metadata: str = typer.Argument(help="JSON metadata to set (e.g. '{\"key\": \"value\"}')"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Peer ID (uses default if omitted)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Set metadata for a peer."""
@@ -256,7 +253,7 @@ def set_metadata(
     from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
-    pid = _get_peer_id(peer_id)
+    pid = _get_peer_id(None)
     client, config = get_client()
 
     try:

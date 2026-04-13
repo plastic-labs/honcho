@@ -101,12 +101,6 @@ honcho             # show banner + command list
 | `honcho conclusion create` | Create a conclusion |
 | `honcho conclusion delete <id>` | Delete a conclusion |
 
-### Keys
-
-| Command | Description |
-|---------|-------------|
-| `honcho key generate` | Generate a scoped JWT (workspace/peer/session) |
-
 ### Config
 
 | Command | Description |
