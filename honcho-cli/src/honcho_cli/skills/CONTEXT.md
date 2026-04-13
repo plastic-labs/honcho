@@ -26,11 +26,19 @@ description: A terminal for Honcho — memory that reasons.
 
 ## Config
 
-Stored at `~/.honcho/config.toml`. Set defaults to avoid repeating IDs:
+Shared with other Honcho tools at `~/.honcho/config.json`. The CLI owns only
+`apiKey` and `environment` (or `baseUrl`) at the top level. Host-specific
+entries under `hosts` are untouched.
+
+Run `honcho init` to confirm or set those two values. Workspace / peer /
+session are per-command — pass them via flags or env vars:
 
 ```bash
-honcho config set workspace_id my-workspace
-honcho config set peer_id my-peer
+honcho peer card -w my-workspace -p my-peer
+# or
+export HONCHO_WORKSPACE_ID=my-workspace
+export HONCHO_PEER_ID=my-peer
+honcho peer card
 ```
 
 ## Command Groups

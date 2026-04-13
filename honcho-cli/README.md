@@ -32,12 +32,14 @@ Either way, you'll get the `honcho` command on your PATH.
 ## Quick Start
 
 ```bash
-honcho init        # interactive wizard: API key, workspace, default peer
+honcho init        # confirm/set apiKey + environment in ~/.honcho/config.json
 honcho doctor      # verify your config + connectivity
 honcho             # show banner + command list
 ```
 
-`honcho init` walks you through picking a workspace and default peer from your available choices, tests the connection, and writes config to `~/.honcho/config.toml`.
+`honcho init` reads `apiKey` and `environment` from the top-level of `~/.honcho/config.json` (the same file other Honcho tools — plugins, host integrations — share). If both are present, it confirms them with you; if either is missing (or you decline), it prompts for the missing value(s) and writes them back. Host-specific entries under `hosts` are left untouched.
+
+Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-s` flags or `HONCHO_*` env vars — not persisted as CLI defaults.
 
 ## Commands
 
@@ -45,7 +47,7 @@ honcho             # show banner + command list
 
 | Command | Description |
 |---------|-------------|
-| `honcho init` | Interactive setup wizard (or `--yes` for non-interactive) |
+| `honcho init` | Confirm/set `apiKey` + `environment` in `~/.honcho/config.json` |
 | `honcho doctor` | Health check: config, connectivity, workspace, peer, queue |
 
 ### Workspaces
@@ -106,7 +108,6 @@ honcho             # show banner + command list
 | Command | Description |
 |---------|-------------|
 | `honcho config show` | Show current config (API key redacted) |
-| `honcho config set <key> <value>` | Set a single config value |
 
 ## Agent Usage
 
@@ -133,39 +134,31 @@ Errors are structured:
 Non-interactive onboarding:
 
 ```bash
-# Full flags
-honcho init --yes --api-key $HONCHO_API_KEY --workspace my-ws --peer my-peer
-
-# Or rely on existing config / env vars to fill in missing values
-HONCHO_API_KEY=xxx honcho init --yes --workspace my-ws
-
-# If config already exists, this just validates and exits 0
-honcho init --yes
+# Pre-seed via flags / env vars; `honcho init` still prompts for anything missing
+HONCHO_API_KEY=xxx honcho init --base-url local
 ```
 
 ## Context Threading
 
-Set defaults once, then skip IDs on subsequent commands:
+Workspace / peer / session come from flags or env vars — not persisted defaults:
 
 ```bash
-honcho config set peer_id peer_abc123
-honcho peer inspect              # uses default
-honcho peer card                 # uses default
-honcho peer inspect other_id     # positional arg overrides
-```
-
-Or override per invocation:
-
-```bash
+# Per-command flags
 honcho --workspace prod --peer ajspig peer card
+
+# Or export once per shell
+export HONCHO_WORKSPACE_ID=prod
+export HONCHO_PEER_ID=ajspig
+honcho peer card
+honcho peer inspect other_id     # positional arg still takes precedence
 ```
 
 ## Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `HONCHO_BASE_URL` | API base URL (default `https://api.honcho.dev`) |
-| `HONCHO_API_KEY` | Admin JWT |
+| `HONCHO_BASE_URL` | API base URL pre-fill for `honcho init` only — ignored at runtime |
+| `HONCHO_API_KEY` | Admin JWT pre-fill for `honcho init` only — ignored at runtime |
 | `HONCHO_WORKSPACE_ID` | Default workspace |
 | `HONCHO_PEER_ID` | Default peer |
 | `HONCHO_SESSION_ID` | Default session |
@@ -184,12 +177,33 @@ honcho --workspace prod --peer ajspig peer card
 
 ## Configuration
 
-Config lives at `~/.honcho/config.toml` with this precedence (highest first):
+The CLI shares `~/.honcho/config.json` with sibling Honcho tools. It owns two
+top-level keys: `apiKey` and either `environment` (`"local"` / `"production"`) or
+`baseUrl` (for custom deployments). Everything else at the top level —
+`hosts`, `sessions`, `saveMessages`, `sessionStrategy`, etc. — is left
+untouched.
 
-1. CLI flags (`--workspace`, `--peer`, ...)
-2. Environment variables (`HONCHO_*`)
-3. Config file
-4. Defaults
+Example:
+
+```json
+{
+  "apiKey": "hch-v3-...",
+  "environment": "production",
+  "hosts": { "claude_code": { "...": "..." } }
+}
+```
+
+Precedence (highest first):
+
+- **`apiKey`**: read only from `~/.honcho/config.json`. No env-var fallback at
+  runtime — a missing config file is a hard error. (`honcho init` still
+  accepts `--api-key` / `HONCHO_API_KEY` as a one-time pre-fill for the
+  write-to-file prompt.) This keeps a single, inspectable source of truth
+  for authentication.
+- **`base_url`**: CLI flag `--base-url` → `HONCHO_BASE_URL` → config file
+  → default.
+- **`workspace_id` / `peer_id` / `session_id`**: flag (`-w` / `-p` / `-s`)
+  → env var (`HONCHO_WORKSPACE_ID` etc.). Not persisted to the config file.
 
 ## Development
 

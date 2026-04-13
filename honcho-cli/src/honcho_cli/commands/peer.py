@@ -25,7 +25,7 @@ def _get_peer_id(peer_id: str | None) -> str:
     if not pid:
         from honcho_cli.output import print_error
 
-        print_error("NO_PEER", "No peer ID provided. Use --peer, set HONCHO_PEER_ID, or run `honcho config set peer_id <id>`.")
+        print_error("NO_PEER", "No peer ID provided. Pass --peer/-p or set HONCHO_PEER_ID.")
         raise typer.Exit(1)
     return validate_resource_id(pid, "peer")
 

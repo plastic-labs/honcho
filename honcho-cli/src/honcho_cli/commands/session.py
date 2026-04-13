@@ -25,7 +25,7 @@ def _get_session_id(session_id: str | None) -> str:
     if not sid:
         from honcho_cli.output import print_error
 
-        print_error("NO_SESSION", "No session ID provided. Use --session, set HONCHO_SESSION_ID, or run `honcho config set session_id <id>`.")
+        print_error("NO_SESSION", "No session ID provided. Pass --session/-s or set HONCHO_SESSION_ID.")
         raise typer.Exit(1)
     return validate_resource_id(sid, "session")
 

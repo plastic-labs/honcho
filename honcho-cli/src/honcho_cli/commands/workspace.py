@@ -21,7 +21,7 @@ def _get_workspace_id(workspace_id: str | None) -> str:
     config = get_resolved_config()
     wid = workspace_id or config.workspace_id
     if not wid:
-        print_error("NO_WORKSPACE", "No workspace ID provided. Use --workspace, set HONCHO_WORKSPACE_ID, or run `honcho config set workspace_id <id>`.")
+        print_error("NO_WORKSPACE", "No workspace ID provided. Pass --workspace/-w or set HONCHO_WORKSPACE_ID.")
         raise typer.Exit(1)
     return validate_resource_id(wid, "workspace")
 

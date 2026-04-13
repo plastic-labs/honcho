@@ -1,57 +1,103 @@
 """Tests for config management."""
 
+import json
 import os
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
 from honcho_cli.config import CLIConfig
 
 
-class TestCLIConfig:
-    def test_defaults(self):
-        config = CLIConfig()
-        assert config.base_url == "https://api.honcho.dev"
-        assert config.api_key == ""
-        assert config.workspace_id == ""
+@pytest.fixture
+def cfg_path(tmp_path, monkeypatch):
+    """Redirect CONFIG_FILE to tmp_path and clear HONCHO_* env vars."""
+    f = tmp_path / "config.json"
+    monkeypatch.setattr("honcho_cli.config.CONFIG_FILE", f)
+    monkeypatch.setattr("honcho_cli.config.CONFIG_DIR", tmp_path)
+    for key in [k for k in os.environ if k.startswith("HONCHO_")]:
+        monkeypatch.delenv(key)
+    return f
 
-    def test_env_override(self):
-        with patch.dict(os.environ, {"HONCHO_API_KEY": "test-key", "HONCHO_BASE_URL": "http://localhost:8000"}):
-            config = CLIConfig.load()
-            assert config.api_key == "test-key"
-            assert config.base_url == "http://localhost:8000"
 
-    def test_save_and_load(self, tmp_path):
-        config_file = tmp_path / "config.toml"
-        # Clear env vars so they don't override file values
-        clean_env = {k: v for k, v in os.environ.items() if not k.startswith("HONCHO_")}
-        with patch("honcho_cli.config.CONFIG_FILE", config_file), patch("honcho_cli.config.CONFIG_DIR", tmp_path), patch.dict(os.environ, clean_env, clear=True):
-            config = CLIConfig(
-                base_url="http://localhost:8000",
-                api_key="test-key-123",
-                workspace_id="my-ws",
-            )
-            config.save()
+class TestLoad:
+    def test_defaults_when_no_file(self, cfg_path):
+        loaded = CLIConfig.load()
+        assert loaded.base_url == "https://api.honcho.dev"
+        assert loaded.api_key == ""
+        assert loaded.workspace_id == ""
 
-            loaded = CLIConfig.load()
-            assert loaded.base_url == "http://localhost:8000"
-            assert loaded.api_key == "test-key-123"
-            assert loaded.workspace_id == "my-ws"
+    def test_malformed_file_uses_defaults(self, cfg_path):
+        cfg_path.write_text("not-json{{{")
+        assert CLIConfig.load().api_key == ""
 
-    def test_redacted(self):
-        config = CLIConfig(api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abcdef")
-        redacted = config.redacted()
-        assert "eyJhbGci" in redacted["api_key"]
-        assert "cdef" in redacted["api_key"]
-        assert "..." in redacted["api_key"]
+    def test_reads_environment_url(self, cfg_path):
+        cfg_path.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        loaded = CLIConfig.load()
+        assert loaded.base_url == "http://localhost:8000"
+        assert loaded.api_key == "k"
 
-    def test_redacted_short_key(self):
-        config = CLIConfig(api_key="short")
-        redacted = config.redacted()
-        assert redacted["api_key"] == "***"
+    def test_ignores_unknown_url_fields(self, cfg_path):
+        """Legacy `environment` / `baseUrl` keys are NOT consulted — only environmentUrl."""
+        cfg_path.write_text(json.dumps({
+            "apiKey": "k",
+            "environment": "production",
+            "baseUrl": "https://stale.example.com",
+        }))
+        assert CLIConfig.load().base_url == "https://api.honcho.dev"  # default
 
-    def test_redacted_empty_key(self):
-        config = CLIConfig(api_key="")
-        redacted = config.redacted()
-        assert redacted["api_key"] == ""
+    def test_api_key_and_base_url_ignore_env(self, cfg_path, monkeypatch):
+        """Both apiKey and base_url must come from config.json — env vars are ignored at runtime."""
+        cfg_path.write_text(json.dumps({"environmentUrl": "https://api.honcho.dev"}))
+        monkeypatch.setenv("HONCHO_API_KEY", "env-key")
+        monkeypatch.setenv("HONCHO_BASE_URL", "http://localhost:8000")
+        loaded = CLIConfig.load()
+        assert loaded.api_key == ""
+        assert loaded.base_url == "https://api.honcho.dev"
+
+
+class TestSave:
+    def test_writes_only_cli_owned_keys(self, cfg_path):
+        """apiKey + environmentUrl are written; workspace/peer/session are not."""
+        CLIConfig(
+            base_url="http://localhost:8000",
+            api_key="test-key-123",
+            workspace_id="my-ws",  # must NOT be persisted
+            peer_id="ajspig",
+            session_id="s1",
+        ).save()
+        assert json.loads(cfg_path.read_text()) == {
+            "environmentUrl": "http://localhost:8000",
+            "apiKey": "test-key-123",
+        }
+
+    def test_preserves_foreign_keys(self, cfg_path):
+        """Other tools' top-level keys (hosts, sessions, ...) are untouched."""
+        seed = {
+            "apiKey": "old-key",
+            "environmentUrl": "https://api.honcho.dev",
+            "saveMessages": True,
+            "sessions": {"/Users/ajspig": "home-chat"},
+            "hosts": {"claude_code": {"peerName": "ajspig", "workspace": "agents"}},
+            "sessionStrategy": "chat-instance",
+        }
+        cfg_path.write_text(json.dumps(seed))
+        cfg = CLIConfig.load()
+        cfg.api_key = "new-key"
+        cfg.save()
+
+        on_disk = json.loads(cfg_path.read_text())
+        assert on_disk["apiKey"] == "new-key"
+        assert on_disk["environmentUrl"] == "https://api.honcho.dev"
+        for k in ("saveMessages", "sessions", "hosts", "sessionStrategy"):
+            assert on_disk[k] == seed[k]
+
+
+@pytest.mark.parametrize(
+    "api_key, check",
+    [
+        ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abcdef", lambda v: v.startswith("eyJhbGci") and v.endswith("cdef") and "..." in v),
+        ("short", lambda v: v == "***"),
+        ("", lambda v: v == ""),
+    ],
+)
+def test_api_key_redaction(api_key, check):
+    assert check(CLIConfig(api_key=api_key).redacted()["api_key"])

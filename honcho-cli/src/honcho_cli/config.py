@@ -1,31 +1,42 @@
 """Configuration management for Honcho CLI.
 
-Config stored at ~/.honcho/config.toml with env var overrides.
+Config stored at ``~/.honcho/config.json`` with env var overrides.
+
+The CLI owns exactly two top-level keys in that file:
+
+    apiKey          -- Honcho admin JWT
+    environmentUrl  -- Honcho API URL (full URL, e.g. https://api.honcho.dev)
+
+All other top-level keys (``hosts``, ``sessions``, ``saveMessages``,
+``sessionStrategy``, …) are written by sibling Honcho tools and are
+preserved untouched on save.
+
+Workspace / peer / session scoping is intentionally *not* persisted here —
+pass ``-w`` / ``-p`` / ``-s`` flags or set ``HONCHO_WORKSPACE_ID`` /
+``HONCHO_PEER_ID`` / ``HONCHO_SESSION_ID`` per command instead.
 """
 
 from __future__ import annotations
 
+import json
 import os
-import sys
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib  # type: ignore[no-redef]
-
-
 CONFIG_DIR = Path.home() / ".honcho"
-CONFIG_FILE = CONFIG_DIR / "config.toml"
+CONFIG_FILE = CONFIG_DIR / "config.json"
 
-# Env var mapping: field_name -> env var
+DEFAULT_BASE_URL = "https://api.honcho.dev"
+
+# Env var mapping for runtime overrides.
+#
+# NOTE: ``api_key`` and ``base_url`` are intentionally NOT here. Both must
+# live in ``~/.honcho/config.json`` so there's a single, inspectable source
+# of truth for where you're connecting and with what credentials.
+# (``honcho init`` still accepts ``--api-key`` / ``HONCHO_API_KEY`` and
+# ``--base-url`` / ``HONCHO_BASE_URL`` as one-time pre-fills for the
+# write-to-file prompts.)
 ENV_MAP: dict[str, str] = {
-    "base_url": "HONCHO_BASE_URL",
-    "api_key": "HONCHO_API_KEY",
     "workspace_id": "HONCHO_WORKSPACE_ID",
     "peer_id": "HONCHO_PEER_ID",
     "session_id": "HONCHO_SESSION_ID",
@@ -34,9 +45,14 @@ ENV_MAP: dict[str, str] = {
 
 @dataclass
 class CLIConfig:
-    """CLI configuration with layered resolution: flag > env > file > default."""
+    """CLI configuration with layered resolution: flag > env > file > default.
 
-    base_url: str = "https://api.honcho.dev"
+    ``workspace_id`` / ``peer_id`` / ``session_id`` exist on this dataclass so
+    flag/env overrides flow through ``get_client_kwargs()``, but they are
+    never read from or written to the config file — they're per-command.
+    """
+
+    base_url: str = DEFAULT_BASE_URL
     api_key: str = ""
     workspace_id: str = ""
     peer_id: str = ""
@@ -47,15 +63,21 @@ class CLIConfig:
         """Load config from file, then overlay env vars."""
         config = cls()
 
-        # Layer 1: config file
         if CONFIG_FILE.exists():
-            with open(CONFIG_FILE, "rb") as f:
-                data = tomllib.load(f)
-            for fld in fields(cls):
-                if fld.name in data:
-                    setattr(config, fld.name, data[fld.name])
+            try:
+                with open(CONFIG_FILE, encoding="utf-8") as f:
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                data = {}
 
-        # Layer 2: env vars
+            if isinstance(data, dict):
+                url = data.get("environmentUrl")
+                if isinstance(url, str) and url:
+                    config.base_url = url
+                key = data.get("apiKey")
+                if isinstance(key, str):
+                    config.api_key = key
+
         for fld_name, env_var in ENV_MAP.items():
             val = os.environ.get(env_var)
             if val:
@@ -64,13 +86,30 @@ class CLIConfig:
         return config
 
     def save(self) -> None:
-        """Write current config to ~/.honcho/config.toml."""
+        """Write ``apiKey`` + ``environmentUrl`` to config.json.
+
+        Preserves unrelated top-level keys (``hosts``, ``sessions``,
+        ``saveMessages``, ``sessionStrategy``, …) that other tools write.
+        """
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        lines = []
-        for fld in fields(self):
-            val = getattr(self, fld.name)
-            lines.append(f'{fld.name} = "{val}"')
-        CONFIG_FILE.write_text("\n".join(lines) + "\n")
+
+        data: dict = {}
+        if CONFIG_FILE.exists():
+            try:
+                with open(CONFIG_FILE, encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (json.JSONDecodeError, OSError):
+                data = {}
+
+        data["environmentUrl"] = self.base_url
+        if self.api_key:
+            data["apiKey"] = self.api_key
+        else:
+            data.pop("apiKey", None)
+
+        CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n")
 
     def redacted(self) -> dict[str, str]:
         """Return config dict with api_key redacted."""
