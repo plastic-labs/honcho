@@ -1,4 +1,4 @@
-"""Session commands: list, inspect, messages, context, summaries, peers, search, representation, metadata."""
+"""Session commands: list, inspect, context, summaries, peers, search, representation, metadata."""
 
 from __future__ import annotations
 
@@ -87,8 +87,6 @@ def inspect(
         summaries = sess.summaries()
         sess_config = sess.get_configuration()
 
-        from honcho_cli.commands.workspace import _compact_config
-
         # Use SyncPage.total when the server provides it; otherwise fall back
         # to the first-page count and flag that we did so, so scripted
         # callers don't treat a lower bound as a total.
@@ -99,7 +97,6 @@ def inspect(
             message_count = len(msg_page.items)
             message_count_is_total = False
 
-        raw_config = _config_to_dict(sess_config) if sess_config else None
         result = {
             "id": sid,
             "peers": [{"id": p.id} for p in peers],
@@ -109,7 +106,7 @@ def inspect(
                 "short": summaries.short_summary if hasattr(summaries, "short_summary") else None,
                 "long": summaries.long_summary if hasattr(summaries, "long_summary") else None,
             },
-            "configuration": _compact_config(raw_config) if raw_config else None,
+            "configuration": _config_to_dict(sess_config) if sess_config else None,
         }
         print_result(result)
     except Exception as e:

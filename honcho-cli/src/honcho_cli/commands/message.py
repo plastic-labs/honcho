@@ -41,8 +41,8 @@ def list_messages(
     try:
         # Server supports ?reverse=true on messages/list, but the Python
         # SDK doesn't forward it from Session.messages() yet. Until then,
-        #  --reverse walks every page via the SDK iterator and slices
-        # — O(pages) in the session size. Safe for small sessions
+        # --reverse walks every page via the SDK iterator and slices
+        # — O(pages) in the session size. Safe for small sessions.
         if not reverse:
             msgs = sess.messages().items[:last]
         else:

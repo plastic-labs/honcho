@@ -36,7 +36,7 @@ def list_peers(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List all peers in the workspace."""
-    from honcho_cli.commands.workspace import _compact_config, _raw_list
+    from honcho_cli.commands.workspace import _raw_list
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
@@ -49,7 +49,7 @@ def list_peers(
             {
                 "id": p.id,
                 "metadata": p.metadata,
-                "configuration": _compact_config(_config_to_dict(p.configuration)) if p.configuration else None,
+                "configuration": _config_to_dict(p.configuration) if p.configuration else None,
                 "created_at": str(p.created_at),
             }
             for p in raw_peers
@@ -77,6 +77,7 @@ def inspect(
 
     try:
         card = p.get_card()
+        peer_config = p.get_configuration()
         # First page only; SyncPage.total (when the server supplies it) is
         # authoritative for counts without walking every page.
         session_page = p.sessions()
@@ -88,6 +89,7 @@ def inspect(
         result = {
             "id": pid,
             "card": card,
+            "configuration": _config_to_dict(peer_config) if peer_config else None,
             "session_count": session_page.total if session_page.total is not None else len(session_items),
             "conclusion_count": conclusion_page.total if conclusion_page.total is not None else len(conclusion_items),
             "recent_conclusions": [
@@ -130,7 +132,7 @@ def chat(
     query: str = typer.Argument(help="Question to ask about the peer"),
     target: Optional[str] = typer.Option(None, help="Target peer for perspective"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Peer ID (uses default if omitted)"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Query the dialectic about a peer."""
@@ -156,7 +158,7 @@ def search(
     query: str = typer.Argument(help="Search query"),
     limit: int = typer.Option(10, help="Max results"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Peer ID (uses default if omitted)"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search a peer's messages."""

@@ -37,10 +37,6 @@ def _raw_list(page) -> list:
     return items
 
 
-def _compact_config(config_dict: dict) -> dict:
-    return config_dict
-
-
 @app.command("list")
 def list_workspaces(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -90,7 +86,7 @@ def inspect(
         result = {
             "workspace_id": wid,
             "metadata": ws_metadata,
-            "configuration": _compact_config(_config_to_dict(ws_config)),
+            "configuration": _config_to_dict(ws_config) if ws_config else None,
             "peer_count": len(raw_peers),
             "session_count": len(raw_sessions),
             "peers": [
