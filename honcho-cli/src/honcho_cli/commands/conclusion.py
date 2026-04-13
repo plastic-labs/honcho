@@ -21,6 +21,7 @@ add_common_options(app)
 def list_conclusions(
     observer: Optional[str] = typer.Option(None, "--observer", help="Observer peer ID"),
     observed: Optional[str] = typer.Option(None, "--observed", help="Observed peer ID"),
+    limit: int = typer.Option(10, "--limit", help="Max results"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -46,7 +47,7 @@ def list_conclusions(
         else:
             scope = p.conclusions
 
-        conclusions = list(scope.list())
+        conclusions = scope.list(size=limit).items
         items = [
             {
                 "id": c.id,
