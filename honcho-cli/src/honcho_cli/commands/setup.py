@@ -80,24 +80,31 @@ def init(
 
     # --- Non-interactive path ---
     if yes:
-        if not api_key:
-            print_error("MISSING_FLAG", "--api-key is required with --yes", {})
+        # Fall back to existing config for any values not explicitly provided
+        existing = CLIConfig.load()
+        resolved_url = base_url
+        resolved_key = api_key or existing.api_key
+        resolved_ws = workspace or existing.workspace_id
+        resolved_peer = peer or existing.peer_id
+
+        if not resolved_key:
+            print_error("MISSING_FLAG", "--api-key is required (not found in config or env)", {})
             raise typer.Exit(1)
-        if not workspace:
-            print_error("MISSING_FLAG", "--workspace is required with --yes", {})
+        if not resolved_ws:
+            print_error("MISSING_FLAG", "--workspace is required (not found in config or env)", {})
             raise typer.Exit(1)
 
         # Test connection
-        ok, detail = _test_connection(base_url, api_key)
+        ok, detail = _test_connection(resolved_url, resolved_key)
         if not ok:
-            print_error("CONNECTION_FAILED", f"Cannot reach {base_url}: {detail}", {"base_url": base_url})
+            print_error("CONNECTION_FAILED", f"Cannot reach {resolved_url}: {detail}", {"base_url": resolved_url})
             raise typer.Exit(1)
 
         config = CLIConfig(
-            base_url=base_url,
-            api_key=api_key,
-            workspace_id=workspace,
-            peer_id=peer or "",
+            base_url=resolved_url,
+            api_key=resolved_key,
+            workspace_id=resolved_ws,
+            peer_id=resolved_peer,
         )
         config.save()
         print_result(config.redacted())
