@@ -39,9 +39,10 @@ def list_messages(
     sess = client.session(sid)
 
     try:
-        # SDK returns most-recent-first. Default case (newest N) only needs
-        # the first page. --reverse (oldest N) still walks all pages until
-        # the SDK accepts order=asc on session.messages().
+        # Server supports ?reverse=true on messages/list, but the Python
+        # SDK doesn't forward it from Session.messages() yet. Until then,
+        #  --reverse walks every page via the SDK iterator and slices
+        # — O(pages) in the session size. Safe for small sessions
         if not reverse:
             msgs = sess.messages().items[:last]
         else:

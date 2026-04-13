@@ -201,22 +201,17 @@ def delete(
     p = client.peer(observer)
 
     if not yes:
-        # Show a short preview so the user knows which conclusion is targeted.
-        preview_content: str | None = None
-        try:
-            scope_preview = p.conclusions_of(observed) if observed else p.conclusions
-            for c in scope_preview.list(size=100).items:
-                if c.id == conclusion_id:
-                    preview_content = c.content
-                    break
-        except Exception:
-            pass
-        typer.echo(
-            f"  id:       {conclusion_id}\n"
-            f"  observer: {observer}\n"
-            f"  observed: {observed or '(self)'}\n"
-            f"  content:  {(preview_content[:200] + '...') if preview_content and len(preview_content) > 200 else (preview_content or '(not found in first 100)')}"
-        )
+        # SDK doesn't expose a get-by-id on ConclusionScope, so we can't
+        # preview content cheaply — don't paginate the list just to
+        # decorate the prompt. Show identifying fields only.
+        from honcho_cli.output import use_json
+
+        if not use_json():
+            typer.echo(
+                f"  id:       {conclusion_id}\n"
+                f"  observer: {observer}\n"
+                f"  observed: {observed or '(self)'}"
+            )
         typer.confirm(f"Delete conclusion '{conclusion_id}'?", abort=True)
 
     try:

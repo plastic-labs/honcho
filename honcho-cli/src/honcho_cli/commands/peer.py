@@ -214,16 +214,14 @@ def create_peer(
 
     try:
         p = client.peer(pid, configuration=peer_config, metadata=parsed_metadata)
-        # get-or-create semantics: the server may have an existing config that
-        # differs from what we passed. Read back what's actually stored so the
-        # output reflects server state, not the (possibly-None) input.
-        server_config = _config_to_dict(p.get_configuration())
-        server_metadata = p.get_metadata()
-        result = {
-            "peer_id": p.id,
-            "metadata": server_metadata,
-            "configuration": server_config,
-        }
+        # Only round-trip to the server when the caller passed config or
+        # metadata — in that case get-or-create may have returned a
+        # pre-existing peer and the echoed output would lie. When no input
+        # was passed, skip the two extra API calls entirely.
+        result: dict[str, object] = {"peer_id": p.id}
+        if peer_config is not None or parsed_metadata is not None:
+            result["metadata"] = p.get_metadata()
+            result["configuration"] = _config_to_dict(p.get_configuration())
         print_result(result)
     except Exception as e:
         _handle_error(e, "peer", pid)

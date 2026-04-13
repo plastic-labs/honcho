@@ -37,10 +37,7 @@ def _raw_list(page) -> list:
     return items
 
 
-def _compact_config(config_dict: dict) -> dict | str:
-    """Return '(defaults)' if all config values are None, else the dict."""
-    if all(v is None for v in config_dict.values()):
-        return "(defaults)"
+def _compact_config(config_dict: dict) -> dict:
     return config_dict
 
 
@@ -255,21 +252,42 @@ def _config_to_dict(config) -> dict:
 
 
 def _handle_error(e: Exception, resource: str, resource_id: str) -> None:
-    """Handle SDK exceptions with structured error output."""
-    error_str = str(e)
-    if "404" in error_str or "not found" in error_str.lower():
+    """Handle SDK exceptions with structured error output.
+
+    Dispatches on the SDK's typed exception hierarchy
+    (``honcho.http.exceptions``) and falls back to its ``status`` field for
+    any APIError subclass we don't enumerate. Substring matching on the
+    message is used only as a last-ditch fallback for non-SDK exceptions.
+    """
+    from honcho import (
+        APIError,
+        AuthenticationError,
+        NotFoundError,
+        PermissionDeniedError,
+        ServerError,
+    )
+
+    if isinstance(e, NotFoundError):
         print_error(
             f"{resource.upper()}_NOT_FOUND",
             f"{resource.title()} '{resource_id}' not found",
             {resource: resource_id},
         )
         raise typer.Exit(1)
-    elif "401" in error_str or "403" in error_str or "auth" in error_str.lower():
-        print_error("AUTH_ERROR", f"Authentication failed: {error_str}", {})
+    if isinstance(e, (AuthenticationError, PermissionDeniedError)):
+        print_error("AUTH_ERROR", f"Authentication failed: {e}", {})
         raise typer.Exit(3)
-    elif "500" in error_str or "server" in error_str.lower():
-        print_error("SERVER_ERROR", f"Server error: {error_str}", {resource: resource_id})
+    if isinstance(e, ServerError):
+        print_error("SERVER_ERROR", f"Server error: {e}", {resource: resource_id})
         raise typer.Exit(2)
-    else:
-        print_error("UNKNOWN_ERROR", str(e), {resource: resource_id})
+    if isinstance(e, APIError):
+        # Catch-all for typed API errors we haven't special-cased
+        # (BadRequest, Conflict, UnprocessableEntity, RateLimit, ...).
+        print_error(
+            "API_ERROR",
+            f"API error ({e.status}): {e}",
+            {resource: resource_id, "status": e.status},
+        )
         raise typer.Exit(1)
+    print_error("UNKNOWN_ERROR", str(e), {resource: resource_id})
+    raise typer.Exit(1)

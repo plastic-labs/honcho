@@ -89,21 +89,27 @@ def inspect(
 
         from honcho_cli.commands.workspace import _compact_config
 
-        # Use SyncPage.total when the server provides it; fall back to a
-        # first-page count to avoid paginating the full session just for a
-        # count.
-        message_count = msg_page.total if msg_page.total is not None else len(msg_page.items)
+        # Use SyncPage.total when the server provides it; otherwise fall back
+        # to the first-page count and flag that we did so, so scripted
+        # callers don't treat a lower bound as a total.
+        if msg_page.total is not None:
+            message_count = msg_page.total
+            message_count_is_total = True
+        else:
+            message_count = len(msg_page.items)
+            message_count_is_total = False
 
         raw_config = _config_to_dict(sess_config) if sess_config else None
         result = {
             "id": sid,
             "peers": [{"id": p.id} for p in peers],
             "message_count": message_count,
+            "message_count_is_total": message_count_is_total,
             "summaries": {
                 "short": summaries.short_summary if hasattr(summaries, "short_summary") else None,
                 "long": summaries.long_summary if hasattr(summaries, "long_summary") else None,
             },
-            "configuration": _compact_config(raw_config) if isinstance(raw_config, dict) else raw_config,
+            "configuration": _compact_config(raw_config) if raw_config else None,
         }
         print_result(result)
     except Exception as e:
@@ -184,17 +190,30 @@ def delete(
 
     if not yes:
         # Show a short preview so the user knows what's about to disappear.
-        try:
-            peers = sess.peers()
-            message_count = len(sess.messages().items)
-            peer_ids = [p.id for p in peers]
-            typer.echo(
-                f"  session: {sid}\n"
-                f"  peers:   {', '.join(peer_ids) if peer_ids else '(none)'}\n"
-                f"  messages: {message_count}+ (first page)"
-            )
-        except Exception:
-            pass
+        # Only in interactive/TTY mode — scripted (--json) callers already
+        # know what they're deleting, and they still need to pass --yes.
+        # Narrow the except to HonchoError so auth/network failures surface
+        # before the user types 'y' on a destructive op.
+        from honcho import HonchoError
+
+        from honcho_cli.output import use_json
+
+        if not use_json():
+            try:
+                peers = sess.peers()
+                msg_page = sess.messages()
+                if msg_page.total is not None:
+                    msg_count_str = str(msg_page.total)
+                else:
+                    msg_count_str = f"{len(msg_page.items)} (first page; more may exist)"
+                peer_ids = [p.id for p in peers]
+                typer.echo(
+                    f"  session:  {sid}\n"
+                    f"  peers:    {', '.join(peer_ids) if peer_ids else '(none)'}\n"
+                    f"  messages: {msg_count_str}"
+                )
+            except HonchoError as preview_err:
+                status(f"preview unavailable: {preview_err}")
         typer.confirm(f"Delete session '{sid}' and all its messages, conclusions, and queue items?", abort=True)
 
     try:
