@@ -465,21 +465,18 @@ def mock_vector_store(request: pytest.FixtureRequest):
     from src.vector_store import (
         VectorQueryResult,
         VectorRecord,
-        VectorUpsertResult,
         _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
     )
 
     # Create a mock vector store that stores vectors in memory
     vector_storage: dict[str, dict[str, tuple[list[float], dict[str, Any]]]] = {}
 
-    async def mock_upsert_many(
-        namespace: str, vectors: list[VectorRecord]
-    ) -> VectorUpsertResult:
+    async def mock_upsert_many(namespace: str, vectors: list[VectorRecord]) -> None:
         if namespace not in vector_storage:
             vector_storage[namespace] = {}
         for vector in vectors:
             vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
-        return VectorUpsertResult(ok=True)
+        return
 
     async def mock_query(
         namespace: str, embedding: list[float], **kwargs: Any

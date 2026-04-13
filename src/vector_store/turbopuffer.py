@@ -14,7 +14,7 @@ from turbopuffer.types import Filter
 
 from src.config import settings
 
-from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
+from . import VectorQueryResult, VectorRecord, VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class TurbopufferVectorStore(VectorStore):
         self,
         namespace: str,
         vectors: list[VectorRecord],
-    ) -> VectorUpsertResult:
+    ) -> None:
         """
         Upsert multiple vectors into Turbopuffer.
 
@@ -71,7 +71,7 @@ class TurbopufferVectorStore(VectorStore):
             vectors: List of VectorRecord objects to upsert
         """
         if not vectors:
-            return VectorUpsertResult(ok=True)
+            return
 
         ns = self._get_namespace(namespace)
 
@@ -89,7 +89,7 @@ class TurbopufferVectorStore(VectorStore):
                 upsert_rows=rows,
                 distance_metric=DISTANCE_METRIC,
             )
-            return VectorUpsertResult(ok=True)
+            return
         except InternalServerError as exc:
             # Turbopuffer unavailable. SDK implicitly retries 5xx responses,
             # so re-raise and let callers leave writes unsynced.
