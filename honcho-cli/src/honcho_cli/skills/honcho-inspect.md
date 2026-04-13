@@ -40,7 +40,7 @@ honcho conclusion search "topic" --observer <peer_id> --json
 
 ```bash
 honcho session inspect <session_id> --json
-honcho session messages <session_id> --last 20 --json
+honcho message list <session_id> --last 20 --json
 honcho session context <session_id> --json
 honcho session summaries <session_id> --json
 ```

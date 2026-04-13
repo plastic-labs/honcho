@@ -111,48 +111,6 @@ def inspect(
 
 
 @app.command()
-def messages(
-    session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
-    last: int = typer.Option(20, "--last", help="Number of recent messages"),
-    reverse: bool = typer.Option(False, "--reverse", help="Reverse order (oldest first)"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
-    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
-    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
-) -> None:
-    """List recent messages in a session."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
-
-    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
-    sid = _get_session_id(session_id)
-    client, config = get_client()
-    sess = client.session(sid)
-
-    try:
-        # SDK returns most-recent-first. Default case (newest N) only needs
-        # the first page. --reverse (oldest N) still walks all pages until
-        # the SDK accepts order=asc on session.messages().
-        if not reverse:
-            msgs = sess.messages().items[:last]
-        else:
-            msgs = list(sess.messages())[-last:]
-
-        items = [
-            {
-                "id": m.id,
-                "peer_id": m.peer_id,
-                "content": m.content[:300],
-                "token_count": m.token_count,
-                "created_at": str(m.created_at),
-            }
-            for m in msgs
-        ]
-        print_result(items, columns=["id", "peer_id", "content", "created_at"], title=f"Messages ({sid})")
-    except Exception as e:
-        _handle_error(e, "session", sid)
-
-
-@app.command()
 def context(
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
     tokens: Optional[int] = typer.Option(None, help="Token budget"),

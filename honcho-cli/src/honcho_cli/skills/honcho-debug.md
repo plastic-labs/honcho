@@ -37,7 +37,7 @@ honcho session context <session_id> --json
 honcho session summaries <session_id> --json
 
 # Check message history
-honcho session messages <session_id> --last 50 --json
+honcho message list <session_id> --last 50 --json
 ```
 
 ### Dialectic giving bad answers?
