@@ -27,7 +27,7 @@ description: A terminal for Honcho — memory that reasons.
 ## Config
 
 Shared with other Honcho tools at `~/.honcho/config.json`. The CLI owns only
-`apiKey` and `environment` (or `baseUrl`) at the top level. Host-specific
+`apiKey` and `environmentUrl` at the top level. Host-specific
 entries under `hosts` are untouched.
 
 Run `honcho init` to confirm or set those two values. Workspace / peer /

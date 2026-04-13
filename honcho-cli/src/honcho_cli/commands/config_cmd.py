@@ -1,7 +1,7 @@
 """Config inspection command: ``honcho config show``.
 
 Writing to ``~/.honcho/config.json`` is done only via ``honcho init``, which
-manages the two CLI-owned keys (``apiKey`` + ``environment`` / ``baseUrl``).
+manages the two CLI-owned keys (``apiKey`` + ``environmentUrl``).
 Workspace / peer / session scoping is per-command via flags / env vars, not
 persisted defaults.
 """
