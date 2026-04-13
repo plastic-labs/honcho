@@ -32,12 +32,12 @@ Either way, you'll get the `honcho` command on your PATH.
 ## Quick Start
 
 ```bash
-honcho init        # confirm/set apiKey + environment in ~/.honcho/config.json
+honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
 honcho doctor      # verify your config + connectivity
 honcho             # show banner + command list
 ```
 
-`honcho init` reads `apiKey` and `environment` from the top-level of `~/.honcho/config.json` (the same file other Honcho tools — plugins, host integrations — share). If both are present, it confirms them with you; if either is missing (or you decline), it prompts for the missing value(s) and writes them back. Host-specific entries under `hosts` are left untouched.
+`honcho init` reads `apiKey` and `environmentUrl` from the top-level of `~/.honcho/config.json` (the same file other Honcho tools — plugins, host integrations — share). If both are present, it confirms them with you; if either is missing (or you decline), it prompts for the missing value(s) and writes them back. Host-specific entries under `hosts` are left untouched.
 
 Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-s` flags or `HONCHO_*` env vars — not persisted as CLI defaults.
 
@@ -47,7 +47,7 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 
 | Command | Description |
 |---------|-------------|
-| `honcho init` | Confirm/set `apiKey` + `environment` in `~/.honcho/config.json` |
+| `honcho init` | Confirm/set `apiKey` + `environmentUrl` in `~/.honcho/config.json` |
 | `honcho doctor` | Health check: config, connectivity, workspace, peer, queue |
 
 ### Workspaces
@@ -57,8 +57,8 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 | `honcho workspace list` | List accessible workspaces |
 | `honcho workspace inspect` | Peers, sessions, config for a workspace |
 | `honcho workspace search <query>` | Search messages across workspace |
-| `honcho workspace queue-status` | Deriver queue processing status |
-| `honcho workspace delete <id>` | Delete a workspace (`--dry-run` first) |
+| `honcho workspace queue-status` | Deriver queue status (filter with `--observer` / `--sender`) |
+| `honcho workspace delete <id>` | Delete a workspace. Use `--dry-run` to preview, `--cascade` to also delete sessions, `--yes` to skip the confirm prompt |
 
 ### Peers
 
@@ -68,37 +68,38 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 | `honcho peer create <id>` | Create or get a peer |
 | `honcho peer inspect <id>` | Card, session count, recent conclusions |
 | `honcho peer card <id>` | Raw peer card content |
-| `honcho peer chat <id> <query>` | Query the dialectic about a peer |
+| `honcho peer chat <query>` | Query the dialectic about a peer (peer via `-p` / `HONCHO_PEER_ID`) |
 | `honcho peer representation <id>` | Formatted representation |
-| `honcho peer search <id> <query>` | Search a peer's messages |
+| `honcho peer search <query>` | Search a peer's messages (peer via `-p` / `HONCHO_PEER_ID`) |
 | `honcho peer get-metadata <id>` / `set-metadata` | Metadata operations |
 
 ### Sessions
 
 | Command | Description |
 |---------|-------------|
-| `honcho session list` | List sessions in the workspace |
+| `honcho session list` | List sessions in the workspace (filter with `--peer/-p`) |
 | `honcho session inspect <id>` | Peers, message count, summaries, config |
 | `honcho session context <id>` | What an agent would see |
 | `honcho session summaries <id>` | Short + long summaries |
 | `honcho session peers <id>` / `add-peers` / `remove-peers` | Peer management |
 | `honcho session search <id> <query>` | Search messages in a session |
 | `honcho session representation <id>` | Peer representation in a session |
+| `honcho session get-metadata <id>` / `set-metadata` | Metadata operations |
 | `honcho session delete <id>` | Destructive; requires `--yes` |
 
 ### Messages
 
 | Command | Description |
 |---------|-------------|
-| `honcho message list` | List messages in a session |
-| `honcho message get <id>` | Get a single message |
+| `honcho message list` | List messages in a session (session via `-s` / `HONCHO_SESSION_ID`) |
+| `honcho message get <id>` | Get a single message (session via `-s` / `HONCHO_SESSION_ID`) |
 
 ### Conclusions (observations)
 
 | Command | Description |
 |---------|-------------|
-| `honcho conclusion list` | List conclusions |
-| `honcho conclusion search <query>` | Semantic search |
+| `honcho conclusion list` | List conclusions (filter with `--observer` / `--observed`) |
+| `honcho conclusion search <query>` | Semantic search (filter with `--observer` / `--observed`) |
 | `honcho conclusion create` | Create a conclusion |
 | `honcho conclusion delete <id>` | Delete a conclusion |
 
@@ -177,30 +178,29 @@ honcho peer inspect other_id     # positional arg still takes precedence
 ## Configuration
 
 The CLI shares `~/.honcho/config.json` with sibling Honcho tools. It owns two
-top-level keys: `apiKey` and either `environment` (`"local"` / `"production"`) or
-`baseUrl` (for custom deployments). Everything else at the top level —
-`hosts`, `sessions`, `saveMessages`, `sessionStrategy`, etc. — is left
-untouched.
+top-level keys: `apiKey` and `environmentUrl` (the full Honcho API URL, e.g.
+`https://api.honcho.dev` or `http://localhost:8000`). Everything else at the
+top level — `hosts`, `sessions`, `saveMessages`, `sessionStrategy`, etc. —
+is left untouched.
 
 Example:
 
 ```json
 {
   "apiKey": "hch-v3-...",
-  "environment": "production",
+  "environmentUrl": "https://api.honcho.dev",
   "hosts": { "claude_code": { "...": "..." } }
 }
 ```
 
 Precedence (highest first):
 
-- **`apiKey`**: read only from `~/.honcho/config.json`. No env-var fallback at
-  runtime — a missing config file is a hard error. (`honcho init` still
-  accepts `--api-key` / `HONCHO_API_KEY` as a one-time pre-fill for the
-  write-to-file prompt.) This keeps a single, inspectable source of truth
-  for authentication.
-- **`base_url`**: CLI flag `--base-url` → `HONCHO_BASE_URL` → config file
-  → default.
+- **`apiKey`** and **`base_url`**: read only from `~/.honcho/config.json` at
+  runtime. No env-var or flag fallback — a missing config file is a hard
+  error. (`honcho init` still accepts `--api-key` / `HONCHO_API_KEY` and
+  `--base-url` / `HONCHO_BASE_URL` as one-time pre-fills for the
+  write-to-file prompts.) This keeps a single, inspectable source of truth
+  for where you're connecting and with what credentials.
 - **`workspace_id` / `peer_id` / `session_id`**: flag (`-w` / `-p` / `-s`)
   → env var (`HONCHO_WORKSPACE_ID` etc.). Not persisted to the config file.
 
