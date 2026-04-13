@@ -55,6 +55,14 @@ class _EmbeddingClient:
             self.model = "openai/text-embedding-3-small"
             self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
             self.max_batch_size = 2048  # Same as OpenAI
+        elif self.provider == "custom":
+            if api_key is None:
+                api_key = settings.LLM.CUSTOM_EMBEDDING_API_KEY or "dummy"
+            base_url = settings.LLM.CUSTOM_EMBEDDING_BASE_URL or "http://localhost:8081/v1"
+            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            self.model = settings.LLM.CUSTOM_EMBEDDING_MODEL or "Qwen/Qwen3-Embedding-8B"
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 256
         else:  # openai
             if api_key is None:
                 api_key = settings.LLM.OPENAI_API_KEY
@@ -382,6 +390,8 @@ class EmbeddingClient:
                         api_key = settings.LLM.GEMINI_API_KEY
                     elif provider == "openrouter":
                         api_key = settings.LLM.OPENAI_COMPATIBLE_API_KEY
+                    elif provider == "custom":
+                        api_key = settings.LLM.CUSTOM_EMBEDDING_API_KEY
                     else:
                         api_key = settings.LLM.OPENAI_API_KEY
 
