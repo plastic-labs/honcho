@@ -139,13 +139,17 @@ curl http://localhost:8000/health
 
 ### Option B: Manual Setup
 
-**1. Start PostgreSQL with pgvector:**
+**1. Start PostgreSQL and Redis:**
 ```bash
 docker run --name honcho-db \
   -e POSTGRES_USER=postgres \
   -e POSTGRES_PASSWORD=postgres \
   -p 5432:5432 \
   -d pgvector/pgvector:pg15
+
+docker run --name honcho-redis \
+  -p 6379:6379 \
+  -d redis:alpine
 ```
 
 Or use [Supabase](https://supabase.com) (free, enable pgvector in SQL editor: `CREATE EXTENSION IF NOT EXISTS vector;`).
