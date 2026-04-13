@@ -111,9 +111,9 @@ def init(
         return
 
     # --- Interactive wizard ---
-    banner_content = f"[bold #B6DAFD]{BANNER}[/bold #B6DAFD]\n\n     The Memory Layer for AI Agents"
+    banner_content = f"[bold #B6DAFD]{BANNER}[/bold #B6DAFD]\n\n     Memory that reasons"
     _console.print()
-    _console.print(Panel(banner_content, expand=False, subtitle=f"Python SDK · v{__version__}"))
+    _console.print(Panel(banner_content, expand=False, subtitle=f"Honcho CLI · v{__version__}"))
     _console.print()
 
     _console.print("[bold]Welcome! Let's set up your Honcho CLI.[/bold]\n")
