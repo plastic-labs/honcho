@@ -344,9 +344,9 @@ class GeminiBackend:
         usage = response.usage_metadata
         cache_read_input_tokens = 0
         if usage is not None:
-            cache_read_input_tokens = (
-                getattr(usage, "cached_content_token_count", 0) or 0
-            )
+            cached_tokens = getattr(usage, "cached_content_token_count", 0)
+            if isinstance(cached_tokens, int):
+                cache_read_input_tokens = cached_tokens
         return CompletionResult(
             content=content,
             input_tokens=usage.prompt_token_count if usage else 0,

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pydantic import BaseModel
 
-from src.exceptions import LLMError
+from src.exceptions import LLMError, ValidationException
 from src.llm.backends.gemini import GeminiBackend
 from src.llm.caching import PromptCachePolicy, gemini_cache_store
 
@@ -103,7 +103,7 @@ async def test_gemini_backend_rejects_budget_and_effort_together() -> None:
     backend = GeminiBackend(Mock())
 
     with pytest.raises(
-        ValueError,
+        ValidationException,
         match="does not support sending both thinking_budget_tokens and thinking_effort",
     ):
         await backend.complete(
