@@ -57,6 +57,40 @@ def _list_peers(base_url: str, api_key: str, workspace_id: str) -> list:
     return list(page)
 
 
+def _workspace_summary(base_url: str, api_key: str, workspace_id: str) -> dict:
+    """Fetch lightweight activity summary for a workspace.
+
+    Returns dict with peer_count and conclusion_count (size of derived memory).
+    """
+    from honcho import Honcho
+    from honcho.http import routes
+
+    summary = {"peer_count": 0, "conclusion_count": 0}
+    try:
+        client = Honcho(base_url=base_url, api_key=api_key, workspace_id=workspace_id)
+
+        # Peer count from first page (cheap; full count would require pagination)
+        try:
+            peers = list(client.peers())
+            summary["peer_count"] = len(peers)
+        except Exception:
+            pass
+
+        # Conclusion count: fetch page 1 with size=1 and read the total
+        try:
+            data = client._http.post(
+                routes.conclusions_list(workspace_id),
+                body={"page": 1, "size": 1},
+            )
+            summary["conclusion_count"] = data.get("total", 0) if isinstance(data, dict) else 0
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    return summary
+
+
 def init(
     api_key: Optional[str] = typer.Option(None, "--api-key", envvar="HONCHO_API_KEY", help="API key (admin JWT)"),
     base_url: str = typer.Option("https://api.honcho.dev", "--base-url", envvar="HONCHO_BASE_URL", help="Honcho API base URL"),
@@ -65,12 +99,17 @@ def init(
     yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive mode (requires --api-key and --workspace)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
-    """Configure the CLI to talk to a Honcho deployment.
+    """Set up the CLI: credentials and defaults for who/where you are.
+
+    Stores your API key, default workspace, and default peer in
+    ~/.honcho/config.toml so subsequent commands don't need flags.
+    After init, `honcho peer card` returns your default peer's card,
+    `honcho peer list` lists peers in your default workspace, etc.
 
     Interactive wizard (human):
         honcho init
 
-    Agent/CI-safe:
+    Agent/CI-safe (falls back to existing config/env for missing values):
         honcho init --api-key $KEY --workspace my-app --yes
     """
     from honcho_cli.output import set_json_mode, use_json
@@ -116,7 +155,11 @@ def init(
     _console.print(Panel(banner_content, expand=False, subtitle=f"Honcho CLI · v{__version__}"))
     _console.print()
 
-    _console.print("[bold]Welcome! Let's set up your Honcho CLI.[/bold]\n")
+    _console.print("[bold]Welcome! Let's set up your Honcho CLI.[/bold]")
+    _console.print(
+        "[dim]This stores your credentials and default workspace/peer in ~/.honcho/config.toml\n"
+        "so you don't have to pass --workspace and --peer on every command.[/dim]\n"
+    )
 
     # Step 1: Base URL
     base_url = typer.prompt("  Base URL", default=base_url)
@@ -148,20 +191,61 @@ def init(
 
         if workspaces:
             _console.print(f"\n  [bold]Available workspaces[/bold] ({len(workspaces)}):")
-            for i, ws in enumerate(workspaces[:20], 1):
-                _console.print(f"    {i}. {ws}")
+            _console.print(
+                "  [dim]Pick where you spend the most time — this is your default \"home\" workspace.\n"
+                "  You can switch any time by passing --workspace or via env var.[/dim]"
+            )
+
+            # Fetch summary stats in parallel for ranking + display
+            from concurrent.futures import ThreadPoolExecutor
+
+            ws_list = [str(w) for w in workspaces[:20]]
+            summaries: dict[str, dict] = {}
+            with _console.status("[dim]Fetching workspace activity...[/dim]", spinner="dots"):
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    results = pool.map(
+                        lambda w: (w, _workspace_summary(base_url, api_key, w)),
+                        ws_list,
+                    )
+                    for w, s in results:
+                        summaries[w] = s
+
+            # Recommend the workspace with the largest derived memory (conclusion_count)
+            recommended = max(ws_list, key=lambda w: summaries[w].get("conclusion_count", 0))
+
+            from rich.table import Table
+
+            table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+            table.add_column("#", style="dim", width=3)
+            table.add_column("Workspace")
+            table.add_column("Peers", justify="right")
+            table.add_column("Conclusions", justify="right")
+            table.add_column("")
+
+            for i, w in enumerate(ws_list, 1):
+                s = summaries.get(w, {})
+                marker = "[green]★ recommended[/green]" if w == recommended else ""
+                table.add_row(
+                    str(i),
+                    w,
+                    str(s.get("peer_count", 0)),
+                    str(s.get("conclusion_count", 0)),
+                    marker,
+                )
+            _console.print(table)
             _console.print()
 
+            rec_idx = ws_list.index(recommended) + 1
             choice = typer.prompt(
                 "  Enter workspace ID or number from list",
-                default=str(workspaces[0]) if len(workspaces) == 1 else "",
+                default=str(rec_idx),
             )
 
             # Allow picking by number
             try:
                 idx = int(choice) - 1
-                if 0 <= idx < len(workspaces):
-                    workspace_id = str(workspaces[idx])
+                if 0 <= idx < len(ws_list):
+                    workspace_id = ws_list[idx]
                 else:
                     workspace_id = choice
             except ValueError:
@@ -179,7 +263,10 @@ def init(
 
         if peers:
             _console.print(f"\n  [bold]Peers in workspace[/bold] ({len(peers)}):")
-            _console.print("  [dim]Select the peer whose memory and conclusions you want to query by default.[/dim]")
+            _console.print(
+                "  [dim]The peer you're querying as. Used as the implicit observer for\n"
+                "  conclusion searches and the default target for `honcho peer card`.[/dim]"
+            )
             for i, p in enumerate(peers[:20], 1):
                 _console.print(f"    {i}. {p.id}")
             _console.print()
