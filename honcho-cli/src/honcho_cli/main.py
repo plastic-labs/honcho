@@ -89,13 +89,28 @@ def get_resolved_config():
     return config
 
 
-def get_client():
-    """Create a Honcho client from resolved config."""
+def get_client(*, require_workspace: bool = True):
+    """Create a Honcho client from resolved config.
+
+    By default, refuses to build a client when no workspace is scoped — the
+    SDK's get-or-create semantics would otherwise silently operate on an empty
+    workspace. Commands that legitimately run without a workspace (e.g.
+    ``workspace list``) pass ``require_workspace=False``.
+    """
+    import typer
+
     from honcho import Honcho
 
     from honcho_cli.config import get_client_kwargs
+    from honcho_cli.output import print_error
 
     config = get_resolved_config()
+    if require_workspace and not config.workspace_id:
+        print_error(
+            "NO_WORKSPACE",
+            "No workspace scoped. Pass --workspace/-w or set HONCHO_WORKSPACE_ID.",
+        )
+        raise typer.Exit(1)
     return Honcho(**get_client_kwargs(config)), config
 
 

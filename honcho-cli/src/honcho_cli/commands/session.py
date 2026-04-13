@@ -125,11 +125,13 @@ def messages(
     sess = client.session(sid)
 
     try:
-        msgs = list(sess.messages())
+        # SDK returns most-recent-first. Default case (newest N) only needs
+        # the first page. --reverse (oldest N) still walks all pages until
+        # the SDK accepts order=asc on session.messages().
         if not reverse:
-            msgs = msgs[-last:]
+            msgs = sess.messages().items[:last]
         else:
-            msgs = msgs[:last]
+            msgs = list(sess.messages())[-last:]
 
         items = [
             {

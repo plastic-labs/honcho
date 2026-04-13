@@ -53,7 +53,7 @@ def list_workspaces(
     from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output)
-    client, config = get_client()
+    client, config = get_client(require_workspace=False)
 
     try:
         workspaces = list(client.workspaces())
