@@ -19,6 +19,17 @@ from honcho_cli.output import print_error, print_result, status
 
 _console = Console(stderr=True)
 
+# --- Style palette ---
+# Brand blue is the primary accent; success/error use semantic colors.
+BRAND = "#B6DAFD"
+SUCCESS = BRAND
+ERROR = "red"
+WARN = "yellow"
+ICON_OK = "[green]✓[/green]"
+ICON_FAIL = "[red]✗[/red]"
+ICON_WARN = "[yellow]![/yellow]"
+ICON_RUN = f"[{BRAND}]→[/{BRAND}]"
+
 
 def _test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
     """Test connectivity to Honcho API by listing workspaces via SDK."""
@@ -172,12 +183,12 @@ def init(
         raise typer.Exit(1)
 
     # Step 3: Test connection
-    _console.print("\n  [dim]Testing connection...[/dim]", end=" ")
+    _console.print(f"\n  {ICON_RUN} [dim]Testing connection...[/dim]", end=" ")
     ok, detail = _test_connection(base_url, api_key)
     if ok:
-        _console.print(f"[green]Connected[/green] ({detail})")
+        _console.print(f"{ICON_OK} [green]Connected[/green]")
     else:
-        _console.print(f"[red]Failed[/red]: {detail}")
+        _console.print(f"{ICON_FAIL} [red]Failed[/red]: {detail}")
         if not typer.confirm("  Continue anyway?", default=False):
             raise typer.Exit(1)
 
@@ -201,7 +212,7 @@ def init(
 
             ws_list = [str(w) for w in workspaces[:20]]
             summaries: dict[str, dict] = {}
-            with _console.status("[dim]Fetching workspace activity...[/dim]", spinner="dots"):
+            with _console.status(f"[{BRAND}]Fetching workspace activity...[/{BRAND}]", spinner="dots", spinner_style=BRAND):
                 with ThreadPoolExecutor(max_workers=8) as pool:
                     results = pool.map(
                         lambda w: (w, _workspace_summary(base_url, api_key, w)),
@@ -215,7 +226,7 @@ def init(
 
             from rich.table import Table
 
-            table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+            table = Table(show_header=True, header_style=f"bold {BRAND}", box=None, padding=(0, 2))
             table.add_column("#", style="dim", width=3)
             table.add_column("Workspace")
             table.add_column("Peers", justify="right")
@@ -224,7 +235,7 @@ def init(
 
             for i, w in enumerate(ws_list, 1):
                 s = summaries.get(w, {})
-                marker = "[green]★ recommended[/green]" if w == recommended else ""
+                marker = f"[{BRAND}]★ recommended[/{BRAND}]" if w == recommended else ""
                 table.add_row(
                     str(i),
                     w,
@@ -307,12 +318,12 @@ def init(
         raise typer.Exit(0)
 
     config.save()
-    _console.print(f"\n  [green]Config saved to {CONFIG_FILE}[/green]")
-    _console.print("\n  Get started:")
-    _console.print("    honcho doctor                      Verify your setup")
-    _console.print("    honcho workspace list              List workspaces")
-    _console.print("    honcho conclusion list             Browse stored conclusions")
-    _console.print("    honcho peer list                   List peers in workspace")
+    _console.print(f"\n  {ICON_OK} [bold]Config saved[/bold]  [dim]{CONFIG_FILE}[/dim]")
+    _console.print("\n  [bold]Get started:[/bold]")
+    _console.print(f"    [{BRAND}]honcho doctor[/{BRAND}]               [dim]Verify your setup[/dim]")
+    _console.print(f"    [{BRAND}]honcho workspace list[/{BRAND}]       [dim]List workspaces[/dim]")
+    _console.print(f"    [{BRAND}]honcho conclusion list[/{BRAND}]      [dim]Browse stored conclusions[/dim]")
+    _console.print(f"    [{BRAND}]honcho peer list[/{BRAND}]            [dim]List peers in workspace[/dim]")
     _console.print()
 
 
@@ -338,14 +349,14 @@ def doctor(
     def _check(name: str, passed: bool, detail: str = "") -> None:
         checks.append({"check": name, "ok": passed, "detail": detail})
         if not use_json():
-            icon = "[green]pass[/green]" if passed else "[red]FAIL[/red]"
-            msg = f"  {icon}  {name}"
+            icon = ICON_OK if passed else ICON_FAIL
+            msg = f"  {icon}  {name:<22}"
             if detail:
-                msg += f"  [dim]({detail})[/dim]"
+                msg += f"  [dim]{detail}[/dim]"
             _console.print(msg)
 
     if not use_json():
-        _console.print("\n[bold]Honcho Doctor[/bold]\n")
+        _console.print(f"\n[bold {BRAND}]Honcho Doctor[/bold {BRAND}]\n")
 
     # 1. Config file
     config = CLIConfig.load()
@@ -411,7 +422,8 @@ def doctor(
     if not use_json():
         passed = sum(1 for c in checks if c["ok"])
         total = len(checks)
-        _console.print(f"\n  {passed}/{total} checks passed\n")
+        color = SUCCESS if passed == total else (WARN if passed > total // 2 else ERROR)
+        _console.print(f"\n  [{color}]{passed}/{total}[/{color}] checks passed\n")
 
     if use_json():
         print_result({"checks": checks, "passed": sum(1 for c in checks if c["ok"]), "total": len(checks)})
