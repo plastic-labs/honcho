@@ -106,6 +106,53 @@ async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models
 
 
 @pytest.mark.asyncio
+async def test_openai_backend_does_not_treat_proxy_models_with_gpt5_substring_as_gpt5() -> (
+    None
+):
+    """Regression: proxy/deployment names containing 'gpt-5' must use `max_tokens`.
+
+    Flexible OpenAI-compatible configuration means operators commonly route through
+    proxies/Azure deployments with IDs like `azure-gpt-5-deployment` or
+    `my-gpt-5-proxy`. A naive substring check would incorrectly send
+    `max_completion_tokens` (a GPT-5-only parameter) to those endpoints.
+    """
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="my-gpt-5-proxy",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["max_tokens"] == 100
+    assert "max_completion_tokens" not in call
+
+
+@pytest.mark.asyncio
 async def test_openai_backend_rejects_thinking_budget_tokens() -> None:
     backend = OpenAIBackend(Mock())
 

@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from src.exceptions import LLMError
+from src.exceptions import LLMError, ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.caching import (
     GeminiCacheHandle,
@@ -138,6 +138,24 @@ class GeminiBackend:
         if system_instruction:
             config["system_instruction"] = system_instruction
 
+        cache_policy = (
+            extra_params.get("cache_policy")
+            if extra_params and "cache_policy" in extra_params
+            else None
+        )
+        if isinstance(cache_policy, PromptCachePolicy) and isinstance(contents, list):
+            # Cache the history prefix; only the last turn is sent as new input.
+            cacheable = contents[:-1] if contents else []
+            await self._attach_cached_content(
+                model=model,
+                config=config,
+                cache_policy=cache_policy,
+                contents=cacheable,
+                tools=tools,
+            )
+            if "cached_content" in config and contents:
+                contents = contents[-1:]
+
         if isinstance(contents, list) and not contents:
             raise LLMError(
                 "No non-system messages to send to Gemini",
@@ -213,7 +231,7 @@ class GeminiBackend:
         if thinking_effort is not None:
             thinking_config["thinking_level"] = thinking_effort
         if len(thinking_config) > 1:
-            raise ValueError(
+            raise ValidationException(
                 "Gemini backend does not support sending both thinking_budget_tokens and thinking_effort in the same request"
             )
         if thinking_config:
@@ -324,10 +342,16 @@ class GeminiBackend:
             )
 
         usage = response.usage_metadata
+        cache_read_input_tokens = 0
+        if usage is not None:
+            cache_read_input_tokens = (
+                getattr(usage, "cached_content_token_count", 0) or 0
+            )
         return CompletionResult(
             content=content,
             input_tokens=usage.prompt_token_count if usage else 0,
             output_tokens=usage.candidates_token_count if usage else 0,
+            cache_read_input_tokens=cache_read_input_tokens,
             finish_reason=finish_reason,
             tool_calls=tool_calls,
             raw_response=response,

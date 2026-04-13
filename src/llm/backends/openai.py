@@ -280,7 +280,8 @@ class OpenAIBackend:
             "messages": messages,
         }
 
-        if "gpt-5" in model:
+        model_lower = model.lower()
+        if model_lower == "gpt-5" or model_lower.startswith("gpt-5-"):
             params["max_completion_tokens"] = max_tokens
             if extra_params and extra_params.get("verbosity"):
                 params["verbosity"] = extra_params["verbosity"]
@@ -385,7 +386,9 @@ class OpenAIBackend:
         refusal = getattr(response.choices[0].message, "refusal", None)
         if refusal:
             return refusal
-        raise ValueError("No raw content available for structured output repair")
+        raise ValidationException(
+            "No raw content available for structured output repair"
+        )
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
