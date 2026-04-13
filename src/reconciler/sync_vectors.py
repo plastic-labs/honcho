@@ -202,7 +202,7 @@ async def _sync_documents(
                 if store_in_postgres:
                     doc.embedding = emb
         except Exception:
-            logger.exception("Failed to re-embed %s documents", len(docs_needing_embed))
+            logger.warning("Failed to re-embed %s documents", len(docs_needing_embed))
 
     # Mark documents that failed to get an embedding
     failed_to_embed = [
@@ -260,7 +260,7 @@ async def _sync_documents(
             )
             synced_count += len(docs_to_sync)
         except Exception:
-            logger.exception("Failed to sync documents to namespace %s", namespace)
+            logger.warning("Failed to sync documents to namespace %s", namespace)
             await _bump_document_sync_attempts(db, docs_to_sync)
             failed_count += len(docs_to_sync)
 
@@ -316,7 +316,7 @@ async def _sync_message_embeddings(
                 if store_in_postgres:
                     emb.embedding = new_emb
         except Exception:
-            logger.exception(
+            logger.warning(
                 "Failed to re-embed %s message embeddings", len(embs_needing_embed)
             )
 
@@ -400,7 +400,7 @@ async def _sync_message_embeddings(
             )
             synced_count += len(embs_to_sync)
         except Exception:
-            logger.exception(
+            logger.warning(
                 "Failed to sync message embeddings to namespace %s", namespace
             )
             await _bump_message_embedding_sync_attempts(db, embs_to_sync)
@@ -482,7 +482,7 @@ async def _reconcile_message_embeddings_batch(
                 db, embs, external_vector_store
             )
         except Exception:
-            logger.exception(
+            logger.warning(
                 "Message embedding reconciliation failed for %s embeddings",
                 len(embs),
             )

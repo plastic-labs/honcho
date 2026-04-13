@@ -578,7 +578,7 @@ async def create_documents(
 
                 except Exception:
                     # Failed after retries - increment sync_attempts for reconciliation
-                    logger.exception("Failed to upsert vectors after retries")
+                    logger.warning("Failed to upsert vectors after retries")
                     await db.execute(
                         update(models.Document)
                         .where(models.Document.id.in_(doc_ids))
@@ -864,7 +864,7 @@ async def create_observations(
 
                 except Exception:
                     # Failed after retries - increment sync_attempts for reconciliation
-                    logger.exception(
+                    logger.warning(
                         f"Failed to upsert vectors for {namespace} after retries"
                     )
                     await db.execute(
