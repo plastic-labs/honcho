@@ -1,7 +1,7 @@
 ---
 name: honcho-cli
 version: 0.1.0
-description: Agent-first admin & debugging CLI for Honcho
+description: A terminal for Honcho — memory that reasons.
 ---
 
 # Honcho CLI — Agent Interface

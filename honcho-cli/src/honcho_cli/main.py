@@ -1,4 +1,4 @@
-"""Honcho CLI — Agent-first admin & debugging tool.
+"""Honcho CLI — a terminal for Honcho.
 
 Entry point and top-level command group.
 """
@@ -23,7 +23,7 @@ BANNER = r"""
 
 app = typer.Typer(
     name="honcho",
-    help="Agent-first admin & debugging CLI for Honcho.",
+    help="A terminal for Honcho — memory that reasons.",
     invoke_without_command=True,
     pretty_exceptions_enable=False,
 )

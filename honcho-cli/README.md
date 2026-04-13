@@ -9,7 +9,7 @@
 
 # honcho-ai-cli
 
-Agent-first admin & debugging CLI for [Honcho](https://honcho.dev) — memory that reasons.
+A terminal for [Honcho](https://honcho.dev) — memory that reasons.
 
 ## Install
 

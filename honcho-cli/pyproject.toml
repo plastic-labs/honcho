@@ -1,7 +1,7 @@
 [project]
 name = "honcho-ai-cli"
 version = "0.1.0"
-description = "Agent-first admin & debugging CLI for Honcho"
+description = "A terminal for Honcho — memory that reasons."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
