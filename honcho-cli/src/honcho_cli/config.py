@@ -82,6 +82,11 @@ class CLIConfig:
             val = os.environ.get(env_var)
             if val:
                 setattr(config, fld_name, val)
+            elif val == "":
+                # SDK reads these env vars directly and crashes on empty
+                # strings with a Pydantic ValidationError. Drop them so the
+                # SDK falls back to kwargs / defaults.
+                os.environ.pop(env_var, None)
 
         return config
 

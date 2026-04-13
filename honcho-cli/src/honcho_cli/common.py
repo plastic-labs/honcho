@@ -18,6 +18,7 @@ from honcho_cli.output import set_json_mode, set_quiet_mode
 
 def handle_cmd_flags(
     json_output: bool = False,
+    quiet: bool = False,
     workspace: str | None = None,
     peer: str | None = None,
     session: str | None = None,
@@ -25,6 +26,8 @@ def handle_cmd_flags(
     """Apply command-level flags. Idempotent if already set by group callback."""
     if json_output:
         set_json_mode(True)
+    if quiet:
+        set_quiet_mode(True)
 
     from honcho_cli.main import _global_overrides
 

@@ -29,9 +29,26 @@ app = typer.Typer(
 )
 
 
+def _json_requested_early() -> bool:
+    """Best-effort JSON detection before Typer parses flags.
+
+    version_callback is eager and fires before set_json_mode() runs, so we
+    can't call use_json() here. Mirror its logic against argv/env/TTY.
+    """
+    import os
+    import sys
+
+    return (
+        "--json" in sys.argv
+        or os.environ.get("HONCHO_JSON", "").lower() in ("1", "true")
+        or not sys.stdout.isatty()
+    )
+
+
 def version_callback(value: bool) -> None:
     if value:
-        print(BANNER)
+        if not _json_requested_early():
+            print(BANNER)
         print(f"  honcho-cli {__version__}")
         raise typer.Exit()
 
@@ -58,9 +75,12 @@ def main(
     if ctx.invoked_subcommand is None:
         from rich.console import Console
 
+        from honcho_cli.output import use_json
+
         console = Console()
-        console.print(f"[bold #B6DAFD]{BANNER}[/bold #B6DAFD]")
-        console.print(f"  [dim]v{__version__}[/dim]\n")
+        if not use_json():
+            console.print(f"[bold #B6DAFD]{BANNER}[/bold #B6DAFD]")
+            console.print(f"  [dim]v{__version__}[/dim]\n")
         console.print(ctx.get_help())
         raise typer.Exit()
 
@@ -74,17 +94,23 @@ _global_overrides: dict[str, str | None] = {
 
 
 def get_resolved_config():
-    """Get config with global flag overrides applied."""
+    """Get config with global flag overrides applied.
+
+    Overrides flow through ``validate_resource_id`` so that a malformed
+    ``-w``/``-p``/``-s`` value fails fast with a structured error rather than
+    reaching the API and surfacing as an opaque ``UNKNOWN_ERROR``.
+    """
     from honcho_cli.config import CLIConfig
+    from honcho_cli.validation import validate_resource_id
 
     config = CLIConfig.load()
 
     if _global_overrides["workspace"]:
-        config.workspace_id = _global_overrides["workspace"]
+        config.workspace_id = validate_resource_id(_global_overrides["workspace"], "workspace")
     if _global_overrides["peer"]:
-        config.peer_id = _global_overrides["peer"]
+        config.peer_id = validate_resource_id(_global_overrides["peer"], "peer")
     if _global_overrides["session"]:
-        config.session_id = _global_overrides["session"]
+        config.session_id = validate_resource_id(_global_overrides["session"], "session")
 
     return config
 

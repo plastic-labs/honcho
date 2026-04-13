@@ -25,6 +25,7 @@ def list_messages(
     brief: bool = typer.Option(False, "--brief", help="Show only IDs, peer, token count, and created_at (no content)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List messages in a session."""
@@ -32,7 +33,7 @@ def list_messages(
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    handle_cmd_flags(json_output=json_output, quiet=quiet, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
     sess = client.session(sid)
@@ -102,16 +103,14 @@ def get_message(
     client, config = get_client()
 
     try:
-        # Use raw HTTP to get a single message
+        # Hit the direct message endpoint instead of paging the session.
+        from honcho.http import routes
+        from honcho.api_types import MessageResponse
+        from honcho.message import Message
+
         sess = client.session(sid)
-        msgs = list(sess.messages())
-        msg = next((m for m in msgs if m.id == message_id), None)
-
-        if msg is None:
-            from honcho_cli.output import print_error
-
-            print_error("MESSAGE_NOT_FOUND", f"Message '{message_id}' not found in session '{sid}'", {"message_id": message_id, "session_id": sid})
-            raise typer.Exit(1)
+        data = client._http.get(routes.message(sess.workspace_id, sess.id, message_id))
+        msg = Message.from_api_response(MessageResponse.model_validate(data))
 
         print_result({
             "id": msg.id,

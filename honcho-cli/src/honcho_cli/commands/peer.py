@@ -77,19 +77,24 @@ def inspect(
 
     try:
         card = p.get_card()
-        sessions = list(p.sessions())
-        conclusions = list(p.conclusions.list())
+        # First page only; SyncPage.total (when the server supplies it) is
+        # authoritative for counts without walking every page.
+        session_page = p.sessions()
+        conclusion_page = p.conclusions.list(size=10)
+
+        session_items = session_page.items
+        conclusion_items = conclusion_page.items
 
         result = {
             "id": pid,
             "card": card,
-            "session_count": len(sessions),
-            "conclusion_count": len(conclusions),
+            "session_count": session_page.total if session_page.total is not None else len(session_items),
+            "conclusion_count": conclusion_page.total if conclusion_page.total is not None else len(conclusion_items),
             "recent_conclusions": [
                 {"id": c.id, "content": c.content[:200], "created_at": str(c.created_at)}
-                for c in conclusions[:10]
+                for c in conclusion_items
             ],
-            "sessions": [{"id": s.id} for s in sessions[:10]],
+            "sessions": [{"id": s.id} for s in session_items[:10]],
         }
         print_result(result)
     except Exception as e:
@@ -124,7 +129,6 @@ def card(
 def chat(
     query: str = typer.Argument(help="Question to ask about the peer"),
     target: Optional[str] = typer.Option(None, help="Target peer for perspective"),
-    session: Optional[str] = typer.Option(None, help="Session context"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Peer ID (uses default if omitted)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -139,7 +143,9 @@ def chat(
     p = client.peer(pid)
 
     try:
-        response = p.chat(query, target=target, session=session)
+        # Session scope comes from the global -s pipeline (config.session_id),
+        # keeping chat consistent with every other peer/session command.
+        response = p.chat(query, target=target, session=config.session_id or None)
         print_result({"peer_id": pid, "query": query, "response": response})
     except Exception as e:
         _handle_error(e, "peer", pid)
@@ -208,10 +214,15 @@ def create_peer(
 
     try:
         p = client.peer(pid, configuration=peer_config, metadata=parsed_metadata)
+        # get-or-create semantics: the server may have an existing config that
+        # differs from what we passed. Read back what's actually stored so the
+        # output reflects server state, not the (possibly-None) input.
+        server_config = _config_to_dict(p.get_configuration())
+        server_metadata = p.get_metadata()
         result = {
             "peer_id": p.id,
-            "metadata": parsed_metadata,
-            "configuration": {"observe_me": observe_me} if observe_me is not None else None,
+            "metadata": server_metadata,
+            "configuration": server_config,
         }
         print_result(result)
     except Exception as e:
@@ -276,7 +287,6 @@ def set_metadata(
 def representation(
     peer_id: Optional[str] = typer.Argument(None, help="Peer ID (uses default if omitted)"),
     target: Optional[str] = typer.Option(None, help="Target peer to get representation about"),
-    session: Optional[str] = typer.Option(None, help="Scope representation to a session"),
     search_query: Optional[str] = typer.Option(None, help="Semantic search query to filter conclusions"),
     max_conclusions: Optional[int] = typer.Option(None, help="Maximum number of conclusions to include"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
@@ -295,7 +305,7 @@ def representation(
     try:
         result = p.representation(
             target=target,
-            session=session,
+            session=config.session_id or None,
             search_query=search_query,
             max_conclusions=max_conclusions,
         )

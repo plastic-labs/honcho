@@ -76,7 +76,7 @@ def inspect(
     handle_cmd_flags(json_output=json_output, workspace=workspace)
 
     wid = _get_workspace_id(workspace_id)
-    client, config = get_client()
+    client, config = get_client(require_workspace=False)
 
     # Override workspace if positional arg given
     if workspace_id:
@@ -116,6 +116,7 @@ def delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt (for scripted/agent use)"),
     cascade: bool = typer.Option(False, "--cascade", help="Delete all sessions before deleting the workspace"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without deleting"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Delete a workspace. Use --dry-run first to see what will be deleted.
@@ -126,10 +127,12 @@ def delete(
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
-    handle_cmd_flags(json_output=json_output)
+    handle_cmd_flags(json_output=json_output, quiet=quiet)
 
     validate_resource_id(workspace_id, "workspace")
-    client, config = get_client()
+    # workspace_id is a required positional and we rebuild the client with it
+    # immediately, so the default-workspace guard isn't needed here.
+    client, config = get_client(require_workspace=False)
     ws_client = _with_workspace(client, workspace_id)
 
     # Always fetch sessions for dry-run or cascade
@@ -175,7 +178,6 @@ def delete(
 @app.command()
 def search(
     query: str = typer.Argument(help="Search query"),
-    workspace_id: Optional[str] = typer.Option(None, help="Workspace ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     limit: int = typer.Option(10, help="Max results"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
@@ -186,7 +188,7 @@ def search(
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
 
-    wid = _get_workspace_id(workspace_id)
+    wid = _get_workspace_id(None)
     client, config = get_client()
 
     try:
@@ -208,11 +210,9 @@ def search(
 
 @app.command("queue-status")
 def queue_status(
-    workspace_id: Optional[str] = typer.Option(None, help="Workspace ID"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     observer: Optional[str] = typer.Option(None, help="Filter by observer peer"),
     sender: Optional[str] = typer.Option(None, help="Filter by sender peer"),
-    session: Optional[str] = typer.Option(None, help="Filter by session"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get queue processing status."""
@@ -221,11 +221,11 @@ def queue_status(
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
 
-    _get_workspace_id(workspace_id)
+    _get_workspace_id(None)
     client, config = get_client()
 
     try:
-        result = client.queue_status(observer=observer, sender=sender, session=session)
+        result = client.queue_status(observer=observer, sender=sender, session=config.session_id or None)
         print_result(result.__dict__ if hasattr(result, "__dict__") else result)
     except Exception as e:
         _handle_error(e, "queue", "status")
