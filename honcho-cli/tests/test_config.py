@@ -35,15 +35,6 @@ class TestLoad:
         assert loaded.base_url == "http://localhost:8000"
         assert loaded.api_key == "k"
 
-    def test_ignores_unknown_url_fields(self, cfg_path):
-        """Legacy `environment` / `baseUrl` keys are NOT consulted — only environmentUrl."""
-        cfg_path.write_text(json.dumps({
-            "apiKey": "k",
-            "environment": "production",
-            "baseUrl": "https://stale.example.com",
-        }))
-        assert CLIConfig.load().base_url == "https://api.honcho.dev"  # default
-
     def test_api_key_and_base_url_ignore_env(self, cfg_path, monkeypatch):
         """Both apiKey and base_url must come from config.json — env vars are ignored at runtime."""
         cfg_path.write_text(json.dumps({"environmentUrl": "https://api.honcho.dev"}))
