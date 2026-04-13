@@ -8,7 +8,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any, Literal, cast
 
-from turbopuffer import AsyncTurbopuffer, NotFoundError
+from turbopuffer import AsyncTurbopuffer, InternalServerError, NotFoundError
 from turbopuffer.lib.namespace import AsyncNamespace
 from turbopuffer.types import Filter
 
@@ -90,6 +90,15 @@ class TurbopufferVectorStore(VectorStore):
                 distance_metric=DISTANCE_METRIC,
             )
             return VectorUpsertResult(ok=True)
+        except InternalServerError as exc:
+            # Turbopuffer unavailable. SDK implicitly retries 5xx responses,
+            # so re-raise and let callers leave writes unsynced.
+            logger.warning(
+                "Turbopuffer unavailable for upsert to namespace %s (%s after retries)",
+                namespace,
+                exc.status_code,
+            )
+            raise
         except Exception:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
@@ -183,6 +192,16 @@ class TurbopufferVectorStore(VectorStore):
             )
             return []
 
+        except InternalServerError as exc:
+            # Turbopuffer unavailable. SDK implicitly retries 5xx responses,
+            # so we should return [].
+            logger.warning(
+                "Turbopuffer unavailable for query on namespace %s (%s after retries), returning empty results",
+                namespace,
+                exc.status_code,
+            )
+            return []
+
         except Exception:
             logger.exception(f"Failed to query namespace {namespace}")
             raise
@@ -247,6 +266,13 @@ class TurbopufferVectorStore(VectorStore):
         except NotFoundError:
             # Namespace doesn't exist - nothing to delete
             logger.debug(f"Namespace {namespace} does not exist, nothing to delete")
+        except InternalServerError as exc:
+            logger.warning(
+                "Turbopuffer unavailable for delete from namespace %s (%s after retries)",
+                namespace,
+                exc.status_code,
+            )
+            raise
         except Exception:
             logger.exception(
                 f"Failed to delete {len(ids)} vectors from namespace {namespace}"
