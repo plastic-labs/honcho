@@ -26,12 +26,20 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
     async () => {
       try {
-        const healthUrl = `${ctx.config.baseUrl}/health`;
-        const response = await fetch(healthUrl, {
-          headers: {
-            Authorization: `Bearer ${ctx.config.apiKey}`,
-          },
-        });
+        const healthUrl = new URL("/health", ctx.config.baseUrl).toString();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        let response: Response;
+        try {
+          response = await fetch(healthUrl, {
+            headers: {
+              Authorization: `Bearer ${ctx.config.apiKey}`,
+            },
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
           return errorResult(
@@ -42,10 +50,10 @@ export function register(server: McpServer, ctx: ToolContext) {
         const data = await response.json() as Record<string, unknown>;
 
         const result: AwsRdsStatusResult = {
-          auth_method: (data.auth_method as string) ?? null,
-          rds_hostname: (data.rds_hostname as string) ?? null,
-          rds_port: (data.rds_port as number) ?? null,
-          aws_region: (data.aws_region as string) ?? null,
+          auth_method: typeof data.auth_method === "string" ? data.auth_method : null,
+          rds_hostname: typeof data.rds_hostname === "string" ? data.rds_hostname : null,
+          rds_port: typeof data.rds_port === "number" ? data.rds_port : null,
+          aws_region: typeof data.aws_region === "string" ? data.aws_region : null,
           connection_healthy: data.status === "ok",
           error: null,
         };

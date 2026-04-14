@@ -1,6 +1,6 @@
 import contextvars
 import logging
-from urllib.parse import quote_plus
+from urllib.parse import SplitResult, quote_plus, urlsplit, urlunsplit
 
 from sqlalchemy import MetaData, event, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -21,22 +21,24 @@ request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 engine_kwargs: dict = {}
 
 
-def _extract_db_name(connection_uri: str) -> str:
-    """Extract database name from a PostgreSQL connection URI."""
-    db_part = connection_uri.rsplit("/", 1)[-1] if "/" in connection_uri else "postgres"
-    return db_part.split("?")[0] or "postgres"
+def _parse_base_uri(connection_uri: str) -> SplitResult:
+    """Parse a PostgreSQL connection URI into components."""
+    return urlsplit(connection_uri)
 
 
 # Determine connection URI and auth-specific settings
 if settings.DB.AUTH_METHOD == "iam":
-    _db_name = _extract_db_name(settings.DB.CONNECTION_URI)
+    _parsed = _parse_base_uri(settings.DB.CONNECTION_URI)
+    _db_path = _parsed.path or "/postgres"
 
-    # Construct base URI from RDS settings (no password)
-    connection_uri = (
-        f"postgresql+psycopg://{settings.DB.RDS_USERNAME}"
-        f"@{settings.DB.RDS_HOSTNAME}:{settings.DB.RDS_PORT}"
-        f"/{_db_name}"
-    )
+    # Construct base URI from RDS settings, preserving original path/query
+    connection_uri = urlunsplit((
+        _parsed.scheme or "postgresql+psycopg",
+        f"{settings.DB.RDS_USERNAME}@{settings.DB.RDS_HOSTNAME}:{settings.DB.RDS_PORT}",
+        _db_path,
+        _parsed.query,
+        "",
+    ))
 
     # SSL connect args required for IAM auth
     connect_args["sslmode"] = "require"
@@ -154,20 +156,24 @@ async def init_db():
         # URL-encode the token since it contains special characters
         encoded_token = quote_plus(token)
 
-        db_name = _extract_db_name(settings.DB.CONNECTION_URI)
+        # Parse original URI and overlay IAM credentials, preserving path/query
+        _alembic_parsed = _parse_base_uri(settings.DB.CONNECTION_URI)
+        _alembic_path = _alembic_parsed.path or "/postgres"
 
-        # Construct IAM connection URI for Alembic
-        iam_uri = (
-            f"postgresql+psycopg://{settings.DB.RDS_USERNAME}:{encoded_token}"
-            f"@{settings.DB.RDS_HOSTNAME}:{settings.DB.RDS_PORT}"
-            f"/{db_name}"
-        )
-
-        # Pass SSL connect args via query parameters for Alembic
-        ssl_query = "sslmode=require"
+        # Build SSL query params, merging with any existing query
+        ssl_params = "sslmode=require"
         if settings.DB.RDS_SSL_CA_BUNDLE:
-            ssl_query += f"&sslrootcert={quote_plus(settings.DB.RDS_SSL_CA_BUNDLE)}"
-        iam_uri += f"?{ssl_query}"
+            ssl_params += f"&sslrootcert={quote_plus(settings.DB.RDS_SSL_CA_BUNDLE)}"
+        existing_query = _alembic_parsed.query
+        merged_query = f"{existing_query}&{ssl_params}" if existing_query else ssl_params
+
+        iam_uri = urlunsplit((
+            _alembic_parsed.scheme or "postgresql+psycopg",
+            f"{settings.DB.RDS_USERNAME}:{encoded_token}@{settings.DB.RDS_HOSTNAME}:{settings.DB.RDS_PORT}",
+            _alembic_path,
+            merged_query,
+            "",
+        ))
 
         alembic_cfg.set_main_option("sqlalchemy.url", iam_uri)
 
