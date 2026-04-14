@@ -19,7 +19,7 @@ from honcho_cli.config import (
     DEFAULT_BASE_URL,
     CLIConfig,
 )
-from honcho_cli.main import BANNER
+from honcho_cli.main import BANNER, get_resolved_config
 from honcho_cli.output import print_error, print_result
 
 _console = Console(stderr=True)
@@ -211,7 +211,7 @@ def doctor(
     if not use_json():
         _console.print(f"\n[bold {BRAND}]Honcho Doctor[/bold {BRAND}]\n")
 
-    config = CLIConfig.load()
+    config = get_resolved_config()
     _add("Config file", CONFIG_FILE.exists(),
          str(CONFIG_FILE) if CONFIG_FILE.exists() else f"{CONFIG_FILE} not found")
     _add("API key configured", bool(config.api_key),
