@@ -16,9 +16,10 @@ export function register(server: McpServer, ctx: ToolContext) {
     "aws_rds_status",
     {
       description: [
-        "Check the status of the Honcho API's database connection and AWS RDS configuration.",
-        "Returns the authentication method (password or iam), RDS hostname, port, region,",
-        "and whether the database connection is healthy.",
+        "Check the status of the Honcho API's database connection.",
+        "Returns whether the connection is healthy based on the /health endpoint.",
+        "Additional fields (auth_method, rds_hostname, rds_port, aws_region) are",
+        "included when the backend exposes them; otherwise they default to null.",
         "Use this to diagnose connectivity issues with the Honcho backend.",
       ].join("\n"),
       inputSchema: {},

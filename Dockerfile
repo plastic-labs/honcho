@@ -40,7 +40,16 @@ RUN addgroup --system app && adduser --system --group app && mkdir -p /tmp/uv-ca
 
 # Download AWS RDS CA certificate bundle for SSL connections to RDS
 RUN mkdir -p /usr/local/share/aws && \
-    python -c "import urllib.request; urllib.request.urlretrieve('https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem', '/usr/local/share/aws/global-bundle.pem')"
+    python - <<'PY'
+import urllib.request
+from pathlib import Path
+
+url = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
+dst = Path("/usr/local/share/aws/global-bundle.pem")
+urllib.request.urlretrieve(url, dst)
+if not dst.exists() or dst.stat().st_size == 0:
+    raise RuntimeError("Failed to download AWS RDS CA bundle")
+PY
 
 COPY --chown=app:app src/ /app/src/
 COPY --chown=app:app migrations/ /app/migrations/

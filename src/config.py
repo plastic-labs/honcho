@@ -177,7 +177,7 @@ class DBSettings(HonchoSettings):
     AUTH_METHOD: Literal["password", "iam"] = "password"
     AWS_REGION: str | None = None
     RDS_HOSTNAME: str | None = None
-    RDS_PORT: int = 5432
+    RDS_PORT: Annotated[int, Field(default=5432, ge=1, le=65535)] = 5432
     RDS_USERNAME: str | None = None
     AWS_PROFILE: str | None = None
     RDS_SSL_CA_BUNDLE: str | None = None
@@ -190,8 +190,6 @@ class DBSettings(HonchoSettings):
                 missing.append("DB_AWS_REGION")
             if not self.RDS_HOSTNAME:
                 missing.append("DB_RDS_HOSTNAME")
-            if self.RDS_PORT is None:
-                missing.append("DB_RDS_PORT")
             if not self.RDS_USERNAME:
                 missing.append("DB_RDS_USERNAME")
             if missing:

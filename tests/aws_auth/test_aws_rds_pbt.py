@@ -233,9 +233,9 @@ class TestProperty4TokenGenerationErrorsAreDescriptive:
             assert "AWS client error" in err_msg
 
     @settings(max_examples=100)
-    @given(data=st.data())
+    @given(st.just(None))
     @patch("src.aws_auth.boto3.Session")
-    def test_no_credentials_error_is_descriptive(self, mock_session_cls, data):
+    def test_no_credentials_error_is_descriptive(self, mock_session_cls, _):
         # Feature: aws-mcp-postgres, Property 4: Token generation errors are descriptive
         mock_client = MagicMock()
         mock_client.generate_db_auth_token.side_effect = NoCredentialsError()
@@ -613,7 +613,7 @@ class TestProperty15MigrationTokenFailureTerminatesWithError:
             )
         else:
             mock_client.generate_db_auth_token.side_effect = EndpointConnectionError(
-                endpoint_url=f"https://rds.us-east-1.amazonaws.com"
+                endpoint_url="https://rds.us-east-1.amazonaws.com"
             )
 
         mock_session_cls.return_value.client.return_value = mock_client

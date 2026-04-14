@@ -20,11 +20,16 @@ request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 
 engine_kwargs: dict = {}
 
+
+def _extract_db_name(connection_uri: str) -> str:
+    """Extract database name from a PostgreSQL connection URI."""
+    db_part = connection_uri.rsplit("/", 1)[-1] if "/" in connection_uri else "postgres"
+    return db_part.split("?")[0] or "postgres"
+
+
 # Determine connection URI and auth-specific settings
 if settings.DB.AUTH_METHOD == "iam":
-    # Extract database name from CONNECTION_URI (strip query params if present)
-    _db_part = settings.DB.CONNECTION_URI.rsplit("/", 1)[-1] if "/" in settings.DB.CONNECTION_URI else "postgres"
-    _db_name = _db_part.split("?")[0] or "postgres"
+    _db_name = _extract_db_name(settings.DB.CONNECTION_URI)
 
     # Construct base URI from RDS settings (no password)
     connection_uri = (
@@ -136,7 +141,7 @@ async def init_db():
                 username=settings.DB.RDS_USERNAME,
                 profile=settings.DB.AWS_PROFILE,
             )
-        except Exception:
+        except RuntimeError:
             logger.error(
                 "Failed to generate IAM auth token for Alembic migration "
                 "(region=%s, hostname=%s, username=%s)",
@@ -149,13 +154,7 @@ async def init_db():
         # URL-encode the token since it contains special characters
         encoded_token = quote_plus(token)
 
-        # Extract database name from CONNECTION_URI
-        db_part = (
-            settings.DB.CONNECTION_URI.rsplit("/", 1)[-1]
-            if "/" in settings.DB.CONNECTION_URI
-            else "postgres"
-        )
-        db_name = db_part.split("?")[0] or "postgres"
+        db_name = _extract_db_name(settings.DB.CONNECTION_URI)
 
         # Construct IAM connection URI for Alembic
         iam_uri = (
