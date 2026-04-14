@@ -34,6 +34,17 @@ POOL_USE_LIFO = true
 SQL_DEBUG = false
 TRACING = false
 
+# AWS IAM authentication for RDS
+# Set AUTH_METHOD to "iam" to use IAM token-based authentication instead of static passwords.
+# When AUTH_METHOD is "iam", AWS_REGION, RDS_HOSTNAME, RDS_PORT, and RDS_USERNAME are required.
+# AUTH_METHOD = "password"  # "password" or "iam"
+# AWS_REGION = "us-east-1"
+# RDS_HOSTNAME = "your-rds-instance.region.rds.amazonaws.com"
+# RDS_PORT = 5432
+# RDS_USERNAME = "iam_db_user"
+# AWS_PROFILE = ""  # Optional: named AWS credentials profile
+# RDS_SSL_CA_BUNDLE = ""  # Optional: path to AWS RDS CA certificate bundle
+
 # Authentication settings
 [auth]
 USE_AUTH = false
