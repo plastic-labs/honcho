@@ -29,6 +29,17 @@ services:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
       - CACHE_ENABLED=true
+    # -- AWS RDS IAM authentication (uncomment to enable) --
+    # environment:
+    #   - DB_AUTH_METHOD=iam
+    #   - DB_AWS_REGION=us-east-1
+    #   - DB_RDS_HOSTNAME=your-rds-instance.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com
+    #   - DB_RDS_PORT=5432
+    #   - DB_RDS_USERNAME=iam_db_user
+    #   - DB_AWS_PROFILE=                          # optional: named AWS credentials profile
+    #   - DB_RDS_SSL_CA_BUNDLE=/usr/local/share/aws/global-bundle.pem
+    #   - CACHE_URL=redis://redis:6379/0?suppress=true
+    #   - CACHE_ENABLED=true
     env_file:
       - path: .env
         required: false
@@ -52,6 +63,17 @@ services:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
       - CACHE_ENABLED=true
+    # -- AWS RDS IAM authentication (uncomment to enable) --
+    # environment:
+    #   - DB_AUTH_METHOD=iam
+    #   - DB_AWS_REGION=us-east-1
+    #   - DB_RDS_HOSTNAME=your-rds-instance.xxxxxxxxxxxx.us-east-1.rds.amazonaws.com
+    #   - DB_RDS_PORT=5432
+    #   - DB_RDS_USERNAME=iam_db_user
+    #   - DB_AWS_PROFILE=                          # optional: named AWS credentials profile
+    #   - DB_RDS_SSL_CA_BUNDLE=/usr/local/share/aws/global-bundle.pem
+    #   - CACHE_URL=redis://redis:6379/0?suppress=true
+    #   - CACHE_ENABLED=true
     env_file:
       - path: .env
         required: false
