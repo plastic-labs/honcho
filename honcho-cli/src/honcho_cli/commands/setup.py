@@ -108,7 +108,7 @@ def init(
             expand=False, subtitle=f"Honcho CLI · v{__version__}",
         ))
         _console.print()
-        _console.print("  [dim]Press Enter to accept the default shown in brackets.[/dim]\n")
+        _console.print()
 
     final_key = _prompt_api_key(key_val)
     final_url = _prompt_url(url_val)
@@ -126,29 +126,58 @@ def init(
 
 
 def _prompt_api_key(value: str) -> str:
-    """Prompt for API key. Shows redacted default in brackets; Enter keeps it."""
+    """Prompt for API key.
+
+    When a key already exists (from env var or config file), the user picks
+    between keeping it or entering a replacement.  When no key exists, the
+    user can paste one or press Enter to skip (local dev with auth disabled
+    doesn't need a key).
+    """
     if use_json():
-        if value:
-            return value
-        print_error("MISSING_VALUE", "API key is required", {})
-        raise typer.Exit(1)
+        return value
 
     if value:
         redacted = _redact(value)
-        return typer.prompt(f"  API key [{redacted}]", default=value, show_default=False)
-    return typer.prompt("  API key")
+        _console.print(f"  [dim]Current API key: {redacted}[/dim]")
+        _console.print("  [dim](1)[/dim] Keep current key")
+        _console.print("  [dim](2)[/dim] Enter a new key")
+        choice = typer.prompt("  Choice", default="1", show_default=True, prompt_suffix=": ").strip()
+        if choice == "2":
+            raw = typer.prompt("  API key", default="", show_default=False, prompt_suffix=": ").strip()
+            return raw
+        return value
+    else:
+        _console.print("  [dim]Not needed for local dev — press Enter to skip[/dim]")
+        raw = typer.prompt("  API key", default="", show_default=False, prompt_suffix=": ").strip()
+        return raw
+
+
+def _normalize_url(url: str) -> str:
+    """Strip whitespace from the URL."""
+    return url.strip()
 
 
 def _prompt_url(value: str) -> str:
-    """Prompt for Honcho URL. Shows default in brackets; Enter keeps it."""
+    """Prompt for Honcho URL. Shows current value as the default; Enter keeps it.
+
+    First run defaults to DEFAULT_BASE_URL. After that, whatever is saved
+    in config becomes the default so the user isn't fighting back to their
+    custom URL every time.
+    """
     if use_json():
         if value:
-            return value
+            return _normalize_url(value)
         print_error("MISSING_VALUE", "Honcho URL is required", {})
         raise typer.Exit(1)
 
-    default = value or DEFAULT_BASE_URL
-    return typer.prompt("  Honcho URL", default=default).strip()
+    default = _normalize_url(value) if value else DEFAULT_BASE_URL
+    _console.print("  [dim]Use https://api.honcho.dev for the hosted Honcho instance[/dim]")
+    while True:
+        raw = typer.prompt("  Honcho URL", default=default, show_default=True, prompt_suffix=": ").strip()
+        url = _normalize_url(raw)
+        if url.startswith(("http://", "https://")):
+            return url
+        _console.print("  [red]URL must start with http:// or https://[/red]")
 
 
 def _check_connection(base_url: str, api_key: str) -> None:
