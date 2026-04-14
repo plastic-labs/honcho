@@ -6,10 +6,8 @@ Agents hallucinate bad IDs. Catch them early with clear errors.
 from __future__ import annotations
 
 import re
-import sys
 
 UNSAFE_CHARS = re.compile(r'[?#%\x00-\x1f\x7f/\\]')
-WORKSPACE_NAME_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 
 def validate_resource_id(value: str, resource_type: str = "resource") -> str:
@@ -33,21 +31,6 @@ def validate_resource_id(value: str, resource_type: str = "resource") -> str:
             "INVALID_ID",
             f"Invalid {resource_type} ID: contains path traversal",
             {resource_type: value},
-        )
-
-    return value
-
-
-def validate_workspace_name(value: str) -> str:
-    """Validate workspace name: alphanumeric, hyphens, underscores."""
-    if not value:
-        _fail("EMPTY_WORKSPACE", "Empty workspace name", {"workspace": ""})
-
-    if not WORKSPACE_NAME_RE.match(value):
-        _fail(
-            "INVALID_WORKSPACE",
-            "Workspace name must be alphanumeric with hyphens/underscores only",
-            {"workspace": value},
         )
 
     return value

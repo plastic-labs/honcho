@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 
 from honcho_cli.commands.workspace import _config_to_dict, _handle_error
-from honcho_cli.output import print_result, status
+from honcho_cli.output import print_result
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options
