@@ -7,7 +7,12 @@ AWS RDS PostgreSQL instances using IAM-based authentication.
 import logging
 
 import boto3
-from botocore.exceptions import ClientError, EndpointConnectionError, NoCredentialsError
+from botocore.exceptions import (
+    ClientError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    ProfileNotFound,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,20 @@ def generate_rds_auth_token(
             Region=region,
         )
         return token
+    except ProfileNotFound as exc:
+        logger.error(
+            "AWS profile not found for RDS IAM auth "
+            "(region=%s, hostname=%s, username=%s, profile=%s): %s",
+            region,
+            hostname,
+            username,
+            profile,
+            exc,
+        )
+        raise RuntimeError(
+            f"AWS profile '{profile}' not found. "
+            "Set DB_AWS_PROFILE to a valid profile or unset it to use default credentials."
+        ) from exc
     except NoCredentialsError as exc:
         logger.error(
             "AWS credentials not found for RDS IAM auth "
