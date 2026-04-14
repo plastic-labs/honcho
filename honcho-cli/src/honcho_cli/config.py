@@ -117,11 +117,17 @@ class CLIConfig:
         CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n")
 
     def redacted(self) -> dict[str, str]:
-        """Return config dict with api_key redacted."""
+        """Return config dict with api_key redacted.
+
+        Only includes fields that have a value set — per-command fields
+        (workspace_id, peer_id, session_id) are omitted when empty.
+        """
         d: dict[str, str] = {}
         for fld in fields(self):
             val = getattr(self, fld.name)
-            if fld.name == "api_key" and val:
+            if not val:
+                continue
+            if fld.name == "api_key":
                 d[fld.name] = val[:8] + "..." + val[-4:] if len(val) > 16 else "***"
             else:
                 d[fld.name] = val

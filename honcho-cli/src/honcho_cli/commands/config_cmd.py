@@ -13,7 +13,14 @@ import typer
 from honcho_cli.config import CLIConfig
 from honcho_cli.output import print_result
 
-app = typer.Typer(help="Inspect CLI configuration.")
+app = typer.Typer(help="Inspect CLI configuration.", invoke_without_command=True)
+
+
+@app.callback()
+def _default(ctx: typer.Context) -> None:
+    """Show current config when no subcommand is given."""
+    if ctx.invoked_subcommand is None:
+        show()
 
 
 @app.command()
