@@ -109,7 +109,6 @@ def delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt (for scripted/agent use)"),
     cascade: bool = typer.Option(False, "--cascade", help="Delete all sessions before deleting the workspace"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without deleting"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Delete a workspace. Use --dry-run first to see what will be deleted.
@@ -120,7 +119,7 @@ def delete(
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
-    handle_cmd_flags(json_output=json_output, quiet=quiet)
+    handle_cmd_flags(json_output=json_output)
 
     validate_resource_id(workspace_id, "workspace")
     # workspace_id is a required positional and we rebuild the client with it

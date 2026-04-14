@@ -13,12 +13,11 @@ from typing import Optional
 
 import typer
 
-from honcho_cli.output import set_json_mode, set_quiet_mode
+from honcho_cli.output import set_json_mode
 
 
 def handle_cmd_flags(
     json_output: bool = False,
-    quiet: bool = False,
     workspace: str | None = None,
     peer: str | None = None,
     session: str | None = None,
@@ -26,8 +25,6 @@ def handle_cmd_flags(
     """Apply command-level flags. Idempotent if already set by group callback."""
     if json_output:
         set_json_mode(True)
-    if quiet:
-        set_quiet_mode(True)
 
     from honcho_cli.main import _global_overrides
 
@@ -40,21 +37,18 @@ def handle_cmd_flags(
 
 
 def add_common_options(app: typer.Typer) -> None:
-    """Add a callback to a sub-app that accepts --json, --quiet, -w, -p, -s."""
+    """Add a callback to a sub-app that accepts --json, -w, -p, -s."""
 
     @app.callback(invoke_without_command=True)
     def _callback(
         ctx: typer.Context,
         json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
-        quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
         workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
         peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
         session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     ) -> None:
         if json_output:
             set_json_mode(True)
-        if quiet:
-            set_quiet_mode(True)
 
         from honcho_cli.main import _global_overrides
 

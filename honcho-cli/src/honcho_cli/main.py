@@ -10,7 +10,7 @@ from typing import Optional
 import typer
 
 from honcho_cli import __version__
-from honcho_cli.output import set_json_mode, set_quiet_mode
+from honcho_cli.output import set_json_mode
 
 BANNER = r"""
 ██╗  ██╗ ██████╗ ███╗   ██╗ ██████╗██╗  ██╗ ██████╗
@@ -57,7 +57,6 @@ def version_callback(value: bool) -> None:
 def main(
     ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", envvar="HONCHO_WORKSPACE_ID", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", envvar="HONCHO_PEER_ID", help="Override peer ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", envvar="HONCHO_SESSION_ID", help="Override session ID"),
@@ -65,7 +64,6 @@ def main(
 ) -> None:
     """Honcho CLI — admin & debugging tool for Honcho workspaces."""
     set_json_mode(json_output)
-    set_quiet_mode(quiet)
 
     # Store global overrides for commands to access
     _global_overrides["workspace"] = workspace

@@ -173,14 +173,13 @@ def delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Delete a session and all its data. Destructive — requires --yes or interactive confirm."""
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
-    handle_cmd_flags(json_output=json_output, quiet=quiet, workspace=workspace, session=session)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
     sess = client.session(sid)
@@ -297,13 +296,14 @@ def search(
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
     limit: int = typer.Option(10, help="Max results"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search messages in a session."""
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
     sess = client.session(sid)
@@ -332,13 +332,14 @@ def representation(
     search_query: Optional[str] = typer.Option(None, help="Semantic search query to filter conclusions"),
     max_conclusions: Optional[int] = typer.Option(None, help="Maximum number of conclusions to include"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get the representation of a peer within a session."""
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
     sess = client.session(sid)
@@ -380,16 +381,17 @@ def get_metadata(
 
 @app.command("set-metadata")
 def set_metadata(
-    metadata: str = typer.Argument(help="JSON metadata to set (e.g. '{\"key\": \"value\"}')"),
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
+    metadata: str = typer.Option(..., "--data", "-d", help="JSON metadata to set (e.g. '{\"key\": \"value\"}')"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Set metadata for a session."""
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
 

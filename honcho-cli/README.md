@@ -169,7 +169,6 @@ honcho peer inspect other_id     # positional arg still takes precedence
 | Flag | Description |
 |------|-------------|
 | `--json` | Force JSON output |
-| `--quiet` / `-q` | Suppress status messages |
 | `--workspace` / `-w` | Override workspace ID |
 | `--peer` / `-p` | Override peer ID |
 | `--session` / `-s` | Override session ID |

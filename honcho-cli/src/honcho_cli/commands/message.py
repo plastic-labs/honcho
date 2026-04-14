@@ -25,7 +25,6 @@ def list_messages(
     brief: bool = typer.Option(False, "--brief", help="Show only IDs, peer, token count, and created_at (no content)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress status messages"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List messages in a session."""
@@ -33,7 +32,7 @@ def list_messages(
     from honcho_cli.common import handle_cmd_flags
     from honcho_cli.main import get_client
 
-    handle_cmd_flags(json_output=json_output, quiet=quiet, workspace=workspace, session=session)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
     sess = client.session(sid)

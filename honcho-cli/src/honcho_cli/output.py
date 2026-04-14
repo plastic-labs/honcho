@@ -21,19 +21,14 @@ def is_tty() -> bool:
     return sys.stdout.isatty()
 
 
-# Global state for --json and --quiet flags
+# Global state for --json flag
 _force_json = False
-_quiet = False
 
 
 def set_json_mode(enabled: bool) -> None:
     global _force_json
     _force_json = enabled
 
-
-def set_quiet_mode(enabled: bool) -> None:
-    global _quiet
-    _quiet = enabled
 
 
 def use_json() -> bool:
@@ -115,6 +110,5 @@ def print_error(code: str, message: str, details: dict | None = None) -> None:
 
 
 def status(msg: str) -> None:
-    """Print a status message (suppressed in quiet mode)."""
-    if not _quiet:
-        console.print(f"[dim]{msg}[/dim]")
+    """Print a status message to stderr."""
+    console.print(f"[dim]{msg}[/dim]")

@@ -15,7 +15,6 @@ description: A terminal for Honcho — memory that reasons.
 - **TTY**: Human-readable tables (default when interactive)
 - **Piped/scripted**: JSON/NDJSON automatically
 - `--json`: Force JSON output
-- `--quiet`: Suppress status messages
 
 ## Exit Codes
 
