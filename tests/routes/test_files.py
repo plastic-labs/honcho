@@ -1,6 +1,7 @@
 # File upload tests for session endpoints
 import io
 import json
+import os
 from typing import Any
 
 import pytest
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.models import Peer, Workspace
+from src.utils import files as file_utils
 
 
 async def _create_test_session(
@@ -29,6 +31,48 @@ async def _create_test_session(
 def _get_upload_url(workspace_name: str, session_name: str) -> str:
     """Helper function to get the session upload URL"""
     return f"/v3/workspaces/{workspace_name}/sessions/{session_name}/messages/upload"
+
+
+def _build_test_pdf(text: str) -> bytes:
+    """Create a minimal single-page PDF with the supplied text."""
+
+    def pdf_obj(number: int, body: str) -> str:
+        return f"{number} 0 obj\n{body}\nendobj\n"
+
+    content_stream = f"BT\n/F1 24 Tf\n72 110 Td\n({text}) Tj\nET"
+    objects = [
+        pdf_obj(1, "<< /Type /Catalog /Pages 2 0 R >>"),
+        pdf_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+        pdf_obj(
+            3,
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] "
+            "/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        ),
+        pdf_obj(
+            4,
+            f"<< /Length {len(content_stream.encode('utf-8'))} >>\nstream\n"
+            f"{content_stream}\nendstream",
+        ),
+        pdf_obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
+    ]
+
+    pdf = "%PDF-1.4\n"
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(pdf.encode("utf-8")))
+        pdf += obj
+
+    xref_offset = len(pdf.encode("utf-8"))
+    pdf += f"xref\n0 {len(objects) + 1}\n"
+    pdf += "0000000000 65535 f \n"
+    for offset in offsets[1:]:
+        pdf += f"{offset:010d} 00000 n \n"
+    pdf += (
+        "trailer\n"
+        f"<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n"
+    )
+    return pdf.encode("utf-8")
 
 
 @pytest.mark.asyncio
@@ -183,6 +227,8 @@ async def test_create_messages_with_unsupported_file_type(
     response = client.post(url, files=files, data=form_data)
 
     assert response.status_code == 415
+    assert "image/*" not in response.json()["detail"]
+    assert "application/pdf" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -613,3 +659,207 @@ async def test_large_file_upload_with_metadata(
         assert message["peer_id"] == test_peer.name
         assert message["session_id"] == session_name
         assert message["metadata"] == metadata
+
+
+@pytest.mark.asyncio
+async def test_create_messages_with_image_ocr(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test image uploads use OCR when configured."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "force")
+
+    async def mock_ocr_extract_text(content: bytes, content_type: str) -> str:
+        assert content == b"fake-image-bytes"
+        assert content_type == "image/png"
+        return "Extracted image text"
+
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", mock_ocr_extract_text)
+
+    files = {"file": ("test.png", io.BytesIO(b"fake-image-bytes"), "image/png")}
+    form_data = {"peer_id": test_peer.name}
+
+    response = client.post(
+        _get_upload_url(test_workspace.name, test_session.name),
+        files=files,
+        data=form_data,
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "Extracted image text"
+
+
+@pytest.mark.asyncio
+async def test_pdf_upload_uses_native_text_when_fallback_succeeds(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test PDF uploads avoid OCR when native extraction is sufficient."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+
+    native_text = "A" * (settings.OCR.MIN_EXTRACTED_TEXT_CHARS + 1)
+
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "fallback")
+    monkeypatch.setattr(file_utils, "_native_pdf_text", lambda content: native_text)
+
+    async def fail_if_called(content: bytes, content_type: str) -> str:
+        raise AssertionError("OCR should not be called when native PDF extraction works")
+
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", fail_if_called)
+
+    files = {"file": ("test.pdf", io.BytesIO(b"fake-pdf-bytes"), "application/pdf")}
+    form_data = {"peer_id": test_peer.name}
+
+    response = client.post(
+        _get_upload_url(test_workspace.name, test_session.name),
+        files=files,
+        data=form_data,
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == native_text
+
+
+@pytest.mark.asyncio
+async def test_pdf_upload_falls_back_to_ocr_when_native_text_missing(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test PDF uploads use OCR when native extraction does not yield useful text."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "fallback")
+    monkeypatch.setattr(file_utils, "_native_pdf_text", lambda content: "")
+
+    async def mock_ocr_extract_text(content: bytes, content_type: str) -> str:
+        assert content_type == "application/pdf"
+        return "OCR fallback text"
+
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", mock_ocr_extract_text)
+
+    files = {"file": ("test.pdf", io.BytesIO(b"fake-pdf-bytes"), "application/pdf")}
+    form_data = {"peer_id": test_peer.name}
+
+    response = client.post(
+        _get_upload_url(test_workspace.name, test_session.name),
+        files=files,
+        data=form_data,
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "OCR fallback text"
+
+
+@pytest.mark.asyncio
+async def test_pdf_force_mode_skips_native_extraction_and_propagates_ocr_error(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test force mode uses OCR directly and does not fall back to native extraction."""
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "force")
+
+    def fail_if_called(content: bytes) -> str:
+        raise AssertionError("Native PDF extraction should not run in force mode")
+
+    async def raise_ocr_error(content: bytes, content_type: str) -> str:
+        assert content_type == "application/pdf"
+        raise RuntimeError("OCR unavailable")
+
+    monkeypatch.setattr(file_utils, "_native_pdf_text", fail_if_called)
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", raise_ocr_error)
+
+    with pytest.raises(RuntimeError, match="OCR unavailable"):
+        await file_utils.PDFProcessor().extract_text(b"fake-pdf-bytes", "application/pdf")
+
+
+@pytest.mark.asyncio
+async def test_pdf_fallback_mode_uses_ocr_when_native_extraction_raises(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test fallback mode still attempts OCR if native PDF parsing fails."""
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "fallback")
+
+    def raise_native_error(content: bytes) -> str:
+        raise ValueError("pdf parse failure")
+
+    async def mock_ocr_extract_text(content: bytes, content_type: str) -> str:
+        assert content_type == "application/pdf"
+        return "OCR after parse error"
+
+    monkeypatch.setattr(file_utils, "_native_pdf_text", raise_native_error)
+    monkeypatch.setattr(file_utils, "_ocr_extract_text", mock_ocr_extract_text)
+
+    result = await file_utils.PDFProcessor().extract_text(
+        b"fake-pdf-bytes", "application/pdf"
+    )
+
+    assert result == "OCR after parse error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("RUN_LIVE_MISTRAL_OCR_TEST")
+    or not (os.getenv("MISTRAL_API_KEY") or os.getenv("OCR_MISTRAL_API_KEY")),
+    reason="Set RUN_LIVE_MISTRAL_OCR_TEST=1 and provide a Mistral API key to run",
+)
+async def test_create_messages_with_live_mistral_ocr(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Opt-in smoke test for the live Mistral OCR upload path."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+
+    monkeypatch.setattr(settings.OCR, "PROVIDER", "mistral")
+    monkeypatch.setattr(settings.OCR, "MODE", "force")
+    monkeypatch.setattr(
+        settings.OCR,
+        "MISTRAL_API_KEY",
+        os.getenv("MISTRAL_API_KEY") or os.getenv("OCR_MISTRAL_API_KEY"),
+    )
+    monkeypatch.setattr(settings.OCR, "TIMEOUT_SECONDS", 120)
+
+    files = {
+        "file": (
+            "mistral-live.pdf",
+            io.BytesIO(_build_test_pdf("MISTRAL OCR LIVE TEST")),
+            "application/pdf",
+        )
+    }
+    form_data = {"peer_id": test_peer.name}
+
+    response = client.post(
+        _get_upload_url(test_workspace.name, test_session.name),
+        files=files,
+        data=form_data,
+    )
+
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert len(data) == 1
+    content = data[0]["content"].lower()
+    assert "mistral" in content
+    assert "ocr" in content
