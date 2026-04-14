@@ -144,6 +144,9 @@ def _confirm_or_prompt_api_key(value: str, source: str) -> str:
             _console.print(f"  API key:     [dim]{_redact(value)}[/dim]  [{BRAND}](from {source})[/{BRAND}]")
         if use_json() or typer.confirm("  Use this API key?", default=True):
             return value
+    if use_json():
+        print_error("MISSING_VALUE", "API key is required", {})
+        raise typer.Exit(1)
     # Never set ``default=`` to the raw key — typer would echo it in brackets.
     new = typer.prompt("  API key")
     if not new:
@@ -160,8 +163,10 @@ def _confirm_or_prompt_url(value: str, source: str) -> str:
             _console.print(f"  Honcho URL:  [dim]{value}[/dim]  [{BRAND}](from {source})[/{BRAND}]")
         if use_json() or typer.confirm("  Use this URL?", default=True):
             return value
-    if not use_json():
-        _console.print("  [dim](e.g. https://api.honcho.dev for managed, http://localhost:8000 for local)[/dim]")
+    if use_json():
+        print_error("MISSING_VALUE", "Honcho URL is required", {})
+        raise typer.Exit(1)
+    _console.print("  [dim](e.g. https://api.honcho.dev for managed, http://localhost:8000 for local)[/dim]")
     return typer.prompt("  Honcho URL", default=DEFAULT_BASE_URL).strip()
 
 

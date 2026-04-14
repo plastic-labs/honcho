@@ -134,8 +134,9 @@ def create(
     # If content looks like JSON, try to parse it
     try:
         payload = json.loads(content)
-        content = payload.get("content", content)
-    except (json.JSONDecodeError, AttributeError):
+        if isinstance(payload, dict):
+            content = payload.get("content", content)
+    except json.JSONDecodeError:
         pass
 
     p = client.peer(observer)
