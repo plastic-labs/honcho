@@ -8,9 +8,7 @@ from typing import Optional
 
 import typer
 
-from honcho.api_types import MessageCreateParams, MessageResponse
-from honcho.http import routes
-from honcho.message import Message
+from honcho.api_types import MessageCreateParams
 
 from honcho_cli.commands.session import _get_session_id
 from honcho_cli.commands.workspace import _handle_error
@@ -145,10 +143,8 @@ def get_message(
     client, config = get_client()
 
     try:
-        # Hit the direct message endpoint instead of paging the session.
         sess = client.session(sid)
-        data = client._http.get(routes.message(sess.workspace_id, sess.id, message_id))
-        msg = Message.from_api_response(MessageResponse.model_validate(data))
+        msg = sess.get_message(message_id)
 
         print_result({
             "id": msg.id,

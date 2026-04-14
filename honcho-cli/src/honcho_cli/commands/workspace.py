@@ -297,8 +297,11 @@ def _handle_error(e: Exception, resource: str, resource_id: str) -> None:
             {resource: resource_id},
         )
         raise typer.Exit(1)
-    if isinstance(e, (AuthenticationError, PermissionDeniedError)):
+    if isinstance(e, AuthenticationError):
         print_error("AUTH_ERROR", f"Authentication failed: {e}", {})
+        raise typer.Exit(3)
+    if isinstance(e, PermissionDeniedError):
+        print_error("PERMISSION_ERROR", f"Permission denied: {e}", {})
         raise typer.Exit(3)
     if isinstance(e, ServerError):
         print_error("SERVER_ERROR", f"Server error: {e}", {resource: resource_id})
