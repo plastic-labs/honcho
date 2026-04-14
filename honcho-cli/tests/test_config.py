@@ -35,14 +35,14 @@ class TestLoad:
         assert loaded.base_url == "http://localhost:8000"
         assert loaded.api_key == "k"
 
-    def test_api_key_and_base_url_ignore_env(self, cfg_path, monkeypatch):
-        """Both apiKey and base_url must come from config.json — env vars are ignored at runtime."""
+    def test_api_key_and_base_url_from_env(self, cfg_path, monkeypatch):
+        """HONCHO_API_KEY and HONCHO_BASE_URL override config file at runtime."""
         cfg_path.write_text(json.dumps({"environmentUrl": "https://api.honcho.dev"}))
         monkeypatch.setenv("HONCHO_API_KEY", "env-key")
         monkeypatch.setenv("HONCHO_BASE_URL", "http://localhost:8000")
         loaded = CLIConfig.load()
-        assert loaded.api_key == ""
-        assert loaded.base_url == "https://api.honcho.dev"
+        assert loaded.api_key == "env-key"
+        assert loaded.base_url == "http://localhost:8000"
 
 
 class TestSave:
@@ -52,7 +52,7 @@ class TestSave:
             base_url="http://localhost:8000",
             api_key="test-key-123",
             workspace_id="my-ws",  # must NOT be persisted
-            peer_id="ajspig",
+            peer_id="user",
             session_id="s1",
         ).save()
         assert json.loads(cfg_path.read_text()) == {
@@ -66,8 +66,8 @@ class TestSave:
             "apiKey": "old-key",
             "environmentUrl": "https://api.honcho.dev",
             "saveMessages": True,
-            "sessions": {"/Users/ajspig": "home-chat"},
-            "hosts": {"claude_code": {"peerName": "ajspig", "workspace": "agents"}},
+            "sessions": {"/Users/user": "home-chat"},
+            "hosts": {"claude_code": {"peerName": "user", "workspace": "agents"}},
             "sessionStrategy": "chat-instance",
         }
         cfg_path.write_text(json.dumps(seed))

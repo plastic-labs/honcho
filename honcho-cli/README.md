@@ -134,45 +134,42 @@ Errors are structured:
 Non-interactive onboarding:
 
 ```bash
-# Pre-seed via flags / env vars; `honcho init` still prompts for anything missing
-HONCHO_API_KEY=xxx honcho init --base-url local
-```
-
-## Context Threading
-
-Workspace / peer / session come from flags or env vars — not persisted defaults:
-
-```bash
-# Per-command flags
-honcho --workspace prod --peer ajspig peer card
-
-# Or export once per shell
-export HONCHO_WORKSPACE_ID=prod
-export HONCHO_PEER_ID=ajspig
-honcho peer card
-honcho peer inspect other_id     # positional arg still takes precedence
+# Pre-seed via flags / env vars; init still prompts for anything missing
+HONCHO_API_KEY=hch-v3-xxx honcho init --base-url https://api.honcho.dev
 ```
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `HONCHO_BASE_URL` | API base URL pre-fill for `honcho init` only — ignored at runtime |
-| `HONCHO_API_KEY` | Admin JWT pre-fill for `honcho init` only — ignored at runtime |
-| `HONCHO_WORKSPACE_ID` | Default workspace |
-| `HONCHO_PEER_ID` | Default peer |
-| `HONCHO_SESSION_ID` | Default session |
-| `HONCHO_JSON` | Force JSON output (`1` / `true`) |
+All `HONCHO_*` env vars work at runtime — no config file required.
 
-## Global Flags
+Precedence (highest first): **flag → env var → config file → default**.
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Force JSON output |
-| `--workspace` / `-w` | Override workspace ID |
-| `--peer` / `-p` | Override peer ID |
-| `--session` / `-s` | Override session ID |
-| `--version` / `-V` | Show version |
+| Variable | Flag | Description |
+|----------|------|-------------|
+| `HONCHO_API_KEY` | `--api-key` (init) | Admin JWT |
+| `HONCHO_BASE_URL` | `--base-url` (init) | API URL |
+| `HONCHO_WORKSPACE_ID` | `-w` / `--workspace` | Workspace scope |
+| `HONCHO_PEER_ID` | `-p` / `--peer` | Peer scope |
+| `HONCHO_SESSION_ID` | `-s` / `--session` | Session scope |
+| `HONCHO_JSON` | `--json` | Force JSON output (`1` / `true`) |
+
+```bash
+# Per-command flags
+honcho -w prod -p user peer card
+
+# Or export once per shell
+export HONCHO_WORKSPACE_ID=prod
+export HONCHO_PEER_ID=user
+honcho peer card
+
+# One-off against a different server
+HONCHO_BASE_URL=http://localhost:8000 honcho workspace list
+
+# CI/CD — env vars only, no config file needed
+export HONCHO_API_KEY=hch-v3-xxx
+export HONCHO_BASE_URL=https://api.honcho.dev
+honcho workspace list
+```
 
 ## Configuration
 
@@ -182,8 +179,6 @@ top-level keys: `apiKey` and `environmentUrl` (the full Honcho API URL, e.g.
 top level — `hosts`, `sessions`, `saveMessages`, `sessionStrategy`, etc. —
 is left untouched.
 
-Example:
-
 ```json
 {
   "apiKey": "hch-v3-...",
@@ -192,16 +187,8 @@ Example:
 }
 ```
 
-Precedence (highest first):
-
-- **`apiKey`** and **`base_url`**: read only from `~/.honcho/config.json` at
-  runtime. No env-var or flag fallback — a missing config file is a hard
-  error. (`honcho init` still accepts `--api-key` / `HONCHO_API_KEY` and
-  `--base-url` / `HONCHO_BASE_URL` as one-time pre-fills for the
-  write-to-file prompts.) This keeps a single, inspectable source of truth
-  for where you're connecting and with what credentials.
-- **`workspace_id` / `peer_id` / `session_id`**: flag (`-w` / `-p` / `-s`)
-  → env var (`HONCHO_WORKSPACE_ID` etc.). Not persisted to the config file.
+`workspace_id` / `peer_id` / `session_id` are per-command only — never
+persisted to the config file.
 
 ## Development
 

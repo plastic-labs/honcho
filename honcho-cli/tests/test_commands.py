@@ -56,8 +56,8 @@ class TestInit:
         cfg.write_text(json.dumps({
             "apiKey": "old",
             "environmentUrl": "http://old.example",
-            "hosts": {"claude_code": {"peerName": "ajspig"}},
-            "sessions": {"/Users/ajspig": "home-chat"},
+            "hosts": {"claude_code": {"peerName": "user"}},
+            "sessions": {"/Users/user": "home-chat"},
             "sessionStrategy": "chat-instance",
         }))
         with patch("honcho_cli.commands.setup._test_connection", return_value=(True, "OK")):
@@ -69,8 +69,8 @@ class TestInit:
         on_disk = json.loads(cfg.read_text())
         assert on_disk["apiKey"] == "new-key"
         assert on_disk["environmentUrl"] == "https://api.honcho.dev"
-        assert on_disk["hosts"] == {"claude_code": {"peerName": "ajspig"}}
-        assert on_disk["sessions"] == {"/Users/ajspig": "home-chat"}
+        assert on_disk["hosts"] == {"claude_code": {"peerName": "user"}}
+        assert on_disk["sessions"] == {"/Users/user": "home-chat"}
         assert on_disk["sessionStrategy"] == "chat-instance"
 
 

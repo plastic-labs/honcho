@@ -7,22 +7,20 @@
 from __future__ import annotations
 
 import json
-import os
 
 import typer
+from honcho import Honcho
 from rich.console import Console
 from rich.panel import Panel
 
-from honcho import Honcho
-
 from honcho_cli import __version__
+from honcho_cli.branding import BANNER, BRAND, ICON_FAIL, ICON_OK, ICON_RUN
+from honcho_cli.common import get_resolved_config
 from honcho_cli.config import (
     CONFIG_FILE,
     DEFAULT_BASE_URL,
     CLIConfig,
 )
-from honcho_cli.branding import BANNER, BRAND, ICON_FAIL, ICON_OK, ICON_RUN
-from honcho_cli.common import get_resolved_config
 from honcho_cli.output import print_error, print_result, set_json_mode, use_json
 
 _console = Console(stderr=True)
@@ -73,11 +71,9 @@ def _test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
         return False, msg
 
 
-def _resolve_source(param: str | None, env_val: str, env_name: str, flag_name: str, file_val: str) -> tuple[str, str]:
-    """Return (value, source_label) for one field, flag/env > file."""
-    if param:
-        return param, f"{env_name} env var" if env_val and env_val == param else f"{flag_name} flag"
-    return (file_val, str(CONFIG_FILE)) if file_val else ("", "")
+def _pick(flag_val: str | None, file_val: str) -> str:
+    """Return best available value. Flag/env wins over file."""
+    return flag_val or file_val or ""
 
 
 # --------------------------------------------------------------------------- #
@@ -88,28 +84,22 @@ def init(
     base_url: str | None = typer.Option(None, "--base-url", envvar="HONCHO_BASE_URL", help="Honcho API URL (e.g. https://api.honcho.dev, http://localhost:8000)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
-    """Confirm or set ``apiKey`` + Honcho URL in ``~/.honcho/config.json``.
+    """Set ``apiKey`` + Honcho URL in ``~/.honcho/config.json``.
 
-    For each value we either (a) show what we have and ask for a Y/N
-    confirmation, or (b) prompt for it if missing. Foreign top-level keys
-    (``hosts``, ``sessions``, …) are preserved.
+    Each value is shown with its current default — press Enter to keep it or
+    type a replacement. Foreign top-level keys (``hosts``, ``sessions``, …)
+    are preserved.
 
     Workspace / peer / session scoping is per-command via ``-w`` / ``-p`` /
     ``-s`` or ``HONCHO_*`` env vars — never persisted.
     """
 
-
     if json_output:
         set_json_mode(True)
 
     file_key, file_url = _read_file_values()
-    key_val, key_src = _resolve_source(
-        api_key, os.environ.get("HONCHO_API_KEY", ""), "HONCHO_API_KEY", "--api-key", file_key,
-    )
-    url_val, url_src = _resolve_source(
-        base_url, os.environ.get("HONCHO_BASE_URL", ""), "HONCHO_BASE_URL", "--base-url", file_url,
-    )
-    url_val = url_val.strip()
+    key_val = _pick(api_key, file_key)
+    url_val = _pick(base_url, file_url).strip()
 
     if not use_json():
         _console.print()
@@ -118,11 +108,10 @@ def init(
             expand=False, subtitle=f"Honcho CLI · v{__version__}",
         ))
         _console.print()
-        if not key_val and not url_val:
-            _console.print(f"[bold]No existing config at {CONFIG_FILE} — let's create one.[/bold]\n")
+        _console.print("  [dim]Press Enter to accept the default shown in brackets.[/dim]\n")
 
-    final_key = _confirm_or_prompt_api_key(key_val, key_src)
-    final_url = _confirm_or_prompt_url(url_val, url_src)
+    final_key = _prompt_api_key(key_val)
+    final_url = _prompt_url(url_val)
 
     # Persist if anything changed or if the value came from env/flag.
     if final_key != file_key or final_url != file_url:
@@ -136,38 +125,30 @@ def init(
         print_result({"apiKey": _redact(final_key), "baseUrl": final_url})
 
 
-def _confirm_or_prompt_api_key(value: str, source: str) -> str:
-
-
-    if value:
-        if not use_json():
-            _console.print(f"  API key:     [dim]{_redact(value)}[/dim]  [{BRAND}](from {source})[/{BRAND}]")
-        if use_json() or typer.confirm("  Use this API key?", default=True):
-            return value
+def _prompt_api_key(value: str) -> str:
+    """Prompt for API key. Shows redacted default in brackets; Enter keeps it."""
     if use_json():
+        if value:
+            return value
         print_error("MISSING_VALUE", "API key is required", {})
         raise typer.Exit(1)
-    # Never set ``default=`` to the raw key — typer would echo it in brackets.
-    new = typer.prompt("  API key")
-    if not new:
-        print_error("MISSING_VALUE", "API key is required", {})
-        raise typer.Exit(1)
-    return new
-
-
-def _confirm_or_prompt_url(value: str, source: str) -> str:
-
 
     if value:
-        if not use_json():
-            _console.print(f"  Honcho URL:  [dim]{value}[/dim]  [{BRAND}](from {source})[/{BRAND}]")
-        if use_json() or typer.confirm("  Use this URL?", default=True):
-            return value
+        redacted = _redact(value)
+        return typer.prompt(f"  API key [{redacted}]", default=value, show_default=False)
+    return typer.prompt("  API key")
+
+
+def _prompt_url(value: str) -> str:
+    """Prompt for Honcho URL. Shows default in brackets; Enter keeps it."""
     if use_json():
+        if value:
+            return value
         print_error("MISSING_VALUE", "Honcho URL is required", {})
         raise typer.Exit(1)
-    _console.print("  [dim](e.g. https://api.honcho.dev for managed, http://localhost:8000 for local)[/dim]")
-    return typer.prompt("  Honcho URL", default=DEFAULT_BASE_URL).strip()
+
+    default = value or DEFAULT_BASE_URL
+    return typer.prompt("  Honcho URL", default=default).strip()
 
 
 def _check_connection(base_url: str, api_key: str) -> None:
@@ -264,7 +245,7 @@ def doctor(
         hint = "" if config.workspace_id else "  [dim](pass -w / -p to include workspace, peer, queue checks)[/dim]"
         _console.print(f"\n  [{color}]{passed}/{total}[/{color}] checks passed{hint}\n")
 
-    # apiKey must live in config.json → missing file is a hard failure.
+    # Config file + API connectivity are hard requirements.
     critical = {"Config file", "API key configured", "API connectivity"}
     if config.workspace_id:
         critical.add("Workspace reachable")

@@ -30,13 +30,10 @@ DEFAULT_BASE_URL = "https://api.honcho.dev"
 
 # Env var mapping for runtime overrides.
 #
-# NOTE: ``api_key`` and ``base_url`` are intentionally NOT here. Both must
-# live in ``~/.honcho/config.json`` so there's a single, inspectable source
-# of truth for where you're connecting and with what credentials.
-# (``honcho init`` still accepts ``--api-key`` / ``HONCHO_API_KEY`` and
-# ``--base-url`` / ``HONCHO_BASE_URL`` as one-time pre-fills for the
-# write-to-file prompts.)
+# Resolution order: flag > env var > config file > default.
 ENV_MAP: dict[str, str] = {
+    "api_key": "HONCHO_API_KEY",
+    "base_url": "HONCHO_BASE_URL",
     "workspace_id": "HONCHO_WORKSPACE_ID",
     "peer_id": "HONCHO_PEER_ID",
     "session_id": "HONCHO_SESSION_ID",
