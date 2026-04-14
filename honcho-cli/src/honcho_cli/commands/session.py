@@ -98,7 +98,7 @@ def inspect(
             message_count_is_total = False
 
         result = {
-            "id": sid,
+            "session_id": sid,
             "peers": [{"id": p.id} for p in peers],
             "message_count": message_count,
             "message_count_is_total": message_count_is_total,

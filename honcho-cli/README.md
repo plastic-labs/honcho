@@ -107,7 +107,7 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 
 | Command | Description |
 |---------|-------------|
-| `honcho config show` | Show current config (API key redacted) |
+| `honcho config` | Show current config (API key redacted) |
 
 ## Agent Usage
 

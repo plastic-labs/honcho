@@ -1,4 +1,4 @@
-"""Config inspection command: ``honcho config show``.
+"""Config inspection command: ``honcho config``.
 
 Writing to ``~/.honcho/config.json`` is done only via ``honcho init``, which
 manages the two CLI-owned keys (``apiKey`` + ``environmentUrl``).
@@ -16,15 +16,16 @@ from honcho_cli.output import print_result
 app = typer.Typer(help="Inspect CLI configuration.", invoke_without_command=True)
 
 
-@app.callback()
-def _default(ctx: typer.Context) -> None:
-    """Show current config when no subcommand is given."""
-    if ctx.invoked_subcommand is None:
-        show()
-
-
-@app.command()
-def show() -> None:
+@app.callback(invoke_without_command=True)
+def config(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
     """Show current config (api key redacted)."""
-    config = CLIConfig.load()
-    print_result(config.redacted())
+    if ctx.invoked_subcommand is not None:
+        return
+    from honcho_cli.common import handle_cmd_flags
+
+    handle_cmd_flags(json_output=json_output)
+    cfg = CLIConfig.load()
+    print_result(cfg.redacted())
