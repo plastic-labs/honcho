@@ -5,14 +5,17 @@ Entry point and top-level command group.
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Optional
 
 import typer
+from rich.console import Console
 
 from honcho_cli import __version__
 from honcho_cli.branding import BANNER, BRAND
 from honcho_cli.common import _global_overrides
-from honcho_cli.output import set_json_mode
+from honcho_cli.output import set_json_mode, use_json
 
 app = typer.Typer(
     name="honcho",
@@ -28,9 +31,6 @@ def _json_requested_early() -> bool:
     version_callback is eager and fires before set_json_mode() runs, so we
     can't call use_json() here. Mirror its logic against argv/env/TTY.
     """
-    import os
-    import sys
-
     return (
         "--json" in sys.argv
         or os.environ.get("HONCHO_JSON", "").lower() in ("1", "true")
@@ -64,10 +64,6 @@ def main(
     _global_overrides["session"] = session
 
     if ctx.invoked_subcommand is None:
-        from rich.console import Console
-
-        from honcho_cli.output import use_json
-
         console = Console()
         if not use_json():
             console.print(f"[bold {BRAND}]{BANNER}[/bold {BRAND}]")

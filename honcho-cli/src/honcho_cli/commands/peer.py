@@ -7,8 +7,10 @@ from typing import Optional
 
 import typer
 
-from honcho_cli.commands.workspace import _config_to_dict, _handle_error
-from honcho_cli.output import print_result, use_json
+from honcho.api_types import PeerConfig
+
+from honcho_cli.commands.workspace import _config_to_dict, _handle_error, _raw_list
+from honcho_cli.output import print_error, print_result, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
@@ -22,8 +24,6 @@ def _get_peer_id(peer_id: str | None) -> str:
     config = get_resolved_config()
     pid = peer_id or config.peer_id
     if not pid:
-        from honcho_cli.output import print_error
-
         print_error("NO_PEER", "No peer ID provided. Pass --peer/-p or set HONCHO_PEER_ID.")
         raise typer.Exit(1)
     return validate_resource_id(pid, "peer")
@@ -35,8 +35,6 @@ def list_peers(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List all peers in the workspace."""
-    from honcho_cli.commands.workspace import _raw_list
-
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     client, config = get_client()
 
@@ -184,8 +182,6 @@ def create_peer(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Create or get a peer."""
-    from honcho.api_types import PeerConfig
-
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     pid = validate_resource_id(peer_id, "peer")
     client, config = get_client()
@@ -195,7 +191,6 @@ def create_peer(
         try:
             parsed_metadata = json.loads(metadata)
         except json.JSONDecodeError as e:
-            from honcho_cli.output import print_error
             print_error("INVALID_JSON", f"--metadata must be valid JSON: {e}", {})
             raise typer.Exit(1)
 
@@ -253,7 +248,6 @@ def set_metadata(
     try:
         parsed = json.loads(metadata)
     except json.JSONDecodeError as e:
-        from honcho_cli.output import print_error
         print_error("INVALID_JSON", f"metadata must be valid JSON: {e}", {})
         raise typer.Exit(1)
 

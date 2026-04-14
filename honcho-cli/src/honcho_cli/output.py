@@ -6,6 +6,7 @@ Detects TTY to auto-switch between human-readable and machine-parseable output.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
@@ -33,8 +34,6 @@ def set_json_mode(enabled: bool) -> None:
 
 def use_json() -> bool:
     """Should we output JSON?"""
-    import os
-
     return _force_json or os.environ.get("HONCHO_JSON", "").lower() in ("1", "true") or not is_tty()
 
 

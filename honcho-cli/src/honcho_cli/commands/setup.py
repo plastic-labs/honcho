@@ -13,6 +13,8 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
+from honcho import Honcho
+
 from honcho_cli import __version__
 from honcho_cli.config import (
     CONFIG_FILE,
@@ -21,7 +23,7 @@ from honcho_cli.config import (
 )
 from honcho_cli.branding import BANNER, BRAND, ICON_FAIL, ICON_OK, ICON_RUN
 from honcho_cli.common import get_resolved_config
-from honcho_cli.output import print_error, print_result
+from honcho_cli.output import print_error, print_result, set_json_mode, use_json
 
 _console = Console(stderr=True)
 
@@ -56,7 +58,7 @@ def _read_file_values() -> tuple[str, str]:
 def _test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
     """Probe the Honcho API by listing workspaces. Returns (ok, detail)."""
     try:
-        from honcho import Honcho
+
 
         list(Honcho(base_url=base_url, api_key=api_key).workspaces())
         return True, "OK"
@@ -95,7 +97,7 @@ def init(
     Workspace / peer / session scoping is per-command via ``-w`` / ``-p`` /
     ``-s`` or ``HONCHO_*`` env vars — never persisted.
     """
-    from honcho_cli.output import set_json_mode, use_json
+
 
     if json_output:
         set_json_mode(True)
@@ -135,7 +137,7 @@ def init(
 
 
 def _confirm_or_prompt_api_key(value: str, source: str) -> str:
-    from honcho_cli.output import use_json
+
 
     if value:
         if not use_json():
@@ -151,7 +153,7 @@ def _confirm_or_prompt_api_key(value: str, source: str) -> str:
 
 
 def _confirm_or_prompt_url(value: str, source: str) -> str:
-    from honcho_cli.output import use_json
+
 
     if value:
         if not use_json():
@@ -164,7 +166,7 @@ def _confirm_or_prompt_url(value: str, source: str) -> str:
 
 
 def _check_connection(base_url: str, api_key: str) -> None:
-    from honcho_cli.output import use_json
+
 
     if not use_json():
         _console.print(f"\n  {ICON_RUN} [dim]Testing connection to {base_url}...[/dim]", end=" ")
@@ -188,7 +190,7 @@ def doctor(
     """Verify config, connectivity, and — when scoped via ``-w`` / ``-p`` —
     workspace, peer, and queue health.
     """
-    from honcho_cli.output import set_json_mode, use_json
+
 
     if json_output:
         set_json_mode(True)
@@ -222,7 +224,7 @@ def doctor(
     ws_ok, client = False, None
     if config.workspace_id and config.api_key:
         try:
-            from honcho import Honcho
+
 
             client = Honcho(base_url=config.base_url, api_key=config.api_key, workspace_id=config.workspace_id)
             client.get_configuration()

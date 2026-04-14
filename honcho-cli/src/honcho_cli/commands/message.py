@@ -7,6 +7,11 @@ from typing import Optional
 
 import typer
 
+from honcho.api_types import MessageResponse
+from honcho.http import routes
+from honcho.message import Message
+
+from honcho_cli.commands.session import _get_session_id
 from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.output import print_result, status
 from honcho_cli.validation import validate_resource_id
@@ -28,7 +33,6 @@ def list_messages(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List messages in a session."""
-    from honcho_cli.commands.session import _get_session_id
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -91,7 +95,6 @@ def get_message(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get a single message by ID."""
-    from honcho_cli.commands.session import _get_session_id
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     validate_resource_id(message_id, "message")
@@ -100,10 +103,6 @@ def get_message(
 
     try:
         # Hit the direct message endpoint instead of paging the session.
-        from honcho.http import routes
-        from honcho.api_types import MessageResponse
-        from honcho.message import Message
-
         sess = client.session(sid)
         data = client._http.get(routes.message(sess.workspace_id, sess.id, message_id))
         msg = Message.from_api_response(MessageResponse.model_validate(data))

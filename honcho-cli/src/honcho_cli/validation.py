@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 
+from honcho_cli.output import print_error
+
 UNSAFE_CHARS = re.compile(r'[?#%\x00-\x1f\x7f/\\]')
 
 
@@ -38,7 +40,5 @@ def validate_resource_id(value: str, resource_type: str = "resource") -> str:
 
 def _fail(code: str, message: str, details: dict) -> None:
     """Print structured error and exit."""
-    from honcho_cli.output import print_error
-
     print_error(code, message, details)
     raise SystemExit(1)

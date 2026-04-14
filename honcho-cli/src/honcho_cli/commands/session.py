@@ -7,8 +7,10 @@ from typing import List, Optional
 
 import typer
 
-from honcho_cli.commands.workspace import _config_to_dict, _handle_error
-from honcho_cli.output import print_result, status, use_json
+from honcho import HonchoError
+
+from honcho_cli.commands.workspace import _config_to_dict, _handle_error, _raw_list
+from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
@@ -22,8 +24,6 @@ def _get_session_id(session_id: str | None) -> str:
     config = get_resolved_config()
     sid = session_id or config.session_id
     if not sid:
-        from honcho_cli.output import print_error
-
         print_error("NO_SESSION", "No session ID provided. Pass --session/-s or set HONCHO_SESSION_ID.")
         raise typer.Exit(1)
     return validate_resource_id(sid, "session")
@@ -36,8 +36,6 @@ def list_sessions(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List sessions in the workspace."""
-    from honcho_cli.commands.workspace import _raw_list
-
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     client, config = get_client()
 
@@ -168,10 +166,6 @@ def delete(
         # know what they're deleting, and they still need to pass --yes.
         # Narrow the except to HonchoError so auth/network failures surface
         # before the user types 'y' on a destructive op.
-        from honcho import HonchoError
-
-        from honcho_cli.output import use_json
-
         if not use_json():
             try:
                 peers = sess.peers()
@@ -362,7 +356,6 @@ def set_metadata(
     try:
         parsed = json.loads(metadata)
     except json.JSONDecodeError as e:
-        from honcho_cli.output import print_error
         print_error("INVALID_JSON", f"metadata must be valid JSON: {e}", {})
         raise typer.Exit(1)
 

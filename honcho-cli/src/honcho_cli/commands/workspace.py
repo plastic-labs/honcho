@@ -6,6 +6,15 @@ from typing import Optional
 
 import typer
 
+from honcho import (
+    APIError,
+    AuthenticationError,
+    Honcho,
+    NotFoundError,
+    PermissionDeniedError,
+    ServerError,
+)
+
 from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
@@ -214,8 +223,6 @@ def queue_status(
 
 def _with_workspace(client, workspace_id: str):
     """Return a new client pointed at a different workspace."""
-    from honcho import Honcho
-
     return Honcho(
         base_url=str(client.base_url),
         api_key=client._http._api_key if hasattr(client._http, "_api_key") else None,
@@ -243,14 +250,6 @@ def _handle_error(e: Exception, resource: str, resource_id: str) -> None:
     any APIError subclass we don't enumerate. Substring matching on the
     message is used only as a last-ditch fallback for non-SDK exceptions.
     """
-    from honcho import (
-        APIError,
-        AuthenticationError,
-        NotFoundError,
-        PermissionDeniedError,
-        ServerError,
-    )
-
     if isinstance(e, NotFoundError):
         print_error(
             f"{resource.upper()}_NOT_FOUND",

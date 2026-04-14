@@ -13,7 +13,11 @@ from typing import Optional
 
 import typer
 
-from honcho_cli.output import set_json_mode
+from honcho import Honcho
+
+from honcho_cli.config import CLIConfig, get_client_kwargs
+from honcho_cli.output import print_error, set_json_mode
+from honcho_cli.validation import validate_resource_id
 
 
 # Global overrides from flags (commands read these)
@@ -31,9 +35,6 @@ def get_resolved_config():
     ``-w``/``-p``/``-s`` value fails fast with a structured error rather than
     reaching the API and surfacing as an opaque ``UNKNOWN_ERROR``.
     """
-    from honcho_cli.config import CLIConfig
-    from honcho_cli.validation import validate_resource_id
-
     config = CLIConfig.load()
 
     if _global_overrides["workspace"]:
@@ -54,11 +55,6 @@ def get_client(*, require_workspace: bool = True):
     workspace. Commands that legitimately run without a workspace (e.g.
     ``workspace list``) pass ``require_workspace=False``.
     """
-    from honcho import Honcho
-
-    from honcho_cli.config import get_client_kwargs
-    from honcho_cli.output import print_error
-
     config = get_resolved_config()
     if require_workspace and not config.workspace_id:
         print_error(

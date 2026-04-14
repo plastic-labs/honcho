@@ -195,8 +195,6 @@ def delete(
         # SDK doesn't expose a get-by-id on ConclusionScope, so we can't
         # preview content cheaply — don't paginate the list just to
         # decorate the prompt. Show identifying fields only.
-        from honcho_cli.output import use_json
-
         if not use_json():
             typer.echo(
                 f"  id:       {conclusion_id}\n"
