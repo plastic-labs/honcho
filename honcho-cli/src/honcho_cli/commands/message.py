@@ -1,19 +1,20 @@
-"""Message commands: list, get."""
+"""Message commands: list, get, create."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Optional
 
 import typer
 
-from honcho.api_types import MessageResponse
+from honcho.api_types import MessageCreateParams, MessageResponse
 from honcho.http import routes
 from honcho.message import Message
 
 from honcho_cli.commands.session import _get_session_id
 from honcho_cli.commands.workspace import _handle_error
-from honcho_cli.output import print_result, status
+from honcho_cli.output import print_error, print_result, status
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
@@ -85,6 +86,48 @@ def list_messages(
             print_result(items, columns=["id", "peer_id", "content", "created_at"], title="Messages")
     except Exception as e:
         _handle_error(e, "message", "list")
+
+
+@app.command("create")
+def create_message(
+    content: str = typer.Argument(help="Message content"),
+    peer_id: str = typer.Option(..., "--peer", "-p", help="Peer ID of the message sender"),
+    metadata: Optional[str] = typer.Option(None, "--metadata", help="JSON metadata to associate with the message"),
+    session_id: Optional[str] = typer.Option(None, "--session", "-s", help="Session ID"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Create a message in a session."""
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session_id)
+    sid = _get_session_id(None)
+    validate_resource_id(peer_id, "peer")
+    client, config = get_client()
+    sess = client.session(sid)
+
+    parsed_metadata = None
+    if metadata:
+        try:
+            parsed_metadata = json.loads(metadata)
+        except json.JSONDecodeError as e:
+            print_error("INVALID_JSON", f"--metadata must be valid JSON: {e}", {})
+            raise typer.Exit(1)
+
+    try:
+        msgs = sess.add_messages(MessageCreateParams(
+            peer_id=peer_id,
+            content=content,
+            metadata=parsed_metadata,
+        ))
+        msg = msgs[0]
+        print_result({
+            "id": msg.id,
+            "peer_id": msg.peer_id,
+            "content": msg.content,
+            "token_count": msg.token_count,
+            "created_at": str(msg.created_at),
+        })
+    except Exception as e:
+        _handle_error(e, "message", "create")
 
 
 @app.command("get")

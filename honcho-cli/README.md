@@ -55,6 +55,7 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 | Command | Description |
 |---------|-------------|
 | `honcho workspace list` | List accessible workspaces |
+| `honcho workspace create <id>` | Create or get a workspace |
 | `honcho workspace inspect` | Peers, sessions, config for a workspace |
 | `honcho workspace search <query>` | Search messages across workspace |
 | `honcho workspace queue-status` | Deriver queue status (filter with `--observer` / `--sender`) |
@@ -78,6 +79,7 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 | Command | Description |
 |---------|-------------|
 | `honcho session list` | List sessions in the workspace (filter with `--peer/-p`) |
+| `honcho session create <id>` | Create or get a session (optionally `--peers` to add peers, `--metadata`) |
 | `honcho session inspect <id>` | Peers, message count, summaries, config |
 | `honcho session context <id>` | What an agent would see |
 | `honcho session summaries <id>` | Short + long summaries |
@@ -92,6 +94,7 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 | Command | Description |
 |---------|-------------|
 | `honcho message list` | List messages in a session (session via `-s` / `HONCHO_SESSION_ID`) |
+| `honcho message create <content>` | Create a message (requires `--peer/-p`, session via `-s`) |
 | `honcho message get <id>` | Get a single message (session via `-s` / `HONCHO_SESSION_ID`) |
 
 ### Conclusions (observations)

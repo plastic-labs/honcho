@@ -60,6 +60,45 @@ def list_sessions(
         _handle_error(e, "session", "list")
 
 
+@app.command("create")
+def create_session(
+    session_id: str = typer.Argument(help="Session ID to create or get"),
+    peers: Optional[str] = typer.Option(None, "--peers", help="Comma-separated peer IDs to add to the session"),
+    metadata: Optional[str] = typer.Option(None, "--metadata", help="JSON metadata to associate with the session"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Create or get a session."""
+    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    sid = validate_resource_id(session_id, "session")
+    client, config = get_client()
+
+    parsed_metadata = None
+    if metadata:
+        try:
+            parsed_metadata = json.loads(metadata)
+        except json.JSONDecodeError as e:
+            print_error("INVALID_JSON", f"--metadata must be valid JSON: {e}", {})
+            raise typer.Exit(1)
+
+    peer_ids = [p.strip() for p in peers.split(",") if p.strip()] if peers else []
+    for pid in peer_ids:
+        validate_resource_id(pid, "peer")
+
+    try:
+        sess = client.session(sid, metadata=parsed_metadata)
+        if peer_ids:
+            sess.add_peers(peer_ids)
+        result: dict[str, object] = {"session_id": sess.id}
+        if parsed_metadata is not None:
+            result["metadata"] = parsed_metadata
+        if peer_ids:
+            result["peers"] = peer_ids
+        print_result(result)
+    except Exception as e:
+        _handle_error(e, "session", sid)
+
+
 @app.command()
 def inspect(
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),

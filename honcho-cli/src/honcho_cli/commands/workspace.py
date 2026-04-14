@@ -1,7 +1,8 @@
-"""Workspace commands: list, inspect, delete, search, queue-status."""
+"""Workspace commands: list, inspect, create, delete, search, queue-status."""
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 import typer
@@ -60,6 +61,38 @@ def list_workspaces(
         print_result(items, columns=["id"], title="Workspaces")
     except Exception as e:
         _handle_error(e, "workspace", "list")
+
+
+@app.command("create")
+def create_workspace(
+    workspace_id: str = typer.Argument(help="Workspace ID to create or get"),
+    metadata: Optional[str] = typer.Option(None, "--metadata", help="JSON metadata to associate with the workspace"),
+    json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
+) -> None:
+    """Create or get a workspace."""
+    handle_cmd_flags(json_output=json_output)
+    wid = validate_resource_id(workspace_id, "workspace")
+    client, config = get_client(require_workspace=False)
+    ws_client = _with_workspace(client, wid)
+
+    parsed_metadata = None
+    if metadata:
+        try:
+            parsed_metadata = json.loads(metadata)
+        except json.JSONDecodeError as e:
+            print_error("INVALID_JSON", f"--metadata must be valid JSON: {e}", {})
+            raise typer.Exit(1)
+
+    try:
+        # Trigger get-or-create via the workspace ensure mechanism
+        ws_client.get_configuration()
+        result: dict[str, object] = {"workspace_id": wid}
+        if parsed_metadata is not None:
+            ws_client.set_metadata(parsed_metadata)
+            result["metadata"] = parsed_metadata
+        print_result(result)
+    except Exception as e:
+        _handle_error(e, "workspace", wid)
 
 
 @app.command()
@@ -128,6 +161,13 @@ def delete(
     # immediately, so the default-workspace guard isn't needed here.
     client, config = get_client(require_workspace=False)
     ws_client = _with_workspace(client, workspace_id)
+
+    # Verify workspace exists before prompting for confirmation
+    try:
+        ws_client.get_metadata()
+    except Exception as e:
+        _handle_error(e, "workspace", workspace_id)
+        return
 
     # Always fetch sessions for dry-run or cascade
     raw_sessions = _raw_list(ws_client.sessions()) if (dry_run or cascade) else []
@@ -225,7 +265,7 @@ def _with_workspace(client, workspace_id: str):
     """Return a new client pointed at a different workspace."""
     return Honcho(
         base_url=str(client.base_url),
-        api_key=client._http._api_key if hasattr(client._http, "_api_key") else None,
+        api_key=client._http.api_key if hasattr(client._http, "api_key") else None,
         workspace_id=workspace_id,
     )
 
