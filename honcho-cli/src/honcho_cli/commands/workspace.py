@@ -6,7 +6,7 @@ from typing import Optional
 
 import typer
 
-from honcho_cli.output import print_error, print_result, status
+from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options
@@ -188,7 +188,7 @@ def search(
         items = [
             {
                 "id": m.id,
-                "content": m.content[:200],
+                "content": m.content if use_json() else m.content[:200],
                 "peer_id": m.peer_id,
                 "session_id": m.session_id,
                 "created_at": str(m.created_at),

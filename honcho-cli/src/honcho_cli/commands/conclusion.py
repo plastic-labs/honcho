@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 
 from honcho_cli.commands.workspace import _handle_error
-from honcho_cli.output import print_error, print_result, status
+from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options
@@ -51,7 +51,7 @@ def list_conclusions(
         items = [
             {
                 "id": c.id,
-                "content": c.content[:200],
+                "content": c.content if use_json() else c.content[:200],
                 "workspace_id": config.workspace_id,
                 "observer_id": c.observer_id,
                 "observed_id": c.observed_id,
@@ -100,7 +100,7 @@ def search(
         items = [
             {
                 "id": c.id,
-                "content": c.content[:200],
+                "content": c.content if use_json() else c.content[:200],
                 "workspace_id": config.workspace_id,
                 "observer_id": c.observer_id,
                 "observed_id": c.observed_id,

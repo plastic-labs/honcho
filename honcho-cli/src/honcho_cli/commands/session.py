@@ -8,7 +8,7 @@ from typing import List, Optional
 import typer
 
 from honcho_cli.commands.workspace import _config_to_dict, _handle_error
-from honcho_cli.output import print_result, status
+from honcho_cli.output import print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options
@@ -87,21 +87,10 @@ def inspect(
         summaries = sess.summaries()
         sess_config = sess.get_configuration()
 
-        # Use SyncPage.total when the server provides it; otherwise fall back
-        # to the first-page count and flag that we did so, so scripted
-        # callers don't treat a lower bound as a total.
-        if msg_page.total is not None:
-            message_count = msg_page.total
-            message_count_is_total = True
-        else:
-            message_count = len(msg_page.items)
-            message_count_is_total = False
-
         result = {
             "session_id": sid,
             "peers": [{"id": p.id} for p in peers],
-            "message_count": message_count,
-            "message_count_is_total": message_count_is_total,
+            "message_count": msg_page.total,
             "summaries": {
                 "short": summaries.short_summary if hasattr(summaries, "short_summary") else None,
                 "long": summaries.long_summary if hasattr(summaries, "long_summary") else None,
@@ -314,7 +303,7 @@ def search(
             {
                 "id": m.id,
                 "peer_id": m.peer_id,
-                "content": m.content[:200],
+                "content": m.content if use_json() else m.content[:200],
                 "created_at": str(m.created_at),
             }
             for m in results

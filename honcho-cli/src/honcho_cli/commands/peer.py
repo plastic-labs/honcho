@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 
 from honcho_cli.commands.workspace import _config_to_dict, _handle_error
-from honcho_cli.output import print_result
+from honcho_cli.output import print_result, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options
@@ -93,7 +93,7 @@ def inspect(
             "session_count": session_page.total if session_page.total is not None else len(session_items),
             "conclusion_count": conclusion_page.total if conclusion_page.total is not None else len(conclusion_items),
             "recent_conclusions": [
-                {"id": c.id, "content": c.content[:200], "created_at": str(c.created_at)}
+                {"id": c.id, "content": c.content if use_json() else c.content[:200], "created_at": str(c.created_at)}
                 for c in conclusion_items
             ],
             "sessions": [{"id": s.id} for s in session_items[:10]],
@@ -175,7 +175,7 @@ def search(
         items = [
             {
                 "id": m.id,
-                "content": m.content[:200],
+                "content": m.content if use_json() else m.content[:200],
                 "session_id": m.session_id,
                 "created_at": str(m.created_at),
             }
