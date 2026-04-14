@@ -51,8 +51,8 @@ RULES:
 
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → {{"content":"{peer_id} is 25 years old"}}, {{"content":"{peer_id}'s birthday is June 21st"}}
-- EXPLICIT: "I took my dog for a walk in NYC" → {{"content":"{peer_id} has a dog"}}, {{"content":"{peer_id} lives in NYC"}}
-- EXPLICIT: "{peer_id} attended college" + general knowledge → {{"content":"{peer_id} completed high school or equivalent"}}
+- EXPLICIT: "I took my dog for a walk in NYC" → {{"content":"{peer_id} has a dog"}}, {{"content":"{peer_id} was in NYC"}}
+- EXPLICIT: "{peer_id} attended college" → {{"content":"{peer_id} attended college"}}
 
 Messages to analyze:
 <messages>
