@@ -11,7 +11,7 @@ from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.output import print_result, status
 from honcho_cli.validation import validate_resource_id
 
-from honcho_cli.common import add_common_options
+from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 
 app = typer.Typer(help="Message operations.")
 add_common_options(app)
@@ -29,8 +29,6 @@ def list_messages(
 ) -> None:
     """List messages in a session."""
     from honcho_cli.commands.session import _get_session_id
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -94,8 +92,6 @@ def get_message(
 ) -> None:
     """Get a single message by ID."""
     from honcho_cli.commands.session import _get_session_id
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     validate_resource_id(message_id, "message")

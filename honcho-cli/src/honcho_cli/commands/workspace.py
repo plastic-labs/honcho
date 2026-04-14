@@ -9,14 +9,13 @@ import typer
 from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
-from honcho_cli.common import add_common_options
+from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
 app = typer.Typer(help="Workspace operations.")
 add_common_options(app)
 
 
 def _get_workspace_id(workspace_id: str | None) -> str:
-    from honcho_cli.main import get_resolved_config
 
     config = get_resolved_config()
     wid = workspace_id or config.workspace_id
@@ -42,8 +41,6 @@ def list_workspaces(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List all accessible workspaces."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output)
     client, config = get_client(require_workspace=False)
@@ -63,8 +60,6 @@ def inspect(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Inspect a workspace: peers, sessions, config."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
 
@@ -116,8 +111,6 @@ def delete(
     Requires --yes to skip confirmation, or will prompt interactively.
     If sessions exist, requires --cascade to delete them first.
     """
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output)
 
@@ -175,8 +168,6 @@ def search(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search messages across workspace."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
 
@@ -208,8 +199,6 @@ def queue_status(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get queue processing status."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
 

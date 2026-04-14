@@ -11,14 +11,13 @@ from honcho_cli.commands.workspace import _config_to_dict, _handle_error
 from honcho_cli.output import print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
-from honcho_cli.common import add_common_options
+from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
 app = typer.Typer(help="Session debugging operations.")
 add_common_options(app)
 
 
 def _get_session_id(session_id: str | None) -> str:
-    from honcho_cli.main import get_resolved_config
 
     config = get_resolved_config()
     sid = session_id or config.session_id
@@ -38,8 +37,6 @@ def list_sessions(
 ) -> None:
     """List sessions in the workspace."""
     from honcho_cli.commands.workspace import _raw_list
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     client, config = get_client()
@@ -73,8 +70,6 @@ def inspect(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Inspect a session: peers, message count, summaries, config."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -112,8 +107,6 @@ def context(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get session context (what an agent would see)."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -136,8 +129,6 @@ def summaries(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get session summaries (short + long)."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -165,8 +156,6 @@ def delete(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Delete a session and all its data. Destructive — requires --yes or interactive confirm."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -217,8 +206,6 @@ def session_peers(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List peers in a session."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -241,8 +228,6 @@ def add_peers(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Add peers to a session."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     sid = _get_session_id(session_id)
@@ -264,8 +249,6 @@ def remove_peers(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Remove peers from a session."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     sid = _get_session_id(session_id)
@@ -289,8 +272,6 @@ def search(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search messages in a session."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -325,8 +306,6 @@ def representation(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get the representation of a peer within a session."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -353,8 +332,6 @@ def get_metadata(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get metadata for a session."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)
@@ -377,8 +354,6 @@ def set_metadata(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Set metadata for a session."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
     sid = _get_session_id(session_id)

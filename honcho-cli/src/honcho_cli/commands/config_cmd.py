@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import typer
 
+from honcho_cli.common import handle_cmd_flags
 from honcho_cli.config import CLIConfig
 from honcho_cli.output import print_result
 
@@ -24,8 +25,6 @@ def config(
     """Show current config (api key redacted)."""
     if ctx.invoked_subcommand is not None:
         return
-    from honcho_cli.common import handle_cmd_flags
-
     handle_cmd_flags(json_output=json_output)
     cfg = CLIConfig.load()
     print_result(cfg.redacted())

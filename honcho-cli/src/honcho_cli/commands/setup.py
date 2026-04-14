@@ -20,6 +20,7 @@ from honcho_cli.config import (
     CLIConfig,
 )
 from honcho_cli.branding import BANNER, BRAND, ICON_FAIL, ICON_OK, ICON_RUN
+from honcho_cli.common import get_resolved_config
 from honcho_cli.output import print_error, print_result
 
 _console = Console(stderr=True)
@@ -205,8 +206,6 @@ def doctor(
 
     if not use_json():
         _console.print(f"\n[bold {BRAND}]Honcho Doctor[/bold {BRAND}]\n")
-
-    from honcho_cli.main import get_resolved_config
 
     config = get_resolved_config()
     _add("Config file", CONFIG_FILE.exists(),

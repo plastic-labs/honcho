@@ -11,14 +11,13 @@ from honcho_cli.commands.workspace import _config_to_dict, _handle_error
 from honcho_cli.output import print_result, use_json
 from honcho_cli.validation import validate_resource_id
 
-from honcho_cli.common import add_common_options
+from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
 app = typer.Typer(help="Peer debugging operations.")
 add_common_options(app)
 
 
 def _get_peer_id(peer_id: str | None) -> str:
-    from honcho_cli.main import get_resolved_config
 
     config = get_resolved_config()
     pid = peer_id or config.peer_id
@@ -37,8 +36,6 @@ def list_peers(
 ) -> None:
     """List all peers in the workspace."""
     from honcho_cli.commands.workspace import _raw_list
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
     client, config = get_client()
@@ -67,8 +64,6 @@ def inspect(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Inspect a peer: card, session count, recent conclusions."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(peer_id)
@@ -112,8 +107,6 @@ def card(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get raw peer card content."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(peer_id)
@@ -136,8 +129,6 @@ def chat(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Query the dialectic about a peer."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(None)
@@ -162,8 +153,6 @@ def search(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Search a peer's messages."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(None)
@@ -195,8 +184,6 @@ def create_peer(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Create or get a peer."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
     from honcho.api_types import PeerConfig
 
     handle_cmd_flags(json_output=json_output, workspace=workspace)
@@ -237,8 +224,6 @@ def get_metadata(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get metadata for a peer."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(peer_id)
@@ -260,8 +245,6 @@ def set_metadata(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Set metadata for a peer."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(None)
@@ -294,8 +277,6 @@ def representation(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get the formatted representation for a peer."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(peer_id)

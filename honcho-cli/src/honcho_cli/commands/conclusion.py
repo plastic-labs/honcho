@@ -11,7 +11,7 @@ from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
-from honcho_cli.common import add_common_options
+from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 
 app = typer.Typer(help="Conclusion (observation) operations.")
 add_common_options(app)
@@ -27,8 +27,6 @@ def list_conclusions(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """List conclusions."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     client, config = get_client()
@@ -76,8 +74,6 @@ def search(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Semantic search over conclusions."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     client, config = get_client()
@@ -125,8 +121,6 @@ def create(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Create a conclusion."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     client, config = get_client()
@@ -184,8 +178,6 @@ def delete(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Delete a conclusion."""
-    from honcho_cli.common import handle_cmd_flags
-    from honcho_cli.main import get_client
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     validate_resource_id(conclusion_id, "conclusion")
