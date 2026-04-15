@@ -21,6 +21,7 @@ from src.config import (
     ModelConfig,
     ModelTransport,
     resolve_model_config,
+    settings,
 )
 
 from .registry import backend_for_provider, client_for_model_config
@@ -30,6 +31,33 @@ logger = logging.getLogger(__name__)
 
 # ContextVar tracking the current retry attempt for provider switching.
 current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
+
+
+def update_current_langfuse_observation(
+    provider: ModelTransport,
+    model: str,
+    *,
+    name: str | None = None,
+) -> None:
+    """Best-effort annotation of the current Langfuse span with LLM routing."""
+    if not settings.LANGFUSE_PUBLIC_KEY:
+        return
+
+    try:
+        from langfuse import get_client
+
+        update_kwargs: dict[str, Any] = {
+            "metadata": {
+                "namespace": settings.NAMESPACE,
+                "provider": provider,
+                "model": model,
+            }
+        }
+        if name is not None:
+            update_kwargs["name"] = name
+        get_client().update_current_span(**update_kwargs)
+    except Exception as exc:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to update Langfuse span metadata: %s", exc)
 
 
 @dataclass(frozen=True)
@@ -204,4 +232,5 @@ __all__ = [
     "resolve_backend_for_plan",
     "resolve_runtime_model_config",
     "select_model_config_for_attempt",
+    "update_current_langfuse_observation",
 ]
