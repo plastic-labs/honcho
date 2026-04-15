@@ -33,6 +33,43 @@ from src.utils.types import SupportedProviders, set_current_iteration
 
 logger = logging.getLogger(__name__)
 
+
+def _update_langfuse_metadata(
+    provider: str, model: str, *, name: str | None = None
+) -> None:
+    """
+    Attach ``namespace``, ``provider``, and ``model`` to the current Langfuse
+    observation, optionally renaming it to a more specific top-level label.
+
+    Uses ``langfuse.get_client().update_current_span(...)``, which annotates the
+    currently-active ``@observe``-decorated span via OpenTelemetry context, so
+    the metadata lands on the current top-level span itself rather than any child.
+
+    No-op when Langfuse is not configured. Any failure is swallowed and logged
+    at debug level so observability issues never break LLM execution.
+    """
+    if not settings.LANGFUSE_PUBLIC_KEY:
+        return
+    try:
+        from langfuse import get_client
+
+        update_kwargs: dict[str, Any] = {
+            "metadata": {
+                "namespace": settings.NAMESPACE,
+                "provider": provider,
+                "model": model,
+            }
+        }
+        if name is not None:
+            update_kwargs["name"] = name
+
+        get_client().update_current_span(
+            **update_kwargs,
+        )
+    except Exception as exc:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to update Langfuse span metadata: %s", exc)
+
+
 # Gemini finish reasons that indicate the response was blocked by safety or policy
 # filters. When these occur, the response typically has no usable text content and
 # retrying with a backup provider is appropriate.
@@ -738,6 +775,7 @@ async def _execute_tool_loop(
             conversation_messages: list[dict[str, Any]] = conversation_messages,
         ) -> HonchoLLMCallResponse[Any]:
             # Use shared provider selection helper
+            # (also tags the current Langfuse LLM Call span as a side effect).
             provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
                 get_provider_and_model()
             )
@@ -812,6 +850,11 @@ async def _execute_tool_loop(
                 continue
 
             if stream_final:
+                # Tag the current Langfuse "LLM Call" span before handing back
+                # the async generator — the generator body runs after this
+                # function returns (and after the @observe span would close),
+                # so metadata must be set here.
+                _update_langfuse_metadata(llm_settings.PROVIDER, llm_settings.MODEL)
                 # Stream the final response with metadata from tool execution
                 stream = _stream_final_response(
                     llm_settings=llm_settings,
@@ -946,6 +989,9 @@ async def _execute_tool_loop(
 
     # If streaming the final response, use the streaming helper with metadata
     if stream_final:
+        # Tag the current Langfuse "LLM Call" span before handing back
+        # the async generator — see note in the non-max branch above.
+        _update_langfuse_metadata(llm_settings.PROVIDER, llm_settings.MODEL)
         stream = _stream_final_response(
             llm_settings=llm_settings,
             prompt=prompt,
@@ -975,6 +1021,7 @@ async def _execute_tool_loop(
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         # Use shared provider selection helper for backup failover support
+        # (also tags the current Langfuse LLM Call span as a side effect).
         provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity = (
             get_provider_and_model()
         )
@@ -1357,6 +1404,13 @@ async def honcho_llm_call(
         """
         Get the provider and model to use based on current attempt.
 
+        Side effect: tags the current Langfuse observation with
+        ``namespace``/``provider``/``model`` metadata and, when ``track_name``
+        is provided, renames it to that higher-level operation label so every path through
+        ``honcho_llm_call`` — non-tool calls, tool-loop iterations, the final
+        synthesis call, and retry/backup-failover attempts — annotates the
+        outer ``@observe`` span itself (not a child).
+
         Returns:
             Tuple of (provider, model, thinking_budget, reasoning_effort, verbosity)
         """
@@ -1406,6 +1460,8 @@ async def honcho_llm_call(
             thinking_budget = thinking_budget_tokens
             gpt5_reasoning_effort = reasoning_effort
             gpt5_verbosity = verbosity
+
+        _update_langfuse_metadata(provider, model, name=track_name)
 
         return provider, model, thinking_budget, gpt5_reasoning_effort, gpt5_verbosity
 
