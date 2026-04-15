@@ -201,6 +201,10 @@ class HonchoTUI(App[None]):
     ) -> None:
         self.active_session = session_id
 
+        # Propagate discovered peer back to app state so queries can use it
+        if peer_id and not self.peer_id:
+            self.peer_id = peer_id
+
         # Update status bar
         bar = self.query_one("#status-bar", StatusBar)
         bar.session_id = session_id

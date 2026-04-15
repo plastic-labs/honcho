@@ -1,26 +1,24 @@
-"""Bottom status bar: workspace, peer, queue summary, uptime."""
+"""Bottom status bar: workspace, peer, queue summary, uptime, pulsing dot."""
 
 from __future__ import annotations
 
-from textual.widget import Widget
-from textual.app import ComposeResult
-from textual.widgets import Static
+from rich.text import Text
 from textual.reactive import reactive
+from textual.widgets import Static
 
-from honcho_tui.theme import ACCENT, FG_DIM, FG_MUTED, GREEN, WARN, DOT
+from honcho_tui.theme import ACCENT, DOT, DOT_EMPTY, FG_DIM, FG_MUTED, GREEN, WARN
 
 
-class StatusBar(Widget):
-    """Fixed bottom bar showing workspace, peer, queue, and uptime."""
+class StatusBar(Static):
+    """Fixed bottom bar — rendered as a single Rich Text line."""
 
     DEFAULT_CSS = """
     StatusBar {
         dock: bottom;
         height: 1;
-        layout: horizontal;
-        background: #141820;
-        color: #3d6480;
-        padding: 0 1;
+        background: #242424;
+        color: #555555;
+        padding: 0 2;
     }
     """
 
@@ -31,64 +29,69 @@ class StatusBar(Widget):
     running: reactive[int] = reactive(0)
     uptime: reactive[int] = reactive(0)
 
-    def compose(self) -> ComposeResult:
-        yield Static("", id="status-content")
+    _pulse_on: bool = True
 
     def on_mount(self) -> None:
-        self._render_status()
+        self.set_interval(0.7, self._pulse)
+        self._update_content()
 
-    def watch_workspace_id(self, value: str) -> None:
-        self._render_status()
+    def _pulse(self) -> None:
+        self._pulse_on = not self._pulse_on
+        self._update_content()
 
-    def watch_peer_id(self, value: str) -> None:
-        self._render_status()
+    def watch_workspace_id(self, _: str) -> None:
+        self._update_content()
 
-    def watch_session_id(self, value: str) -> None:
-        self._render_status()
+    def watch_peer_id(self, _: str) -> None:
+        self._update_content()
 
-    def watch_pending(self, value: int) -> None:
-        self._render_status()
+    def watch_session_id(self, _: str) -> None:
+        self._update_content()
 
-    def watch_running(self, value: int) -> None:
-        self._render_status()
+    def watch_pending(self, _: int) -> None:
+        self._update_content()
 
-    def watch_uptime(self, value: int) -> None:
-        self._render_status()
+    def watch_running(self, _: int) -> None:
+        self._update_content()
 
-    def _render_status(self) -> None:
-        try:
-            content = self.query_one("#status-content", Static)
-        except Exception:
-            return
+    def watch_uptime(self, _: int) -> None:
+        self._update_content()
 
-        parts: list[str] = []
+    def _update_content(self) -> None:
+        t = Text(no_wrap=True, overflow="ellipsis")
+
+        # Pulsing connection dot
+        conn_style = ACCENT if self._pulse_on else FG_MUTED
+        t.append(f"{DOT} ", style=conn_style)
 
         if self.workspace_id:
-            ws = self.workspace_id[:16] + "…" if len(self.workspace_id) > 16 else self.workspace_id
-            parts.append(f"[{ACCENT}]ws[/{ACCENT}] {ws}")
+            ws = self.workspace_id[:14] + "…" if len(self.workspace_id) > 14 else self.workspace_id
+            t.append("ws ", style=ACCENT)
+            t.append(f"{ws}  ", style=FG_DIM)
         else:
-            parts.append(f"[{FG_MUTED}]no workspace[/{FG_MUTED}]")
+            t.append("no workspace  ", style=FG_MUTED)
 
         if self.peer_id:
-            p = self.peer_id[:14] + "…" if len(self.peer_id) > 14 else self.peer_id
-            parts.append(f"[{FG_DIM}]peer[/{FG_DIM}] {p}")
+            p = self.peer_id[:12] + "…" if len(self.peer_id) > 12 else self.peer_id
+            t.append("peer ", style=FG_DIM)
+            t.append(f"{p}  ", style=FG_DIM)
 
         if self.session_id:
             s = self.session_id[:12] + "…" if len(self.session_id) > 12 else self.session_id
-            parts.append(f"[{FG_DIM}]sess[/{FG_DIM}] {s}")
+            t.append("sess ", style=FG_DIM)
+            t.append(f"{s}  ", style=FG_DIM)
 
-        # Queue
         if self.running > 0:
-            parts.append(f"[{GREEN}]{DOT}[/{GREEN}] [{FG_DIM}]{self.running} running[/{FG_DIM}]")
+            t.append(f"{DOT} ", style=GREEN)
+            t.append(f"{self.running} running  ", style=FG_DIM)
         if self.pending > 0:
-            parts.append(f"[{WARN}]{DOT}[/{WARN}] [{FG_DIM}]{self.pending} pending[/{FG_DIM}]")
+            t.append(f"{DOT} ", style=WARN)
+            t.append(f"{self.pending} pending  ", style=FG_DIM)
 
-        # Uptime (right-aligned via spacer)
-        h = self.uptime // 3600
-        m = (self.uptime % 3600) // 60
-        s = self.uptime % 60
-        uptime_str = f"{h:02d}:{m:02d}:{s:02d}"
+        total = int(self.uptime)
+        h = total // 3600
+        m = (total % 3600) // 60
+        s_val = total % 60
+        t.append(f"{h:02d}:{m:02d}:{s_val:02d}", style=FG_MUTED)
 
-        sep = f"  [{FG_MUTED}]·[/{FG_MUTED}]  "
-        left = sep.join(parts)
-        content.update(f"{left}  [{FG_MUTED}]{uptime_str}[/{FG_MUTED}]")
+        self.update(t)
