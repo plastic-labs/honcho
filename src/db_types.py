@@ -18,10 +18,33 @@ if TYPE_CHECKING:
 
 
 class JSONBCompat(TypeDecorator[Any]):
-    """Use JSONB on PostgreSQL, JSON on SQLite and other dialects."""
+    """Use JSONB on PostgreSQL, JSON on SQLite and other dialects.
+
+    Overrides the Comparator to ensure JSON-specific operators (``contains``
+    via ``@>``, subscript ``__getitem__``, and ``.astext``) are forwarded
+    through SQLAlchemy's JSON type rather than falling back to the base
+    ``ColumnOperators`` implementations (which would generate LIKE etc.).
+    """
 
     impl: TypeEngine[Any] | type[TypeEngine[Any]] = JSON
     cache_ok: bool | None = True
+
+    class Comparator(TypeDecorator.Comparator[Any]):  # type: ignore[type-arg]
+        def contains(self, other: Any, **kwargs: Any) -> Any:
+            # Use JSON's contains (→ @> on PostgreSQL, json_extract on SQLite)
+            # instead of base ColumnOperators.contains which generates LIKE.
+            from sqlalchemy import JSON as SaJSON, type_coerce
+
+            return type_coerce(self.expr, SaJSON()).contains(other, **kwargs)
+
+        def __getitem__(self, index: Any) -> Any:
+            # Delegate to the generic JSON type's subscript so that the
+            # returned element has .astext (and other JSON accessor attrs).
+            from sqlalchemy import JSON as SaJSON, type_coerce
+
+            return type_coerce(self.expr, SaJSON())[index]
+
+    comparator_factory = Comparator
 
     def load_dialect_impl(self, dialect: Dialect) -> Any:
         if dialect.name == "postgresql":
@@ -35,6 +58,11 @@ class VectorType(TypeDecorator[Any]):
     On SQLite the embedding is stored as a JSON text string and is never
     used for cosine-distance queries — vector search is routed through the
     external vector store (e.g. lancedb) when running in SQLite mode.
+
+    Overrides the Comparator to forward ``cosine_distance`` to the real
+    pgvector ``Vector`` type so that query expressions like
+    ``column.cosine_distance(vec)`` work even though the mapped column type
+    is ``VectorType`` rather than the raw pgvector ``Vector``.
     """
 
     impl: TypeEngine[Any] | type[TypeEngine[Any]] = Text
@@ -43,6 +71,20 @@ class VectorType(TypeDecorator[Any]):
     def __init__(self, dimensions: int = 1536) -> None:
         super().__init__()
         self.dimensions: int = dimensions
+
+    class Comparator(TypeDecorator.Comparator[Any]):  # type: ignore[type-arg]
+        def cosine_distance(self, other: Any) -> Any:
+            # type_coerce tells SQLAlchemy to treat this expression as a real
+            # pgvector Vector without wrapping it in extra SQL, then delegate
+            # to pgvector's .cosine_distance() for the <=> operator.
+            from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+            from sqlalchemy import type_coerce
+
+            return type_coerce(
+                self.expr, Vector(self.type.dimensions)  # pyright: ignore[reportUnknownVariableType]
+            ).cosine_distance(other)
+
+    comparator_factory = Comparator
 
     def load_dialect_impl(self, dialect: Dialect) -> Any:
         if dialect.name == "postgresql":

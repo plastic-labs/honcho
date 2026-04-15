@@ -337,7 +337,7 @@ def _build_comparison_condition(
     if op_value == "*":
         return None
 
-    field_accessor = column[field_name].astext
+    field_accessor = column[field_name].as_string()
 
     # Mapping of operators to their SQLAlchemy methods
     if operator in NUMERIC_OPERATORS:

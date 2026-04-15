@@ -987,9 +987,7 @@ async def _get_or_add_peers_to_session(
             models.SessionPeer.peer_name.notin_(
                 peer_names.keys()
             ),  # Exclude peers being updated
-            models.SessionPeer.configuration["observe_others"].astext.cast(
-                Boolean
-            ),  # Only observers
+            models.SessionPeer.configuration["observe_others"].as_boolean(),  # Only observers
         )
         result = await db.execute(existing_observers_stmt)
         existing_observer_count = result.scalar() or 0
@@ -1135,9 +1133,7 @@ async def set_peer_config(
                 models.SessionPeer.left_at.is_(None),  # Only active peers
                 models.SessionPeer.peer_name
                 != peer_name,  # Exclude the peer being updated
-                models.SessionPeer.configuration["observe_others"].astext.cast(
-                    Boolean
-                ),  # Only observers
+                models.SessionPeer.configuration["observe_others"].as_boolean(),  # Only observers
             )
             result = await db.execute(existing_observers_stmt)
             observer_count = result.scalar() or 0
