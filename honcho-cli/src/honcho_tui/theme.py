@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-# ── Color tokens ──────────────────────────────────────────────────────────────
-BG          = "#0b0e14"
-BG_ELEVATED = "#141820"
-BG_PANEL    = "#0f1318"
-BG_INPUT    = "#0c1017"
-FG          = "#c9d1d9"
-FG_MUTED    = "#5c6370"
-FG_DIM      = "#8b949e"
-BORDER      = "#2a2d35"
-ACCENT      = "#FFBF00"    # amber — primary
-ACCENT_DIM  = "#7a5c00"    # dim amber border
+# ── Color tokens — cyan/navy to match the honcho CLI aesthetic ────────────────
+BG          = "#0d1117"    # near-black with blue cast
+BG_ELEVATED = "#161b22"    # panel header / status bar
+BG_PANEL    = "#0d1117"    # side panels
+BG_INPUT    = "#0a0e14"    # query input background
+FG          = "#B6DAFD"    # periwinkle — matches BRAND in branding.py
+FG_DIM      = "#7aadce"    # mid-brightness cyan-blue
+FG_MUTED    = "#3d6480"    # dim inactive text
+BORDER      = "#2a4a5a"    # panel borders
+ACCENT      = "#56d4dd"    # bright cyan — primary accent
+ACCENT_DIM  = "#1e4a55"    # dim cyan for inactive states
 BLUE        = "#4169e1"    # royal blue
 CYAN        = "#56d4dd"
 PURPLE      = "#bc8cff"
-GREEN       = "#8FBC8F"    # good
-WARN        = "#FFD700"    # warn
+GREEN       = "#7ee6a8"    # good / success
+WARN        = "#e6c855"    # warn
 CRITICAL    = "#FF6B6B"    # critical
 ORANGE      = "#e6a855"
 
@@ -41,8 +41,8 @@ CHEVRON_CLOSED = "▸"
 # ── TCSS ──────────────────────────────────────────────────────────────────────
 TCSS = """
 Screen {
-    background: #0b0e14;
-    color: #c9d1d9;
+    background: #0d1117;
+    color: #B6DAFD;
     layers: base overlay;
 }
 
@@ -55,22 +55,22 @@ Screen {
 /* ── LEFT: SESSIONS ── */
 #sessions-panel {
     width: 28;
-    background: #0f1318;
-    border-right: solid #2a2d35;
+    background: #0d1117;
+    border-right: solid #2a4a5a;
     layout: vertical;
 }
 
 .panel-title {
     height: 1;
-    background: #141820;
-    color: #FFBF00;
+    background: #161b22;
+    color: #56d4dd;
     text-style: bold;
     content-align: left middle;
     padding: 0 1;
 }
 
 ListView {
-    background: #0f1318;
+    background: #0d1117;
     height: 1fr;
 }
 
@@ -79,20 +79,20 @@ ListView:focus {
 }
 
 ListItem {
-    background: #0f1318;
+    background: #0d1117;
     height: 2;
     padding: 0 1;
-    color: #8b949e;
+    color: #3d6480;
 }
 
 ListItem:hover {
-    background: #141820;
-    color: #c9d1d9;
+    background: #161b22;
+    color: #B6DAFD;
 }
 
 ListItem.--highlight {
-    background: #1a1f2e;
-    color: #c9d1d9;
+    background: #0f1e2e;
+    color: #B6DAFD;
 }
 
 /* ── CENTER ── */
@@ -103,19 +103,19 @@ ListItem.--highlight {
 
 RichLog {
     height: 1fr;
-    background: #0b0e14;
+    background: #0d1117;
     padding: 0 1;
-    scrollbar-color: #2a2d35;
-    scrollbar-background: #0b0e14;
-    scrollbar-corner-color: #0b0e14;
+    scrollbar-color: #2a4a5a;
+    scrollbar-background: #0d1117;
+    scrollbar-corner-color: #0d1117;
     border: none;
 }
 
 /* ── QUERY BAR ── */
 #query-bar {
     height: 3;
-    background: #0c1017;
-    border-top: solid #2a2d35;
+    background: #0a0e14;
+    border-top: solid #2a4a5a;
     layout: horizontal;
     align: left middle;
     padding: 0 1;
@@ -123,15 +123,15 @@ RichLog {
 
 #query-prefix {
     width: 2;
-    color: #FFBF00;
+    color: #56d4dd;
     text-style: bold;
     content-align: left middle;
 }
 
 #query-input {
     width: 1fr;
-    background: #0c1017;
-    color: #c9d1d9;
+    background: #0a0e14;
+    color: #B6DAFD;
     border: none;
     padding: 0 0;
 }
@@ -143,37 +143,32 @@ RichLog {
 /* ── RIGHT: PEER PANEL ── */
 #peer-panel {
     width: 34;
-    background: #0f1318;
-    border-left: solid #2a2d35;
+    background: #0d1117;
+    border-left: solid #2a4a5a;
     layout: vertical;
 }
 
 #peer-scroll {
     height: 1fr;
-    background: #0f1318;
+    background: #0d1117;
     padding: 0 1;
-    scrollbar-color: #2a2d35;
-    scrollbar-background: #0f1318;
+    scrollbar-color: #2a4a5a;
+    scrollbar-background: #0d1117;
 }
 
 .section-label {
-    color: #FFBF00;
+    color: #56d4dd;
     text-style: bold;
     height: 1;
     margin-top: 1;
 }
 
-.section-sep {
-    color: #2a2d35;
-    height: 1;
-}
-
 .card-body {
-    color: #8b949e;
+    color: #7aadce;
 }
 
 .conclusion-row {
-    color: #8b949e;
+    color: #7aadce;
     height: auto;
 }
 
@@ -185,65 +180,34 @@ RichLog {
 StatusBar {
     dock: bottom;
     height: 1;
-    background: #141820;
-    color: #5c6370;
+    background: #161b22;
+    color: #3d6480;
     layout: horizontal;
     padding: 0 1;
 }
 
 /* ── SPINNER ── */
 .spinner {
-    color: #FFBF00;
+    color: #56d4dd;
     width: 1;
 }
 
 /* ── COLLAPSIBLE ── */
 Collapsible {
-    background: #0f1318;
+    background: #0d1117;
     border: none;
     padding: 0;
     margin: 0;
 }
 
 CollapsibleTitle {
-    color: #8b949e;
-    background: #0f1318;
+    color: #3d6480;
+    background: #0d1117;
     padding: 0;
 }
 
 CollapsibleTitle:hover {
-    color: #c9d1d9;
-    background: #141820;
-}
-
-/* ── STARTUP OVERLAY ── */
-#startup-overlay {
-    layer: overlay;
-    width: 60;
-    height: 12;
-    background: #141820;
-    border: solid #2a2d35;
-    align: center middle;
-    padding: 1 2;
-    layout: vertical;
-}
-
-#startup-title {
-    color: #FFBF00;
-    text-style: bold;
-    text-align: center;
-}
-
-#startup-msg {
-    color: #8b949e;
-    text-align: center;
-    margin-top: 1;
-}
-
-#workspace-input {
-    margin-top: 1;
-    background: #0c1017;
-    color: #c9d1d9;
-    border: solid #2a2d35;
+    color: #B6DAFD;
+    background: #161b22;
 }
 """

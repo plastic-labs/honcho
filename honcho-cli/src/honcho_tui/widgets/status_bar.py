@@ -19,7 +19,7 @@ class StatusBar(Widget):
         height: 1;
         layout: horizontal;
         background: #141820;
-        color: #5c6370;
+        color: #3d6480;
         padding: 0 1;
     }
     """

@@ -70,8 +70,6 @@ class TranscriptPanel(Widget):
 
     def _blink_cursor(self) -> None:
         self._cursor_on = not self._cursor_on
-        if self._streaming:
-            self._update_stream_cursor()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
