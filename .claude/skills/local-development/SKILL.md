@@ -27,6 +27,7 @@ Guide for setting up, running, and developing on Honcho locally across macOS, Li
 - **uv**: 0.5.0+ (package manager). Install: `curl -LsSf https://astral.sh/uv/install.sh | sh` (macOS/Linux/WSL2) or `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"` (Windows PowerShell)
 - **Docker**: Required for the local Postgres + pgvector database (alternative: external Postgres via Supabase)
 - **Git**: For cloning and branch management
+- **Bun**: Required only for TypeScript SDK type-checking (`bun run tsc --noEmit`). Install: `curl -fsSL https://bun.sh/install | bash` (macOS/Linux/WSL2) or `powershell -c "irm bun.sh/install.ps1 | iex"` (Windows).
 
 ---
 
@@ -103,10 +104,15 @@ SUMMARY_MODEL=your-model-here
 DREAM_PROVIDER=custom
 DREAM_MODEL=your-model-here
 
-# Dialectic chat (/peers/{id}/chat) — requires provider + model per level.
-# At minimum set one level; see .env.template for all five (minimal, low, medium, high, max).
-DIALECTIC_LEVELS__medium__PROVIDER=custom
-DIALECTIC_LEVELS__medium__MODEL=your-model-here
+# Dialectic chat (/peers/{id}/chat) — ALL FIVE LEVELS ARE REQUIRED.
+# Uncomment every DIALECTIC_LEVELS__* line in .env.template for all five levels
+# (minimal, low, medium, high, max). Each level requires four fields:
+#   DIALECTIC_LEVELS__<level>__PROVIDER
+#   DIALECTIC_LEVELS__<level>__MODEL
+#   DIALECTIC_LEVELS__<level>__THINKING_BUDGET_TOKENS
+#   DIALECTIC_LEVELS__<level>__MAX_TOOL_ITERATIONS
+# Missing any field causes Pydantic validation errors on `alembic upgrade head`
+# and `fastapi dev` startup (10 errors: 2 per level × 5 levels).
 
 # Embedding configuration
 LLM_EMBEDDING_PROVIDER=openrouter         # Valid values: openai, gemini, openrouter
@@ -246,10 +252,7 @@ uv run basedpyright
 Install hooks (covers pre-commit, commit-msg, and pre-push stages):
 
 ```bash
-uv run pre-commit install \
-    --hook-type pre-commit \
-    --hook-type commit-msg \
-    --hook-type pre-push
+uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 ```
 
 Run hooks manually on all files:
@@ -333,7 +336,7 @@ git commit -m "docs(readme): update installation instructions"
 
 This is the primary development platform for Honcho. All commands in the README work as documented.
 
-On Linux, if `uv sync` fails building C extensions, install system dev packages:
+On Linux, if `uv sync` fails building C extensions, install system dev packages (**manual — run yourself, not via the agent**):
 
 ```bash
 # Debian/Ubuntu
@@ -343,13 +346,15 @@ sudo apt install python3-dev libpq-dev
 sudo dnf install python3-devel libpq-devel
 ```
 
-On macOS, if you hit compiler issues, make sure Xcode Command Line Tools are installed:
+On macOS, if you hit compiler issues, make sure Xcode Command Line Tools are installed (**manual — run yourself, not via the agent**):
 
 ```bash
 xcode-select --install
 ```
 
 ### Windows (PowerShell or Git Bash)
+
+> ⚠️ **Native Windows is NOT supported.** The Honcho server imports `fcntl`, a Unix-only Python module, and will crash at startup with `ModuleNotFoundError: No module named 'fcntl'`. **Windows contributors must use WSL2** (see the next section). The notes below apply only if you are preparing dependencies before switching into a WSL2 workflow.
 
 **psycopg on Windows:** Honcho uses `psycopg` (v3, not psycopg2). If `uv sync` fails with a "Microsoft Visual C++ 14.0 or greater is required" error, the C-optimized adapter could not compile. Fixes:
 
