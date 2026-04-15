@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 
+from rich.markup import escape as markup_escape
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.message import Message
@@ -72,21 +73,26 @@ class TranscriptPanel(Widget):
         if self._streaming:
             self._update_stream_cursor()
 
-    def _update_stream_cursor(self) -> None:
-        log = self.query_one("#log", RichLog)
-        cursor_char = CURSOR if self._cursor_on else " "
-        # Cursor line is updated via the streaming append path
-        _ = cursor_char  # referenced during actual stream writes
-
     # ── Public API ────────────────────────────────────────────────────────────
 
     def show_welcome(self) -> None:
         log = self.query_one("#log", RichLog)
         log.clear()
         t = Text()
-        t.append("  HONCHO\n", style=f"bold {ACCENT}")
+        t.append("\n  HONCHO\n", style=f"bold {ACCENT}")
         t.append("  memory that reasons\n\n", style=FG_MUTED)
-        t.append(f"  [{FG_MUTED}]select a session or query the dialectic[/{FG_MUTED}]\n")
+        t.append("  select a session from the left panel\n", style=FG_DIM)
+        t.append("  or query the dialectic below\n\n", style=FG_DIM)
+        t.append("  bindings\n", style=f"bold {FG_DIM}")
+        binds = [
+            ("ctrl+d", "focus dialectic input"),
+            ("tab",    "focus session list"),
+            ("r",      "refresh"),
+            ("q",      "quit"),
+        ]
+        for key, desc in binds:
+            t.append(f"    {key}", style=f"bold {ACCENT}")
+            t.append(f"  {desc}\n", style=FG_MUTED)
         log.write(t)
 
     def show_no_workspace(self) -> None:
@@ -153,10 +159,12 @@ class TranscriptPanel(Widget):
         header.append("\n")
         log.write(header)
 
-        # Content
+        # Content — escape raw text so Rich markup chars don't break rendering
         body = Text()
         for line in content.splitlines():
-            body.append(f"    {line}\n", style=FG)
+            body.append("    ", style=FG)
+            body.append(line, style=FG)
+            body.append("\n")
         if not content.strip():
             body.append("    (empty)\n", style=FG_MUTED)
         log.write(body)
@@ -176,7 +184,9 @@ class TranscriptPanel(Widget):
         resp = Text()
         resp.append("  dialectic\n", style=f"bold {GREEN}")
         for line in content.splitlines():
-            resp.append(f"    {line}\n", style=FG)
+            resp.append("    ", style=FG)
+            resp.append(line, style=FG)
+            resp.append("\n")
         resp.append("\n")
         log.write(resp)
 

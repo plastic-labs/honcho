@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rich.markup import escape as markup_escape
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
@@ -86,11 +87,11 @@ class PeerPanel(Widget):
         scroll.mount(Static(f"[{ACCENT}]CARD[/{ACCENT}]", classes="section-label"))
 
         if card and card.strip():
-            # Wrap long lines, show first 400 chars
-            preview = card.strip()[:400]
-            if len(card.strip()) > 400:
-                preview += f"\n[{FG_MUTED}]… {len(card.strip()) - 400} more chars[/{FG_MUTED}]"
-            scroll.mount(Static(preview, classes="card-body"))
+            raw = card.strip()
+            preview = markup_escape(raw[:400])
+            if len(raw) > 400:
+                preview += f"\n[{FG_MUTED}]… {len(raw) - 400} more chars[/{FG_MUTED}]"
+            scroll.mount(Static(preview, classes="card-body", markup=True))
         else:
             scroll.mount(Static(f"[{FG_DIM}]no card yet[/{FG_DIM}]", classes="card-body"))
 
@@ -103,11 +104,14 @@ class PeerPanel(Widget):
         else:
             for i, c in enumerate(conclusions[:12]):
                 content = c.get("content", "")
-                # Truncate to fit panel width
-                preview = content[:55] + "…" if len(content) > 55 else content
+                safe = markup_escape(content[:55] + "…" if len(content) > 55 else content)
                 prefix = TREE_LAST if i == min(len(conclusions), 12) - 1 else TREE_MID
                 scroll.mount(
-                    Static(f"[{FG_DIM}]{prefix}[/{FG_DIM}][{FG}]{preview}[/{FG}]", classes="conclusion-row")
+                    Static(
+                        f"[{FG_DIM}]{prefix}[/{FG_DIM}][{FG}]{safe}[/{FG}]",
+                        classes="conclusion-row",
+                        markup=True,
+                    )
                 )
             if count > 12:
                 scroll.mount(Static(f"[{FG_MUTED}]   … {count - 12} more[/{FG_MUTED}]"))
