@@ -26,11 +26,10 @@ def get_context(
         Returns an empty list if the session has no messages yet.
     """
     honcho = get_client()
-    user_peer = honcho.peer(ctx.user_id)
-    assistant_peer = honcho.peer(ctx.assistant_id)
     session = honcho.session(ctx.session_id)
-
-    session.add_peers([user_peer, assistant_peer])
-
     context = session.context(tokens=tokens)
-    return context.to_openai(assistant=ctx.assistant_id)
+    # Strip 'name' field — the OpenAI Responses API does not accept it
+    return [
+        {"role": m["role"], "content": m["content"]}
+        for m in context.to_openai(assistant=ctx.assistant_id)
+    ]

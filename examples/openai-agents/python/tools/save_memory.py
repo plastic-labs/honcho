@@ -37,8 +37,6 @@ def save_memory(
     assistant_peer = honcho.peer(assistant_id)
     session = honcho.session(session_id)
 
-    session.add_peers([user_peer, assistant_peer])
-
     sender = assistant_peer if role == "assistant" else user_peer
     session.add_messages([sender.message(content)])
 
