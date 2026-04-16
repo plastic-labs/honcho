@@ -90,9 +90,19 @@ def print_welcome(console: Console) -> None:
         ("config",     "inspect current configuration"),
     ]
 
+    option_rows = [
+        ("-w / --workspace", "scope to a workspace (env: HONCHO_WORKSPACE_ID)"),
+        ("-p / --peer",      "scope to a peer (env: HONCHO_PEER_ID)"),
+        ("-s / --session",   "scope to a session (env: HONCHO_SESSION_ID)"),
+        ("--json",           "force JSON / NDJSON output for scripts and agents"),
+        ("-V / --version",   "print the CLI version"),
+        ("--help",           "show help for any command (e.g. honcho peer --help)"),
+    ]
+
     console.print(_welcome_panel("getting started", start_rows))
     console.print(_welcome_panel("memory", memory_rows))
     console.print(_welcome_panel("commands", cmd_rows))
+    console.print(_welcome_panel("options", option_rows))
     console.print()
 
 
