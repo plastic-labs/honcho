@@ -213,7 +213,12 @@ class LLMSettings(HonchoSettings):
     VLLM_API_KEY: str | None = None
     VLLM_BASE_URL: str | None = None
 
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
+    # Custom embedding model configuration
+    CUSTOM_EMBEDDING_API_KEY: str | None = None
+    CUSTOM_EMBEDDING_BASE_URL: str | None = None
+    CUSTOM_EMBEDDING_MODEL: str = "text-embedding-3-small"
+
+    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter", "custom"] = "openai"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
