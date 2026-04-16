@@ -95,7 +95,6 @@ def print_welcome(console: Console) -> None:
         ("-p / --peer",      "scope to a peer (env: HONCHO_PEER_ID)"),
         ("-s / --session",   "scope to a session (env: HONCHO_SESSION_ID)"),
         ("--json",           "force JSON / NDJSON output for scripts and agents"),
-        ("-V / --version",   "print the CLI version"),
         ("--help",           "show help for any command (e.g. honcho peer --help)"),
     ]
 
