@@ -15,14 +15,18 @@ Environment variables:
 """
 
 import asyncio
+import logging
 import uuid
 
 from agents import Agent, RunContextWrapper, Runner
+from honcho.http.exceptions import HonchoError
 
 from tools.client import HonchoContext, get_client
 from tools.get_context import get_context
 from tools.query_memory import query_memory
 from tools.save_memory import save_memory
+
+logger = logging.getLogger(__name__)
 
 
 def setup_session(user_id: str, session_id: str, assistant_id: str = "assistant") -> None:
@@ -36,12 +40,18 @@ def setup_session(user_id: str, session_id: str, assistant_id: str = "assistant"
         user_id: Unique identifier for the user peer.
         session_id: Identifier for the conversation session.
         assistant_id: Peer ID for the assistant. Defaults to ``"assistant"``.
+
+    Raises:
+        RuntimeError: If the Honcho API call fails.
     """
-    honcho = get_client()
-    user_peer = honcho.peer(user_id)
-    assistant_peer = honcho.peer(assistant_id)
-    session = honcho.session(session_id)
-    session.add_peers([user_peer, assistant_peer])
+    try:
+        honcho = get_client()
+        user_peer = honcho.peer(user_id)
+        assistant_peer = honcho.peer(assistant_id)
+        session = honcho.session(session_id)
+        session.add_peers([user_peer, assistant_peer])
+    except HonchoError as exc:
+        raise RuntimeError("Failed to initialize Honcho session peers") from exc
 
 
 honcho_agent = Agent[HonchoContext](
@@ -74,17 +84,27 @@ async def chat(user_id: str, message: str, session_id: str) -> str:
     ctx = HonchoContext(user_id=user_id, session_id=session_id)
 
     # Persist user message before the agent runs so it's available in context
-    save_memory(user_id, message, "user", session_id)
+    try:
+        save_memory(user_id, message, "user", session_id)
+    except HonchoError as exc:
+        logger.warning("Could not persist user message: %s", exc)
 
     # Pass structured OpenAI-format history directly — don't flatten to plain text
-    history = get_context(ctx, tokens=2000)
+    try:
+        history = get_context(ctx, tokens=2000)
+    except HonchoError as exc:
+        logger.warning("Could not load Honcho context; continuing without history: %s", exc)
+        history = []
     input_messages = history + [{"role": "user", "content": message}]
 
     result = await Runner.run(honcho_agent, input_messages, context=ctx)
     response = str(result.final_output)
 
     # Persist assistant response after the run
-    save_memory(user_id, response, "assistant", session_id)
+    try:
+        save_memory(user_id, response, "assistant", session_id)
+    except HonchoError as exc:
+        logger.warning("Could not persist assistant message: %s", exc)
 
     return response
 
