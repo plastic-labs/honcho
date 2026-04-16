@@ -13,9 +13,10 @@ from honcho_cli.commands.workspace import _config_to_dict, _handle_error, _raw_l
 from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
+from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
-app = typer.Typer(help="List, inspect, create, delete, and manage conversation sessions and their peers.")
+app = typer.Typer(cls=HonchoTyperGroup, help="List, inspect, create, delete, and manage conversation sessions and their peers.")
 add_common_options(app)
 
 

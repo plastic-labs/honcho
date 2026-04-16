@@ -9,7 +9,13 @@ from __future__ import annotations
 import json
 
 import typer
-from honcho import Honcho
+from honcho import (
+    APIError,
+    AuthenticationError,
+    ConnectionError as HonchoConnectionError,
+    Honcho,
+    TimeoutError as HonchoTimeoutError,
+)
 from rich.console import Console
 from rich.panel import Panel
 
@@ -30,11 +36,12 @@ _console = Console(stderr=True)
 # shared helpers
 
 def _redact(api_key: str) -> str:
+    """Show ``***<last4>`` — enough to compare keys without leaking the body."""
     if not api_key:
         return ""
-    if len(api_key) <= 16:
+    if len(api_key) <= 4:
         return "***"
-    return api_key[:8] + "..." + api_key[-4:]
+    return "***" + api_key[-4:]
 
 
 def _read_file_values() -> tuple[str, str]:
@@ -54,21 +61,24 @@ def _read_file_values() -> tuple[str, str]:
 
 
 def _test_connection(base_url: str, api_key: str) -> tuple[bool, str]:
-    """Probe the Honcho API by listing workspaces. Returns (ok, detail)."""
+    """Probe the Honcho API by listing workspaces. Returns (ok, detail).
+
+    Dispatches on the SDK's typed exception hierarchy instead of matching
+    substrings of error messages — robust to SDK message changes and locale.
+    """
     try:
-
-
         list(Honcho(base_url=base_url, api_key=api_key).workspaces())
         return True, "OK"
+    except AuthenticationError:
+        return False, "Unauthorized — check your API key"
+    except HonchoConnectionError:
+        return False, "Connection refused — is the server running?"
+    except HonchoTimeoutError:
+        return False, "Request timed out"
+    except APIError as e:
+        return False, f"API error ({e.status}): {e}"
     except Exception as e:
-        msg = str(e)
-        if "Connection refused" in msg or "ConnectError" in msg:
-            return False, "Connection refused — is the server running?"
-        if "timed out" in msg.lower() or "Timeout" in msg:
-            return False, "Request timed out"
-        if "401" in msg or "Unauthorized" in msg:
-            return False, "Unauthorized — check your API key"
-        return False, msg
+        return False, str(e)
 
 
 def _pick(flag_val: str | None, file_val: str) -> str:

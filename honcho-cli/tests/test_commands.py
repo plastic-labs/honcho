@@ -83,7 +83,7 @@ class TestDestructiveConfirm:
         cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
         fake = MagicMock()
         fake.sessions.return_value = MagicMock(has_next_page=lambda: False, _raw_items=[])
-        with patch("honcho_cli.main.get_client", return_value=(fake, MagicMock())), \
+        with patch("honcho_cli.commands.workspace.get_client", return_value=(fake, MagicMock())), \
              patch("honcho_cli.commands.workspace._with_workspace", return_value=fake):
             result = runner.invoke(app, ["workspace", "delete", "ws1"], input="n\n")
         assert result.exit_code != 0
@@ -95,7 +95,7 @@ class TestDestructiveConfirm:
         client = MagicMock()
         client.session.return_value = session
         config = MagicMock(session_id="s1", workspace_id="ws1")
-        with patch("honcho_cli.main.get_client", return_value=(client, config)):
+        with patch("honcho_cli.commands.workspace.get_client", return_value=(client, config)):
             result = runner.invoke(app, ["session", "delete", "s1"], input="n\n")
         assert result.exit_code != 0
         session.delete.assert_not_called()
@@ -109,7 +109,7 @@ class TestJsonContract:
         cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
         client = MagicMock()
         client.workspaces.return_value = ["ws-a", "ws-b"]
-        with patch("honcho_cli.main.get_client", return_value=(client, MagicMock())):
+        with patch("honcho_cli.commands.workspace.get_client", return_value=(client, MagicMock())):
             result = runner.invoke(app, ["workspace", "list"])
         assert result.exit_code == 0, result.stderr
         lines = [json.loads(line) for line in result.stdout.strip().splitlines() if line.strip()]
@@ -135,7 +135,7 @@ class TestExitCodes:
         client = MagicMock()
         client.peer.return_value.get_card.side_effect = NotFoundError("not found")
         config = MagicMock(peer_id="missing", session_id="", workspace_id="ws1")
-        with patch("honcho_cli.main.get_client", return_value=(client, config)):
+        with patch("honcho_cli.commands.peer.get_client", return_value=(client, config)):
             result = runner.invoke(app, ["peer", "inspect", "missing", "-w", "ws1"])
         assert result.exit_code == 1
         assert json.loads(result.stderr)["error"]["code"] == "PEER_NOT_FOUND"

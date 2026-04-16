@@ -112,6 +112,11 @@ class CLIConfig:
             data.pop("apiKey", None)
 
         CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n")
+        # API key in plaintext — restrict to the owner on multi-user hosts.
+        try:
+            os.chmod(CONFIG_FILE, 0o600)
+        except OSError:
+            pass
 
     def redacted(self) -> dict[str, str]:
         """Return config dict with api_key redacted.
@@ -125,7 +130,9 @@ class CLIConfig:
             if not val:
                 continue
             if fld.name == "api_key":
-                d[fld.name] = val[:8] + "..." + val[-4:] if len(val) > 16 else "***"
+                # Show ``***<last4>`` only — enough to compare keys without
+                # leaking the header or body of the JWT.
+                d[fld.name] = "***" + val[-4:] if len(val) > 4 else "***"
             else:
                 d[fld.name] = val
         return d

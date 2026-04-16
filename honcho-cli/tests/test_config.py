@@ -83,12 +83,31 @@ class TestSave:
 
 
 @pytest.mark.parametrize(
-    "api_key, check",
+    "api_key, expected",
     [
-        ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abcdef", lambda v: v.startswith("eyJhbGci") and v.endswith("cdef") and "..." in v),
-        ("short", lambda v: v == "***"),
-        ("", lambda v: v == ""),
+        # Long JWT: only last 4 chars visible, masked prefix.
+        ("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abcdef", "***cdef"),
+        # Short value > 4 chars: still only last 4.
+        ("abcdef", "***cdef"),
+        # 4 or fewer chars: fully masked — don't leak the whole key.
+        ("abcd", "***"),
+        ("x", "***"),
     ],
 )
-def test_api_key_redaction(api_key, check):
-    assert check(CLIConfig(api_key=api_key).redacted()["api_key"])
+def test_api_key_redaction_shows_last4_only(api_key, expected):
+    """Redacted api_key must show ``***<last4>`` at most, never the header/body."""
+    assert CLIConfig(api_key=api_key).redacted()["api_key"] == expected
+
+
+def test_api_key_redaction_empty_omitted():
+    """Empty api_key is omitted from redacted output entirely."""
+    assert "api_key" not in CLIConfig(api_key="").redacted()
+
+
+def test_save_sets_600_permissions(cfg_path):
+    """Config with plaintext API key must be owner-readable only on POSIX."""
+    import stat
+    CLIConfig(base_url="http://localhost:8000", api_key="sekret").save()
+    mode = stat.S_IMODE(os.stat(cfg_path).st_mode)
+    # chmod(0o600) → rw- --- ---
+    assert mode == 0o600, f"expected 0o600, got {oct(mode)}"

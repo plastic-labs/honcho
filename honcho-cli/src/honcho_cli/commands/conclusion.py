@@ -11,9 +11,10 @@ from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
+from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 
-app = typer.Typer(help="List, search, create, and delete peer conclusions (Honcho's memory atoms).")
+app = typer.Typer(cls=HonchoTyperGroup, help="List, search, create, and delete peer conclusions (Honcho's memory atoms).")
 add_common_options(app)
 
 

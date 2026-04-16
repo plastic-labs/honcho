@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import typer
 
+from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.common import handle_cmd_flags
 from honcho_cli.config import CLIConfig
 from honcho_cli.output import print_result
 
-app = typer.Typer(help="Inspect CLI configuration.", invoke_without_command=True)
+app = typer.Typer(cls=HonchoTyperGroup, help="Inspect CLI configuration.", invoke_without_command=True)
 
 
 @app.callback(invoke_without_command=True)

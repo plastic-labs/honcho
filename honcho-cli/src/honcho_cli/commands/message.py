@@ -15,9 +15,10 @@ from honcho_cli.commands.workspace import _handle_error
 from honcho_cli.output import print_error, print_result, status
 from honcho_cli.validation import validate_resource_id
 
+from honcho_cli._help import HonchoTyperGroup
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 
-app = typer.Typer(help="List, create, and get messages within a session.")
+app = typer.Typer(cls=HonchoTyperGroup, help="List, create, and get messages within a session.")
 add_common_options(app)
 
 
