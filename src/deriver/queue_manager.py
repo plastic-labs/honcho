@@ -116,6 +116,15 @@ class QueueManager:
         """Setup signal handlers, initialize client, and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
 
+        recovered_dreams = 0
+        try:
+            recovered_dreams = await self.dream_scheduler.recover_overdue_dreams()
+        except Exception as e:
+            logger.warning("Failed overdue dream recovery at startup: %s", e)
+
+        if recovered_dreams:
+            logger.info("Recovered %s overdue dream(s) during queue manager init", recovered_dreams)
+
         # Set up signal handlers
         loop = asyncio.get_running_loop()
         signals = (signal.SIGTERM, signal.SIGINT)

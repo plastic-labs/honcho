@@ -1,6 +1,6 @@
 import asyncio
 import contextlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
 import sentry_sdk
@@ -215,6 +215,91 @@ class DreamScheduler:
             document_count=current_document_count,
             session_name=session_name,
         )
+
+    async def recover_overdue_dreams(self) -> int:
+        """Recover overdue dreams after a deriver restart.
+
+        Timer-based dreams live in memory until they mature. If the deriver restarts,
+        those pending timers vanish. On startup we scan collections that are already
+        past the dream threshold and have been idle at least the configured timeout,
+        then immediately execute the missing dream.
+        """
+        if not settings.DREAM.ENABLED:
+            return 0
+
+        recovered = 0
+        now = datetime.now(timezone.utc)
+        idle_cutoff = now - timedelta(minutes=settings.DREAM.IDLE_TIMEOUT_MINUTES)
+
+        async with tracked_db("dream_recovery_scan") as db:
+            stmt = (
+                select(
+                    models.Collection.workspace_name,
+                    models.Collection.observer,
+                    models.Collection.observed,
+                    func.count(models.Document.id).label("doc_count"),
+                    models.Collection.internal_metadata["dream"]["last_dream_document_count"].astext,
+                    models.Collection.internal_metadata["dream"]["last_dream_at"].astext,
+                    func.max(models.Document.created_at).label("last_document_at"),
+                )
+                .join(
+                    models.Document,
+                    (
+                        (models.Document.workspace_name == models.Collection.workspace_name)
+                        & (models.Document.observer == models.Collection.observer)
+                        & (models.Document.observed == models.Collection.observed)
+                    ),
+                )
+                .group_by(
+                    models.Collection.workspace_name,
+                    models.Collection.observer,
+                    models.Collection.observed,
+                    models.Collection.internal_metadata,
+                )
+            )
+            result = await db.execute(stmt)
+            rows = result.all()
+
+        for (
+            workspace_name,
+            observer,
+            observed,
+            doc_count,
+            last_dream_document_count,
+            last_dream_at,
+            last_document_at,
+        ) in rows:
+            if doc_count < settings.DREAM.DOCUMENT_THRESHOLD:
+                continue
+            if last_document_at is None or last_document_at > idle_cutoff:
+                continue
+
+            last_dream_document_count_int = int(last_dream_document_count or 0)
+            if doc_count - last_dream_document_count_int < settings.DREAM.DOCUMENT_THRESHOLD:
+                continue
+
+            if last_dream_at:
+                try:
+                    last_dream_dt = datetime.fromisoformat(last_dream_at)
+                except (TypeError, ValueError):
+                    last_dream_dt = None
+                if last_dream_dt is not None:
+                    hours_since_last_dream = (now - last_dream_dt).total_seconds() / 3600
+                    if hours_since_last_dream < settings.DREAM.MIN_HOURS_BETWEEN_DREAMS:
+                        continue
+
+            for dream_type in settings.DREAM.ENABLED_TYPES:
+                await self.execute_dream(
+                    workspace_name,
+                    DreamType(dream_type),
+                    observer=observer,
+                    observed=observed,
+                )
+                recovered += 1
+
+        if recovered:
+            logger.info("Recovered %s overdue dream(s) after startup", recovered)
+        return recovered
 
     async def shutdown(self) -> None:
         """Cancel all pending dreams during shutdown."""
