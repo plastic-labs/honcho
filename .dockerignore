@@ -14,3 +14,4 @@ data/**
 .venv
 .git
 tests
+.python-version

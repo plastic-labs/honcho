@@ -16,6 +16,7 @@ ENV UV_LINK_MODE=copy
 # Python optimizations
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV UV_PYTHON_DOWNLOADS=never
 
 # Install the project's dependencies using the lockfile and settings
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -26,12 +27,31 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy only requirements to cache them in docker layer
 COPY uv.lock pyproject.toml /app/
 
-# Sync the project
+# Place executables in the environment at the front of the path
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Sync the project into a virtual environment, using the frozen lockfile
+COPY . /app
+
+# Install the project itself (extras omitted for runtime image)
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-group dev
 
-# Place executables in the environment at the front of the path
-ENV PATH="/app/.venv/bin:$PATH"
+# Pre-seed tiktoken's o200k_base cache so containers do not depend on live DNS
+# resolution to openaipublic.blob.core.windows.net at first startup.
+RUN python - <<'PY'
+import hashlib
+import pathlib
+import urllib.request
+url = 'https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken'
+cache_key = hashlib.sha1(url.encode()).hexdigest()
+cache_path = pathlib.Path('/tmp/data-gym-cache') / cache_key
+cache_path.parent.mkdir(parents=True, exist_ok=True)
+if not cache_path.exists():
+    with urllib.request.urlopen(url) as resp:
+        cache_path.write_bytes(resp.read())
+print(f'cached {url} -> {cache_path}')
+PY
 ENV HOME=/app
 ENV UV_CACHE_DIR=/tmp/uv-cache
 
