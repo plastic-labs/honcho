@@ -15,6 +15,7 @@ Environment variables:
 """
 
 import asyncio
+import uuid
 
 from agents import Agent, RunContextWrapper, Runner
 
@@ -24,39 +25,32 @@ from tools.query_memory import query_memory
 from tools.save_memory import save_memory
 
 
-def honcho_instructions(ctx: RunContextWrapper[HonchoContext], agent: Agent) -> str:
-    """Build dynamic system instructions that include Honcho memory context.
+def setup_session(user_id: str, session_id: str, assistant_id: str = "assistant") -> None:
+    """Register peers in the session once at startup.
 
-    Called by the OpenAI Agents SDK before every LLM request. Fetches recent
-    conversation history from Honcho and prepends it so the model always has
-    an up-to-date view of the session.
+    Should be called once before the conversation loop begins. Calling
+    ``add_peers`` on every turn is redundant — this ensures peers are
+    registered exactly once.
 
     Args:
-        ctx: Run context wrapping the ``HonchoContext``.
-        agent: The current agent instance (unused, required by the SDK).
-
-    Returns:
-        System prompt string with injected conversation history.
+        user_id: Unique identifier for the user peer.
+        session_id: Identifier for the conversation session.
+        assistant_id: Peer ID for the assistant. Defaults to ``"assistant"``.
     """
-    base = (
-        "You are a helpful assistant with persistent memory powered by Honcho. "
-        "You remember users across conversations. "
-        "When a user asks what you remember about them, use the query_memory tool."
-    )
-
-    history = get_context(ctx.context, tokens=2000)
-    if not history:
-        return base
-
-    formatted = "\n".join(
-        f"{msg['role'].title()}: {msg['content']}" for msg in history
-    )
-    return f"{base}\n\n## Conversation History\n{formatted}"
+    honcho = get_client()
+    user_peer = honcho.peer(user_id)
+    assistant_peer = honcho.peer(assistant_id)
+    session = honcho.session(session_id)
+    session.add_peers([user_peer, assistant_peer])
 
 
 honcho_agent = Agent[HonchoContext](
     name="HonchoMemoryAgent",
-    instructions=honcho_instructions,
+    instructions=(
+        "You are a helpful assistant with persistent memory powered by Honcho. "
+        "You remember users across conversations. "
+        "When a user asks what you remember about them, use the query_memory tool."
+    ),
     tools=[query_memory],
     model="gpt-4.1-mini",
 )
@@ -65,9 +59,9 @@ honcho_agent = Agent[HonchoContext](
 async def chat(user_id: str, message: str, session_id: str) -> str:
     """Run one conversation turn with persistent Honcho memory.
 
-    Saves the user message to Honcho before the agent runs, then saves the
-    assistant reply afterwards. The dynamic instructions callable injects
-    the full Honcho context for every turn automatically.
+    Saves the user message to Honcho, retrieves structured session history
+    from Honcho and passes it directly to the SDK as prior messages, then
+    saves the assistant reply.
 
     Args:
         user_id: Unique identifier for the user.
@@ -82,7 +76,11 @@ async def chat(user_id: str, message: str, session_id: str) -> str:
     # Persist user message before the agent runs so it's available in context
     save_memory(user_id, message, "user", session_id)
 
-    result = await Runner.run(honcho_agent, message, context=ctx)
+    # Pass structured OpenAI-format history directly — don't flatten to plain text
+    history = get_context(ctx, tokens=2000)
+    input_messages = history + [{"role": "user", "content": message}]
+
+    result = await Runner.run(honcho_agent, input_messages, context=ctx)
     response = str(result.final_output)
 
     # Persist assistant response after the run
@@ -93,8 +91,13 @@ async def chat(user_id: str, message: str, session_id: str) -> str:
 
 if __name__ == "__main__":
     print("HonchoMemoryAgent — type 'quit' to exit\n")
+    # Replace "demo-user" with a real user identifier in production.
     _user_id = "demo-user"
-    _session_id = "demo-session"
+    # A fresh session ID per run prevents history from accumulating across runs.
+    _session_id = str(uuid.uuid4())
+
+    # Register peers once at session start — not on every turn.
+    setup_session(_user_id, _session_id)
 
     while True:
         _user_input = input("You: ").strip()
