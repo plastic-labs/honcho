@@ -9,8 +9,10 @@ from typing import Any, Generic, Literal, TypeVar, cast, overload
 from anthropic import AsyncAnthropic
 try:
     from anthropic import AsyncAnthropicVertex
+    _HAS_ANTHROPIC_VERTEX = True
 except ImportError:
     AsyncAnthropicVertex = type("_Unavailable", (), {})
+    _HAS_ANTHROPIC_VERTEX = False
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from anthropic.types.message import Message as AnthropicMessage
 from anthropic.types.usage import Usage
@@ -262,7 +264,11 @@ if settings.LLM.ANTHROPIC_API_KEY:
     )
     CLIENTS["anthropic"] = anthropic
 elif os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID") and os.environ.get("CLOUD_ML_REGION"):
-    from anthropic import AsyncAnthropicVertex
+    if not _HAS_ANTHROPIC_VERTEX:
+        raise ImportError(
+            "Vertex AI env vars are set but AsyncAnthropicVertex is not available. "
+            "Install or upgrade the anthropic SDK."
+        )
     # SDK reads ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION from env
     anthropic = AsyncAnthropicVertex(timeout=600.0)
     CLIENTS["anthropic"] = anthropic
