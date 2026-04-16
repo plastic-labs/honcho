@@ -460,3 +460,61 @@ class TestEnqueueCancelsDreamsCorrectly:
         # All three dreams should be cancelled
         assert len(cancelled) == 3
         assert len(dream_scheduler.pending_dreams) == 0
+
+
+class TestDreamRecoveryAfterRestart:
+    """Overdue dreams should be recovered after deriver restart instead of vanishing."""
+
+    @pytest.mark.asyncio
+    async def test_recover_overdue_dreams_executes_for_idle_collections(
+        self, dream_scheduler: DreamScheduler
+    ):
+        from contextlib import asynccontextmanager
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import MagicMock
+
+        now = datetime.now(timezone.utc)
+        overdue_row = (
+            "hermes",
+            "hermes",
+            "user-default-hermes-agent",
+            75,
+            None,
+            None,
+            now - timedelta(minutes=95),
+        )
+        fresh_row = (
+            "hermes",
+            "hermes",
+            "fresh-user",
+            75,
+            None,
+            None,
+            now - timedelta(minutes=10),
+        )
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = [overdue_row, fresh_row]
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        @asynccontextmanager
+        async def mock_tracked_db(_: str | None = None):
+            yield mock_db
+
+        with (
+            patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db),
+            patch.object(dream_scheduler, "execute_dream", new_callable=AsyncMock) as execute_dream,
+            patch("src.dreamer.dream_scheduler.settings.DREAM.DOCUMENT_THRESHOLD", 50),
+            patch("src.dreamer.dream_scheduler.settings.DREAM.IDLE_TIMEOUT_MINUTES", 60),
+            patch("src.dreamer.dream_scheduler.settings.DREAM.MIN_HOURS_BETWEEN_DREAMS", 0),
+        ):
+            recovered = await dream_scheduler.recover_overdue_dreams()
+
+        assert recovered == 1
+        execute_dream.assert_awaited_once_with(
+            "hermes",
+            DreamType.OMNI,
+            observer="hermes",
+            observed="user-default-hermes-agent",
+        )
