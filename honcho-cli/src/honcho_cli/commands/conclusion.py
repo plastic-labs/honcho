@@ -13,7 +13,7 @@ from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 
-app = typer.Typer(help="Conclusion (observation) operations.")
+app = typer.Typer(help="List, search, create, and delete peer conclusions (Honcho's memory atoms).")
 add_common_options(app)
 
 
@@ -34,7 +34,7 @@ def list_conclusions(
     if not observer:
         observer = config.peer_id
     if not observer:
-        print_error("NO_PEER", "Observer peer ID required. Use --observer or set default peer.")
+        print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
         raise typer.Exit(1)
 
     p = client.peer(observer)
@@ -81,7 +81,7 @@ def search(
     if not observer:
         observer = config.peer_id
     if not observer:
-        print_error("NO_PEER", "Observer peer ID required. Use --observer or set default peer.")
+        print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
         raise typer.Exit(1)
 
     p = client.peer(observer)
@@ -128,7 +128,7 @@ def create(
     if not observer:
         observer = config.peer_id
     if not observer:
-        print_error("NO_PEER", "Observer peer ID required. Use --observer or set default peer.")
+        print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
         raise typer.Exit(1)
 
     # If content looks like JSON, try to parse it
@@ -187,7 +187,7 @@ def delete(
     if not observer:
         observer = config.peer_id
     if not observer:
-        print_error("NO_PEER", "Observer peer ID required. Use --observer or set default peer.")
+        print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
         raise typer.Exit(1)
 
     p = client.peer(observer)

@@ -21,7 +21,7 @@ from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
-app = typer.Typer(help="Workspace operations.")
+app = typer.Typer(help="List, create, inspect, delete, and search workspaces.")
 add_common_options(app)
 
 

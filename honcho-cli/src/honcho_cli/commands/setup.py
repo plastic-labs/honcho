@@ -84,14 +84,11 @@ def init(
     base_url: str | None = typer.Option(None, "--base-url", envvar="HONCHO_BASE_URL", help="Honcho API URL (e.g. https://api.honcho.dev, http://localhost:8000)"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
-    """Set ``apiKey`` + Honcho URL in ``~/.honcho/config.json``.
+    """Set API key and server URL in ~/.honcho/config.json.
 
-    Each value is shown with its current default — press Enter to keep it or
-    type a replacement. Foreign top-level keys (``hosts``, ``sessions``, …)
-    are preserved.
-
-    Workspace / peer / session scoping is per-command via ``-w`` / ``-p`` /
-    ``-s`` or ``HONCHO_*`` env vars — never persisted.
+    Press Enter to keep the current value or type a replacement.
+    Workspace / peer / session scoping is per-command via -w / -p / -s
+    or HONCHO_* env vars — never persisted.
     """
 
     if json_output:
@@ -202,9 +199,7 @@ def _check_connection(base_url: str, api_key: str) -> None:
 def doctor(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
-    """Verify config, connectivity, and — when scoped via ``-w`` / ``-p`` —
-    workspace, peer, and queue health.
-    """
+    """Verify config and connectivity. Scope with -w / -p to check workspace, peer, and queue health."""
 
 
     if json_output:

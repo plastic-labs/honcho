@@ -15,7 +15,7 @@ from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
-app = typer.Typer(help="Session debugging operations.")
+app = typer.Typer(help="List, inspect, create, delete, and manage conversation sessions and their peers.")
 add_common_options(app)
 
 

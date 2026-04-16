@@ -17,7 +17,7 @@ from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
 
-app = typer.Typer(help="Message operations.")
+app = typer.Typer(help="List, create, and get messages within a session.")
 add_common_options(app)
 
 
@@ -25,28 +25,28 @@ add_common_options(app)
 def list_messages(
     session_id: Optional[str] = typer.Argument(None, help="Session ID (uses default if omitted)"),
     last: int = typer.Option(20, "--last", help="Number of recent messages"),
-    reverse: bool = typer.Option(False, "--reverse", help="Reverse order"),
+    reverse: bool = typer.Option(False, "--reverse", help="Show oldest first (default is newest first)"),
     brief: bool = typer.Option(False, "--brief", help="Show only IDs, peer, token count, and created_at (no content)"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Filter by peer ID"),
     session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
-    """List messages in a session."""
+    """List messages in a session. Scoped to a peer with -p."""
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
     sid = _get_session_id(session_id)
     client, config = get_client()
     sess = client.session(sid)
 
     try:
-        # Server supports ?reverse=true on messages/list, but the Python
-        # SDK doesn't forward it from Session.messages() yet. Until then,
-        # --reverse walks every page via the SDK iterator and slices
-        # — O(pages) in the session size. Safe for small sessions.
+        filters = {"peer_id": config.peer_id} if config.peer_id else None
+        # Fetch newest-first so [:last] always gives the most recent N messages,
+        # then flip to oldest-at-top / newest-at-bottom for readable display.
+        # --reverse keeps the raw server order (oldest first, descending in table).
+        msgs = sess.messages(filters=filters, reverse=True).items[:last]
         if not reverse:
-            msgs = sess.messages().items[:last]
-        else:
-            msgs = list(sess.messages())[-last:]
+            msgs = list(reversed(msgs))
 
         # Detect duplicate content
         content_hashes: dict[str, list[str]] = {}

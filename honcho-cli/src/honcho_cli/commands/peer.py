@@ -15,7 +15,7 @@ from honcho_cli.validation import validate_resource_id
 
 from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
-app = typer.Typer(help="Peer debugging operations.")
+app = typer.Typer(help="List, create, chat with, search, and manage peers and their representations.")
 add_common_options(app)
 
 
@@ -122,11 +122,18 @@ def card(
 def chat(
     query: str = typer.Argument(help="Question to ask about the peer"),
     target: Optional[str] = typer.Option(None, help="Target peer for perspective"),
+    reasoning: Optional[str] = typer.Option(None, "--reasoning", "-r", help="Reasoning level: minimal, low, medium, high, max"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Query the dialectic about a peer."""
+
+    _REASONING_LEVELS = ("minimal", "low", "medium", "high", "max")
+    if reasoning and reasoning not in _REASONING_LEVELS:
+        from honcho_cli.output import print_error
+        print_error("INVALID_REASONING", f"--reasoning must be one of: {', '.join(_REASONING_LEVELS)}")
+        raise typer.Exit(1)
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
     pid = _get_peer_id(None)
@@ -134,9 +141,12 @@ def chat(
     p = client.peer(pid)
 
     try:
-        # Session scope comes from the global -s pipeline (config.session_id),
-        # keeping chat consistent with every other peer/session command.
-        response = p.chat(query, target=target, session=config.session_id or None)
+        response = p.chat(
+            query,
+            target=target,
+            session=config.session_id or None,
+            reasoning_level=reasoning or None,
+        )
         print_result({"peer_id": pid, "query": query, "response": response})
     except Exception as e:
         _handle_error(e, "peer", pid)
