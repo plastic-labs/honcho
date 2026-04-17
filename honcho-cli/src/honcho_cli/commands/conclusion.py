@@ -129,7 +129,7 @@ def create(
 ) -> None:
     """Create a conclusion."""
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session_id)
     observer = _require_observer(observer)
     client, config = get_client()
 
@@ -150,8 +150,8 @@ def create(
             scope = p.conclusions
 
         params: dict[str, object] = {"content": content}
-        if session_id:
-            params["session_id"] = session_id
+        if config.session_id:
+            params["session_id"] = config.session_id
         results = scope.create([params])
         result = results[0] if results else None
         if result is None:

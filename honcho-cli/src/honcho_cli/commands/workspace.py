@@ -245,13 +245,14 @@ def search(
 @app.command("queue-status")
 def queue_status(
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     observer: Optional[str] = typer.Option(None, help="Filter by observer peer"),
     sender: Optional[str] = typer.Option(None, help="Filter by sender peer"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get queue processing status."""
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, session=session)
 
     _get_workspace_id(None)
     client, config = get_client()

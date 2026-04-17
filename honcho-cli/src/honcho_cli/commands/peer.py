@@ -132,6 +132,7 @@ def chat(
     reasoning: Optional[str] = typer.Option(None, "--reasoning", "-r", help="Reasoning level: minimal, low, medium, high, max"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Query the dialectic about a peer."""
@@ -142,7 +143,7 @@ def chat(
         print_error("INVALID_REASONING", f"--reasoning must be one of: {', '.join(_REASONING_LEVELS)}")
         raise typer.Exit(1)
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
     pid = _get_peer_id(None)
     client, config = get_client()
     p = client.peer(pid)
@@ -285,11 +286,12 @@ def representation(
     max_conclusions: Optional[int] = typer.Option(None, help="Maximum number of conclusions to include"),
     workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Override workspace ID"),
     peer: Optional[str] = typer.Option(None, "--peer", "-p", help="Override peer ID"),
+    session: Optional[str] = typer.Option(None, "--session", "-s", help="Override session ID"),
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
     """Get the formatted representation for a peer."""
 
-    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
     pid = _get_peer_id(peer_id)
     client, config = get_client()
     p = client.peer(pid)
