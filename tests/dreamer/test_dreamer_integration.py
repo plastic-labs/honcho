@@ -7,6 +7,7 @@ collection's internal_metadata on successful dreams — and critically,
 does NOT land on failures or exceptions.
 """
 
+from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.deriver.enqueue import enqueue_dream
 from src.dreamer.orchestrator import DreamResult, process_dream
 from src.schemas import DreamType
 from src.utils.queue_payload import DreamPayload
@@ -93,8 +95,16 @@ class TestLastDreamAtCompletionWrite:
         assert (
             "last_dream_at" in dream_meta
         ), "process_dream must write last_dream_at when run_dream returns a result"
-        # ISO format sanity check: contains 'T' separator and either 'Z' or '+'
-        assert "T" in dream_meta["last_dream_at"]
+        # Must be a tz-aware UTC ISO timestamp. A naive datetime.now().isoformat()
+        # would pass a loose "T in string" check but corrupt the 8h guard math
+        # against tz-aware now() comparisons downstream.
+        parsed = datetime.fromisoformat(dream_meta["last_dream_at"])
+        assert (
+            parsed.tzinfo is not None
+        ), f"last_dream_at must be timezone-aware, got {dream_meta['last_dream_at']!r}"
+        assert parsed.utcoffset() == timedelta(
+            0
+        ), f"last_dream_at must be UTC, got offset {parsed.utcoffset()}"
 
     @pytest.mark.asyncio
     async def test_failure_path_leaves_last_dream_at_null(
@@ -204,4 +214,61 @@ class TestLastDreamAtCompletionWrite:
             "last_dream_at must NOT be written when run_dream raises. "
             "process_dream swallows the exception but the guard write must "
             "not occur."
+        )
+
+
+class TestEnqueueDreamPreservesSiblings:
+    """Regression test for the symmetric sibling-drop bug in enqueue_dream.
+
+    `update_collection_internal_metadata` uses a top-level JSONB `||` merge,
+    so writing `{"dream": {"last_dream_document_count": N}}` without a prior
+    read-modify-write would replace the whole `"dream"` subkey and drop
+    `last_dream_at` (written by process_dream on the prior completion).
+
+    Symmetric to the orchestrator fix in c8fe40a (and the
+    test_completion_preserves_last_dream_document_count test above).
+    """
+
+    @pytest.mark.asyncio
+    async def test_enqueue_preserves_last_dream_at(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """enqueue_dream must merge into existing dream metadata, not replace it.
+
+        Pre-seeds `last_dream_at` (as if a prior dream completed), calls
+        `enqueue_dream`, and asserts both:
+        1. `last_dream_document_count` is written (the new baseline), and
+        2. `last_dream_at` is preserved (the sibling key from the prior completion).
+        """
+        workspace, peer = sample_data
+        prior_timestamp = "2026-04-17T12:00:00+00:00"
+        collection = models.Collection(
+            observer=peer.name,
+            observed=peer.name,
+            workspace_name=workspace.name,
+            internal_metadata={"dream": {"last_dream_at": prior_timestamp}},
+        )
+        db_session.add(collection)
+        await db_session.commit()
+        await db_session.refresh(collection)
+
+        await enqueue_dream(
+            workspace_name=workspace.name,
+            observer=collection.observer,
+            observed=collection.observed,
+            dream_type=DreamType.OMNI,
+            document_count=77,
+            session_name=None,
+        )
+
+        dream_meta = await _get_dream_metadata(db_session, collection)
+        assert (
+            dream_meta.get("last_dream_document_count") == 77
+        ), "enqueue_dream must write last_dream_document_count as the new baseline"
+        assert dream_meta.get("last_dream_at") == prior_timestamp, (
+            "last_dream_at from a prior completion must be preserved across "
+            "the enqueue write — top-level JSONB || would drop it without the "
+            "read-modify-write in enqueue_dream."
         )

@@ -517,16 +517,24 @@ async def enqueue_dream(
 
             # Update collection metadata (CRUD handles cache invalidation).
             # last_dream_at is written at completion in process_dream, not here.
+            # Read-modify-write: update_collection_internal_metadata uses a
+            # top-level JSONB || merge, so passing {"dream": {"last_dream_document_count": ...}}
+            # alone would replace the whole "dream" subkey and drop sibling
+            # last_dream_at (written by process_dream on the prior completion).
+            collection = await crud.get_collection(
+                db_session,
+                workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+            dream_meta = dict(collection.internal_metadata.get("dream", {}))
+            dream_meta["last_dream_document_count"] = document_count
             await crud.update_collection_internal_metadata(
                 db_session,
                 workspace_name,
                 observer,
                 observed,
-                update_data={
-                    "dream": {
-                        "last_dream_document_count": document_count,
-                    }
-                },
+                update_data={"dream": dream_meta},
             )
             # update_collection_internal_metadata commits already
 

@@ -6,11 +6,11 @@ verify that `enqueue_dream` no longer writes `last_dream_at` and still
 writes `last_dream_document_count`.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src import schemas
+from src import models, schemas
 from src.deriver.enqueue import enqueue_dream
 
 
@@ -24,11 +24,21 @@ class TestEnqueueDreamMetadataShape:
         Moved to completion (in `process_dream`) so duplicate enqueues can't
         reset the 8-hour guard and failed dreams don't falsely advance it.
         """
+        # Mock a Collection with empty dream metadata so the read-modify-write
+        # in enqueue_dream has something to merge into.
+        mock_collection = MagicMock(spec=models.Collection)
+        mock_collection.internal_metadata = {}
+
         with (
             patch(
                 "src.deriver.enqueue.crud.update_collection_internal_metadata",
                 new_callable=AsyncMock,
             ) as mock_update,
+            patch(
+                "src.deriver.enqueue.crud.get_collection",
+                new_callable=AsyncMock,
+                return_value=mock_collection,
+            ),
             # Short-circuit the dedup / insert paths so we only exercise the
             # metadata update call. db_session.scalar returns False for both
             # the in-progress and pending checks; db_session.execute is a no-op.

@@ -186,13 +186,15 @@ class DreamScheduler:
                 )
                 return
 
-            # Get current document count at execution time (not stale from scheduling)
+            # Get current document count at execution time (not stale from scheduling).
+            # Explicit-only, matching check_and_schedule_dream — baseline must be symmetric or the delta goes negative.
             count_stmt = select(func.count(models.Document.id)).where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.observer == observer,
                 models.Document.observed == observed,
+                models.Document.level == "explicit",
             )
-            current_document_count = int(await db.scalar(count_stmt) or 0)
+            current_explicit_count = int(await db.scalar(count_stmt) or 0)
 
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
@@ -212,7 +214,7 @@ class DreamScheduler:
             observer=observer,
             observed=observed,
             dream_type=dream_type,
-            document_count=current_document_count,
+            document_count=current_explicit_count,
             session_name=session_name,
         )
 

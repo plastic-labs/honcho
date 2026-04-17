@@ -426,6 +426,21 @@ class TestThresholdFilter:
     The fix filters the count to `level == "explicit"` only.
     """
 
+    @pytest.fixture(autouse=True)
+    def _pin_dream_config(self):
+        """Pin DOCUMENT_THRESHOLD=50 and ENABLED_TYPES=['omni'] for this class.
+
+        These tests assume the default thresholds; a developer's local env
+        (e.g. DREAM_DOCUMENT_THRESHOLD=5 for faster manual testing) would
+        otherwise invalidate the 30/60/10 fixtures below. Scoped to this
+        class only — do NOT widen; other tests may have different assumptions.
+        """
+        with (
+            patch("src.dreamer.dream_scheduler.settings.DREAM.DOCUMENT_THRESHOLD", 50),
+            patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED_TYPES", ["omni"]),
+        ):
+            yield
+
     async def _make_collection(
         self,
         db_session: AsyncSession,
