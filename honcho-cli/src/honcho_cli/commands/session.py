@@ -210,15 +210,11 @@ def delete(
             try:
                 peers = sess.peers()
                 msg_page = sess.messages()
-                if msg_page.total is not None:
-                    msg_count_str = str(msg_page.total)
-                else:
-                    msg_count_str = f"{len(msg_page.items)} (first page; more may exist)"
                 peer_ids = [p.id for p in peers]
                 typer.echo(
                     f"  session:  {sid}\n"
                     f"  peers:    {', '.join(peer_ids) if peer_ids else '(none)'}\n"
-                    f"  messages: {msg_count_str}"
+                    f"  messages: {msg_page.total}"
                 )
             except HonchoError as preview_err:
                 status(f"preview unavailable: {preview_err}")
