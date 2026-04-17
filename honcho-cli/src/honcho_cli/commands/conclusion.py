@@ -29,7 +29,7 @@ def _require_observer(observer: str | None) -> str:
                 "No peer or workspace scoped. Pass --peer/-p and --workspace/-w, or set HONCHO_PEER_ID and HONCHO_WORKSPACE_ID.",
             )
         else:
-            print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
+            print_error("NO_PEER", "Peer required. Pass --peer/-p: honcho conclusion <cmd> -p <peer>")
         raise typer.Exit(1)
     return obs
 

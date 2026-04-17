@@ -159,7 +159,7 @@ Precedence (highest first): **flag → env var → config file → default**.
 
 ```bash
 # Per-command flags
-honcho -w prod -p user peer card
+honcho peer card -w prod -p user
 
 # Or export once per shell
 export HONCHO_WORKSPACE_ID=prod

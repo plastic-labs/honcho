@@ -1,10 +1,13 @@
 """Shared runtime state, client factory, and command-level flag helpers.
 
-Flags like --json, -w, -p, -s work in TWO positions:
-  1. Group-level (before subcommand):  honcho workspace --json list
-  2. Command-level (after subcommand): honcho workspace list --json -w granola
+Flags --json, -w, -p, -s are documented at **command-level** (the canonical
+form demonstrated in the welcome panel, README, and skill files):
 
-Both positions are idempotent — if set at group level, the command-level is a no-op.
+    honcho workspace list -w granola --json
+
+They also parse at group-level and top-level for flexibility. All three
+positions resolve identically and are idempotent — command-level is a
+no-op if the same flag was already set at an outer level.
 """
 
 from __future__ import annotations

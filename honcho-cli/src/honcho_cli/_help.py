@@ -70,8 +70,8 @@ def print_welcome(console: Console) -> None:
         ("honcho doctor", "verify connection and workspace health"),
     ]
     cmd_rows = [
-        ("[dim]pattern[/dim]", "[dim]honcho [-w workspace] [-p peer] [-s session] <command>[/dim]"),
-        ("[dim]example[/dim]", "[dim]honcho -p alice peer chat \"what does alice prefer?\"[/dim]"),
+        ("[dim]pattern[/dim]", r"[dim]honcho <command> \[args] \[-w workspace] \[-p peer] \[-s session][/dim]"),
+        ("[dim]example[/dim]", "[dim]honcho peer chat \"what does alice prefer?\" -p alice -w agents[/dim]"),
         ("", ""),
         ("workspace",  "list · create · search · delete · inspect · queue-status"),
         ("peer",       "list · create · search · inspect · card · chat"),
@@ -84,16 +84,16 @@ def print_welcome(console: Console) -> None:
         ("config",     "inspect current configuration"),
     ]
     memory_rows = [
-        ("honcho -w <workspace> -p <peer> peer chat \"...\"",   "query the dialectic about a peer"),
-        ("honcho -w <workspace> -p <peer> peer inspect",        "review what honcho knows about a peer"),
-        ("honcho -w <workspace> -p <peer> peer representation", "get the full peer representation"),
-        ("honcho -w <workspace> -p <peer> conclusion list",     "browse peer memory atoms"),
+        ("honcho peer chat \"...\" -p <peer> -w <workspace>",   "query the dialectic about a peer"),
+        ("honcho peer inspect -p <peer> -w <workspace>",        "review what honcho knows about a peer"),
+        ("honcho peer representation -p <peer> -w <workspace>", "get the full peer representation"),
+        ("honcho conclusion list -p <peer> -w <workspace>",     "browse peer memory atoms"),
     ]
 
     option_rows = [
-        ("-w / --workspace", "scope to a workspace (env: HONCHO_WORKSPACE_ID)"),
-        ("-p / --peer",      "scope to a peer (env: HONCHO_PEER_ID)"),
-        ("-s / --session",   "scope to a session (env: HONCHO_SESSION_ID)"),
+        ("-w / --workspace", "scope to a workspace"),
+        ("-p / --peer",      "scope to a peer"),
+        ("-s / --session",   "scope to a session"),
         ("--json",           "force JSON output for scripts and agents"),
         ("--help",           "show help for any command (e.g. honcho peer --help)"),
     ]
