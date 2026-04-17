@@ -189,7 +189,7 @@ def delete(
     if not observer:
         observer = config.peer_id
     if not observer:
-        print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
+        print_error("NO_PEER", "Peer required. Pass --peer/-p: honcho conclusion <cmd> -p <peer>")
         raise typer.Exit(1)
 
     p = client.peer(observer)

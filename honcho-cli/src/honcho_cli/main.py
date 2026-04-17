@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -15,7 +14,6 @@ from rich.console import Console
 from honcho_cli import __version__
 from honcho_cli._help import HonchoTyperGroup, print_welcome
 from honcho_cli.branding import BANNER
-from honcho_cli.common import _global_overrides
 from honcho_cli.output import set_json_mode
 
 
@@ -54,17 +52,10 @@ def version_callback(value: bool) -> None:
 def main(
     ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
-    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", envvar="HONCHO_WORKSPACE_ID", help="Override workspace ID"),
-    peer: Optional[str] = typer.Option(None, "--peer", "-p", envvar="HONCHO_PEER_ID", help="Override peer ID"),
-    session: Optional[str] = typer.Option(None, "--session", "-s", envvar="HONCHO_SESSION_ID", help="Override session ID"),
     version: bool = typer.Option(False, "--version", "-V", callback=version_callback, is_eager=True, help="Show version"),
 ) -> None:
     """Honcho CLI — admin & debugging tool for Honcho workspaces."""
     set_json_mode(json_output)
-
-    _global_overrides["workspace"] = workspace
-    _global_overrides["peer"] = peer
-    _global_overrides["session"] = session
 
     if ctx.invoked_subcommand is None:
         print_welcome(Console())
