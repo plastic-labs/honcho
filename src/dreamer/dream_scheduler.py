@@ -231,11 +231,11 @@ async def check_and_schedule_dream(
     collection: models.Collection,
 ) -> bool:
     """
-    Check if a collection has reached the document threshold and schedule a timer-based dream.
+    Check if a collection has reached the explicit-observation threshold and schedule a timer-based dream.
 
     This function only schedules a timer-based dream if:
     1. Dreams are enabled
-    2. Document threshold is reached
+    2. Explicit-observation threshold is reached (dreamer output does not count)
     3. Minimum hours between dreams have passed
     4. No dream is already scheduled for this collection
 
