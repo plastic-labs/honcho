@@ -116,17 +116,18 @@ def inspect(
     try:
         ws_config = client.get_configuration()
         ws_metadata = client.get_metadata()
+        peer_page = client.peers()
+        session_page = client.sessions()
 
-        # Use raw API response objects to get all fields (created_at, is_active)
-        raw_peers = _raw_list(client.peers())
-        raw_sessions = _raw_list(client.sessions())
+        raw_peers = peer_page._raw_items
+        raw_sessions = session_page._raw_items
 
         result = {
             "workspace_id": wid,
             "metadata": ws_metadata,
             "configuration": _config_to_dict(ws_config) if ws_config else None,
-            "peer_count": len(raw_peers),
-            "session_count": len(raw_sessions),
+            "peer_count": peer_page.total,
+            "session_count": session_page.total,
             "peers": [
                 {"id": p.id, "metadata": p.metadata, "created_at": str(p.created_at)}
                 for p in raw_peers[:20]

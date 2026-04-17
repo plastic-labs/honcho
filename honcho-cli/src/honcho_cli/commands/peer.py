@@ -90,8 +90,8 @@ def inspect(
             "id": pid,
             "card": card,
             "configuration": _config_to_dict(peer_config) if peer_config else None,
-            "session_count": session_page.total if session_page.total is not None else len(session_items),
-            "conclusion_count": conclusion_page.total if conclusion_page.total is not None else len(conclusion_items),
+            "session_count": session_page.total,
+            "conclusion_count": conclusion_page.total,
             "recent_conclusions": [
                 {"id": c.id, "content": c.content if use_json() else c.content[:200], "created_at": str(c.created_at)}
                 for c in conclusion_items
