@@ -256,7 +256,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
     DEDUPLICATE: bool = True
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4096, gt=0, le=100_000)] = 4096
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, ge=0, le=5000)] = 1024
 
     LOG_OBSERVATIONS: bool = False
 
@@ -438,7 +438,7 @@ class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, ge=0, le=2000)] = 512
 
 
 class WebhookSettings(HonchoSettings):
@@ -542,7 +542,7 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     PROVIDER: SupportedProviders = "anthropic"
     MODEL: str = "claude-sonnet-4-20250514"
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=16_384, gt=0, le=64_000)] = 16_384
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=8192, gt=0, le=32_000)] = 8192
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=8192, ge=0, le=32_000)] = 8192
 
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
