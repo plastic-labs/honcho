@@ -1,7 +1,7 @@
 """Command-level tests: init flow, destructive confirms, JSON output contract, exit codes.
 
 Uses Typer's CliRunner against the real `app`. stdout is not a TTY under
-CliRunner, so `use_json()` returns True and the CLI emits JSON/ndjson —
+CliRunner, so `use_json()` returns True and the CLI emits JSON —
 which is exactly what scripts and agents consume.
 """
 
@@ -105,15 +105,69 @@ class TestDestructiveConfirm:
 # 3. JSON output contract — scripts pipe these
 
 class TestJsonContract:
-    def test_workspace_list_ndjson_shape(self, cfg, runner):
+    def test_workspace_list_json_array_shape(self, cfg, runner):
         cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
         client = MagicMock()
         client.workspaces.return_value = ["ws-a", "ws-b"]
         with patch("honcho_cli.commands.workspace.get_client", return_value=(client, MagicMock())):
             result = runner.invoke(app, ["workspace", "list"])
         assert result.exit_code == 0, result.stderr
-        lines = [json.loads(line) for line in result.stdout.strip().splitlines() if line.strip()]
-        assert lines == [{"id": "ws-a"}, {"id": "ws-b"}]
+        assert json.loads(result.stdout) == [{"id": "ws-a"}, {"id": "ws-b"}]
+
+    def test_workspace_search_preserves_full_content_in_json_mode(self, cfg, runner):
+        cfg.write_text(json.dumps({
+            "apiKey": "k",
+            "environmentUrl": "http://localhost:8000",
+            "workspace_id": "ws1",
+        }))
+        message = MagicMock(
+            id="msg1",
+            content="x" * 250,
+            peer_id="peer1",
+            session_id="sess1",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        client = MagicMock()
+        client.search.return_value = [message]
+        config = MagicMock(workspace_id="ws1")
+        with patch("honcho_cli.commands.workspace.get_client", return_value=(client, config)):
+            result = runner.invoke(app, ["workspace", "search", "topic", "-w", "ws1"])
+        assert result.exit_code == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload == [{
+            "id": "msg1",
+            "content": "x" * 250,
+            "peer_id": "peer1",
+            "session_id": "sess1",
+            "created_at": "2026-01-01T00:00:00Z",
+        }]
+
+    def test_message_get_returns_single_json_object(self, cfg, runner):
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        msg = MagicMock(
+            id="msg1",
+            peer_id="peer1",
+            content="hello",
+            token_count=7,
+            metadata={"kind": "demo"},
+            created_at="2026-01-01T00:00:00Z",
+        )
+        session = MagicMock()
+        session.get_message.return_value = msg
+        client = MagicMock()
+        client.session.return_value = session
+        config = MagicMock(session_id="sess1", workspace_id="ws1")
+        with patch("honcho_cli.commands.message.get_client", return_value=(client, config)):
+            result = runner.invoke(app, ["message", "get", "msg1", "-s", "sess1", "-w", "ws1"])
+        assert result.exit_code == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            "id": "msg1",
+            "peer_id": "peer1",
+            "content": "hello",
+            "token_count": 7,
+            "metadata": {"kind": "demo"},
+            "created_at": "2026-01-01T00:00:00Z",
+        }
 
 
 # --------------------------------------------------------------------------- #

@@ -94,7 +94,7 @@ def print_welcome(console: Console) -> None:
         ("-w / --workspace", "scope to a workspace (env: HONCHO_WORKSPACE_ID)"),
         ("-p / --peer",      "scope to a peer (env: HONCHO_PEER_ID)"),
         ("-s / --session",   "scope to a session (env: HONCHO_SESSION_ID)"),
-        ("--json",           "force JSON / NDJSON output for scripts and agents"),
+        ("--json",           "force JSON output for scripts and agents"),
         ("--help",           "show help for any command (e.g. honcho peer --help)"),
     ]
 

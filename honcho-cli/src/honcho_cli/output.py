@@ -1,4 +1,4 @@
-"""Output formatting: JSON, NDJSON, tables, and structured errors.
+"""Output formatting: JSON, tables, and structured errors.
 
 Detects TTY to auto-switch between human-readable and machine-parseable output.
 """
@@ -38,14 +38,8 @@ def use_json() -> bool:
 
 
 def print_json(data: Any) -> None:
-    """Print a single JSON object to stdout."""
+    """Print a single JSON value to stdout."""
     print(json.dumps(data, indent=2, default=str))
-
-
-def print_ndjson(items: list[Any]) -> None:
-    """Print items as newline-delimited JSON."""
-    for item in items:
-        print(json.dumps(item, default=str))
 
 
 def print_table(columns: list[str], rows: list[list[str]], title: str | None = None) -> None:
@@ -61,14 +55,11 @@ def print_table(columns: list[str], rows: list[list[str]], title: str | None = N
 def print_result(data: Any, columns: list[str] | None = None, title: str | None = None) -> None:
     """Print data as JSON or table depending on mode.
 
-    For lists, uses NDJSON in JSON mode or table in TTY mode.
+    For lists, uses JSON arrays in JSON mode or tables in TTY mode.
     For dicts, uses JSON or key-value display.
     """
     if use_json():
-        if isinstance(data, list):
-            print_ndjson(data)
-        else:
-            print_json(data)
+        print_json(data)
     else:
         if isinstance(data, list) and columns:
             rows = []

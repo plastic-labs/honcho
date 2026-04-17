@@ -114,7 +114,8 @@ Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-
 
 ## Agent Usage
 
-All commands output JSON when stdout isn't a TTY, or when `--json` is forced:
+All commands output JSON when stdout isn't a TTY, or when `--json` is forced.
+Collection commands emit JSON arrays, and single-resource commands emit JSON objects:
 
 ```bash
 honcho peer list --json

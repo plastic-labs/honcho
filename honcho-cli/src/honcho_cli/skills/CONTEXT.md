@@ -13,7 +13,7 @@ description: A terminal for Honcho — memory that reasons.
 ## Output Modes
 
 - **TTY**: Human-readable tables (default when interactive)
-- **Piped/scripted**: JSON/NDJSON automatically
+- **Piped/scripted**: JSON automatically
 - `--json`: Force JSON output
 
 ## Exit Codes
