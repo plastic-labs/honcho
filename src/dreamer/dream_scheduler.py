@@ -254,11 +254,13 @@ async def check_and_schedule_dream(
     last_dream_document_count = dream_metadata.get("last_dream_document_count", 0)
     last_dream_at = dream_metadata.get("last_dream_at")
 
-    # Count current documents in the collection
+    # Count explicit-level docs only: dreamer output (deductive/inductive/
+    # contradiction) would inflate the threshold and create a feedback loop.
     count_stmt = select(func.count(models.Document.id)).where(
         models.Document.workspace_name == collection.workspace_name,
         models.Document.observer == collection.observer,
         models.Document.observed == collection.observed,
+        models.Document.level == "explicit",
     )
     current_document_count = int(await db.scalar(count_stmt) or 0)
 

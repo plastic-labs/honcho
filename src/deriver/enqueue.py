@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from sqlalchemy import exists, insert, select
@@ -516,8 +515,8 @@ async def enqueue_dream(
             stmt = insert(QueueItem).returning(QueueItem)
             await db_session.execute(stmt, [dream_record])
 
-            # Update collection metadata (CRUD handles cache invalidation)
-            now_iso = datetime.now(timezone.utc).isoformat()
+            # Update collection metadata (CRUD handles cache invalidation).
+            # last_dream_at is written at completion in process_dream, not here.
             await crud.update_collection_internal_metadata(
                 db_session,
                 workspace_name,
@@ -526,7 +525,6 @@ async def enqueue_dream(
                 update_data={
                     "dream": {
                         "last_dream_document_count": document_count,
-                        "last_dream_at": now_iso,
                     }
                 },
             )

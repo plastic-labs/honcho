@@ -17,6 +17,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import sentry_sdk
@@ -322,6 +323,18 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         + f"iterations={result.total_iterations}, "
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )
+
+                    # Write last_dream_at at completion (not enqueue) so duplicate
+                    # enqueues can't reset the 8h guard. Lenient: any non-null result.
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    async with tracked_db("dream.last_dream_at_write") as db:
+                        await crud.update_collection_internal_metadata(
+                            db,
+                            workspace_name,
+                            payload.observer,
+                            payload.observed,
+                            update_data={"dream": {"last_dream_at": now_iso}},
+                        )
 
     except Exception as e:
         logger.error(
