@@ -84,10 +84,12 @@ def print_welcome(console: Console) -> None:
         ("config",     "inspect current configuration"),
     ]
     memory_rows = [
-        ("honcho peer chat \"...\" -p <peer> -w <workspace>",   "query the dialectic about a peer"),
-        ("honcho peer inspect -p <peer> -w <workspace>",        "review what honcho knows about a peer"),
-        ("honcho peer representation -p <peer> -w <workspace>", "get the full peer representation"),
-        ("honcho conclusion list -p <peer> -w <workspace>",     "browse peer memory atoms"),
+        ("honcho peer chat \"...\" -p <peer> -w <workspace>","query the Dialectic about a peer"),
+        ("honcho peer inspect -p <peer> -w <workspace>","dashboard: peer card + recent conclusions + configuration"),
+        ("honcho peer representation -p <peer> -w <workspace>", "global peer representation"),
+        ("honcho peer representation -p <peer> -w <workspace> -s <session>", "session-scoped peer representation"),
+        ("honcho peer card -p <peer> -w <workspace>", "synthesized identity: traits, preferences, instructions"),
+        ("honcho conclusion list -p <peer> -w <workspace>",  "browse peer conclusions"),
     ]
 
     option_rows = [
