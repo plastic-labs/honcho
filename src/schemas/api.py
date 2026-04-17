@@ -91,10 +91,11 @@ _SanitizedMetadata = Annotated[dict[str, Any], BeforeValidator(_validate_metadat
 
 
 class WorkspaceBase(BaseModel):
-    pass
+    """Base schema for workspace operations."""
 
 
 class WorkspaceCreate(WorkspaceBase):
+    """Schema for creating a new workspace."""
     name: Annotated[
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
@@ -108,15 +109,20 @@ class WorkspaceCreate(WorkspaceBase):
 
 
 class WorkspaceGet(WorkspaceBase):
+    """Schema for querying workspaces with optional filters."""
+
     filters: dict[str, Any] | None = None
 
 
 class WorkspaceUpdate(WorkspaceBase):
+    """Schema for updating an existing workspace."""
+
     metadata: _SanitizedMetadata | None = None
     configuration: WorkspaceConfiguration | None = None
 
 
 class Workspace(WorkspaceBase):
+    """Schema representing a workspace in API responses."""
     name: str = Field(serialization_alias="id")
     h_metadata: dict[str, Any] = Field(
         default_factory=dict, serialization_alias="metadata"
@@ -135,10 +141,11 @@ class Workspace(WorkspaceBase):
 
 
 class PeerBase(BaseModel):
-    pass
+    """Base schema for peer operations."""
 
 
 class PeerCreate(PeerBase):
+    """Schema for creating a new peer."""
     name: Annotated[
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
@@ -150,15 +157,20 @@ class PeerCreate(PeerBase):
 
 
 class PeerGet(PeerBase):
+    """Schema for querying peers with optional filters."""
+
     filters: dict[str, Any] | None = None
 
 
 class PeerUpdate(PeerBase):
+    """Schema for updating an existing peer."""
+
     metadata: _SanitizedMetadata | None = None
     configuration: dict[str, Any] | None = None
 
 
 class Peer(PeerBase):
+    """Schema representing a peer in API responses."""
     name: str = Field(serialization_alias="id")
     workspace_name: str = Field(serialization_alias="workspace_id")
     created_at: datetime.datetime
@@ -173,6 +185,7 @@ class Peer(PeerBase):
 
 
 class PeerRepresentationGet(BaseModel):
+    """Schema for requesting a peer's representation with optional filters."""
     session_id: str | None = Field(
         None, description="Optional session ID within which to scope the representation"
     )
@@ -209,21 +222,28 @@ class PeerRepresentationGet(BaseModel):
 
 
 class RepresentationResponse(BaseModel):
+    """Schema for the peer representation response."""
+
     representation: str
 
 
 class PeerCardResponse(BaseModel):
+    """Schema for the peer card response."""
+
     peer_card: list[str] | None = Field(
         None, description="The peer card content, or None if not found"
     )
 
 
 class PeerCardSet(BaseModel):
+    """Schema for setting a peer's card content."""
+
     peer_card: list[str] = Field(..., description="The peer card content to set")
 
     @field_validator("peer_card", mode="before")
     @classmethod
     def sanitize_peer_card(cls, v: Any) -> Any:
+        """Strip NUL bytes from peer card strings."""
         if isinstance(v, list):
             return [
                 item.replace("\x00", "") if isinstance(item, str) else item
@@ -238,10 +258,11 @@ class PeerCardSet(BaseModel):
 
 
 class MessageBase(BaseModel):
-    pass
+    """Base schema for message operations."""
 
 
 class MessageCreate(MessageBase):
+    """Schema for creating a new message."""
     content: Annotated[str, Field(min_length=0, max_length=settings.MAX_MESSAGE_SIZE)]
     peer_name: str = Field(alias="peer_id")
     metadata: _SanitizedMetadata | None = None
@@ -253,14 +274,17 @@ class MessageCreate(MessageBase):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
+        """Strip NUL bytes from message content."""
         return v.replace("\x00", "")
 
     @property
     def encoded_message(self) -> list[int]:
+        """Return the tokenized message as a list of token IDs."""
         return self._encoded_message
 
     @model_validator(mode="after")
     def validate_and_set_token_count(self) -> Self:
+        """Tokenize the message content using o200k_base encoding."""
         encoding = tiktoken.get_encoding("o200k_base")
         encoded_message = encoding.encode(self.content)
 
@@ -269,14 +293,19 @@ class MessageCreate(MessageBase):
 
 
 class MessageGet(MessageBase):
+    """Schema for querying messages with optional filters."""
+
     filters: dict[str, Any] | None = None
 
 
 class MessageUpdate(MessageBase):
+    """Schema for updating an existing message."""
+
     metadata: _SanitizedMetadata | None = None
 
 
 class Message(MessageBase):
+    """Schema representing a message in API responses."""
     public_id: str = Field(serialization_alias="id")
     content: str
     peer_name: str = Field(serialization_alias="peer_id")
@@ -316,10 +345,11 @@ class MessageUploadCreate(BaseModel):
 
 
 class SessionBase(BaseModel):
-    pass
+    """Base schema for session operations."""
 
 
 class SessionCreate(SessionBase):
+    """Schema for creating a new session."""
     name: Annotated[
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
@@ -332,15 +362,20 @@ class SessionCreate(SessionBase):
 
 
 class SessionGet(SessionBase):
+    """Schema for querying sessions with optional filters."""
+
     filters: dict[str, Any] | None = None
 
 
 class SessionUpdate(SessionBase):
+    """Schema for updating an existing session."""
+
     metadata: _SanitizedMetadata | None = None
     configuration: SessionConfiguration | None = None
 
 
 class Session(SessionBase):
+    """Schema representing a session in API responses."""
     name: str = Field(serialization_alias="id")
     is_active: bool
     workspace_name: str = Field(serialization_alias="workspace_id")
@@ -356,6 +391,7 @@ class Session(SessionBase):
 
 
 class Summary(BaseModel):
+    """Schema representing a session summary."""
     content: str = Field(description="The summary text")
     message_id: int = Field(
         description="The internal ID of the message that this summary covers up to",
@@ -373,6 +409,7 @@ class Summary(BaseModel):
 
 
 class SessionContext(SessionBase):
+    """Schema representing a session's context with messages, summary, and peer data."""
     name: str = Field(serialization_alias="id")
     messages: list[Message]
     summary: Summary | None = Field(
@@ -408,6 +445,7 @@ class PeerContext(BaseModel):
 
 
 class SessionSummaries(SessionBase):
+    """Schema representing a session's short and long summaries."""
     name: str = Field(serialization_alias="id")
     short_summary: Summary | None = Field(
         default=None, description="The short summary if available"
@@ -492,6 +530,7 @@ class ConclusionCreate(BaseModel):
     @field_validator("content", mode="after")
     @classmethod
     def sanitize_content(cls, v: str) -> str:
+        """Strip NUL bytes from conclusion content."""
         return v.replace("\x00", "")
 
     @model_validator(mode="after")
@@ -526,6 +565,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
+    """Schema for message search query parameters."""
     query: Annotated[str, Field(..., description="Search query")]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
@@ -540,6 +580,7 @@ class MessageSearchOptions(BaseModel):
     @field_validator("query", mode="after")
     @classmethod
     def sanitize_query(cls, v: str) -> str:
+        """Strip NUL bytes from search query."""
         return v.replace("\x00", "")
 
 
@@ -549,6 +590,7 @@ class MessageSearchOptions(BaseModel):
 
 
 class DialecticOptions(BaseModel):
+    """Schema for dialectic chat request parameters."""
     session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"
     )
@@ -568,10 +610,13 @@ class DialecticOptions(BaseModel):
     @field_validator("query", mode="after")
     @classmethod
     def sanitize_query(cls, v: str) -> str:
+        """Strip NUL bytes from dialectic query."""
         return v.replace("\x00", "")
 
 
 class DialecticResponse(BaseModel):
+    """Schema for non-streaming dialectic responses."""
+
     content: str | None
 
 
@@ -642,6 +687,7 @@ class QueueStatus(BaseModel):
 
 
 class ScheduleDreamRequest(BaseModel):
+    """Schema for scheduling a dream consolidation task."""
     observer: str = Field(..., description="Observer peer name")
     observed: str | None = Field(
         None, description="Observed peer name (defaults to observer if not specified)"
@@ -658,15 +704,18 @@ class ScheduleDreamRequest(BaseModel):
 
 
 class WebhookEndpointBase(BaseModel):
-    pass
+    """Base schema for webhook endpoint operations."""
 
 
 class WebhookEndpointCreate(WebhookEndpointBase):
+    """Schema for creating a new webhook endpoint."""
+
     url: str
 
     @field_validator("url")
     @classmethod
     def validate_webhook_url(cls, v: str) -> str:
+        """Validate webhook URL format, scheme, and block private IPs."""
         parsed = urlparse(v)
 
         if not all([parsed.scheme, parsed.netloc]):
@@ -689,6 +738,7 @@ class WebhookEndpointCreate(WebhookEndpointBase):
 
 
 class WebhookEndpoint(WebhookEndpointBase):
+    """Schema representing a webhook endpoint in API responses."""
     id: str
     workspace_name: str | None = Field(serialization_alias="workspace_id")
     url: str

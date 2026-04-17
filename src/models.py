@@ -1,3 +1,5 @@
+"""SQLAlchemy ORM models for the Honcho database."""
+
 import datetime
 from logging import getLogger
 from typing import Any, final
@@ -93,6 +95,8 @@ session_peers_table = Table(
 
 @final
 class Workspace(Base):
+    """SQLAlchemy model representing a workspace (root organizational unit)."""
+
     __tablename__: str = "workspaces"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, unique=True)
@@ -126,6 +130,8 @@ class Workspace(Base):
 
 @final
 class Peer(Base):
+    """SQLAlchemy model representing a peer (user or agent participant)."""
+
     __tablename__: str = "peers"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
@@ -158,11 +164,14 @@ class Peer(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation of the Peer."""
         return f"Peer(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata}, configuration={self.configuration})"
 
 
 @final
 class Session(Base):
+    """SQLAlchemy model representing a conversation session."""
+
     __tablename__: str = "sessions"
     id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT)
@@ -197,11 +206,14 @@ class Session(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation of the Session."""
         return f"Session(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 @final
 class Message(Base):
+    """SQLAlchemy model representing a message within a session."""
+
     __tablename__: str = "messages"
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
@@ -268,11 +280,14 @@ class Message(Base):
 
     @override
     def __repr__(self) -> str:
+        """Return a string representation of the Message."""
         return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
 
 
 @final
 class MessageEmbedding(Base):
+    """SQLAlchemy model for storing message embeddings with vector sync state."""
+
     __tablename__: str = "message_embeddings"
 
     id: Mapped[int] = mapped_column(
@@ -331,6 +346,8 @@ class MessageEmbedding(Base):
 
 @final
 class Collection(Base):
+    """SQLAlchemy model representing a document collection for an observer-observed pair."""
+
     __tablename__: str = "collections"
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
@@ -375,6 +392,8 @@ class Collection(Base):
 
 @final
 class Document(Base):
+    """SQLAlchemy model representing a stored observation document with embeddings."""
+
     __tablename__: str = "documents"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -473,6 +492,8 @@ class Document(Base):
 
 @final
 class QueueItem(Base):
+    """SQLAlchemy model representing a background processing queue item."""
+
     __tablename__: str = "queue"
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
@@ -527,11 +548,14 @@ class QueueItem(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a string representation of the QueueItem."""
         return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed}, workspace_name={self.workspace_name}, message_id={self.message_id})"
 
 
 @final
 class ActiveQueueSession(Base):
+    """SQLAlchemy model tracking actively processed queue work units."""
+
     __tablename__: str = "active_queue_sessions"
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
@@ -545,6 +569,8 @@ class ActiveQueueSession(Base):
 
 @final
 class WebhookEndpoint(Base):
+    """SQLAlchemy model representing a webhook endpoint for event delivery."""
+
     __tablename__: str = "webhook_endpoints"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     workspace_name: Mapped[str] = mapped_column(
@@ -560,11 +586,14 @@ class WebhookEndpoint(Base):
     __table_args__ = (CheckConstraint("length(url) <= 2048", name="url_length"),)
 
     def __repr__(self) -> str:
+        """Return a string representation of the WebhookEndpoint."""
         return f"WebhookEndpoint(id={self.id}, workspace_name={self.workspace_name}, url={self.url})"
 
 
 @final
 class SessionPeer(Base):
+    """SQLAlchemy model representing the many-to-many relationship between sessions and peers."""
+
     __table__: Table = session_peers_table
 
     # Type annotations for the columns

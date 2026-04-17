@@ -1,3 +1,5 @@
+"""Application configuration loaded from environment, .env, and TOML files."""
+
 import logging
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Protocol
@@ -53,6 +55,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
     """Custom settings source for loading from TOML file."""
 
     def __init__(self, settings_cls: type[BaseSettings]) -> None:
+        """Initialize the TOML settings source."""
         super().__init__(settings_cls)
 
     SECTION_MAP: ClassVar[dict[str, str]] = {
@@ -76,6 +79,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
     def get_field_value(
         self, field: FieldInfo, field_name: str
     ) -> tuple[Any, str, bool]:
+        """Retrieve a field value from the TOML config section."""
         # Get the env_prefix from the model config
         prefix = self.settings_cls.model_config.get("env_prefix", "")
         if prefix.endswith("_"):
@@ -95,6 +99,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         return field_value, field_name, False
 
     def __call__(self) -> dict[str, Any]:
+        """Return all TOML values for the current section as a dict."""
         # Get the env_prefix from the model config
         prefix = self.settings_cls.model_config.get("env_prefix", "")
         if prefix.endswith("_"):
@@ -122,6 +127,7 @@ class HonchoSettings(BaseSettings):
         dotenv_settings: DotEnvSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Define settings source precedence: init > env > .env > toml > secrets."""
         # Correct precedence: init > env > .env > toml > secrets > defaults
         return (
             init_settings,
@@ -153,6 +159,8 @@ class BackupLLMSettingsMixin:
 
 
 class DBSettings(HonchoSettings):
+    """Database connection and pool configuration."""
+
     model_config = SettingsConfigDict(env_prefix="DB_", extra="ignore")  # pyright: ignore
 
     CONNECTION_URI: str = (
@@ -175,6 +183,8 @@ class DBSettings(HonchoSettings):
 
 
 class AuthSettings(HonchoSettings):
+    """Authentication settings including JWT configuration."""
+
     model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore
 
     USE_AUTH: bool = False
@@ -182,12 +192,15 @@ class AuthSettings(HonchoSettings):
 
     @model_validator(mode="after")  # type: ignore
     def _require_jwt_secret(self) -> "AuthSettings":
+        """Validate that JWT_SECRET is set when USE_AUTH is enabled."""
         if self.USE_AUTH and not self.JWT_SECRET:
             raise ValueError("JWT_SECRET must be set if USE_AUTH is true")
         return self
 
 
 class SentrySettings(HonchoSettings):
+    """Sentry error tracking and performance monitoring settings."""
+
     model_config = SettingsConfigDict(env_prefix="SENTRY_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
@@ -199,6 +212,8 @@ class SentrySettings(HonchoSettings):
 
 
 class LLMSettings(HonchoSettings):
+    """LLM provider API keys and default generation settings."""
+
     model_config = SettingsConfigDict(env_prefix="LLM_", extra="ignore")  # pyright: ignore
 
     # API Keys for LLM providers
@@ -233,6 +248,8 @@ class LLMSettings(HonchoSettings):
 
 
 class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
+    """Configuration for the background deriver (message processing) agent."""
+
     model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
@@ -278,6 +295,7 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
+        """Ensure batch token limit does not exceed deriver input token limit."""
         if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
                 f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
@@ -286,6 +304,8 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
 
 class PeerCardSettings(HonchoSettings):
+    """Configuration for peer card generation."""
+
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
@@ -350,6 +370,8 @@ class DialecticLevelSettings(BaseModel):
 
 
 class DialecticSettings(HonchoSettings):
+    """Configuration for the dialectic (chat/QA) agent and reasoning levels."""
+
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DIALECTIC_", env_nested_delimiter="__", extra="ignore"
     )
@@ -426,6 +448,8 @@ class DialecticSettings(HonchoSettings):
 
 
 class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
+    """Configuration for session summarization."""
+
     model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
@@ -442,6 +466,8 @@ class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
 
 
 class WebhookSettings(HonchoSettings):
+    """Configuration for webhook event delivery."""
+
     model_config = SettingsConfigDict(env_prefix="WEBHOOK_", extra="ignore")  # pyright: ignore
 
     SECRET: str | None = None  # Must be set if configuring webhooks
@@ -449,6 +475,8 @@ class WebhookSettings(HonchoSettings):
 
 
 class MetricsSettings(HonchoSettings):
+    """Configuration for Prometheus metrics."""
+
     model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
     ENABLED: bool = False
     NAMESPACE: str | None = None
@@ -488,6 +516,8 @@ class TelemetrySettings(HonchoSettings):
 
 
 class CacheSettings(HonchoSettings):
+    """Configuration for Redis cache connection."""
+
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
@@ -529,6 +559,8 @@ class SurprisalSettings(BaseModel):
 
 
 class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
+    """Configuration for the dreamer (memory consolidation) agent."""
+
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DREAM_", env_nested_delimiter="__", extra="ignore"
     )
@@ -610,6 +642,7 @@ class VectorStoreSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
+        """Validate that an API key is set when using Turbopuffer."""
         if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
             raise ValueError(
                 "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'"
@@ -618,6 +651,8 @@ class VectorStoreSettings(HonchoSettings):
 
 
 class AppSettings(HonchoSettings):
+    """Top-level application settings aggregating all nested config sections."""
+
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="", env_nested_delimiter="__", extra="ignore"
@@ -664,6 +699,7 @@ class AppSettings(HonchoSettings):
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
+        """Validate and normalize the log level string."""
         log_level = v.upper()
         if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             raise ValueError(f"Invalid log level: {v}")
