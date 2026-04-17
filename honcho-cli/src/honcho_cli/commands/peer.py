@@ -25,7 +25,13 @@ def _get_peer_id(peer_id: str | None) -> str:
     config = get_resolved_config()
     pid = peer_id or config.peer_id
     if not pid:
-        print_error("NO_PEER", "No peer ID provided. Pass --peer/-p or set HONCHO_PEER_ID.")
+        if not config.workspace_id:
+            print_error(
+                "NO_SCOPE",
+                "No peer or workspace scoped. Pass --peer/-p and --workspace/-w, or set HONCHO_PEER_ID and HONCHO_WORKSPACE_ID.",
+            )
+        else:
+            print_error("NO_PEER", "No peer ID provided. Pass --peer/-p or set HONCHO_PEER_ID.")
         raise typer.Exit(1)
     return validate_resource_id(pid, "peer")
 

@@ -12,10 +12,26 @@ from honcho_cli.output import print_error, print_result, status, use_json
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, get_client, handle_cmd_flags
+from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, search, create, and delete peer conclusions (Honcho's memory atoms).")
 add_common_options(app)
+
+
+def _require_observer(observer: str | None) -> str:
+    """Resolve observer peer ID; emit combined error if peer+workspace both missing."""
+    config = get_resolved_config()
+    obs = observer or config.peer_id
+    if not obs:
+        if not config.workspace_id:
+            print_error(
+                "NO_SCOPE",
+                "No peer or workspace scoped. Pass --peer/-p and --workspace/-w, or set HONCHO_PEER_ID and HONCHO_WORKSPACE_ID.",
+            )
+        else:
+            print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
+        raise typer.Exit(1)
+    return obs
 
 
 @app.command("list")
@@ -30,13 +46,8 @@ def list_conclusions(
     """List conclusions."""
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    observer = _require_observer(observer)
     client, config = get_client()
-
-    if not observer:
-        observer = config.peer_id
-    if not observer:
-        print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
-        raise typer.Exit(1)
 
     p = client.peer(observer)
 
@@ -77,13 +88,8 @@ def search(
     """Semantic search over conclusions."""
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    observer = _require_observer(observer)
     client, config = get_client()
-
-    if not observer:
-        observer = config.peer_id
-    if not observer:
-        print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
-        raise typer.Exit(1)
 
     p = client.peer(observer)
 
@@ -124,13 +130,8 @@ def create(
     """Create a conclusion."""
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer)
+    observer = _require_observer(observer)
     client, config = get_client()
-
-    if not observer:
-        observer = config.peer_id
-    if not observer:
-        print_error("NO_PEER", "Peer required. Pass -p globally: honcho -p <peer> conclusion <cmd>")
-        raise typer.Exit(1)
 
     # If content looks like JSON, try to parse it
     try:

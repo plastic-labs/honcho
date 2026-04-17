@@ -183,6 +183,7 @@ docs/node_modules
 timing_logs.csv
 
 config.json
+config.toml
 .aider*
 
 CRUSH.md

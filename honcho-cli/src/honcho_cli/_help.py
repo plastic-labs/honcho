@@ -68,26 +68,26 @@ def print_welcome(console: Console) -> None:
     start_rows = [
         ("honcho init",   "configure API key and server URL"),
         ("honcho doctor", "verify connection and workspace health"),
-        ("", ""),
-        ("[dim]pattern[/dim]", "[dim]honcho [-w workspace] [-p peer] [-s session] <command>[/dim]"),
-        ("[dim]example[/dim]", "[dim]honcho -p alice peer chat \"what does alice prefer?\"[/dim]"),
-    ]
-    memory_rows = [
-        ("honcho peer chat \"...\"",          "query the dialectic about a peer"),
-        ("honcho peer inspect",               "review what honcho knows about a peer"),
-        ("honcho peer representation",        "get the full peer representation"),
-        ("honcho -p <peer> conclusion list",  "browse peer memory atoms"),
     ]
     cmd_rows = [
-        ("peer",       "chat · inspect · card · search · representation"),
-        ("",           "list · create · get-metadata · set-metadata"),
-        ("session",    "list · inspect · context · summaries · peers"),
-        ("",           "add-peers · remove-peers · search · representation"),
-        ("",           "create · delete · get-metadata · set-metadata"),
-        ("message",    "list · get · create"),
-        ("conclusion", "list · search · create · delete"),
-        ("workspace",  "list · inspect · create · delete · search · queue-status"),
+        ("[dim]pattern[/dim]", "[dim]honcho [-w workspace] [-p peer] [-s session] <command>[/dim]"),
+        ("[dim]example[/dim]", "[dim]honcho -p alice peer chat \"what does alice prefer?\"[/dim]"),
+        ("", ""),
+        ("workspace",  "list · create · search · delete · inspect · queue-status"),
+        ("peer",       "list · create · search · inspect · card · chat"),
+        ("",           "get-metadata · set-metadata · representation"),
+        ("session",    "list · create · search · delete · inspect · add-peers"),
+        ("",           "context · get-metadata · set-metadata · peers"),
+        ("",           "remove-peers · representation · summaries"),
+        ("message",    "list · create · get"),
+        ("conclusion", "list · create · search · delete"),
         ("config",     "inspect current configuration"),
+    ]
+    memory_rows = [
+        ("honcho -w <workspace> -p <peer> peer chat \"...\"",   "query the dialectic about a peer"),
+        ("honcho -w <workspace> -p <peer> peer inspect",        "review what honcho knows about a peer"),
+        ("honcho -w <workspace> -p <peer> peer representation", "get the full peer representation"),
+        ("honcho -w <workspace> -p <peer> conclusion list",     "browse peer memory atoms"),
     ]
 
     option_rows = [
@@ -99,8 +99,8 @@ def print_welcome(console: Console) -> None:
     ]
 
     console.print(_welcome_panel("getting started", start_rows))
-    console.print(_welcome_panel("memory", memory_rows))
     console.print(_welcome_panel("commands", cmd_rows))
+    console.print(_welcome_panel("memory", memory_rows))
     console.print(_welcome_panel("options", option_rows))
     console.print()
 
