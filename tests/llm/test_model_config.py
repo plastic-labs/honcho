@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -351,7 +352,17 @@ def test_env_template_uses_nested_model_config_keys() -> None:
     assert "DREAM_DEDUCTION_MODEL=" not in env_template
 
 
-def test_partial_env_override_of_transport_drops_default_thinking_params() -> None:
+def _clear_deriver_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip any DERIVER_MODEL_CONFIG__* env that would interfere with
+    direct-construction tests."""
+    for name in list(os.environ):
+        if name.startswith("DERIVER_MODEL_CONFIG__") or name == "DERIVER_MODEL_CONFIG":
+            monkeypatch.delenv(name, raising=False)
+
+
+def test_partial_env_override_of_transport_drops_default_thinking_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A partial env override of transport must not leak the default's thinking
     params into a transport that rejects them.
 
@@ -363,6 +374,7 @@ def test_partial_env_override_of_transport_drops_default_thinking_params() -> No
     """
     from src.config import DeriverSettings
 
+    _clear_deriver_env(monkeypatch)
     settings = DeriverSettings(
         MODEL_CONFIG={"transport": "openai", "model": "gpt-4.1-mini"},
     )
@@ -373,11 +385,14 @@ def test_partial_env_override_of_transport_drops_default_thinking_params() -> No
     assert settings.MODEL_CONFIG.thinking_effort is None
 
 
-def test_partial_env_override_same_transport_keeps_default_thinking_params() -> None:
+def test_partial_env_override_same_transport_keeps_default_thinking_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """When env preserves the default transport, default thinking params still
     apply — we only strip on actual transport change."""
     from src.config import DeriverSettings
 
+    _clear_deriver_env(monkeypatch)
     settings = DeriverSettings(
         MODEL_CONFIG={"model": "gemini-2.5-pro"},
     )
@@ -387,10 +402,13 @@ def test_partial_env_override_same_transport_keeps_default_thinking_params() -> 
     assert settings.MODEL_CONFIG.thinking_budget_tokens == 1024
 
 
-def test_explicit_thinking_effort_survives_transport_override() -> None:
+def test_explicit_thinking_effort_survives_transport_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """User-set thinking params in the override are always preserved."""
     from src.config import DeriverSettings
 
+    _clear_deriver_env(monkeypatch)
     settings = DeriverSettings(
         MODEL_CONFIG={
             "transport": "openai",
@@ -402,3 +420,33 @@ def test_explicit_thinking_effort_survives_transport_override() -> None:
     assert settings.MODEL_CONFIG.transport == "openai"
     assert settings.MODEL_CONFIG.thinking_effort == "high"
     assert settings.MODEL_CONFIG.thinking_budget_tokens is None
+
+
+def test_dialectic_level_transport_override_drops_default_thinking_params() -> None:
+    """Same leak existed in DialecticSettings._merge_level_defaults.
+    Regression: minimal level default is gemini w/ thinking_budget_tokens=0;
+    env flips it to openai, and the 0 used to leak through, tripping the
+    OpenAI backend's thinking-param rejection at call time.
+
+    Exercises the before-validator directly to avoid DialecticSettings'
+    "all 5 levels required" constraint.
+    """
+    from src.config import DialecticSettings
+
+    data: dict[str, object] = {
+        "LEVELS": {
+            "minimal": {
+                "MODEL_CONFIG": {
+                    "transport": "openai",
+                    "model": "gpt-4.1-mini",
+                }
+            }
+        }
+    }
+    merged = DialecticSettings._merge_level_defaults(data)  # pyright: ignore[reportPrivateUsage]
+    levels = merged["LEVELS"]  # type: ignore[index]
+    minimal_mc = levels["minimal"]["MODEL_CONFIG"]
+    assert minimal_mc["transport"] == "openai"
+    assert minimal_mc["model"] == "gpt-4.1-mini"
+    assert "thinking_budget_tokens" not in minimal_mc
+    assert "thinking_effort" not in minimal_mc

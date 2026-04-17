@@ -900,10 +900,24 @@ class DialecticSettings(HonchoSettings):
                     if mc_key in level_override and isinstance(
                         level_override[mc_key], dict
                     ):
-                        base_mc: dict[str, Any] = (
+                        base_mc: dict[str, Any] = dict(
                             base.get("MODEL_CONFIG") or base.get("model_config") or {}
                         )
-                        level_override[mc_key] = {**base_mc, **level_override[mc_key]}
+                        override_mc = cast(
+                            dict[str, Any], level_override[mc_key]
+                        )
+                        override_lower = {k.lower(): v for k, v in override_mc.items()}
+                        base_lower = {k.lower(): v for k, v in base_mc.items()}
+                        override_transport = override_lower.get("transport")
+                        base_transport = base_lower.get("transport")
+                        if (
+                            override_transport is not None
+                            and override_transport != base_transport
+                        ):
+                            for k in list(base_mc.keys()):
+                                if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
+                                    del base_mc[k]
+                        level_override[mc_key] = {**base_mc, **override_mc}
                 levels_raw[level_name] = {**base, **level_override}
         return data  # pyright: ignore[reportUnknownVariableType]
 
