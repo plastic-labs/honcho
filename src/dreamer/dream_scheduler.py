@@ -166,7 +166,10 @@ class DreamScheduler:
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
-        # Find the most recent session and get current document count
+        # Find the most recent explicit-level session and get current document count.
+        # Explicit-only, matching the count query below and check_and_schedule_dream —
+        # if the session is picked from a derived doc while the count filters to
+        # explicit, the two can disagree on which document set the dream is over.
         async with tracked_db("dream_session_lookup") as db:
             stmt = (
                 select(models.Document.session_name)
@@ -174,6 +177,7 @@ class DreamScheduler:
                     models.Document.workspace_name == workspace_name,
                     models.Document.observer == observer,
                     models.Document.observed == observed,
+                    models.Document.level == "explicit",
                 )
                 .order_by(models.Document.created_at.desc())
                 .limit(1)

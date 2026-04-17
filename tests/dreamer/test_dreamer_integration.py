@@ -18,8 +18,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.deriver.enqueue import enqueue_dream
+from src.dreamer.dream_scheduler import DreamScheduler, set_dream_scheduler
 from src.dreamer.orchestrator import DreamResult, process_dream
-from src.schemas import DreamType
+from src.schemas import (
+    DreamType,
+    ResolvedConfiguration,
+    ResolvedDreamConfiguration,
+    ResolvedPeerCardConfiguration,
+    ResolvedReasoningConfiguration,
+    ResolvedSummaryConfiguration,
+)
 from src.utils.queue_payload import DreamPayload
 
 
@@ -272,3 +280,160 @@ class TestEnqueueDreamPreservesSiblings:
             "the enqueue write — top-level JSONB || would drop it without the "
             "read-modify-write in enqueue_dream."
         )
+
+
+class TestExecuteDreamSessionFilter:
+    """Regression test for the session lookup asymmetry in execute_dream.
+
+    The baseline count query in execute_dream filters to `level == "explicit"`
+    (symmetric with check_and_schedule_dream). The session_name lookup must
+    filter the same way — otherwise the session is picked from a derived doc
+    and can disagree with the document set the count is measuring, producing
+    a dream scoped to a session that wasn't even in the triggering document
+    cohort.
+    """
+
+    @pytest.mark.asyncio
+    async def test_session_name_picked_from_latest_explicit_doc(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Latest explicit session wins even when a newer deductive doc exists.
+
+        Seeds:
+        - Session A (older): one explicit-level Document
+        - Session B (newer): one deductive-level Document (dreamer output)
+
+        Without the explicit filter on the session lookup, the newer deductive
+        doc's session_name (B) would be returned. With the filter, A is
+        returned — matching the explicit-only count query immediately below.
+        """
+        workspace, peer = sample_data
+
+        # Pre-create the collection so crud.get_collection inside enqueue_dream
+        # finds something (process_dream's baseline write is not exercised here;
+        # we're only asserting the kwargs passed to enqueue_dream).
+        collection = models.Collection(
+            observer=peer.name,
+            observed=peer.name,
+            workspace_name=workspace.name,
+            internal_metadata={},
+        )
+        db_session.add(collection)
+
+        # Two sessions: A (older), B (newer). Insert A first so its created_at
+        # is strictly earlier than B's.
+        session_a = models.Session(name="session_a", workspace_name=workspace.name)
+        db_session.add(session_a)
+        await db_session.commit()
+        await db_session.refresh(session_a)
+
+        session_b = models.Session(name="session_b", workspace_name=workspace.name)
+        db_session.add(session_b)
+        await db_session.commit()
+        await db_session.refresh(session_b)
+
+        # Older explicit doc in session A.
+        explicit_doc = models.Document(
+            content="explicit observation",
+            level="explicit",
+            workspace_name=workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            session_name=session_a.name,
+        )
+        db_session.add(explicit_doc)
+        await db_session.commit()
+
+        # Newer deductive doc in session B. Without the explicit filter on the
+        # session lookup, this doc's session_name (B) would win on ORDER BY
+        # created_at DESC — even though the count query ignores it.
+        deductive_doc = models.Document(
+            content="deductive observation",
+            level="deductive",
+            workspace_name=workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            session_name=session_b.name,
+        )
+        db_session.add(deductive_doc)
+        await db_session.commit()
+
+        # Capture kwargs passed to enqueue_dream (we don't want to actually
+        # run it — just verify which session_name execute_dream picks).
+        captured_kwargs: dict[str, Any] = {}
+
+        async def capture_enqueue_dream(
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            dream_type: Any,
+            document_count: int,
+            session_name: str,
+        ) -> None:
+            captured_kwargs.update(
+                {
+                    "workspace_name": workspace_name,
+                    "observer": observer,
+                    "observed": observed,
+                    "dream_type": dream_type,
+                    "document_count": document_count,
+                    "session_name": session_name,
+                }
+            )
+
+        # Fresh scheduler instance; ENABLED patched so execute_dream runs.
+        DreamScheduler.reset_singleton()
+        scheduler = DreamScheduler()
+        set_dream_scheduler(scheduler)
+
+        try:
+            with (
+                patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED", True),
+                patch(
+                    "src.deriver.enqueue.enqueue_dream",
+                    side_effect=capture_enqueue_dream,
+                ),
+                patch(
+                    "src.utils.config_helpers.get_configuration",
+                    return_value=ResolvedConfiguration(
+                        reasoning=ResolvedReasoningConfiguration(enabled=True),
+                        peer_card=ResolvedPeerCardConfiguration(use=True, create=True),
+                        summary=ResolvedSummaryConfiguration(
+                            enabled=True,
+                            messages_per_short_summary=10,
+                            messages_per_long_summary=20,
+                        ),
+                        dream=ResolvedDreamConfiguration(enabled=True),
+                    ),
+                ),
+            ):
+                await scheduler.execute_dream(
+                    workspace.name,
+                    DreamType.OMNI,
+                    observer=peer.name,
+                    observed=peer.name,
+                )
+        finally:
+            DreamScheduler.reset_singleton()
+
+        assert captured_kwargs, (
+            "enqueue_dream must be called — execute_dream returned early, "
+            "likely because the session lookup returned no rows (check that "
+            "the explicit filter matches at least one doc in the fixture)."
+        )
+        assert captured_kwargs["session_name"] == session_a.name, (
+            f"Session lookup must filter to level=='explicit' to match the "
+            f"baseline count query. Got session_name="
+            f"{captured_kwargs['session_name']!r}, expected {session_a.name!r} "
+            f"(the older session with the only explicit doc). Picking "
+            f"{session_b.name!r} means the session came from a derived doc "
+            f"that the count query ignores — the dream would be scoped to a "
+            f"session that wasn't in the triggering cohort."
+        )
+        # Sanity: the count must reflect explicit-only too (baseline symmetry).
+        assert (
+            captured_kwargs["document_count"] == 1
+        ), "document_count must reflect explicit-only (1), not total (2)."

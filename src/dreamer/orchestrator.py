@@ -330,6 +330,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     # top-level JSONB || merge, so passing {"dream": {"last_dream_at": ...}}
                     # alone would replace the whole "dream" subkey and drop
                     # last_dream_document_count (written by enqueue_dream).
+                    # Row-lock the collection during read-modify-write to prevent concurrent enqueue/completion from clobbering each other's dream metadata writes.
                     now_iso = datetime.now(timezone.utc).isoformat()
                     async with tracked_db("dream.last_dream_at_write") as db:
                         collection = await crud.get_collection(
@@ -337,6 +338,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             workspace_name,
                             observer=payload.observer,
                             observed=payload.observed,
+                            with_for_update=True,
                         )
                         dream_meta = dict(collection.internal_metadata.get("dream", {}))
                         dream_meta["last_dream_at"] = now_iso

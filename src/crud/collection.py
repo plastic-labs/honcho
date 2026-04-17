@@ -81,6 +81,7 @@ async def get_collection(
     *,
     observer: str,
     observed: str,
+    with_for_update: bool = False,
 ) -> models.Collection:
     """
     Get a collection by observer/observed for a workspace.
@@ -90,6 +91,11 @@ async def get_collection(
         workspace_name: Name of the workspace
         observer: Name of the observing peer (owns the collection)
         observed: Name of the observed peer
+        with_for_update: If True, acquire a row-level lock (SELECT ... FOR UPDATE)
+            on the collection. Bypasses the cache so the lock is actually held
+            by the current transaction. Callers using this flag must wrap the
+            read and subsequent write in the same transaction (the lock is
+            released on commit/rollback).
 
     Returns:
         The collection if found
@@ -97,6 +103,22 @@ async def get_collection(
     Raises:
         ResourceNotFoundException: If the collection does not exist
     """
+    if with_for_update:
+        # Row-lock path: go direct to DB (skip cache) so the FOR UPDATE lock
+        # is actually acquired on the row in the current transaction. The
+        # cached dict path would return without issuing SELECT ... FOR UPDATE.
+        stmt = (
+            select(models.Collection)
+            .where(models.Collection.workspace_name == workspace_name)
+            .where(models.Collection.observer == observer)
+            .where(models.Collection.observed == observed)
+            .with_for_update()
+        )
+        collection = await db.scalar(stmt)
+        if collection is None:
+            raise ResourceNotFoundException("Collection not found")
+        return collection
+
     data = await _fetch_collection(db, workspace_name, observer, observed)
     if data is None:
         raise ResourceNotFoundException("Collection not found")

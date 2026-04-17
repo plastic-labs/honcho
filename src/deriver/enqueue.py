@@ -521,11 +521,13 @@ async def enqueue_dream(
             # top-level JSONB || merge, so passing {"dream": {"last_dream_document_count": ...}}
             # alone would replace the whole "dream" subkey and drop sibling
             # last_dream_at (written by process_dream on the prior completion).
+            # Row-lock the collection during read-modify-write to prevent concurrent enqueue/completion from clobbering each other's dream metadata writes.
             collection = await crud.get_collection(
                 db_session,
                 workspace_name,
                 observer=observer,
                 observed=observed,
+                with_for_update=True,
             )
             dream_meta = dict(collection.internal_metadata.get("dream", {}))
             dream_meta["last_dream_document_count"] = document_count
