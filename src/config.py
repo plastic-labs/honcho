@@ -82,9 +82,14 @@ def _normalize_model_transport(data: Any) -> Any:
     return update
 
 
-def _validate_anthropic_thinking_minimum(
+def _validate_thinking_constraints(
     transport: ModelTransport, thinking_budget_tokens: int | None
 ) -> None:
+    """Enforce transport-specific thinking_budget_tokens rules.
+
+    Anthropic requires a minimum of 1024 tokens when thinking is enabled.
+    Gemini/OpenAI accept any non-negative value (including 0 to disable).
+    """
     if (
         transport == "anthropic"
         and thinking_budget_tokens is not None
@@ -128,7 +133,7 @@ class FallbackModelSettings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "FallbackModelSettings":
-        _validate_anthropic_thinking_minimum(
+        _validate_thinking_constraints(
             self.transport, self.thinking_budget_tokens
         )
         return self
@@ -172,7 +177,7 @@ class ConfiguredModelSettings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
-        _validate_anthropic_thinking_minimum(
+        _validate_thinking_constraints(
             self.transport, self.thinking_budget_tokens
         )
         return self
@@ -248,8 +253,8 @@ class ModelConfig(BaseModel):
         return self.thinking_effort
 
     @model_validator(mode="after")
-    def _validate_anthropic_thinking_minimum(self) -> "ModelConfig":
-        _validate_anthropic_thinking_minimum(
+    def _validate_thinking_constraints_on_self(self) -> "ModelConfig":
+        _validate_thinking_constraints(
             self.transport, self.thinking_budget_tokens
         )
         return self
