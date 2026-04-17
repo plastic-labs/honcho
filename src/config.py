@@ -438,6 +438,11 @@ def resolve_embedding_model_config(
     )
 
 
+_TRANSPORT_SPECIFIC_THINKING_KEYS: frozenset[str] = frozenset(
+    {"thinking_budget_tokens", "thinking_effort"}
+)
+
+
 def _fill_defaults_for_nested_field(
     data: dict[str, Any],
     field_name: str,
@@ -451,6 +456,15 @@ def _fill_defaults_for_nested_field(
     that partial dict would fail validation because required keys like
     ``model`` and ``transport`` are missing.  This helper fills them from
     the field's ``default_factory`` so partial overrides work.
+
+    If the env override switches ``transport`` to a value that differs from
+    the default's, transport-specific thinking params
+    (``thinking_budget_tokens``, ``thinking_effort``) are dropped from the
+    default before merging.  This prevents e.g. a Gemini default's
+    ``thinking_budget_tokens=1024`` from leaking into an OpenAI override,
+    which would then be rejected by the OpenAI backend (OpenAI uses
+    ``reasoning.effort``, not a token budget). Explicit thinking params in
+    the env override are preserved.
     """
     raw: Any = data.get(field_name) or data.get(field_name.lower())
     if not isinstance(raw, dict):
@@ -462,7 +476,17 @@ def _fill_defaults_for_nested_field(
     else:
         default_dict = dict(default_obj)
 
-    merged: dict[str, Any] = {**default_dict, **cast(dict[str, Any], raw)}
+    raw_dict = cast(dict[str, Any], raw)
+    raw_lower = {k.lower(): v for k, v in raw_dict.items()}
+    default_lower = {k.lower(): v for k, v in default_dict.items()}
+    override_transport = raw_lower.get("transport")
+    default_transport = default_lower.get("transport")
+    if override_transport is not None and override_transport != default_transport:
+        for k in list(default_dict.keys()):
+            if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
+                del default_dict[k]
+
+    merged: dict[str, Any] = {**default_dict, **raw_dict}
     # Preserve the key casing used in data
     key = field_name if field_name in data else field_name.lower()
     data[key] = merged

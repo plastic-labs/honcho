@@ -349,3 +349,56 @@ def test_env_template_uses_nested_model_config_keys() -> None:
     assert "DIALECTIC_LEVELS__minimal__PROVIDER=" not in env_template
     assert "DREAM_PROVIDER=" not in env_template
     assert "DREAM_DEDUCTION_MODEL=" not in env_template
+
+
+def test_partial_env_override_of_transport_drops_default_thinking_params() -> None:
+    """A partial env override of transport must not leak the default's thinking
+    params into a transport that rejects them.
+
+    Regression: setting DERIVER_MODEL_CONFIG__TRANSPORT=openai +
+    DERIVER_MODEL_CONFIG__MODEL=gpt-4.1-mini (without clearing the default
+    thinking_budget_tokens=1024 carried over from the gemini default) used to
+    produce a merged ConfiguredModelSettings with thinking_budget_tokens=1024,
+    which the OpenAI backend then rejected at call time.
+    """
+    from src.config import DeriverSettings
+
+    settings = DeriverSettings(
+        MODEL_CONFIG={"transport": "openai", "model": "gpt-4.1-mini"},
+    )
+
+    assert settings.MODEL_CONFIG.transport == "openai"
+    assert settings.MODEL_CONFIG.model == "gpt-4.1-mini"
+    assert settings.MODEL_CONFIG.thinking_budget_tokens is None
+    assert settings.MODEL_CONFIG.thinking_effort is None
+
+
+def test_partial_env_override_same_transport_keeps_default_thinking_params() -> None:
+    """When env preserves the default transport, default thinking params still
+    apply — we only strip on actual transport change."""
+    from src.config import DeriverSettings
+
+    settings = DeriverSettings(
+        MODEL_CONFIG={"model": "gemini-2.5-pro"},
+    )
+
+    assert settings.MODEL_CONFIG.transport == "gemini"
+    assert settings.MODEL_CONFIG.model == "gemini-2.5-pro"
+    assert settings.MODEL_CONFIG.thinking_budget_tokens == 1024
+
+
+def test_explicit_thinking_effort_survives_transport_override() -> None:
+    """User-set thinking params in the override are always preserved."""
+    from src.config import DeriverSettings
+
+    settings = DeriverSettings(
+        MODEL_CONFIG={
+            "transport": "openai",
+            "model": "gpt-5",
+            "thinking_effort": "high",
+        },
+    )
+
+    assert settings.MODEL_CONFIG.transport == "openai"
+    assert settings.MODEL_CONFIG.thinking_effort == "high"
+    assert settings.MODEL_CONFIG.thinking_budget_tokens is None
