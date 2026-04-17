@@ -326,14 +326,26 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
 
                     # Write last_dream_at at completion (not enqueue) so duplicate
                     # enqueues can't reset the 8h guard. Lenient: any non-null result.
+                    # Read-modify-write: update_collection_internal_metadata uses a
+                    # top-level JSONB || merge, so passing {"dream": {"last_dream_at": ...}}
+                    # alone would replace the whole "dream" subkey and drop
+                    # last_dream_document_count (written by enqueue_dream).
                     now_iso = datetime.now(timezone.utc).isoformat()
                     async with tracked_db("dream.last_dream_at_write") as db:
+                        collection = await crud.get_collection(
+                            db,
+                            workspace_name,
+                            observer=payload.observer,
+                            observed=payload.observed,
+                        )
+                        dream_meta = dict(collection.internal_metadata.get("dream", {}))
+                        dream_meta["last_dream_at"] = now_iso
                         await crud.update_collection_internal_metadata(
                             db,
                             workspace_name,
                             payload.observer,
                             payload.observed,
-                            update_data={"dream": {"last_dream_at": now_iso}},
+                            update_data={"dream": dream_meta},
                         )
 
     except Exception as e:
