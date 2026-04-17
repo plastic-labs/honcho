@@ -218,6 +218,7 @@ If you update it, send the full deduplicated list and remove stale entries.
             max_tool_iterations=self.get_max_iterations(),
             messages=messages,
             track_name=f"Dreamer/{self.name}",
+            trace_name=f"dreamer_{self.name}",
             iteration_callback=iteration_callback,
         )
 
@@ -312,7 +313,7 @@ class DeductionSpecialist(BaseSpecialist):
         return 8192
 
     def get_max_iterations(self) -> int:
-        return 12
+        return 6
 
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
@@ -324,21 +325,42 @@ class DeductionSpecialist(BaseSpecialist):
 ## PEER CARD (REQUIRED)
 
 The peer card is a summary of stable biographical facts. You MUST update it when you learn:
-- Name, age, location, occupation
+- Name, email, location, occupation/role
 - Family members and relationships
 - Standing instructions ("call me X", "don't mention Y")
 - Core preferences and traits
 
+Priority order for peer-card entries:
+1. Canonical identity facts explicitly stated by the user (name, email, title, location)
+2. Standing instructions and routing preferences
+3. Long-lived preferences and personality traits
+4. Stable role/occupation facts
+5. Only then, a few high-value project/work context facts if they materially help identification
+
+Avoid low-value or generic entries such as:
+- "Works on projects"
+- "Evaluates systems"
+- "Capable of reviewing conversation history"
+- temporary tasks, one-off questions, or broad capability statements
+
 Never add temporary event summaries, one-off conclusions, reasoning traces, or contradiction notes.
 
 Format entries as:
-- Plain facts: "Name: Alice", "Works at Google", "Lives in NYC"
+- Plain facts: "Name: Alice", "Email: alice@example.com", "Lives in NYC", "Role: Software developer"
 - `INSTRUCTION: ...` for standing instructions
 - `PREFERENCE: ...` for preferences
 - `TRAIT: ...` for personality traits
 
-Call `update_peer_card` with the complete updated list when you have new biographical info.
-Keep it concise (max 40 entries), deduplicated, and current."""
+Good examples:
+- "Name: Aubrey Freeman III"
+- "Email: aubrey@freeman-wisco.com"
+- "Location: Wisconsin"
+- "INSTRUCTION: Gerard is the single front door"
+- "PREFERENCE: Route specialists behind the scenes"
+
+Call `update_peer_card` with the complete updated list in the `content` field when you have new biographical info.
+Do not use argument names like `entries` or `peer_card_updates`.
+Keep it concise (max 12 entries unless there is a strong reason for more), deduplicated, and current."""
 
         return f"""You are a deductive reasoning agent analyzing observations about {observed}.
 
@@ -346,14 +368,28 @@ Keep it concise (max 40 entries), deduplicated, and current."""
 
 Create deductive observations by finding logical implications in what's already known. Think like a detective connecting evidence.
 
+## EXECUTION DISCIPLINE
+
+- Call `extract_preferences` FIRST to pull standing instructions and stable preferences from conversation history.
+- After that, do at most 2 additional discovery calls (`get_recent_observations`, `search_memory`, or `search_messages`).
+- Stop discovery after at most 3 tool calls total before acting.
+- Once you have enough evidence, you MUST do one of these before the loop ends:
+  1. Call `update_peer_card` with the complete updated card in the `content` argument, or
+  2. Call `finish_consolidation` with a short reason that no durable card update is warranted.
+- Do not keep searching once you already have name/location/preferences/standing-instruction evidence.
+- If you find durable profile facts, prefer updating the peer card over creating more search queries.
+
 ## PHASE 1: DISCOVERY
 
-Explore what's actually in memory. Use these tools freely:
-- `get_recent_observations` - See what's been learned recently
-- `search_memory` - Search for specific topics
-- `search_messages` - See actual conversation content
-
-Spend a few tool calls understanding the landscape before creating anything.
+Use a short discovery pass only:
+- `extract_preferences` - first call, for preferences and standing instructions
+- `get_recent_observations` - recent facts
+- `search_memory` - use targeted identity/routing queries such as:
+  - `Aubrey Freeman III name email`
+  - `aubrey@freeman-wisco.com Wisconsin`
+  - `Gerard single front door specialists behind the scenes`
+  - `software developer role occupation`
+- `search_messages` - one targeted follow-up if needed
 
 ## PHASE 2: ACTION
 
@@ -394,7 +430,8 @@ When statements can't both be true (not just updates), flag them:
 2. Create observations based on what you ACTUALLY FIND, not what you expect
 3. Always include source_ids linking to the observations you're synthesizing
 4. Delete outdated observations - don't leave duplicates
-5. Quality over quantity - fewer good deductions beat many weak ones"""
+5. Quality over quantity - fewer good deductions beat many weak ones
+6. Before your final step, either call `update_peer_card` or call `finish_consolidation` explicitly"""
 
     def build_user_prompt(
         self,
@@ -405,22 +442,23 @@ When statements can't both be true (not just updates), flag them:
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
-            return f"""{peer_card_context}Start by exploring recent observations and messages. These topics may be worth investigating:
+            return f"""{peer_card_context}Start with `extract_preferences`, then do a very short discovery pass using at most two of `get_recent_observations`, `search_memory`, or `search_messages`.
+
+These topics may be worth investigating:
 
 {hints_str}
 
-But follow the evidence - if you find something more interesting, pursue that instead.
+Once you have enough evidence, stop searching and either update the peer card or finish consolidation explicitly."""
 
-Begin with `get_recent_observations` to see what's there."""
-
-        return f"""{peer_card_context}Explore the observation space and create deductive observations.
-
-Start with `get_recent_observations` to see what's been learned recently, then investigate whatever seems most promising.
+        return f"""{peer_card_context}Start with `extract_preferences`, then do a very short discovery pass using at most two of `get_recent_observations`, `search_memory`, or `search_messages`.
 
 Look for:
 1. Knowledge updates (same fact, different values over time)
 2. Logical implications that haven't been made explicit
 3. Contradictions that need flagging
+4. Canonical identity/routing facts first: exact name, email, location, Gerard/front-door preference
+
+Once you have enough evidence, stop searching and either update the peer card or finish consolidation explicitly.
 
 Go."""
 
@@ -455,7 +493,7 @@ class InductionSpecialist(BaseSpecialist):
         return 8192
 
     def get_max_iterations(self) -> int:
-        return 10
+        return 6
 
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
@@ -466,14 +504,24 @@ class InductionSpecialist(BaseSpecialist):
 
 ## PEER CARD (REQUIRED)
 
-After identifying patterns, only update the peer card for durable profile-level traits/preferences:
-- `TRAIT: Analytical thinker`
-- `TRAIT: Tends to reschedule when stressed`
-- `PREFERENCE: Prefers detailed explanations`
+After identifying patterns, only update the peer card for durable profile-level traits/preferences and missing canonical identity facts.
 
-Do NOT add temporary patterns, episode-specific conclusions, or reasoning summaries.
-Call `update_peer_card` with the complete deduplicated list only when a durable profile update is warranted.
-Keep it concise (max 40 entries)."""
+Priority order for peer-card entries:
+1. Missing canonical identity or routing facts the deduction phase failed to add
+2. Standing instructions and strong routing preferences
+3. Durable long-lived preferences and personality traits
+4. Exclude generic project chatter unless it is essential to identifying the user
+
+Prefer entries like:
+- `INSTRUCTION: Gerard is the single front door`
+- `PREFERENCE: Route specialists behind the scenes`
+- `TRAIT: Methodical and process-oriented`
+- `TRAIT: Detail-conscious in verification and debugging`
+
+Do NOT add temporary patterns, episode-specific conclusions, reasoning summaries, or generic capability statements.
+Call `update_peer_card` with the complete deduplicated list in the `content` field only when a durable profile update is warranted.
+Do not use argument names like `entries` or `peer_card_updates`.
+Keep it concise (max 12 entries unless there is a strong reason for more)."""
 
         return f"""You are an inductive reasoning agent identifying patterns about {observed}.
 
@@ -481,18 +529,30 @@ Keep it concise (max 40 entries)."""
 
 Create inductive observations by finding patterns across multiple observations. Think like a psychologist identifying behavioral tendencies.
 
+## EXECUTION DISCIPLINE
+
+- Call `extract_preferences` FIRST to pull standing instructions and stable preferences from conversation history.
+- After that, do at most 2 additional discovery calls (`get_recent_observations`, `search_memory`, or `search_messages`).
+- Stop discovery after at most 3 tool calls total before acting.
+- Once you have enough evidence, you MUST do one of these before the loop ends:
+  1. Call `update_peer_card` with the complete updated card in the `content` argument, or
+  2. Call `finish_consolidation` with a short reason that no durable card update is warranted.
+- Do not keep searching once you already have enough evidence for durable traits/preferences.
+- If you identify a durable preference or trait, prefer updating the peer card over more search queries.
+
 ## PHASE 1: DISCOVERY
 
-Explore broadly to find patterns. Use these tools:
-- `get_recent_observations` - Recent learnings
-- `search_memory` - Topic-specific search
-- `search_messages` - Actual conversation content
+Use a short discovery pass only:
+- `extract_preferences` - first call, for preferences and standing instructions
+- `get_recent_observations` - recent learnings
+- `search_memory` - one targeted follow-up if needed
+- `search_messages` - one targeted follow-up if needed
 
 Look at BOTH explicit observations AND deductive ones. Patterns often emerge from synthesizing across both levels.
 
 ## PHASE 2: ACTION
 
-Create inductive observations when you see patterns:
+Create inductive observations only when you have enough evidence:
 
 ### Behavioral Patterns
 - "Tends to reschedule meetings when stressed"
@@ -504,13 +564,13 @@ Create inductive observations when you see patterns:
 - "Likes detailed technical explanations"
 
 ### Personality Traits
-- "Generally optimistic about outcomes"
-- "Detail-oriented in planning"
-
-### Temporal Patterns
-- "Career goals have remained consistent"
-- "Living situation changes frequently"
+- "Analytical thinker"
+- "Risk-averse with finances"
+- "Values family time over overtime"
 {peer_card_section}
+
+If you do NOT have at least 2 concrete source observation IDs for a proposed inductive pattern, do NOT call `create_observations`.
+In that case, update the peer card if warranted or call `finish_consolidation`.
 
 ## CREATING OBSERVATIONS
 
@@ -519,21 +579,24 @@ Create inductive observations when you see patterns:
   "observations": [{{
     "content": "The pattern or generalization",
     "level": "inductive",
-    "source_ids": ["id1", "id2", "id3"],
-    "sources": ["evidence 1", "evidence 2"],
-    "pattern_type": "tendency",  // preference|behavior|personality|tendency|correlation
-    "confidence": "medium"  // low (2 sources), medium (3-4), high (5+)
+    "source_ids": ["id1", "id2", "id3"]
   }}]
 }}
 ```
 
 ## RULES
 
-1. Minimum 2 source observations required - patterns need evidence
-2. Don't just restate a single fact as a pattern
-3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
-4. Look for HOW things change over time, not just static facts
-5. Include source_ids - always link back to evidence"""
+1. Patterns need multiple examples - don't overgeneralize from one instance
+2. Create observations based on what you ACTUALLY FIND, not stereotypes
+3. Include source_ids for all observations supporting the pattern
+4. Focus on useful patterns that help understand future behavior
+5. Quality over quantity - fewer strong patterns beat many weak ones
+6. Before your final step, either call `update_peer_card` or call `finish_consolidation` explicitly
+7. Minimum 2 source observations required - patterns need evidence
+8. Don't just restate a single fact as a pattern
+9. Look for HOW things change over time, not just static facts
+10. When calling `create_observations`, use only `content`, `level`, and `source_ids` for inductive observations
+11. Do NOT send extra keys like `pattern_type`, `confidence`, or `sources`"""
 
     def build_user_prompt(
         self,
@@ -544,17 +607,19 @@ Create inductive observations when you see patterns:
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
-            return f"""{peer_card_context}Explore and find patterns. These areas may be worth investigating:
+            return f"""{peer_card_context}Start with `extract_preferences`, then do a very short discovery pass using at most two of `get_recent_observations`, `search_memory`, or `search_messages`.
+
+These areas may be worth investigating:
 
 {hints_str}
 
-But follow the evidence - if you find patterns elsewhere, pursue those.
+Once you have enough evidence, stop searching and either update the peer card or finish consolidation explicitly."""
 
-Start with `get_recent_observations`."""
+        return f"""{peer_card_context}Start with `extract_preferences`, then do a very short discovery pass using at most two of `get_recent_observations`, `search_memory`, or `search_messages`.
 
-        return f"""{peer_card_context}Explore the observation space and identify patterns.
+Look for repeated behaviors, preferences, and durable traits. Remember: patterns need 2+ sources.
 
-Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
+Once you have enough evidence, stop searching and either update the peer card or finish consolidation explicitly.
 
 Go."""
 

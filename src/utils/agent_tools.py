@@ -269,7 +269,10 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": (
             "Update the peer card with durable profile facts about the observed peer. "
             + "Only include stable biographical facts, standing instructions, and long-lived preferences/traits. "
-            + "Do not include one-off conclusions, temporary events, or duplicate entries."
+            + "Prefer canonical identity facts first (name, email, location, role), then standing instructions/routing preferences, then durable traits/preferences. "
+            + "Avoid generic project chatter, broad capability statements, one-off conclusions, temporary events, or duplicate entries. "
+            + "IMPORTANT: the argument name must be exactly `content` and its value must be the complete deduplicated list. "
+            + "Do not use keys like `entries`, `peer_card_updates`, or any other alias."
         ),
         "input_schema": {
             "type": "object",
@@ -591,13 +594,13 @@ DREAMER_TOOLS: list[dict[str, Any]] = [
 # Note: get_peer_card is not included - peer card is injected into the prompt directly
 DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Discovery tools
+    TOOLS["extract_preferences"],
     TOOLS["get_recent_observations"],
-    TOOLS["search_memory"],
-    TOOLS["search_messages"],
     # Action tools
     TOOLS["create_observations"],
     TOOLS["delete_observations"],
     TOOLS["update_peer_card"],
+    TOOLS["finish_consolidation"],
 ]
 
 # Tools for the induction specialist (dreamer phase 2)
@@ -606,12 +609,12 @@ DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 # Note: get_peer_card is not included - peer card is injected into the prompt directly
 INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Discovery tools
+    TOOLS["extract_preferences"],
     TOOLS["get_recent_observations"],
-    TOOLS["search_memory"],
-    TOOLS["search_messages"],
     # Action tools
     TOOLS["create_observations"],
     TOOLS["update_peer_card"],
+    TOOLS["finish_consolidation"],
 ]
 
 
@@ -1902,6 +1905,47 @@ async def create_tool_executor(
             String result describing what was done
         """
         logger.info("[tool call] %s %s", tool_name, tool_input)
+
+        discovery_tools = {
+            "extract_preferences",
+            "get_recent_observations",
+            "get_most_derived_observations",
+            "search_memory",
+            "search_messages",
+        }
+        non_extract_discovery_tools = discovery_tools - {"extract_preferences"}
+        if parent_category == "dream":
+            if not hasattr(execute_tool, "_dream_discovery_count"):
+                execute_tool._dream_discovery_count = 0  # type: ignore[attr-defined]
+                execute_tool._dream_extract_called = False  # type: ignore[attr-defined]
+            if tool_name in discovery_tools:
+                if tool_name in non_extract_discovery_tools and not execute_tool._dream_extract_called:  # type: ignore[attr-defined]
+                    logger.warning(
+                        "Dream discovery rule violation: auto-running extract_preferences before %s",
+                        tool_name,
+                    )
+                    handler = _TOOL_HANDLERS.get("extract_preferences")
+                    if handler:
+                        execute_tool._dream_discovery_count += 1  # type: ignore[attr-defined]
+                        execute_tool._dream_extract_called = True  # type: ignore[attr-defined]
+                        result = await handler(ctx, {})
+                        logger.info("[tool result] %s %s", "extract_preferences", result)
+                        return result
+                if execute_tool._dream_discovery_count >= 3:  # type: ignore[attr-defined]
+                    msg = (
+                        "Dream discovery budget exhausted after extract_preferences plus two follow-up searches. "
+                        "Auto-finishing consolidation to prevent tool-loop wandering."
+                    )
+                    logger.warning(msg)
+                    finish_handler = _TOOL_HANDLERS.get("finish_consolidation")
+                    if finish_handler:
+                        result = await finish_handler(ctx, {"summary": msg})
+                        logger.info("[tool result] %s %s", "finish_consolidation", result)
+                        return result
+                    return msg
+                execute_tool._dream_discovery_count += 1  # type: ignore[attr-defined]
+                if tool_name == "extract_preferences":
+                    execute_tool._dream_extract_called = True  # type: ignore[attr-defined]
 
         try:
             handler = _TOOL_HANDLERS.get(tool_name)

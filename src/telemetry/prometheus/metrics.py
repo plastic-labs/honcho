@@ -24,22 +24,31 @@ logger = logging.getLogger(__name__)
 
 
 class NamespacedCounter(Counter):
+    """Prometheus counter that automatically injects the configured namespace label."""
+
     def labels(self, **kwargs: str) -> NamespacedCounter:
+        """Return a counter instance with namespace and other labels applied."""
         kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)  # type: ignore[return-value]
 
 
 class TokenTypes(Enum):
+    """Enum for distinguishing input vs output tokens."""
+
     INPUT = "input"
     OUTPUT = "output"
 
 
 class DeriverTaskTypes(Enum):
+    """Enum for deriver task categories."""
+
     INGESTION = "ingestion"
     SUMMARY = "summary"
 
 
 class DeriverComponents(Enum):
+    """Enum for deriver token accounting components."""
+
     PROMPT = "prompt"
     MESSAGES = "messages"
     PREVIOUS_SUMMARY = "previous_summary"
@@ -47,6 +56,8 @@ class DeriverComponents(Enum):
 
 
 class DialecticComponents(Enum):
+    """Enum for dialectic token accounting components."""
+
     TOTAL = "total"
 
 
@@ -95,14 +106,18 @@ dreamer_tokens_processed_counter = NamespacedCounter(
 
 @final
 class PrometheusMetrics:
+    """Singleton that wraps all Prometheus counters with error handling."""
+
     _instance: PrometheusMetrics | None = None
 
     def __new__(cls) -> PrometheusMetrics:
+        """Return the singleton instance, creating it on first call."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
     def _handle_metric_error(self, method_name: str, error: Exception) -> None:
+        """Report a metric recording failure to Sentry and log a warning."""
         import sentry_sdk
 
         sentry_sdk.capture_exception(error)
@@ -117,6 +132,7 @@ class PrometheusMetrics:
         endpoint: str,
         status_code: str,
     ) -> None:
+        """Record an API request counter increment."""
         try:
             api_requests_counter.labels(
                 method=method,
@@ -132,6 +148,7 @@ class PrometheusMetrics:
         count: int,
         workspace_name: str,
     ) -> None:
+        """Record the creation of messages in a workspace."""
         try:
             messages_created_counter.labels(
                 workspace_name=workspace_name,
@@ -145,6 +162,7 @@ class PrometheusMetrics:
         workspace_name: str,
         reasoning_level: str,
     ) -> None:
+        """Record a dialectic API call."""
         try:
             dialectic_calls_counter.labels(
                 workspace_name=workspace_name,
@@ -160,6 +178,7 @@ class PrometheusMetrics:
         workspace_name: str,
         task_type: str,
     ) -> None:
+        """Record processed deriver queue items."""
         try:
             deriver_queue_items_processed_counter.labels(
                 workspace_name=workspace_name,
@@ -176,6 +195,7 @@ class PrometheusMetrics:
         token_type: str,
         component: str,
     ) -> None:
+        """Record tokens consumed by the deriver."""
         try:
             deriver_tokens_processed_counter.labels(
                 task_type=task_type,
@@ -193,6 +213,7 @@ class PrometheusMetrics:
         component: str,
         reasoning_level: str,
     ) -> None:
+        """Record tokens consumed by the dialectic agent."""
         try:
             dialectic_tokens_processed_counter.labels(
                 token_type=token_type,
@@ -209,6 +230,7 @@ class PrometheusMetrics:
         specialist_name: str,
         token_type: str,
     ) -> None:
+        """Record tokens consumed by the dreamer agent."""
         try:
             dreamer_tokens_processed_counter.labels(
                 specialist_name=specialist_name,
@@ -222,6 +244,7 @@ prometheus_metrics = PrometheusMetrics()
 
 
 async def metrics_endpoint(_request: Request) -> Response:
+    """Serve Prometheus metrics or return 404 if metrics are disabled."""
     if not settings.METRICS.ENABLED:
         return Response("Metrics are disabled", status_code=404)
     try:

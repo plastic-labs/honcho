@@ -12,3 +12,6 @@ docker-compose.yml.example
 .vscode/**
 data/**
 .venv
+.git
+tests
+.python-version

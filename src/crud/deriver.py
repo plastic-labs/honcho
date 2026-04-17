@@ -1,3 +1,5 @@
+"""CRUD operations for deriver queue status and related queries."""
+
 from collections.abc import Sequence
 from logging import getLogger
 from typing import Any

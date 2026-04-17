@@ -1,3 +1,5 @@
+"""File processing utilities for uploaded documents and text extraction."""
+
 import datetime
 import logging
 from io import BytesIO
@@ -21,15 +23,47 @@ logger = logging.getLogger(__name__)
 
 
 class FileProcessor(Protocol):
-    async def extract_text(self, content: bytes) -> str: ...
-    def supports_file_type(self, content_type: str) -> bool: ...
+    """Protocol defining the interface for file content processors."""
+
+    async def extract_text(self, content: bytes) -> str:
+        """Extract text from raw file content.
+
+        Args:
+            content: Raw bytes of the file.
+
+        Returns:
+            Extracted text string.
+        """
+        ...
+
+    def supports_file_type(self, content_type: str) -> bool:
+        """Check if this processor handles the given content type.
+
+        Args:
+            content_type: MIME type of the file.
+
+        Returns:
+            True if this processor supports the content type.
+        """
+        ...
 
 
 class PDFProcessor:
+    """Processor for extracting text from PDF files."""
+
     def supports_file_type(self, content_type: str) -> bool:
+        """Return True if content_type is application/pdf."""
         return content_type == "application/pdf"
 
     async def extract_text(self, content: bytes) -> str:
+        """Extract text from PDF content, labeling each page.
+
+        Args:
+            content: Raw PDF bytes.
+
+        Returns:
+            Extracted text with page labels.
+        """
         import pdfplumber
 
         with pdfplumber.open(BytesIO(content)) as pdf_reader:
@@ -42,10 +76,24 @@ class PDFProcessor:
 
 
 class TextProcessor:
+    """Processor for extracting text from plain text files."""
+
     def supports_file_type(self, content_type: str) -> bool:
+        """Return True if content_type starts with text/."""
         return content_type.startswith("text/")
 
     async def extract_text(self, content: bytes) -> str:
+        """Decode text content trying multiple encodings.
+
+        Args:
+            content: Raw text bytes.
+
+        Returns:
+            Decoded text string.
+
+        Raises:
+            ValueError: If no encoding succeeds.
+        """
         # Try different encodings
         for encoding in ["utf-8", "utf-16", "latin-1"]:
             try:
@@ -56,10 +104,24 @@ class TextProcessor:
 
 
 class JSONProcessor:
+    """Processor for extracting text from JSON files."""
+
     def supports_file_type(self, content_type: str) -> bool:
+        """Return True if content_type is application/json."""
         return content_type == "application/json"
 
     async def extract_text(self, content: bytes) -> str:
+        """Parse JSON content and return it as a formatted string.
+
+        Args:
+            content: Raw JSON bytes.
+
+        Returns:
+            Formatted JSON string.
+
+        Raises:
+            ValidationException: If content is not valid UTF-8 or valid JSON.
+        """
         import json
 
         try:
@@ -80,7 +142,10 @@ class JSONProcessor:
 
 
 class FileProcessingService:
+    """Service that routes uploaded files to the appropriate text processor."""
+
     def __init__(self):
+        """Initialize with the list of available file processors."""
         self.processors: list[FileProcessor] = [
             PDFProcessor(),
             TextProcessor(),
@@ -104,6 +169,14 @@ class FileProcessingService:
         return await processor.extract_text(content)
 
     def _get_processor(self, content_type: str) -> FileProcessor | None:
+        """Find the first processor that supports the given content type.
+
+        Args:
+            content_type: MIME type to match.
+
+        Returns:
+            Matching FileProcessor or None.
+        """
         for processor in self.processors:
             if processor.supports_file_type(content_type):
                 return processor
