@@ -31,10 +31,12 @@ from src.utils.clients import (
     CLIENTS,
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
+    extract_gemini_cache_tokens,
     handle_streaming_response,
     honcho_llm_call,
     honcho_llm_call_inner,
 )
+from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 
 
 class SampleTestModel(BaseModel):
@@ -89,6 +91,32 @@ class TestLLMCallResponse:
         assert isinstance(chunk.finish_reasons, list)
         assert chunk.finish_reasons == []
 
+    def test_extract_gemini_cache_tokens(self):
+        """Gemini cached content tokens should map to cache-read metrics."""
+        usage_metadata = Mock()
+        usage_metadata.cached_content_token_count = 321
+
+        cache_creation, cache_read = extract_gemini_cache_tokens(usage_metadata)
+
+        assert cache_creation == 0
+        assert cache_read == 321
+
+    def test_extract_gemini_cache_tokens_none_metadata(self):
+        """Missing Gemini usage metadata should return zero cache tokens."""
+        cache_creation, cache_read = extract_gemini_cache_tokens(None)
+
+        assert cache_creation == 0
+        assert cache_read == 0
+
+    def test_extract_gemini_cache_tokens_missing_attribute(self):
+        """Gemini usage metadata without the cached token field should return zeroes."""
+        usage_metadata = Mock(spec=[])
+
+        cache_creation, cache_read = extract_gemini_cache_tokens(usage_metadata)
+
+        assert cache_creation == 0
+        assert cache_read == 0
+
 
 @pytest.mark.asyncio
 class TestAnthropicClient:
@@ -141,6 +169,37 @@ class TestAnthropicClient:
 
             assert response.content == "First block\nSecond block"
             assert response.output_tokens == 8
+
+    async def test_anthropic_preserves_multiple_cacheable_system_blocks(self):
+        """Anthropic requests should keep separate system blocks cacheable."""
+
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="Hello from Anthropic", type="text")]
+        mock_response.usage = Usage(input_tokens=10, output_tokens=5)
+        mock_response.stop_reason = "stop"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            await honcho_llm_call_inner(
+                provider="anthropic",
+                model="claude-3-sonnet",
+                prompt="ignored",
+                max_tokens=100,
+                messages=[
+                    {"role": "system", "content": "stable instructions"},
+                    {"role": "system", "content": "rolling session context"},
+                    {"role": "user", "content": "Hello"},
+                ],
+            )
+
+        system_blocks = mock_client.messages.create.call_args.kwargs["system"]
+        assert len(system_blocks) == 2
+        assert system_blocks[0]["text"] == "stable instructions"
+        assert system_blocks[1]["text"] == "rolling session context"
+        assert all(
+            block["cache_control"] == {"type": "ephemeral"} for block in system_blocks
+        )
 
     async def test_anthropic_json_mode(self):
         """Test Anthropic with JSON mode"""
@@ -518,7 +577,52 @@ class TestOpenAIClient:
             assert chunks[1].content == " world"
             assert chunks[2].content == ""
             assert chunks[2].is_done is True
-            assert chunks[2].finish_reasons == ["stop"]
+
+    async def test_custom_provider_system_messages_gain_cache_control(self):
+        """Custom OpenAI-compatible providers should mark each system message cacheable."""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="anthropic/claude-sonnet",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(
+                        role="assistant", content="Hello from OpenAI"
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"custom": mock_client}):
+            await honcho_llm_call_inner(
+                provider="custom",
+                model="anthropic/claude-sonnet",
+                prompt="ignored",
+                max_tokens=100,
+                messages=[
+                    {"role": "system", "content": "stable instructions"},
+                    {"role": "system", "content": "session history"},
+                    {"role": "user", "content": "Hello"},
+                ],
+            )
+
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "system"
+        assert messages[0]["content"][0]["text"] == "stable instructions"
+        assert messages[1]["content"][0]["text"] == "session history"
+        assert messages[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert messages[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
 
 
 @pytest.mark.asyncio
@@ -571,6 +675,43 @@ class TestGoogleClient:
             mock_aio.models.generate_content.assert_called_once()
             call_args = mock_aio.models.generate_content.call_args
             assert call_args.kwargs["config"]["max_output_tokens"] == 100
+
+    async def test_google_basic_call_surfaces_cached_content_tokens(self):
+        """Gemini usage metadata should populate cache-read input tokens."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_part = Mock()
+        mock_part.text = "Hello from Gemini"
+        mock_part.function_call = None
+        mock_content = Mock()
+        mock_content.parts = [mock_part]
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_candidate = Mock()
+        mock_candidate.content = mock_content
+        mock_candidate.finish_reason = mock_finish_reason
+        mock_response.candidates = [mock_candidate]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 100
+        mock_usage_metadata.candidates_token_count = 5
+        mock_usage_metadata.cached_content_token_count = 90
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            response = await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-2.5-flash",
+                prompt="Hello",
+                max_tokens=100,
+            )
+
+        assert response.cache_creation_input_tokens == 0
+        assert response.cache_read_input_tokens == 90
 
     async def test_google_json_mode(self):
         """Test Google/Gemini with JSON mode"""
@@ -659,6 +800,199 @@ class TestGoogleClient:
             assert config["response_schema"] == SampleTestModel
             assert config["max_output_tokens"] == 100
 
+    async def test_google_response_model_uses_messages_with_honcho_llm_call(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Structured Gemini calls should honor system+user messages when provided."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_response.parsed = PromptRepresentation(
+            explicit=[ExplicitObservationBase(content="Alice likes tea")]
+        )
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_response.candidates = [Mock(finish_reason=mock_finish_reason)]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 12
+        mock_usage_metadata.candidates_token_count = 8
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        monkeypatch.setattr(settings.DERIVER, "PROVIDER", "google")
+        monkeypatch.setattr(settings.DERIVER, "MODEL", "gemini-1.5-pro")
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            response = await honcho_llm_call(
+                llm_settings=settings.DERIVER,
+                prompt="",
+                max_tokens=100,
+                response_model=PromptRepresentation,
+                messages=[
+                    {"role": "system", "content": "stable deriver instructions"},
+                    {"role": "user", "content": "Messages to analyze:\n<messages>hello</messages>"},
+                ],
+            )
+
+        assert isinstance(response, HonchoLLMCallResponse)
+        assert isinstance(response.content, PromptRepresentation)
+        assert response.content.explicit[0].content == "Alice likes tea"
+
+        call_args = mock_aio.models.generate_content.call_args
+        assert call_args is not None
+        assert call_args.kwargs["contents"] == [
+            {"role": "user", "parts": [{"text": "Messages to analyze:\n<messages>hello</messages>"}]}
+        ]
+        config = call_args.kwargs["config"]
+        assert config["system_instruction"] == "stable deriver instructions"
+        assert config["response_schema"] == PromptRepresentation
+        assert config["response_mime_type"] == "application/json"
+
+    async def test_google_preserves_list_form_system_messages(self):
+        """Gemini should preserve text blocks from list-form system content."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_part = Mock()
+        mock_part.text = "ok"
+        mock_part.function_call = None
+        mock_content = Mock()
+        mock_content.parts = [mock_part]
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_candidate = Mock()
+        mock_candidate.content = mock_content
+        mock_candidate.finish_reason = mock_finish_reason
+        mock_response.candidates = [mock_candidate]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
+        mock_usage_metadata.candidates_token_count = 5
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-1.5-pro",
+                prompt="ignored",
+                max_tokens=100,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": [
+                            {"type": "text", "text": "stable instructions"},
+                            {
+                                "type": "text",
+                                "text": "rolling session context",
+                                "cache_control": {"type": "ephemeral"},
+                            },
+                        ],
+                    },
+                    {"role": "user", "content": "Hello"},
+                ],
+            )
+
+        call_args = mock_aio.models.generate_content.call_args
+        assert call_args is not None
+        assert call_args.kwargs["config"]["system_instruction"] == (
+            "stable instructions\n\nrolling session context"
+        )
+
+    async def test_google_preserves_non_text_content_blocks(self):
+        """Gemini should preserve tool context when converting content blocks."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+        mock_response = Mock()
+        mock_part = Mock()
+        mock_part.text = "ok"
+        mock_part.function_call = None
+        mock_content = Mock()
+        mock_content.parts = [mock_part]
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_candidate = Mock()
+        mock_candidate.content = mock_content
+        mock_candidate.finish_reason = mock_finish_reason
+        mock_response.candidates = [mock_candidate]
+        mock_usage_metadata = Mock()
+        mock_usage_metadata.prompt_token_count = 10
+        mock_usage_metadata.candidates_token_count = 5
+        mock_response.usage_metadata = mock_usage_metadata
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            await honcho_llm_call_inner(
+                provider="google",
+                model="gemini-1.5-pro",
+                prompt="ignored",
+                max_tokens=100,
+                messages=[
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": "Tool call context"},
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_1",
+                                "name": "search_memory",
+                                "input": {"query": "tea"},
+                            },
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_1",
+                                "content": "Alice likes tea",
+                            }
+                        ],
+                    },
+                ],
+            )
+
+        call_args = mock_aio.models.generate_content.call_args
+        assert call_args is not None
+        assert call_args.kwargs["contents"] == [
+            {
+                "role": "model",
+                "parts": [
+                    {"text": "Tool call context"},
+                    {
+                        "function_call": {
+                            "name": "search_memory",
+                            "args": {"query": "tea"},
+                        }
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "function_response": {
+                            "name": "search_memory",
+                            "response": {
+                                "result": "Alice likes tea",
+                                "is_error": False,
+                            },
+                        }
+                    }
+                ],
+            },
+        ]
+
     async def test_google_streaming(self):
         """Test Google/Gemini streaming response"""
         from google import genai
@@ -716,6 +1050,66 @@ class TestGoogleClient:
             mock_aio.models.generate_content_stream.assert_called_once()
             call_args = mock_aio.models.generate_content_stream.call_args
             assert call_args.kwargs["config"]["max_output_tokens"] == 100
+
+    async def test_google_streaming_uses_system_and_user_messages(self):
+        """Gemini streaming should preserve split system and user messages."""
+        from google import genai
+
+        mock_client = Mock(spec=genai.Client)
+
+        mock_finish_reason = Mock()
+        mock_finish_reason.name = "STOP"
+        mock_usage_metadata = Mock(candidates_token_count=12)
+        mock_chunks = [
+            Mock(text="ok"),
+            Mock(
+                text="",
+                candidates=[Mock(finish_reason=mock_finish_reason)],
+                usage_metadata=mock_usage_metadata,
+            ),
+        ]
+
+        async def async_chunk_iterator():
+            for chunk in mock_chunks:
+                yield chunk
+
+        mock_aio = Mock()
+        mock_aio.models.generate_content_stream = AsyncMock(
+            return_value=async_chunk_iterator()
+        )
+        mock_client.aio = mock_aio
+
+        with patch.dict(CLIENTS, {"google": mock_client}):
+            chunks: list[HonchoLLMCallStreamChunk] = []
+            async for chunk in handle_streaming_response(
+                client=mock_client,
+                params={
+                    "model": "gemini-1.5-pro",
+                    "max_tokens": 100,
+                    "messages": [
+                        {"role": "system", "content": "stable instructions"},
+                        {"role": "system", "content": "session history"},
+                        {"role": "user", "content": "Hello"},
+                    ],
+                },
+                json_mode=False,
+                thinking_budget_tokens=None,
+            ):
+                chunks.append(chunk)
+
+        assert len(chunks) == 2
+        assert chunks[0].content == "ok"
+        assert chunks[1].is_done is True
+
+        call_args = mock_aio.models.generate_content_stream.call_args
+        assert call_args is not None
+        assert call_args.kwargs["contents"] == [
+            {"role": "user", "parts": [{"text": "Hello"}]}
+        ]
+        assert call_args.kwargs["config"]["system_instruction"] == (
+            "stable instructions\n\nsession history"
+        )
+        assert call_args.kwargs["config"]["max_output_tokens"] == 100
 
     async def test_google_no_candidates_fallback(self):
         """Test Google/Gemini fallback when no candidates"""

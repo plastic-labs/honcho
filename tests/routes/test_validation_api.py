@@ -34,6 +34,16 @@ def test_workspace_validations_api(client: TestClient):
     assert error["loc"] == ["body", "metadata"]
     assert error["type"] == "dict_type"
 
+    # Test deeply nested list metadata
+    response = client.post(
+        "/v3/workspaces",
+        json={"name": "test-nested", "metadata": {"a": [[[[["too deep"]]]]]}},
+    )
+    assert response.status_code == 422
+    error = response.json()["detail"][0]
+    assert error["loc"] == ["body", "metadata"]
+    assert "Metadata nesting exceeds maximum depth" in error["msg"]
+
 
 def test_peer_validations_api(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, _ = sample_data
@@ -188,6 +198,17 @@ def test_agent_query_validations_api(
         json={"query": "a" * 100, "stream": False},  # 100 chars should be fine
     )
     assert response.status_code == 200
+
+    # Test NUL-only query is rejected after sanitization
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        params={"session_id": session_id, "target": "test_target"},
+        json={"query": "\x00", "stream": False},
+    )
+    assert response.status_code == 422
+    error = response.json()["detail"][0]
+    assert error["loc"] == ["body", "query"]
+    assert error["type"] == "string_too_short"
 
 
 def test_required_field_validations_api(
