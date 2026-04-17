@@ -29,7 +29,8 @@ def save_memory(
     Raises:
         ValueError: If content is empty.
     """
-    if not content:
+    cleaned_content = content.strip()
+    if not cleaned_content:
         raise ValueError("content must not be empty")
 
     honcho = get_client()
@@ -38,6 +39,6 @@ def save_memory(
     session = honcho.session(session_id)
 
     sender = assistant_peer if role == "assistant" else user_peer
-    session.add_messages([sender.message(content)])
+    session.add_messages([sender.message(cleaned_content)])
 
     return f"Saved {role} message to session '{session_id}' for user '{user_id}'."

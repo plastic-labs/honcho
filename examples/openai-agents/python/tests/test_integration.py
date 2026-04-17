@@ -1,8 +1,7 @@
 """Integration tests for the OpenAI Agents SDK + Honcho memory integration.
 
-These tests run against the live Honcho API and require both
-``HONCHO_API_KEY`` and ``OPENAI_API_KEY`` to be set. They are skipped
-automatically when the keys are absent.
+These tests run against the live Honcho API and require ``HONCHO_API_KEY``
+to be set. They are skipped automatically when the key is absent.
 """
 
 import os
@@ -16,7 +15,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.client import HonchoContext
 from tools.get_context import get_context
-from tools.query_memory import query_memory
 from tools.save_memory import save_memory
 
 pytestmark = pytest.mark.skipif(
@@ -131,12 +129,23 @@ class TestSaveGetRoundtrip:
     def test_saved_messages_appear_in_context(self):
         user_id = unique_id("user")
         session_id = unique_id("session")
+        user_content = "Hello from the integration test!"
+        assistant_content = "Hi there, integration test!"
 
-        save_memory(user_id, "Hello!", "user", session_id)
-        save_memory(user_id, "Hi there!", "assistant", session_id)
+        save_memory(user_id, user_content, "user", session_id)
+        save_memory(user_id, assistant_content, "assistant", session_id)
 
         ctx = HonchoContext(user_id=user_id, session_id=session_id)
-        messages = get_context(ctx)
 
-        assert isinstance(messages, list)
-        assert len(messages) >= 1
+        # Retry briefly — Honcho processes messages asynchronously
+        messages = []
+        for _ in range(5):
+            messages = get_context(ctx)
+            contents = [m["content"] for m in messages]
+            if user_content in contents and assistant_content in contents:
+                break
+            time.sleep(1)
+
+        contents = [m["content"] for m in messages]
+        assert user_content in contents, "User message not found in context"
+        assert assistant_content in contents, "Assistant message not found in context"

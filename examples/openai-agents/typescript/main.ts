@@ -18,8 +18,9 @@
 import { Agent, run } from "@openai/agents";
 import type { RunContext } from "@openai/agents";
 import * as readline from "readline/promises";
+import { randomUUID } from "crypto";
 
-import { createContext } from "./tools/client.js";
+import { createContext, getClient } from "./tools/client.js";
 import type { HonchoContext } from "./tools/client.js";
 import { getContext } from "./tools/getContext.js";
 import { queryMemoryTool } from "./tools/queryMemory.js";
@@ -44,38 +45,47 @@ const honchoAgent = new Agent<HonchoContext>({
   model: "gpt-4.1-mini",
 });
 
+async function setupSession(
+  userId: string,
+  sessionId: string,
+  assistantId = "assistant"
+): Promise<void> {
+  const honcho = getClient();
+  const userPeer = honcho.peer(userId);
+  const assistantPeer = honcho.peer(assistantId);
+  const session = honcho.session(sessionId);
+  await session.addPeers([userPeer, assistantPeer]);
+}
+
 export async function chat(
   userId: string,
   message: string,
-  sessionId: string
+  sessionId: string,
+  assistantId = "assistant"
 ): Promise<string> {
-  const ctx = createContext(userId, sessionId);
+  const ctx = createContext(userId, sessionId, assistantId);
 
-  await saveMemory(userId, message, "user", sessionId);
-
-  // Fetch history and prepend to message for context
+  // Fetch prior history BEFORE saving the current turn to avoid duplicating it
   const history = await getContext(ctx, 2000);
-  const historyText =
-    history.length > 0
-      ? "\n\n## Conversation History\n" +
-        history
-          .map((m) => `${m.role.charAt(0).toUpperCase() + m.role.slice(1)}: ${m.content}`)
-          .join("\n")
-      : "";
+  const input = [...history, { role: "user" as const, content: message }];
 
-  const input = historyText ? `${historyText}\n\nUser: ${message}` : message;
+  await saveMemory(userId, message, "user", sessionId, assistantId);
 
   const result = await run(honchoAgent, input, { context: ctx });
   const response = result.finalOutput ?? "";
 
-  await saveMemory(userId, response, "assistant", sessionId);
+  await saveMemory(userId, response, "assistant", sessionId, assistantId);
   return response;
 }
 
 async function main() {
   console.log("OpenAI Agents HonchoMemoryAgent — type 'quit' to exit\n");
+  // Replace "demo-user" with a real user identifier in production.
   const userId = "demo-user";
-  const sessionId = "demo-session";
+  // A fresh session ID per run prevents history from accumulating across runs.
+  const sessionId = randomUUID();
+
+  await setupSession(userId, sessionId);
 
   const rl = readline.createInterface({
     input: process.stdin,

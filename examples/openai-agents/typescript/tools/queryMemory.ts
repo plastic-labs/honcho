@@ -21,7 +21,10 @@ export const queryMemoryTool = tool({
       throw new Error("query must not be empty");
     }
 
-    const ctx = runContext?.context as HonchoContext;
+    const ctx = runContext?.context as HonchoContext | undefined;
+    if (!ctx?.userId) {
+      throw new Error("Missing Honcho context (userId)");
+    }
     try {
       const honcho = getClient();
       const peer = honcho.peer(ctx.userId);

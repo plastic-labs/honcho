@@ -15,12 +15,10 @@ export async function getContext(
   tokens = 2000
 ): Promise<Message[]> {
   const honcho = getClient();
-  const userPeer = honcho.peer(ctx.userId);
-  const assistantPeer = honcho.peer(ctx.assistantId);
   const session = honcho.session(ctx.sessionId);
-
-  await session.addPeers([userPeer, assistantPeer]);
-
   const context = await session.context({ tokens });
-  return context.toOpenai({ assistant: ctx.assistantId }) as Message[];
+  // Strip the 'name' field — the OpenAI Responses API does not accept it
+  return (context.toOpenai({ assistant: ctx.assistantId }) as Array<Record<string, string>>).map(
+    ({ role, content }) => ({ role: role as Message["role"], content })
+  );
 }

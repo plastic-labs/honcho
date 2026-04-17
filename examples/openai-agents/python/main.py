@@ -66,43 +66,49 @@ honcho_agent = Agent[HonchoContext](
 )
 
 
-async def chat(user_id: str, message: str, session_id: str) -> str:
+async def chat(
+    user_id: str,
+    message: str,
+    session_id: str,
+    assistant_id: str = "assistant",
+) -> str:
     """Run one conversation turn with persistent Honcho memory.
 
-    Saves the user message to Honcho, retrieves structured session history
-    from Honcho and passes it directly to the SDK as prior messages, then
-    saves the assistant reply.
+    Fetches prior history first, then saves the user message, runs the agent,
+    and saves the assistant reply. History is read before persisting the current
+    turn to avoid duplicating it in the prompt.
 
     Args:
         user_id: Unique identifier for the user.
         message: The user's input message.
         session_id: Identifier for the current conversation session.
+        assistant_id: Peer ID for the assistant. Defaults to ``"assistant"``.
 
     Returns:
         The agent's response as a string.
     """
-    ctx = HonchoContext(user_id=user_id, session_id=session_id)
+    ctx = HonchoContext(user_id=user_id, session_id=session_id, assistant_id=assistant_id)
 
-    # Persist user message before the agent runs so it's available in context
-    try:
-        save_memory(user_id, message, "user", session_id)
-    except HonchoError as exc:
-        logger.warning("Could not persist user message: %s", exc)
-
-    # Pass structured OpenAI-format history directly — don't flatten to plain text
+    # Fetch prior history BEFORE saving the current turn to avoid duplicating it
     try:
         history = get_context(ctx, tokens=2000)
     except HonchoError as exc:
         logger.warning("Could not load Honcho context; continuing without history: %s", exc)
         history = []
-    input_messages = history + [{"role": "user", "content": message}]
+    input_messages = [*history, {"role": "user", "content": message}]
+
+    # Persist user message before the agent runs
+    try:
+        save_memory(user_id, message, "user", session_id, assistant_id=assistant_id)
+    except HonchoError as exc:
+        logger.warning("Could not persist user message: %s", exc)
 
     result = await Runner.run(honcho_agent, input_messages, context=ctx)
     response = str(result.final_output)
 
     # Persist assistant response after the run
     try:
-        save_memory(user_id, response, "assistant", session_id)
+        save_memory(user_id, response, "assistant", session_id, assistant_id=assistant_id)
     except HonchoError as exc:
         logger.warning("Could not persist assistant message: %s", exc)
 

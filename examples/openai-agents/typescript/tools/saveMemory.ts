@@ -13,7 +13,8 @@ export async function saveMemory(
   sessionId: string,
   assistantId = "assistant"
 ): Promise<void> {
-  if (!content) {
+  const cleanedContent = content.trim();
+  if (!cleanedContent) {
     throw new Error("content must not be empty");
   }
 
@@ -22,8 +23,6 @@ export async function saveMemory(
   const assistantPeer = honcho.peer(assistantId);
   const session = honcho.session(sessionId);
 
-  await session.addPeers([userPeer, assistantPeer]);
-
   const sender = role === "assistant" ? assistantPeer : userPeer;
-  await session.addMessages([sender.message(content)]);
+  await session.addMessages([sender.message(cleanedContent)]);
 }
