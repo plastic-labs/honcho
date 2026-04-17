@@ -317,28 +317,21 @@ class TestOpenAIClient:
         from openai import AsyncOpenAI
 
         mock_client = AsyncMock(spec=AsyncOpenAI)
-        mock_response = ChatCompletion(
-            id="test-id",
-            object="chat.completion",
-            created=1234567890,
-            model="gpt-5-turbo",
-            choices=[
-                Choice(
-                    index=0,
-                    message=ChatCompletionMessage(
-                        role="assistant", content="GPT-5 response"
-                    ),
-                    finish_reason="stop",
-                )
-            ],
-            usage=CompletionUsage(
-                prompt_tokens=10, completion_tokens=5, total_tokens=15
+        mock_response = Mock(
+            output_text="GPT-5 response",
+            output=[],
+            usage=Mock(
+                input_tokens=10,
+                output_tokens=5,
+                input_tokens_details=Mock(cached_tokens=0),
             ),
+            status="completed",
         )
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        mock_client.responses.create = AsyncMock(return_value=mock_response)
+        mock_client.chat.completions.create = AsyncMock()
 
         with patch.dict(CLIENTS, {"openai": mock_client}):
-            _response = await honcho_llm_call_inner(
+            response = await honcho_llm_call_inner(
                 provider="openai",
                 model="gpt-5-turbo",
                 prompt="Hello",
@@ -347,14 +340,88 @@ class TestOpenAIClient:
                 verbosity="medium",
             )
 
-            # Verify GPT-5 specific parameters were used
-            mock_client.chat.completions.create.assert_called_once()
-            call_args = mock_client.chat.completions.create.call_args
+            assert response.content == "GPT-5 response"
+            mock_client.responses.create.assert_called_once()
+            mock_client.chat.completions.create.assert_not_called()
+            call_args = mock_client.responses.create.call_args
             kwargs = call_args.kwargs
-            assert "max_completion_tokens" in kwargs
-            assert kwargs["max_completion_tokens"] == 100
-            assert kwargs["reasoning_effort"] == "high"
-            assert kwargs["verbosity"] == "medium"
+            assert kwargs["max_output_tokens"] == 100
+            assert kwargs["reasoning"] == {"effort": "high"}
+            assert kwargs["text"] == {"verbosity": "medium"}
+
+    async def test_openai_gpt5_tools_use_responses_api(self):
+        """Test GPT-5 tool calls route through the Responses API."""
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = Mock(
+            output_text="",
+            output=[
+                Mock(
+                    type="function_call",
+                    call_id="call-1",
+                    id="call-1",
+                    name="repo_context",
+                    arguments='{"repo": "rsi-agent-platform"}',
+                )
+            ],
+            usage=Mock(
+                input_tokens=20,
+                output_tokens=7,
+                input_tokens_details=Mock(cached_tokens=0),
+            ),
+            status="completed",
+        )
+        mock_client.responses.create = AsyncMock(return_value=mock_response)
+        mock_client.chat.completions.create = AsyncMock()
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "repo_context",
+                    "description": "Load repo context",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"repo": {"type": "string"}},
+                    },
+                },
+            }
+        ]
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            response = await honcho_llm_call_inner(
+                provider="openai",
+                model="gpt-5-turbo",
+                prompt="Inspect the repository",
+                max_tokens=100,
+                tools=tools,
+                tool_choice="required",
+            )
+
+            mock_client.responses.create.assert_called_once()
+            mock_client.chat.completions.create.assert_not_called()
+            call_args = mock_client.responses.create.call_args
+            kwargs = call_args.kwargs
+            assert kwargs["tool_choice"] == "required"
+            assert kwargs["tools"] == [
+                {
+                    "type": "function",
+                    "name": "repo_context",
+                    "description": "Load repo context",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"repo": {"type": "string"}},
+                    },
+                }
+            ]
+            assert response.tool_calls_made == [
+                {
+                    "id": "call-1",
+                    "name": "repo_context",
+                    "input": {"repo": "rsi-agent-platform"},
+                }
+            ]
 
     async def test_openai_json_mode(self):
         """Test OpenAI with JSON mode"""

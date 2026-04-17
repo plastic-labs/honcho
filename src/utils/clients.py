@@ -370,6 +370,244 @@ def convert_tools_for_provider(
         return tools
 
 
+def _should_use_openai_responses_api(
+    model: str,
+    *,
+    tools: list[dict[str, Any]] | None,
+    reasoning_effort: ReasoningEffortType,
+    verbosity: VerbosityType,
+    response_model: type[BaseModel] | None,
+    json_mode: bool,
+    stream: bool,
+) -> bool:
+    if stream:
+        return False
+    if "gpt-5" not in model:
+        return False
+    return bool(tools or reasoning_effort or verbosity or response_model or json_mode)
+
+
+def _openai_message_content_to_string(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        if parts:
+            return "\n".join(parts)
+        return json.dumps(content)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _convert_openai_messages_to_responses_input(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    input_items: list[dict[str, Any]] = []
+    for msg in messages:
+        role = str(msg.get("role", "") or "").strip()
+        if role == "tool":
+            input_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": str(msg.get("tool_call_id", "") or "").strip(),
+                    "output": _openai_message_content_to_string(msg.get("content")),
+                    "id": str(msg.get("tool_call_id", "") or "").strip(),
+                }
+            )
+            continue
+
+        content = _openai_message_content_to_string(msg.get("content"))
+        if role in {"system", "developer", "user", "assistant"} and content:
+            input_items.append({"role": role, "content": content})
+
+        tool_calls = msg.get("tool_calls")
+        if role == "assistant" and isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function", {})
+                if not isinstance(function, dict):
+                    continue
+                call_id = str(tool_call.get("id", "") or "").strip()
+                name = str(function.get("name", "") or "").strip()
+                arguments = function.get("arguments")
+                if not name or arguments is None:
+                    continue
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "id": call_id,
+                        "name": name,
+                        "arguments": str(arguments),
+                    }
+                )
+    return input_items
+
+
+def _convert_openai_tools_to_responses_tools(
+    tools: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        if tool.get("type") != "function":
+            continue
+        function = tool.get("function", {})
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name", "") or "").strip()
+        if not name:
+            continue
+        converted.append(
+            {
+                "type": "function",
+                "name": name,
+                "description": function.get("description"),
+                "parameters": function.get("parameters") or {},
+            }
+        )
+    return converted
+
+
+def _convert_openai_tool_choice_to_responses(
+    tool_choice: str | dict[str, Any] | None,
+) -> str | dict[str, Any] | None:
+    if tool_choice is None:
+        return None
+    if isinstance(tool_choice, str):
+        return tool_choice
+    if "name" in tool_choice:
+        return {"type": "function", "name": tool_choice["name"]}
+    function = tool_choice.get("function")
+    if isinstance(function, dict) and "name" in function:
+        return {"type": "function", "name": function["name"]}
+    return tool_choice
+
+
+def _extract_openai_responses_tool_calls(response: Any) -> list[dict[str, Any]]:
+    tool_calls: list[dict[str, Any]] = []
+    for item in getattr(response, "output", []) or []:
+        if getattr(item, "type", None) != "function_call":
+            continue
+        arguments = getattr(item, "arguments", "") or ""
+        try:
+            parsed_arguments = json.loads(arguments) if arguments else {}
+        except json.JSONDecodeError:
+            parsed_arguments = {}
+        tool_calls.append(
+            {
+                "id": getattr(item, "call_id", "") or getattr(item, "id", ""),
+                "name": getattr(item, "name", ""),
+                "input": parsed_arguments,
+            }
+        )
+    return tool_calls
+
+
+def _extract_openai_responses_reasoning_content(response: Any) -> str | None:
+    parts: list[str] = []
+    for item in getattr(response, "output", []) or []:
+        if getattr(item, "type", None) != "reasoning":
+            continue
+        summaries = getattr(item, "summary", None) or []
+        for summary in summaries:
+            text = getattr(summary, "text", None)
+            if text:
+                parts.append(text)
+    return "\n".join(parts) if parts else None
+
+
+def _responses_text_format(
+    response_model: type[BaseModel] | None,
+    json_mode: bool,
+) -> dict[str, Any] | None:
+    if response_model is not None:
+        return {
+            "format": {
+                "type": "json_schema",
+                "name": response_model.__name__,
+                "schema": response_model.model_json_schema(),
+                "strict": True,
+            }
+        }
+    if json_mode:
+        return {"format": {"type": "json_object"}}
+    return None
+
+
+async def _call_openai_responses_api(
+    client: AsyncOpenAI,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    max_tokens: int,
+    response_model: type[BaseModel] | None,
+    json_mode: bool,
+    temperature: float | None,
+    stop_seqs: list[str] | None,
+    reasoning_effort: ReasoningEffortType,
+    verbosity: VerbosityType,
+    tools: list[dict[str, Any]] | None,
+    tool_choice: str | dict[str, Any] | None,
+) -> "HonchoLLMCallResponse[Any]":
+    if stop_seqs:
+        logger.warning("OpenAI Responses API path ignores stop sequences")
+    input_items = _convert_openai_messages_to_responses_input(messages)
+    response_text = _responses_text_format(response_model, json_mode)
+    if response_text is not None and verbosity:
+        response_text["verbosity"] = verbosity
+    elif verbosity:
+        response_text = {"verbosity": verbosity}
+
+    create_params: dict[str, Any] = {
+        "model": model,
+        "input": input_items,
+        "max_output_tokens": max_tokens,
+    }
+    if temperature is not None and "gpt-5" not in model:
+        create_params["temperature"] = temperature
+    if reasoning_effort:
+        create_params["reasoning"] = {"effort": reasoning_effort}
+    if response_text is not None:
+        create_params["text"] = response_text
+    if tools:
+        create_params["tools"] = _convert_openai_tools_to_responses_tools(tools)
+        converted_tool_choice = _convert_openai_tool_choice_to_responses(tool_choice)
+        if converted_tool_choice is not None:
+            create_params["tool_choice"] = converted_tool_choice
+
+    response = await client.responses.create(**create_params)
+    usage = getattr(response, "usage", None)
+    tool_calls = _extract_openai_responses_tool_calls(response)
+    content_text = getattr(response, "output_text", "") or ""
+
+    parsed_content: Any = content_text
+    if response_model is not None:
+        parsed_json = json.loads(content_text)
+        parsed_content = response_model.model_validate(parsed_json)
+
+    cache_creation, cache_read = extract_openai_cache_tokens(usage)
+    finish_reason = getattr(response, "status", None)
+    return HonchoLLMCallResponse(
+        content=parsed_content,
+        input_tokens=getattr(usage, "input_tokens", 0) or 0,
+        output_tokens=getattr(usage, "output_tokens", 0) or 0,
+        cache_creation_input_tokens=cache_creation,
+        cache_read_input_tokens=cache_read,
+        finish_reasons=[finish_reason] if finish_reason else [],
+        tool_calls_made=tool_calls,
+        thinking_content=_extract_openai_responses_reasoning_content(response),
+    )
+
+
 def extract_openai_reasoning_content(response: Any) -> str | None:
     """
     Extract reasoning/thinking content from an OpenAI ChatCompletion response.
@@ -454,6 +692,12 @@ def extract_openai_cache_tokens(usage: Any) -> tuple[int, int]:
     # OpenAI native: usage.prompt_tokens_details.cached_tokens
     if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
         details = usage.prompt_tokens_details
+        if hasattr(details, "cached_tokens") and details.cached_tokens:
+            cache_read = details.cached_tokens
+
+    # OpenAI Responses API: usage.input_tokens_details.cached_tokens
+    if cache_read == 0 and hasattr(usage, "input_tokens_details") and usage.input_tokens_details:
+        details = usage.input_tokens_details
         if hasattr(details, "cached_tokens") and details.cached_tokens:
             cache_read = details.cached_tokens
 
@@ -1871,6 +2115,30 @@ async def honcho_llm_call_inner(
                         )
                     else:
                         processed_messages.append(msg)
+
+            if _should_use_openai_responses_api(
+                model,
+                tools=tools,
+                reasoning_effort=reasoning_effort,
+                verbosity=verbosity,
+                response_model=response_model,
+                json_mode=json_mode,
+                stream=stream,
+            ):
+                return await _call_openai_responses_api(
+                    client,
+                    model=params["model"],
+                    messages=processed_messages,
+                    max_tokens=params["max_tokens"],
+                    response_model=response_model,
+                    json_mode=json_mode,
+                    temperature=temperature,
+                    stop_seqs=stop_seqs,
+                    reasoning_effort=reasoning_effort,
+                    verbosity=verbosity,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                )
 
             openai_params: dict[str, Any] = {
                 "model": params["model"],
