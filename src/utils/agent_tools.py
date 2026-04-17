@@ -232,6 +232,10 @@ TOOLS: dict[str, dict[str, Any]] = {
                                 "enum": ["high", "medium", "low"],
                                 "description": "(For inductive only) Confidence level: 'high' for 3+ sources, 'medium' for 2+, 'low' for tentative",
                             },
+                            "category": {
+                                "type": "string",
+                                "description": "Semantic category for this observation (e.g. 'preferences', 'business_context', 'personal', 'goals', 'technical'). Helps scope future retrieval.",
+                            },
                         },
                         "required": ["content", "level"],
                     },
@@ -255,6 +259,10 @@ TOOLS: dict[str, dict[str, Any]] = {
                             "content": {
                                 "type": "string",
                                 "description": "The observation content - should be a self-contained statement about the peer",
+                            },
+                            "category": {
+                                "type": "string",
+                                "description": "Semantic category for this observation (e.g. 'preferences', 'business_context', 'personal', 'goals', 'technical')",
                             },
                         },
                         "required": ["content"],
@@ -296,7 +304,7 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "search_memory": {
         "name": "search_memory",
-        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details.",
+        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details. Optionally filter by category for more precise retrieval.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -308,6 +316,10 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "type": "integer",
                     "description": "(Optional) number of results to return (default: 20, max: 40)",
                     "default": 20,
+                },
+                "category": {
+                    "type": "string",
+                    "description": "(Optional) filter results to a specific category (e.g. 'preferences', 'business_context', 'personal', 'goals', 'technical')",
                 },
             },
             "required": ["query"],
@@ -707,6 +719,7 @@ async def create_observations(
             confidence=(obs.confidence or "medium")
             if obs.level == "inductive"
             else None,
+            category=obs.category,
         )
 
         doc = schemas.DocumentCreate(
@@ -718,6 +731,7 @@ async def create_observations(
             source_ids=obs.source_ids
             if obs.level in ("deductive", "inductive", "contradiction")
             else None,
+            category=obs.category,
         )
         documents.append(doc)
 
@@ -810,6 +824,7 @@ async def search_memory(
     limit: int,
     levels: list[str] | None = None,
     embedding: list[float] | None = None,
+    category: str | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -826,14 +841,19 @@ async def search_memory(
         levels: Optional list of observation levels to filter by
                 (e.g., ["explicit"], ["deductive", "inductive", "contradiction"])
         embedding: Optional pre-computed embedding to avoid redundant API calls
+        category: Optional category to filter by (e.g., "preferences", "business_context")
 
     Returns:
         Representation object containing relevant observations
     """
-    # Build filter for levels if specified
+    # Build filter for levels and category if specified
     filters: dict[str, Any] | None = None
-    if levels:
-        filters = {"level": {"in": levels}}
+    if levels or category:
+        filters = {}
+        if levels:
+            filters["level"] = {"in": levels}
+        if category:
+            filters["category"] = category
 
     documents = await crud.query_documents(
         db=None,
@@ -1260,10 +1280,15 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
     """Handle search_memory tool."""
     top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
     query = tool_input["query"]
+    category = tool_input.get("category")
     try:
         query_embedding = await embedding_client.embed(query)
     except ValueError:
         return f"ERROR: Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}. Please use a shorter query."
+
+    filters: dict[str, Any] | None = None
+    if category:
+        filters = {"category": category}
 
     documents = await crud.query_documents(
         db=None,
@@ -1273,6 +1298,7 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         query=query,
         top_k=top_k,
         embedding=query_embedding,
+        filters=filters,
     )
     mem = Representation.from_documents(documents)
     total_count = mem.len()
@@ -1282,7 +1308,9 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # this stage, and be efficient with tool calls, and make sure the model
         # doesn't short-circuit and think there's nothing here, we
         # automatically search the message history for relevant information.
-        if ctx.agent_type == "dialectic":
+        # Skip fallback when a category filter is applied — zero results may
+        # simply mean no observations in that category, not an empty memory.
+        if ctx.agent_type == "dialectic" and not category:
             limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
             message_output = None
             snippets = await crud.search_messages(

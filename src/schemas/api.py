@@ -446,6 +446,7 @@ class Conclusion(BaseModel):
         serialization_alias="observed_id",
     )
     session_name: str | None = Field(default=None, serialization_alias="session_id")
+    category: str | None = Field(default=None, description="Semantic category")
     created_at: datetime.datetime
 
     model_config = ConfigDict(  # pyright: ignore
@@ -485,6 +486,10 @@ class ConclusionCreate(BaseModel):
     session_id: str | None = Field(
         default=None,
         description="A session ID to store the conclusion in, if specified",
+    )
+    category: str | None = Field(
+        default=None,
+        description="Semantic category for scoped retrieval (e.g. 'preferences', 'business_context', 'personal')",
     )
 
     _token_count: int = PrivateAttr(default=0)

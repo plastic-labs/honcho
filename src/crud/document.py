@@ -229,7 +229,7 @@ async def query_external_vector_document_ids(
 
     vector_filters: dict[str, Any] = {}
     if filters:
-        for key in ["level", "session_name"]:
+        for key in ["level", "session_name", "category"]:
             if key in filters:
                 vector_filters[key] = filters[key]
 
@@ -475,6 +475,7 @@ async def create_documents(
                     times_derived=doc.times_derived,
                     internal_metadata=metadata_dict,
                     session_name=doc.session_name,
+                    category=doc.category,
                     embedding=doc.embedding,
                     # Tree linkage column
                     source_ids=doc.source_ids,
@@ -489,6 +490,7 @@ async def create_documents(
                     times_derived=doc.times_derived,
                     internal_metadata=metadata_dict,
                     session_name=doc.session_name,
+                    category=doc.category,
                     # Tree linkage column
                     source_ids=doc.source_ids,
                 )
@@ -555,6 +557,7 @@ async def create_documents(
                                 "observed": observed,
                                 "session_name": doc.session_name,
                                 "level": doc.level,
+                                "category": doc.category,
                             },
                         )
                     )
@@ -768,6 +771,7 @@ async def create_observations(
                 times_derived=1,
                 internal_metadata={},  # No message_ids since not derived from messages
                 session_name=obs.session_id,
+                category=obs.category,
                 embedding=embedding,
             )
         else:
@@ -780,6 +784,7 @@ async def create_observations(
                 times_derived=1,
                 internal_metadata={},  # No message_ids since not derived from messages
                 session_name=obs.session_id,
+                category=obs.category,
             )
         doc.sync_state = "pending"
         honcho_documents.append(doc)
@@ -841,6 +846,7 @@ async def create_observations(
                                 "observed": observed,
                                 "session_name": doc.session_name,
                                 "level": doc.level,
+                                "category": doc.category,
                             },
                         )
                     )

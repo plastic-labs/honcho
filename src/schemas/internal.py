@@ -56,6 +56,10 @@ class DocumentMetadata(BaseModel):
         default=None,
         description="Confidence level (high, medium, low) -- only applicable for inductive documents",
     )
+    category: str | None = Field(
+        default=None,
+        description="Semantic category for scoped retrieval (e.g. 'preferences', 'business_context', 'personal')",
+    )
 
 
 class DocumentCreate(DocumentBase):
@@ -80,6 +84,10 @@ class DocumentCreate(DocumentBase):
         default=None,
         description="Document IDs of source/premise documents -- for deductive and inductive documents",
     )
+    category: str | None = Field(
+        default=None,
+        description="Semantic category for scoped retrieval (e.g. 'preferences', 'business_context', 'personal')",
+    )
 
 
 class ObservationInput(BaseModel):
@@ -95,6 +103,7 @@ class ObservationInput(BaseModel):
         | None
     ) = None
     confidence: Literal["high", "medium", "low"] | None = None
+    category: str | None = None
 
     @field_validator("content", mode="after")
     @classmethod

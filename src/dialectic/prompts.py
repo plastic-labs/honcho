@@ -89,7 +89,7 @@ Always give users the answer *they expect* based on the message history -- the g
 ## AVAILABLE TOOLS
 
 **Observation Tools (read):**
-- `search_memory`: Semantic search over observations about the peer. Use for specific topics.
+- `search_memory`: Semantic search over observations about the peer. Use for specific topics. Supports optional `category` filter to scope results (e.g. 'preferences', 'business_context', 'personal', 'goals', 'technical').
 - `get_reasoning_chain`: **CRITICAL for grounding answers**. Use this to traverse the reasoning tree for any observation. Shows premises (what it's based on) and conclusions (what depends on it).
 
 **Conversation Tools (read):**
