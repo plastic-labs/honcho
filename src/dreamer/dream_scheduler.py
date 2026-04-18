@@ -268,10 +268,10 @@ async def check_and_schedule_dream(
         models.Document.observed == collection.observed,
         models.Document.level == "explicit",
     )
-    current_document_count = int(await db.scalar(count_stmt) or 0)
+    current_explicit_count = int(await db.scalar(count_stmt) or 0)
 
     # Calculate documents added since last dream
-    documents_since_last_dream = current_document_count - last_dream_document_count
+    documents_since_last_dream = current_explicit_count - last_dream_document_count
 
     logger.debug(
         "Dream check",
@@ -279,7 +279,7 @@ async def check_and_schedule_dream(
             "workspace_name": collection.workspace_name,
             "observer": collection.observer,
             "observed": collection.observed,
-            "current_document_count": current_document_count,
+            "current_explicit_count": current_explicit_count,
             "last_dream_document_count": last_dream_document_count,
             "documents_since_last_dream": documents_since_last_dream,
             "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,
