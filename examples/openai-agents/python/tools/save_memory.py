@@ -1,0 +1,44 @@
+"""Save a conversation message to Honcho memory."""
+
+from .client import get_client
+
+
+def save_memory(
+    user_id: str,
+    content: str,
+    role: str,
+    session_id: str,
+    assistant_id: str = "assistant",
+) -> str:
+    """Save a single conversation turn to Honcho memory.
+
+    Creates the peer and session if they do not already exist. Registers
+    both peers in the session on first use, then persists the message.
+
+    Args:
+        user_id: Unique identifier for the user peer.
+        content: Text content of the message to save.
+        role: Either ``"user"`` or ``"assistant"``. Any value other than
+            ``"assistant"`` is treated as the user peer.
+        session_id: Identifier for the conversation session.
+        assistant_id: Peer ID for the assistant. Defaults to ``"assistant"``.
+
+    Returns:
+        A confirmation string describing what was saved.
+
+    Raises:
+        ValueError: If content is empty.
+    """
+    cleaned_content = content.strip()
+    if not cleaned_content:
+        raise ValueError("content must not be empty")
+
+    honcho = get_client()
+    user_peer = honcho.peer(user_id)
+    assistant_peer = honcho.peer(assistant_id)
+    session = honcho.session(session_id)
+
+    sender = assistant_peer if role == "assistant" else user_peer
+    session.add_messages([sender.message(cleaned_content)])
+
+    return f"Saved {role} message to session '{session_id}' for user '{user_id}'."
