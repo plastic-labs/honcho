@@ -93,6 +93,9 @@ extend-immutable-calls = ["fastapi.Depends"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 addopts = "--strict-markers -n auto --ignore=tests/alembic"
+markers = [
+    "llm: marks tests that make real LLM API calls (deselect with '-m not llm')",
+]
 testpaths = ["tests"]
 pythonpath = ["src"]
 filterwarnings = [
