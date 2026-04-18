@@ -189,7 +189,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                         "properties": {
                             "content": {
                                 "type": "string",
-                                "description": "The observation content",
+                                "description": "The observation content. Preserve the language of the supporting messages or observations; do not translate to English.",
                             },
                             "level": {
                                 "type": "string",
@@ -254,7 +254,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                         "properties": {
                             "content": {
                                 "type": "string",
-                                "description": "The observation content - should be a self-contained statement about the peer",
+                                "description": "The observation content - should be a self-contained statement about the peer. Preserve the language of the supporting messages or observations; do not translate to English.",
                             },
                         },
                         "required": ["content"],
@@ -269,7 +269,8 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": (
             "Update the peer card with durable profile facts about the observed peer. "
             + "Only include stable biographical facts, standing instructions, and long-lived preferences/traits. "
-            + "Do not include one-off conclusions, temporary events, or duplicate entries."
+            + "Do not include one-off conclusions, temporary events, or duplicate entries. "
+            + "Preserve the language of the supporting evidence and existing peer card entries."
         ),
         "input_schema": {
             "type": "object",
@@ -278,7 +279,8 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "description": (
                         "Complete deduplicated peer card list (max 40 entries). "
-                        + "Each entry should be a concise standalone profile fact."
+                        + "Each entry should be a concise standalone profile fact. "
+                        + "Preserve the language of the source evidence; do not translate entries to English."
                     ),
                     "items": {"type": "string"},
                 },

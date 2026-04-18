@@ -107,6 +107,11 @@ You are a system that summarizes parts of a conversation to create a concise and
 
 If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
 
+LANGUAGE PRESERVATION:
+- Write the summary in the same primary language as the conversation and previous summary.
+- Do NOT translate the conversation into English or any other language.
+- If the conversation is mixed-language, keep the dominant language of the conversation and preserve quoted phrases in their original language when useful.
+
 Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
@@ -140,6 +145,11 @@ You are a system that creates thorough, comprehensive summaries of conversations
 6. Important themes and patterns across the conversation
 
 If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
+
+LANGUAGE PRESERVATION:
+- Write the summary in the same primary language as the conversation and previous summary.
+- Do NOT translate the conversation into English or any other language.
+- If the conversation is mixed-language, keep the dominant language of the conversation and preserve quoted phrases in their original language when useful.
 
 Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
 
