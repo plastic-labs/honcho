@@ -29,6 +29,11 @@ def minimal_deriver_prompt(
         f"""
 Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
 
+[LANGUAGE PRESERVATION]
+- Preserve the language used in the source messages.
+- Do NOT translate observations into English or any other language.
+- If different observations come from different languages, keep each observation in the language of its supporting message(s).
+
 [EXPLICIT] DEFINITION: Facts about {peer_id} that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context

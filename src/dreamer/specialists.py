@@ -346,6 +346,12 @@ Keep it concise (max 40 entries), deduplicated, and current."""
 
 Create deductive observations by finding logical implications in what's already known. Think like a detective connecting evidence.
 
+## LANGUAGE PRESERVATION
+
+- Preserve the language used in the source observations and messages.
+- Do NOT translate created observations or peer card entries into English.
+- When multiple source items support one new observation, write it in the dominant language of those sources.
+
 ## PHASE 1: DISCOVERY
 
 Explore what's actually in memory. Use these tools freely:
@@ -480,6 +486,12 @@ Keep it concise (max 40 entries)."""
 ## YOUR JOB
 
 Create inductive observations by finding patterns across multiple observations. Think like a psychologist identifying behavioral tendencies.
+
+## LANGUAGE PRESERVATION
+
+- Preserve the language used in the source observations and messages.
+- Do NOT translate created observations or peer card entries into English.
+- When multiple source items support one new observation, write it in the dominant language of those sources.
 
 ## PHASE 1: DISCOVERY
 
