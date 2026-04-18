@@ -450,7 +450,13 @@ async def enqueue_dream(
         observer: Name of the observer peer
         observed: Name of the observed peer
         dream_type: Type of dream to execute
-        document_count: Current document count for metadata update
+        document_count: Count of explicit-level documents only. Written as
+            last_dream_document_count and used as the baseline that
+            dream_scheduler.check_and_schedule_dream subtracts from a future
+            explicit-filtered count to compute documents_since_last_dream.
+            Callers that include non-explicit levels (deductive, inductive,
+            contradiction) will inflate the baseline and suppress the next
+            scheduled dream.
         session_name: Name of the session to scope the dream to if specified
     """
     async with tracked_db("dream_enqueue") as db_session:
