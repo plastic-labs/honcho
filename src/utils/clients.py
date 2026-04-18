@@ -33,6 +33,13 @@ from src.utils.types import SupportedProviders, set_current_iteration
 
 logger = logging.getLogger(__name__)
 
+
+def _should_retry_with_structured_fallback(exc: Exception) -> bool:
+    """Only fallback for parse/schema drift, not generic provider failures."""
+    if isinstance(exc, (ValidationError, ValueError, json.JSONDecodeError, TypeError, AttributeError)):
+        return True
+    return False
+
 # Gemini finish reasons that indicate the response was blocked by safety or policy
 # filters. When these occur, the response typically has no usable text content and
 # retrying with a backup provider is appropriate.
@@ -1989,51 +1996,118 @@ async def honcho_llm_call_inner(
                 )
             elif response_model:
                 openai_params["response_format"] = response_model
-                response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
-                    **openai_params
-                )
-                # Extract the parsed object for structured output
-                parsed_content = response.choices[0].message.parsed
-                if parsed_content is None:
-                    raise ValueError("No parsed content in structured response")
-
-                usage = response.usage
-                finish_reason = response.choices[0].finish_reason
-
-                # Validate that parsed content matches the response model
-                if not isinstance(parsed_content, response_model):
-                    raise ValueError(
-                        f"Parsed content does not match the response model: {parsed_content} != {response_model}"
+                try:
+                    response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
+                        **openai_params
                     )
+                    # Extract the parsed object for structured output
+                    parsed_content = response.choices[0].message.parsed
+                    if parsed_content is None:
+                        raise ValueError("No parsed content in structured response")
 
-                # Extract tool calls if present (though unlikely with structured output)
-                parsed_tool_calls: list[dict[str, Any]] = []
-                if (
-                    hasattr(response.choices[0].message, "tool_calls")
-                    and response.choices[0].message.tool_calls
-                ):
-                    for tool_call in response.choices[0].message.tool_calls:
-                        parsed_tool_calls.append(
-                            {
-                                "id": tool_call.id,
-                                "name": tool_call.function.name,
-                                "input": json.loads(tool_call.function.arguments)
-                                if tool_call.function.arguments
-                                else {},
-                            }
+                    usage = response.usage
+                    finish_reason = response.choices[0].finish_reason
+
+                    # Validate that parsed content matches the response model
+                    if not isinstance(parsed_content, response_model):
+                        raise ValueError(
+                            f"Parsed content does not match the response model: {parsed_content} != {response_model}"
                         )
 
-                cache_creation, cache_read = extract_openai_cache_tokens(usage)
-                return HonchoLLMCallResponse(
-                    content=parsed_content,
-                    input_tokens=usage.prompt_tokens if usage else 0,
-                    output_tokens=usage.completion_tokens if usage else 0,
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read,
-                    finish_reasons=[finish_reason] if finish_reason else [],
-                    tool_calls_made=parsed_tool_calls,
-                    thinking_content=extract_openai_reasoning_content(response),
-                )
+                    # Extract tool calls if present (though unlikely with structured output)
+                    parsed_tool_calls: list[dict[str, Any]] = []
+                    if (
+                        hasattr(response.choices[0].message, "tool_calls")
+                        and response.choices[0].message.tool_calls
+                    ):
+                        for tool_call in response.choices[0].message.tool_calls:
+                            parsed_tool_calls.append(
+                                {
+                                    "id": tool_call.id,
+                                    "name": tool_call.function.name,
+                                    "input": json.loads(tool_call.function.arguments)
+                                    if tool_call.function.arguments
+                                    else {},
+                                }
+                            )
+
+                    cache_creation, cache_read = extract_openai_cache_tokens(usage)
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        input_tokens=usage.prompt_tokens if usage else 0,
+                        output_tokens=usage.completion_tokens if usage else 0,
+                        cache_creation_input_tokens=cache_creation,
+                        cache_read_input_tokens=cache_read,
+                        finish_reasons=[finish_reason] if finish_reason else [],
+                        tool_calls_made=parsed_tool_calls,
+                        thinking_content=extract_openai_reasoning_content(response),
+                    )
+                except Exception as parse_exc:
+                    if not _should_retry_with_structured_fallback(parse_exc):
+                        raise
+                    logger.warning(
+                        "Structured parse failed for %s/%s; retrying with JSON repair fallback: %s",
+                        provider,
+                        model,
+                        parse_exc,
+                    )
+                    fallback_params = dict(openai_params)
+                    is_minimax_prompt_representation = (
+                        provider == "custom"
+                        and response_model is PromptRepresentation
+                        and "minimax" in (settings.LLM.OPENAI_COMPATIBLE_BASE_URL or "").lower()
+                    )
+                    if is_minimax_prompt_representation:
+                        fallback_params.pop("response_format", None)
+                        fallback_messages = list(fallback_params.get("messages") or [])
+                        fallback_messages.insert(
+                            0,
+                            {
+                                "role": "system",
+                                "content": (
+                                    "Return only a single JSON object with key explicit. "
+                                    'The value must be an array of {"content": "..."} objects. '
+                                    "Do not output reasoning, <think> tags, markdown, or any other keys."
+                                ),
+                            },
+                        )
+                        fallback_params["messages"] = fallback_messages
+                        if "max_tokens" in fallback_params:
+                            fallback_params["max_tokens"] = max(
+                                int(fallback_params["max_tokens"]), 2000
+                            )
+                        if "max_completion_tokens" in fallback_params:
+                            fallback_params["max_completion_tokens"] = max(
+                                int(fallback_params["max_completion_tokens"]), 2000
+                            )
+                    else:
+                        fallback_params["response_format"] = {"type": "json_object"}
+                    fallback_response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
+                        **fallback_params
+                    )
+                    fallback_usage = fallback_response.usage
+                    fallback_finish_reason = fallback_response.choices[0].finish_reason
+                    fallback_raw = fallback_response.choices[0].message.content or ""
+                    repaired_json = validate_and_repair_json(fallback_raw)
+                    parsed_content = response_model.model_validate_json(repaired_json)
+
+                    cache_creation, cache_read = extract_openai_cache_tokens(
+                        fallback_usage
+                    )
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        input_tokens=fallback_usage.prompt_tokens if fallback_usage else 0,
+                        output_tokens=fallback_usage.completion_tokens if fallback_usage else 0,
+                        cache_creation_input_tokens=cache_creation,
+                        cache_read_input_tokens=cache_read,
+                        finish_reasons=[fallback_finish_reason]
+                        if fallback_finish_reason
+                        else [],
+                        tool_calls_made=[],
+                        thinking_content=extract_openai_reasoning_content(
+                            fallback_response
+                        ),
+                    )
             else:
                 response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                     **openai_params
