@@ -777,6 +777,7 @@ async def get_session_context(
     *,
     cutoff: int | None = None,
     include_summary: bool = True,
+    max_messages: int | None = None,
 ) -> tuple[schemas.Summary | None, list[models.Message]]:
     """
     Get session context similar to the API endpoint but for internal use.
@@ -856,6 +857,7 @@ async def get_session_context(
         start_id=messages_start_id,
         end_id=cutoff,
         token_limit=messages_tokens,
+        max_messages=max_messages,
     )
 
     return summary, messages

@@ -165,6 +165,7 @@ async def _get_messages_for_context_task(
     session_id: str,
     start_id: int,
     token_limit: int,
+    max_messages: int | None = None,
 ) -> list[schemas.Message]:
     """
     Fetch messages for context.
@@ -187,6 +188,7 @@ async def _get_messages_for_context_task(
         session_id,
         start_id=start_id,
         token_limit=token_limit,
+        max_messages=max_messages,
     )
     return [schemas.Message.model_validate(msg) for msg in messages]
 
@@ -659,6 +661,11 @@ async def get_session_context(
         le=100,
         description="Only used if `search_query` is provided. The maximum number of conclusions to include in the representation",
     ),
+    max_messages: int | None = Query(
+        None,
+        ge=1,
+        description="The maximum number of actual messages to include in the context (from most recent)",
+    ),
 ):
     """
     Produce a context object from the Session. The caller provides an optional token limit which the entire context must fit into.
@@ -678,7 +685,7 @@ async def get_session_context(
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(
-            db, workspace_id, session_id, token_limit, include_summary
+            db, workspace_id, session_id, token_limit, include_summary, max_messages=max_messages
         )
         return schemas.SessionContext(
             name=session_id,
@@ -728,7 +735,7 @@ async def get_session_context(
 
     # Fetch messages with the correct start_id and budget
     messages = await _get_messages_for_context_task(
-        db, workspace_id, session_id, messages_start_id, messages_budget
+        db, workspace_id, session_id, messages_start_id, messages_budget, max_messages=max_messages
     )
 
     return schemas.SessionContext(

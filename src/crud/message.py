@@ -469,6 +469,7 @@ async def get_messages_id_range(
     start_id: int = 0,
     end_id: int | None = None,
     token_limit: int | None = None,
+    max_messages: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session by primary key ID range.
@@ -504,9 +505,19 @@ async def get_messages_id_range(
     if token_limit:
         # Apply token limit logic using helper function
         stmt = _apply_token_limit(base_conditions, token_limit)
-        stmt = stmt.order_by(models.Message.id)
     else:
         stmt = select(models.Message).where(*base_conditions)
+
+    if max_messages:
+        # We want the MOST RECENT max_messages, but returned in chronological ASC order
+        # So we order DESC, apply limit, and wrap in a subquery to re-order ASC.
+        stmt = stmt.order_by(models.Message.id.desc()).limit(max_messages)
+        subq = stmt.subquery()
+        from sqlalchemy.orm import aliased
+        msg_alias = aliased(models.Message, subq)
+        stmt = select(msg_alias).order_by(msg_alias.id.asc())
+    else:
+        stmt = stmt.order_by(models.Message.id.asc())
 
     result = await db.execute(stmt)
     return list(result.scalars().all())

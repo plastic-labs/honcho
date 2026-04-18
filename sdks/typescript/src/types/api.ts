@@ -163,6 +163,7 @@ export interface SessionContextParams {
   search_max_distance?: number
   include_most_frequent?: boolean
   max_conclusions?: number
+  max_messages?: number
 }
 
 export interface SummaryResponse {

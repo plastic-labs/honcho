@@ -225,6 +225,7 @@ export class Session {
     search_max_distance?: number
     include_most_frequent?: boolean
     max_conclusions?: number
+    max_messages?: number
   }): Promise<SessionContextResponse> {
     await this._ensureWorkspace()
     return this._http.get<SessionContextResponse>(
@@ -775,6 +776,7 @@ export class Session {
     peerPerspective?: string | Peer
     limitToSession?: boolean
     representationOptions?: RepresentationOptions
+    maxMessages?: number
   }): Promise<SessionContext> {
     const opts = options || {}
 
@@ -802,6 +804,7 @@ export class Session {
             searchQuery,
           }
         : undefined,
+      maxMessages: opts.maxMessages,
     })
 
     const context = await this._getContext({
@@ -817,6 +820,7 @@ export class Session {
       include_most_frequent:
         contextParams.representationOptions?.includeMostFrequent,
       max_conclusions: contextParams.representationOptions?.maxConclusions,
+      max_messages: contextParams.maxMessages,
     })
 
     return SessionContext.fromApiResponse(this.id, context)
