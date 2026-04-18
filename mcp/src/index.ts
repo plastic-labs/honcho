@@ -1,5 +1,5 @@
 import { createMcpHandler } from "agents/mcp";
-import { parseConfig, createClient } from "./config.js";
+import { parseConfig, createClient, type Env } from "./config.js";
 import { createServer } from "./server.js";
 
 const CORS_ORIGIN = "*";
@@ -16,7 +16,7 @@ const CORS_HEADERS = {
 export default {
   async fetch(
     request: Request,
-    env: unknown,
+    env: Env,
     executionCtx: ExecutionContext,
   ): Promise<Response> {
     if (request.method === "OPTIONS") {
@@ -25,7 +25,7 @@ export default {
 
     let config;
     try {
-      config = parseConfig(request);
+      config = parseConfig(request, env);
     } catch (e) {
       const message =
         e instanceof Error ? e.message : "Invalid request";
