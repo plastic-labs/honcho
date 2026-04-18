@@ -835,6 +835,43 @@ def test_get_session_context_with_tokens(
     assert isinstance(data["messages"], list)
 
 
+def test_get_session_context_with_max_messages(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session context with max_messages parameter on a session with >100 messages"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Add >100 messages
+    messages = [
+        {"content": f"Test message {i}", "peer_id": test_peer.name}
+        for i in range(110)
+    ]
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={"messages": messages},
+    )
+    assert response.status_code == 201
+
+    # Get context with max_messages=10
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_id}/context?max_messages=10",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "messages" in data
+    assert len(data["messages"]) == 10
+    
+    assert data["messages"][0]["content"] == "Test message 100"
+    assert data["messages"][-1]["content"] == "Test message 109"
+
+
 def test_get_session_context_with_all_params(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
