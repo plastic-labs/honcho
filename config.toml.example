@@ -71,6 +71,12 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # VLLM_BASE_URL = "http://localhost:8000/v1"
 # VLLM_API_KEY = "not-needed"
 
+# Audio transcription settings
+[audio]
+PROVIDER = "openai"
+MODEL = "whisper-1"
+MAX_FILE_SIZE_BYTES = 25000000  # 25MB
+
 # Deriver settings
 [deriver]
 ENABLED = true

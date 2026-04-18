@@ -18,12 +18,17 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import db
+from src.dependencies import db, tracked_db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.security import require_auth
 from src.telemetry import prometheus_metrics
-from src.utils.files import process_file_uploads_for_messages
+from src.utils.files import (
+    is_audio_transcription_enabled,
+    is_audio_upload,
+    is_validated_audio_upload,
+    process_file_uploads_for_messages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,14 +146,24 @@ async def create_messages_with_file(
     session_id: str = Path(...),
     form_data: schemas.MessageUploadCreate = Depends(parse_upload_form),
     file: UploadFile = File(...),
-    db: AsyncSession = db,
 ):
     """Create messages from uploaded files. Files are converted to text and split into multiple messages."""
 
     # Validate file size
-    if file.size and file.size > settings.MAX_FILE_SIZE:
+    max_file_size = settings.MAX_FILE_SIZE
+    if (
+        file.size
+        and file.size > settings.MAX_FILE_SIZE
+        and is_audio_transcription_enabled()
+        and is_audio_upload(file)
+        and file.size <= settings.AUDIO.MAX_FILE_SIZE_BYTES
+        and await is_validated_audio_upload(file)
+    ):
+        max_file_size = settings.AUDIO.MAX_FILE_SIZE_BYTES
+
+    if file.size and file.size > max_file_size:
         raise FileTooLargeError(
-            f"File size ({file.size} bytes) exceeds maximum allowed size ({settings.MAX_FILE_SIZE} bytes)",
+            f"File size ({file.size} bytes) exceeds maximum allowed size ({max_file_size} bytes)",
         )
 
     # Process files using shared utility function
@@ -160,22 +175,23 @@ async def create_messages_with_file(
         created_at=form_data.created_at,
     )
 
-    # Create messages
-    message_creates = [item["message_create"] for item in all_message_data]
-    created_messages = await crud.create_messages(
-        db,
-        messages=message_creates,
-        workspace_name=workspace_id,
-        session_name=session_id,
-    )
+    async with tracked_db("messages.upload") as db_session:
+        # Create messages
+        message_creates = [item["message_create"] for item in all_message_data]
+        created_messages = await crud.create_messages(
+            db_session,
+            messages=message_creates,
+            workspace_name=workspace_id,
+            session_name=session_id,
+        )
 
-    # Update internal_metadata for file-related messages
-    for i, message in enumerate(created_messages):
-        file_metadata = all_message_data[i]["file_metadata"]
-        message.internal_metadata.update(file_metadata)
-        flag_modified(message, "internal_metadata")
+        # Update internal_metadata for file-related messages
+        for i, message in enumerate(created_messages):
+            file_metadata = all_message_data[i]["file_metadata"]
+            message.internal_metadata.update(file_metadata)
+            flag_modified(message, "internal_metadata")
 
-    await db.commit()
+        await db_session.commit()
 
     # Enqueue for processing (same as regular messages)
     payloads = [

@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 import logging
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, Protocol
@@ -6,13 +7,7 @@ import tomllib
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
-from pydantic_settings import (
-    BaseSettings,
-    DotEnvSettingsSource,
-    EnvSettingsSource,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-)
+from pydantic_settings import BaseSettings, DotEnvSettingsSource, EnvSettingsSource, PydanticBaseSettingsSource, SettingsConfigDict
 
 from src.utils.types import SupportedProviders
 
@@ -61,6 +56,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SENTRY": "sentry",
         "CACHE": "cache",
         "LLM": "llm",
+        "AUDIO": "audio",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
         "DIALECTIC": "dialectic",
@@ -230,6 +226,14 @@ class LLMSettings(HonchoSettings):
     MAX_MESSAGE_CONTENT_CHARS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = (
         2000
     )
+
+
+class AudioSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="AUDIO_", extra="ignore")  # pyright: ignore
+
+    PROVIDER: Literal["openai"] = "openai"
+    MODEL: str = "whisper-1"
+    MAX_FILE_SIZE_BYTES: Annotated[int, Field(default=25_000_000, gt=0)] = 25_000_000
 
 
 class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
@@ -651,6 +655,7 @@ class AppSettings(HonchoSettings):
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
     SENTRY: SentrySettings = Field(default_factory=SentrySettings)
     LLM: LLMSettings = Field(default_factory=LLMSettings)
+    AUDIO: AudioSettings = Field(default_factory=AudioSettings)
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)

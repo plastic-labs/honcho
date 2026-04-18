@@ -746,6 +746,7 @@ def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
         patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
         patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
         patch("src.routers.peers.tracked_db", mock_tracked_db_context),
+        patch("src.routers.messages.tracked_db", mock_tracked_db_context),
         patch("src.crud.representation.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.orchestrator.tracked_db", mock_tracked_db_context),
         patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),

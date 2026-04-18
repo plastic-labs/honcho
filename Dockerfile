@@ -4,6 +4,10 @@ FROM python:3.13-slim-bookworm
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.24 /uv /bin/uv
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set Working directory
 WORKDIR /app
 

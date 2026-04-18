@@ -1,17 +1,25 @@
 # File upload tests for session endpoints
 import io
 import json
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import BackgroundTasks, UploadFile
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import Headers
 
-from src import models
+from src import models, schemas
 from src.config import settings
+from src.exceptions import FileProcessingError, ValidationException
 from src.models import Peer, Workspace
+from src.routers.messages import create_messages_with_file
+from src.utils.files import ExtractedFileText
 
 
 async def _create_test_session(
@@ -613,3 +621,453 @@ async def test_large_file_upload_with_metadata(
         assert message["peer_id"] == test_peer.name
         assert message["session_id"] == session_name
         assert message["metadata"] == metadata
+
+
+@pytest.mark.asyncio
+async def test_create_messages_with_mp3_file(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test creating messages with an MP3 upload."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    file_data = io.BytesIO(b"fake mp3 bytes")
+    files = {"file": ("call.mp3", file_data, "audio/mpeg")}
+    form_data = {"peer_id": test_peer.name}
+
+    extracted = ExtractedFileText(
+        text="First sentence.\nSecond sentence.",
+        metadata={
+            "processing_type": "audio_transcription",
+            "audio_segment_count": 1,
+            "transcription_provider": "openai",
+        },
+    )
+
+    with (
+        patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False),
+        patch(
+            "src.utils.files.AudioProcessor.extract_text",
+            new=AsyncMock(return_value=extracted),
+        ),
+    ):
+        url = _get_upload_url(test_workspace.name, session_name)
+        response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == extracted.text
+    assert data[0]["peer_id"] == test_peer.name
+    assert data[0]["session_id"] == session_name
+
+    stmt = select(models.Message).where(models.Message.public_id == data[0]["id"])
+    result = await db_session.execute(stmt)
+    db_message = result.scalar_one()
+    assert db_message.internal_metadata["processing_type"] == "audio_transcription"
+    assert db_message.internal_metadata["audio_segment_count"] == 1
+    assert db_message.internal_metadata["transcription_provider"] == "openai"
+    assert "transcription_fallback_used" not in db_message.internal_metadata
+
+
+@pytest.mark.asyncio
+async def test_audio_upload_over_generic_limit_uses_audio_size_limit_when_validated(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    original_generic_max = settings.MAX_FILE_SIZE
+    original_audio_max = settings.AUDIO.MAX_FILE_SIZE_BYTES
+    settings.MAX_FILE_SIZE = 5
+    settings.AUDIO.MAX_FILE_SIZE_BYTES = 10
+    extracted = ExtractedFileText(
+        text="Transcribed audio",
+        metadata={
+            "processing_type": "audio_transcription",
+            "audio_segment_count": 1,
+            "transcription_provider": "openai",
+        },
+    )
+    try:
+        file_data = io.BytesIO(b"123456")
+        files = {"file": ("call.mp3", file_data, "audio/mpeg")}
+        form_data = {"peer_id": test_peer.name}
+
+        with (
+            patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False),
+            patch(
+                "src.routers.messages.is_validated_audio_upload",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "src.utils.files.AudioProcessor.extract_text",
+                new=AsyncMock(return_value=extracted),
+            ),
+        ):
+            url = _get_upload_url(test_workspace.name, session_name)
+            response = client.post(url, files=files, data=form_data)
+    finally:
+        settings.MAX_FILE_SIZE = original_generic_max
+        settings.AUDIO.MAX_FILE_SIZE_BYTES = original_audio_max
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == extracted.text
+
+
+@pytest.mark.asyncio
+async def test_extension_only_audio_upload_over_generic_limit_uses_audio_size_limit_when_validated(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    original_generic_max = settings.MAX_FILE_SIZE
+    original_audio_max = settings.AUDIO.MAX_FILE_SIZE_BYTES
+    settings.MAX_FILE_SIZE = 5
+    settings.AUDIO.MAX_FILE_SIZE_BYTES = 10
+    extracted = ExtractedFileText(
+        text="Transcribed extension-only audio",
+        metadata={
+            "processing_type": "audio_transcription",
+            "audio_segment_count": 1,
+            "transcription_provider": "openai",
+        },
+    )
+    try:
+        file_data = io.BytesIO(b"123456")
+        files = {"file": ("renamed.mp3", file_data, "application/octet-stream")}
+        form_data = {"peer_id": test_peer.name}
+
+        with (
+            patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False),
+            patch(
+                "src.routers.messages.is_validated_audio_upload",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "src.utils.files.AudioProcessor.extract_text",
+                new=AsyncMock(return_value=extracted),
+            ),
+        ):
+            url = _get_upload_url(test_workspace.name, session_name)
+            response = client.post(url, files=files, data=form_data)
+    finally:
+        settings.MAX_FILE_SIZE = original_generic_max
+        settings.AUDIO.MAX_FILE_SIZE_BYTES = original_audio_max
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == extracted.text
+
+
+@pytest.mark.asyncio
+async def test_audio_upload_over_generic_limit_keeps_generic_limit_without_transcription_credentials(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    original_generic_max = settings.MAX_FILE_SIZE
+    original_audio_max = settings.AUDIO.MAX_FILE_SIZE_BYTES
+    settings.MAX_FILE_SIZE = 5
+    settings.AUDIO.MAX_FILE_SIZE_BYTES = 10
+    try:
+        file_data = io.BytesIO(b"123456")
+        files = {"file": ("call.mp3", file_data, "audio/mpeg")}
+        form_data = {"peer_id": test_peer.name}
+
+        with patch.dict("src.utils.files.CLIENTS", {}, clear=True):
+            url = _get_upload_url(test_workspace.name, session_name)
+            response = client.post(url, files=files, data=form_data)
+    finally:
+        settings.MAX_FILE_SIZE = original_generic_max
+        settings.AUDIO.MAX_FILE_SIZE_BYTES = original_audio_max
+
+    assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_audio_upload_over_generic_limit_keeps_generic_limit_on_probe_timeout(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    original_generic_max = settings.MAX_FILE_SIZE
+    original_audio_max = settings.AUDIO.MAX_FILE_SIZE_BYTES
+    settings.MAX_FILE_SIZE = 5
+    settings.AUDIO.MAX_FILE_SIZE_BYTES = 10
+    try:
+        file_data = io.BytesIO(b"123456")
+        files = {"file": ("call.mp3", file_data, "audio/mpeg")}
+        form_data = {"peer_id": test_peer.name}
+
+        with (
+            patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=True),
+            patch(
+                "src.utils.files.AudioProcessor.probe_audio_duration_seconds_from_path",
+                side_effect=FileProcessingError("Audio validation timed out"),
+            ),
+        ):
+            url = _get_upload_url(test_workspace.name, session_name)
+            response = client.post(url, files=files, data=form_data)
+    finally:
+        settings.MAX_FILE_SIZE = original_generic_max
+        settings.AUDIO.MAX_FILE_SIZE_BYTES = original_audio_max
+
+    assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_create_messages_with_file_opens_tracked_db_after_file_processing():
+    background_tasks = BackgroundTasks()
+    form_data = schemas.MessageUploadCreate(peer_id="peer")
+    file = UploadFile(
+        file=io.BytesIO(b"ID3\x03\x00\x00"),
+        filename="call.mp3",
+        headers=Headers({"content-type": "audio/mpeg"}),
+    )
+
+    tracked_db_entered = False
+    db_session = AsyncMock()
+    created_message = models.Message(
+        session_name="session",
+        peer_name="peer",
+        workspace_name="workspace",
+        content="transcribed text",
+        public_id=generate_nanoid(),
+        token_count=2,
+        seq_in_session=1,
+        created_at=datetime.now(UTC),
+        h_metadata={},
+        internal_metadata={},
+    )
+
+    @asynccontextmanager
+    async def fake_tracked_db(_operation_name: str | None = None):
+        nonlocal tracked_db_entered
+        tracked_db_entered = True
+        yield db_session
+
+    async def fake_process_file_uploads_for_messages(*_args: Any, **_kwargs: Any):
+        assert not tracked_db_entered
+        return [
+            {
+                "message_create": schemas.MessageCreate(
+                    content="transcribed text",
+                    peer_id="peer",
+                ),
+                "file_metadata": {"processing_type": "audio_transcription"},
+            }
+        ]
+
+    with (
+        patch(
+            "src.routers.messages.process_file_uploads_for_messages",
+            side_effect=fake_process_file_uploads_for_messages,
+        ),
+        patch("src.routers.messages.tracked_db", fake_tracked_db),
+        patch(
+            "src.routers.messages.crud.create_messages",
+            new=AsyncMock(return_value=[created_message]),
+        ),
+        patch("src.routers.messages.flag_modified"),
+    ):
+        result = await create_messages_with_file(
+            background_tasks=background_tasks,
+            workspace_id="workspace",
+            session_id="session",
+            form_data=form_data,
+            file=file,
+        )
+
+    assert tracked_db_entered
+    db_session.commit.assert_awaited_once()
+    assert result == [created_message]
+
+
+@pytest.mark.asyncio
+async def test_filename_audio_extension_with_text_plain_mime_uses_text_processor(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    file_data = io.BytesIO(b"plain text, not audio")
+    files = {"file": ("notes.mp3", file_data, "text/plain")}
+    form_data = {"peer_id": test_peer.name}
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "plain text, not audio"
+
+
+@pytest.mark.asyncio
+async def test_create_messages_with_wav_file_accepts_audio_wave_mime(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    file_data = io.BytesIO(b"fake wav bytes")
+    files = {"file": ("call.wav", file_data, "audio/wave")}
+    form_data = {"peer_id": test_peer.name}
+
+    extracted = ExtractedFileText(
+        text="WAV transcript",
+        metadata={
+            "processing_type": "audio_transcription",
+            "audio_segment_count": 1,
+            "transcription_provider": "openai",
+        },
+    )
+
+    with (
+        patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False),
+        patch(
+            "src.utils.files.AudioProcessor.extract_text",
+            new=AsyncMock(return_value=extracted),
+        ),
+    ):
+        url = _get_upload_url(test_workspace.name, session_name)
+        response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "WAV transcript"
+
+
+@pytest.mark.asyncio
+async def test_malformed_audio_upload_returns_validation_error(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    file_data = io.BytesIO(b"not-valid-audio")
+    files = {"file": ("broken.mp3", file_data, "audio/mpeg")}
+    form_data = {"peer_id": test_peer.name}
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    with (
+        patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False),
+        patch(
+            "src.utils.files.AudioProcessor._probe_audio_duration_seconds",
+            side_effect=ValidationException("Uploaded audio is invalid or unreadable"),
+        ),
+    ):
+        response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 422
+    assert "Uploaded audio is invalid or unreadable" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_empty_audio_upload_returns_validation_error(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    file_data = io.BytesIO(b"")
+    files = {"file": ("empty.mp3", file_data, "audio/mpeg")}
+    form_data = {"peer_id": test_peer.name}
+
+    url = _get_upload_url(test_workspace.name, session_name)
+    with patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False):
+        response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 422
+    assert "Audio upload is empty" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_large_audio_upload_applies_audio_metadata_to_all_message_chunks(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Large audio transcripts should chunk into multiple messages with shared audio metadata."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    session_name = test_session.name
+
+    file_data = io.BytesIO(b"fake long mp3 bytes")
+    files = {"file": ("lecture.mp3", file_data, "audio/mpeg")}
+    form_data = {"peer_id": test_peer.name}
+
+    long_text = "Segment line. " * 4000
+    extracted = ExtractedFileText(
+        text=long_text,
+        metadata={
+            "processing_type": "audio_transcription",
+            "audio_segment_count": 3,
+            "transcription_provider": "openai",
+        },
+    )
+
+    with (
+        patch.dict("src.utils.files.CLIENTS", {"openai": object()}, clear=False),
+        patch(
+            "src.utils.files.AudioProcessor.extract_text",
+            new=AsyncMock(return_value=extracted),
+        ),
+    ):
+        url = _get_upload_url(test_workspace.name, session_name)
+        response = client.post(url, files=files, data=form_data)
+
+    assert response.status_code == 201
+    data = response.json()
+    assert len(data) > 1
+
+    stmt = select(models.Message).where(
+        models.Message.session_name == session_name,
+        models.Message.peer_name == test_peer.name,
+    )
+    result = await db_session.execute(stmt)
+    db_messages = list(result.scalars().all())
+
+    assert len(db_messages) == len(data)
+    for db_message in db_messages:
+        assert db_message.internal_metadata["processing_type"] == "audio_transcription"
+        assert db_message.internal_metadata["audio_segment_count"] == 3
+        assert db_message.internal_metadata["transcription_provider"] == "openai"
+        assert "transcription_fallback_used" not in db_message.internal_metadata
+        assert "chunk_index" in db_message.internal_metadata
+        assert "total_chunks" in db_message.internal_metadata

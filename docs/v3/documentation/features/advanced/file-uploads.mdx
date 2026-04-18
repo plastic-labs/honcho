@@ -1,10 +1,10 @@
 ---
 title: 'File Uploads'
-description: 'Upload PDFs, text files, and JSON documents to create messages in Honcho'
+description: 'Upload PDFs, text files, JSON documents, and audio files to create messages in Honcho'
 icon: 'upload'
 ---
 
-Honcho's file upload feature allows you to convert documents into messages automatically. Upload PDFs, text files, or JSON documents, and Honcho will extract the text content, split it into appropriately sized chunks, and create messages that become part of your peer's representation or session context.
+Honcho's file upload feature allows you to convert documents and audio into messages automatically. Upload PDFs, text files, JSON documents, or supported audio files, and Honcho will extract or transcribe the content, split it into appropriately sized chunks, and create messages that become part of your peer's representation or session context.
 
 This feature is perfect for ingesting documents, reports, research papers, or any text-based content that you want your AI agents to understand and reference.
 
@@ -25,9 +25,10 @@ Honcho currently supports the following file types with more to come:
 - **PDF files** (`application/pdf`) - Text extraction with page numbers
 - **Text files** (`text/*`) - Plain text, markdown, code files, etc.
 - **JSON files** (`application/json`) - Structured data converted to readable format
+- **Audio files** (`audio/mpeg`, `audio/wav`, `audio/x-wav`) - Server-side transcription for `.mp3` and `.wav` uploads
 
 <Note>
-Files are processed in memory and not stored on disk. Only the extracted text content is preserved in Honcho's message system.
+Files are processed during upload and only the extracted or transcribed text content is preserved in Honcho's message system.
 </Note>
 
 ## Basic Usage
@@ -101,6 +102,8 @@ Our approach involves...
 **Text Files**: Content is decoded using UTF-8, UTF-16, or Latin-1 encoding as needed.
 
 **JSON Files**: Structured data is converted to string format.
+
+**Audio Files**: `.mp3` and `.wav` uploads are transcribed directly by OpenAI during upload using `whisper-1` by default. The resulting transcript is then split into normal message-sized text chunks before messages are created.
 
 ### Chunking Strategy
 
