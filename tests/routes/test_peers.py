@@ -958,3 +958,517 @@ def test_set_peer_card(client: TestClient, sample_data: tuple[Workspace, Peer]):
     )
     assert response.status_code == 200
     assert response.json()["peer_card"] == target_card
+
+
+# ===========================================================================
+# Tests for GET /{peer_id}/context endpoint
+# ===========================================================================
+
+
+def test_get_peer_context_basic(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test basic peer context endpoint returns expected structure."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Validate response structure matches PeerContext schema
+    assert "peer_id" in data
+    assert "target_id" in data
+    assert "representation" in data
+    assert "peer_card" in data
+
+    # When no target is specified, peer_id and target_id should both equal the peer's name
+    assert data["peer_id"] == test_peer.name
+    assert data["target_id"] == test_peer.name
+
+
+def test_get_peer_context_self_observation(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that omitting target defaults to self-observation."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Without target, peer observes itself
+    assert data["peer_id"] == test_peer.name
+    assert data["target_id"] == test_peer.name
+
+
+def test_get_peer_context_with_target(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with an explicit target peer."""
+    test_workspace, observer_peer = sample_data
+
+    # Create a target peer
+    target_peer_name = str(generate_nanoid())
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name},
+    )
+    assert response.status_code in [200, 201]
+
+    # Get context for the target from the observer's perspective
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/context",
+        params={"target": target_peer_name},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["peer_id"] == observer_peer.name
+    assert data["target_id"] == target_peer_name
+
+
+def test_get_peer_context_representation_field_type(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that the representation field is a string or None."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # representation should be a string or None (no conclusions yet for a new peer)
+    assert data["representation"] is None or isinstance(data["representation"], str)
+
+
+def test_get_peer_context_peer_card_field_type(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that the peer_card field is a list or None."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # peer_card should be a list of strings or None (no card set yet)
+    assert data["peer_card"] is None or isinstance(data["peer_card"], list)
+
+
+def test_get_peer_context_no_peer_card_initially(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that peer_card is None initially before any card is set."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # New peer has no peer card
+    assert data["peer_card"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_peer_context_with_peer_card_data(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test peer context returns peer card data when a card has been set."""
+    test_workspace, observer_peer = sample_data
+
+    # Set a self-card for the observer peer directly in the DB
+    self_card_content = ["I am a helpful assistant", "I remember conversations well"]
+    await crud.set_peer_card(
+        db_session,
+        test_workspace.name,
+        self_card_content,
+        observer=observer_peer.name,
+        observed=observer_peer.name,
+    )
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/context"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["peer_card"] == self_card_content
+
+
+@pytest.mark.asyncio
+async def test_get_peer_context_with_target_peer_card(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test peer context returns the correct peer card for a target peer."""
+    test_workspace, observer_peer = sample_data
+
+    # Create a target peer
+    target_peer_name = str(generate_nanoid())
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name},
+    )
+    assert response.status_code in [200, 201]
+
+    # Set a card from observer describing the target
+    target_card_content = ["This user prefers concise answers", "They are a developer"]
+    await crud.set_peer_card(
+        db_session,
+        test_workspace.name,
+        target_card_content,
+        observer=observer_peer.name,
+        observed=target_peer_name,
+    )
+
+    # Get context from observer's perspective on the target
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/context",
+        params={"target": target_peer_name},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["peer_id"] == observer_peer.name
+    assert data["target_id"] == target_peer_name
+    assert data["peer_card"] == target_card_content
+
+
+def test_get_peer_context_with_search_query(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with a semantic search_query parameter."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"search_query": "what does the user prefer?"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "peer_id" in data
+    assert "target_id" in data
+    assert data["peer_id"] == test_peer.name
+
+
+def test_get_peer_context_with_search_top_k(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with a search_top_k parameter."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"search_query": "test", "search_top_k": 5},
+    )
+    assert response.status_code == 200
+
+
+def test_get_peer_context_with_search_max_distance(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with a search_max_distance parameter."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"search_query": "test", "search_max_distance": 0.5},
+    )
+    assert response.status_code == 200
+
+
+def test_get_peer_context_include_most_frequent_true(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with include_most_frequent=True."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"include_most_frequent": True},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_id" in data
+
+
+def test_get_peer_context_include_most_frequent_false(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with include_most_frequent=False."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"include_most_frequent": False},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_id" in data
+
+
+def test_get_peer_context_with_max_conclusions(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with a max_conclusions parameter."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"max_conclusions": 10},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "peer_id" in data
+
+
+def test_get_peer_context_max_conclusions_min_boundary(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with max_conclusions at minimum boundary (1)."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"max_conclusions": 1},
+    )
+    assert response.status_code == 200
+
+
+def test_get_peer_context_max_conclusions_max_boundary(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with max_conclusions at maximum boundary (100)."""
+    test_workspace, test_peer = sample_data
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"max_conclusions": 100},
+    )
+    assert response.status_code == 200
+
+
+def test_get_peer_context_max_conclusions_out_of_range(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with max_conclusions out of valid range returns 422."""
+    test_workspace, test_peer = sample_data
+
+    # Below minimum
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"max_conclusions": 0},
+    )
+    assert response.status_code == 422
+
+    # Above maximum
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"max_conclusions": 101},
+    )
+    assert response.status_code == 422
+
+
+def test_get_peer_context_search_top_k_out_of_range(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with search_top_k out of valid range returns 422."""
+    test_workspace, test_peer = sample_data
+
+    # Below minimum
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"search_query": "test", "search_top_k": 0},
+    )
+    assert response.status_code == 422
+
+    # Above maximum
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"search_query": "test", "search_top_k": 101},
+    )
+    assert response.status_code == 422
+
+
+def test_get_peer_context_search_max_distance_out_of_range(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with search_max_distance out of valid range returns 422."""
+    test_workspace, test_peer = sample_data
+
+    # Below minimum
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"search_query": "test", "search_max_distance": -0.1},
+    )
+    assert response.status_code == 422
+
+    # Above maximum
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context",
+        params={"search_query": "test", "search_max_distance": 1.1},
+    )
+    assert response.status_code == 422
+
+
+def test_get_peer_context_with_all_params(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with all supported query parameters at once."""
+    test_workspace, observer_peer = sample_data
+
+    # Create a target peer
+    target_peer_name = str(generate_nanoid())
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name},
+    )
+    assert response.status_code in [200, 201]
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/context",
+        params={
+            "target": target_peer_name,
+            "search_query": "preferences",
+            "search_top_k": 5,
+            "search_max_distance": 0.8,
+            "include_most_frequent": True,
+            "max_conclusions": 20,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["peer_id"] == observer_peer.name
+    assert data["target_id"] == target_peer_name
+    assert "representation" in data
+    assert "peer_card" in data
+
+
+def test_get_peer_context_nonexistent_workspace(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with a nonexistent workspace returns 404."""
+    _, test_peer = sample_data
+    fake_workspace = str(generate_nanoid())
+
+    response = client.get(
+        f"/v3/workspaces/{fake_workspace}/peers/{test_peer.name}/context"
+    )
+    assert response.status_code == 404
+
+
+def test_get_peer_context_nonexistent_peer(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with a nonexistent peer returns 404."""
+    test_workspace, _ = sample_data
+    fake_peer = str(generate_nanoid())
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{fake_peer}/context"
+    )
+    assert response.status_code == 404
+
+
+def test_get_peer_context_nonexistent_target(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer context with a nonexistent target peer returns 404."""
+    test_workspace, observer_peer = sample_data
+    fake_target = str(generate_nanoid())
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/context",
+        params={"target": fake_target},
+    )
+    assert response.status_code == 404
+
+
+def test_get_peer_context_combines_representation_and_card(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that peer context returns both representation and peer_card in a single call."""
+    test_workspace, test_peer = sample_data
+
+    # Make a single /context call
+    context_response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/context"
+    )
+    assert context_response.status_code == 200
+    context_data = context_response.json()
+
+    # Also fetch representation and card separately to validate consistency
+    rep_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={},
+    )
+    assert rep_response.status_code == 200
+
+    card_response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/card"
+    )
+    assert card_response.status_code == 200
+
+    # Both individual calls should succeed and the context endpoint should aggregate them
+    assert context_data["representation"] == rep_response.json()["representation"]
+    assert context_data["peer_card"] == card_response.json()["peer_card"]
+
+
+@pytest.mark.asyncio
+async def test_get_peer_context_combines_representation_and_card_with_target(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test that /context combines representation and card correctly for a target peer."""
+    test_workspace, observer_peer = sample_data
+
+    # Create target peer
+    target_peer_name = str(generate_nanoid())
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name},
+    )
+
+    # Set a peer card for the observer → target relationship
+    expected_card = ["Target peer is curious", "Speaks Python fluently"]
+    await crud.set_peer_card(
+        db_session,
+        test_workspace.name,
+        expected_card,
+        observer=observer_peer.name,
+        observed=target_peer_name,
+    )
+
+    # /context with target should include that card
+    context_response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/context",
+        params={"target": target_peer_name},
+    )
+    assert context_response.status_code == 200
+    context_data = context_response.json()
+
+    assert context_data["peer_card"] == expected_card
+
+    # /card with the same target should return the same value
+    card_response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card",
+        params={"target": target_peer_name},
+    )
+    assert card_response.status_code == 200
+    assert card_response.json()["peer_card"] == context_data["peer_card"]
