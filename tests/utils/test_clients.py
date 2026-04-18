@@ -35,6 +35,7 @@ from src.utils.clients import (
     honcho_llm_call,
     honcho_llm_call_inner,
 )
+from src.utils.representation import PromptRepresentation
 
 
 class SampleTestModel(BaseModel):
@@ -519,6 +520,104 @@ class TestOpenAIClient:
             assert chunks[2].content == ""
             assert chunks[2].is_done is True
             assert chunks[2].finish_reasons == ["stop"]
+
+    async def test_openai_response_model_parse_runtime_error_does_not_fallback(self):
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.parse = AsyncMock(side_effect=RuntimeError("provider exploded"))
+        mock_client.chat.completions.create = AsyncMock()
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            with pytest.raises(RuntimeError, match="provider exploded"):
+                await honcho_llm_call_inner(
+                    provider="openai",
+                    model="gpt-4",
+                    prompt="Generate a person",
+                    max_tokens=100,
+                    response_model=SampleTestModel,
+                )
+
+        mock_client.chat.completions.create.assert_not_called()
+
+    async def test_openai_response_model_validation_error_uses_json_fallback(self):
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.parse = AsyncMock(side_effect=ValueError("No parsed content in structured response"))
+        fallback_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4",
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason="stop",
+                    message=ChatCompletionMessage(
+                        role="assistant",
+                        content='{"name":"Jane","age":31,"active":true}',
+                    ),
+                )
+            ],
+            usage=CompletionUsage(prompt_tokens=10, completion_tokens=7, total_tokens=17),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=fallback_response)
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            response = await honcho_llm_call_inner(
+                provider="openai",
+                model="gpt-4",
+                prompt="Generate a person",
+                max_tokens=100,
+                response_model=SampleTestModel,
+            )
+
+        assert isinstance(response.content, SampleTestModel)
+        assert response.content.name == "Jane"
+        mock_client.chat.completions.create.assert_called_once()
+
+    async def test_custom_minimax_prompt_representation_fallback_drops_response_format(self):
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_client.chat.completions.parse = AsyncMock(side_effect=ValueError("No parsed content in structured response"))
+        fallback_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="MiniMax-M2.7",
+            choices=[
+                Choice(
+                    index=0,
+                    finish_reason="stop",
+                    message=ChatCompletionMessage(
+                        role="assistant",
+                        content='{"explicit":[{"content":"I live in Berlin"}]}',
+                    ),
+                )
+            ],
+            usage=CompletionUsage(prompt_tokens=10, completion_tokens=7, total_tokens=17),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=fallback_response)
+
+        with (
+            patch.dict(CLIENTS, {"custom": mock_client}),
+            patch.object(settings.LLM, "OPENAI_COMPATIBLE_BASE_URL", "https://api.minimax.io/v1"),
+        ):
+            response = await honcho_llm_call_inner(
+                provider="custom",
+                model="MiniMax-M2.7",
+                prompt="Generate observations",
+                max_tokens=100,
+                response_model=PromptRepresentation,
+            )
+
+        assert isinstance(response.content, PromptRepresentation)
+        create_kwargs = mock_client.chat.completions.create.call_args.kwargs
+        assert "response_format" not in create_kwargs
+        assert create_kwargs["messages"][0]["role"] == "system"
+        assert "Return only a single JSON object with key explicit" in create_kwargs["messages"][0]["content"]
 
 
 @pytest.mark.asyncio

@@ -33,17 +33,25 @@ Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context
    - Use absolute dates/times when possible (e.g. "June 26, 2025" not "yesterday")
+   - Do NOT add facts from general knowledge or unstated implications
 
 RULES:
 - Properly attribute observations to the correct subject: if it is about {peer_id}, say so. If {peer_id} is referencing someone or something else, make that clear.
 - Observations should make sense on their own. Each observation will be used in the future to better understand {peer_id}.
 - Extract ALL observations from {peer_id} messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
+- Return ONLY valid JSON.
+- The top-level response MUST be a single JSON object with exactly one key: "explicit".
+- The value of "explicit" MUST be an array of objects shaped like {{"content": "..."}}.
+- Do NOT include markdown fences.
+- Do NOT include explanatory prose.
+- Do NOT include analysis, thoughts, summaries, or any keys besides "explicit".
+- If there are no explicit facts, return {{"explicit": []}}.
 
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
-- EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
-- EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
+- EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} was in NYC"
+- NOT EXPLICIT: Do not add facts from general knowledge like "Berlin is in Germany" or "Cubase is a DAW" unless the user said them.
 
 Messages to analyze:
 <messages>
