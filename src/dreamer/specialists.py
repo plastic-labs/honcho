@@ -219,6 +219,7 @@ If you update it, send the full deduplicated list and remove stale entries.
             messages=messages,
             track_name=f"Dreamer/{self.name}",
             iteration_callback=iteration_callback,
+            trace_name=f"dreamer_{self.name}",
         )
 
         # Log metrics
