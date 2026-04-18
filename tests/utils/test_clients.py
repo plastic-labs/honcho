@@ -1175,6 +1175,43 @@ class TestMainLLMCallFunction:
 
             assert response.content == "No retry response"
 
+    async def test_track_name_updates_langfuse_span_name(self):
+        """track_name should rename the top-level Langfuse span."""
+
+        mock_llm_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="Named response", type="text")]
+        mock_response.usage = Usage(input_tokens=5, output_tokens=5)
+        mock_response.stop_reason = "stop"
+        mock_llm_client.messages.create = AsyncMock(return_value=mock_response)
+
+        mock_langfuse_client = Mock()
+
+        with (
+            patch.dict(CLIENTS, {"anthropic": mock_llm_client}),
+            patch.object(settings, "LANGFUSE_PUBLIC_KEY", "test-public-key"),
+            patch("langfuse.get_client", return_value=mock_langfuse_client),
+        ):
+            settings.DIALECTIC.LEVELS["medium"].PROVIDER = "anthropic"
+            settings.DIALECTIC.LEVELS["medium"].MODEL = "claude-4-sonnet"
+            response = await honcho_llm_call(
+                llm_settings=settings.DIALECTIC.LEVELS["medium"],
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+                track_name="Dialectic Agent",
+            )
+
+            assert response.content == "Named response"
+            mock_langfuse_client.update_current_span.assert_called_once_with(
+                name="Dialectic Agent",
+                metadata={
+                    "namespace": settings.NAMESPACE,
+                    "provider": "anthropic",
+                    "model": "claude-4-sonnet",
+                },
+            )
+
 
 class TestEdgeCases:
     """Tests for edge cases and boundary conditions"""
