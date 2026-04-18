@@ -1,0 +1,22 @@
+# ClusterIP Service — accessible within the cluster only.
+# For local development use: kubectl port-forward svc/honcho-api 8000:80 -n honcho
+#
+# To expose externally, change type to:
+#   NodePort     — works on all local k8s distributions without extra tooling
+#   LoadBalancer — requires a cloud provider LB or metallb on bare-metal/kind
+#
+# For production, prefer an Ingress controller (nginx, traefik, etc.) over
+# changing the Service type.
+apiVersion: v1
+kind: Service
+metadata:
+  name: honcho-api
+  namespace: honcho
+spec:
+  selector:
+    app: honcho-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+  type: ClusterIP
