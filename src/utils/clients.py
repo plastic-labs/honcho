@@ -284,6 +284,17 @@ if settings.LLM.GROQ_API_KEY:
     groq = AsyncGroq(api_key=settings.LLM.GROQ_API_KEY)
     CLIENTS["groq"] = groq
 
+# MiniMax Anthropic API compatibility endpoint
+# Routes Anthropic-format requests through MiniMax to cleanly separate
+# thinking blocks from content (avoids thinking tags polluting content)
+if settings.LLM.MINIMAX_API_KEY:
+    minimax = AsyncAnthropic(
+        api_key=settings.LLM.MINIMAX_API_KEY,
+        base_url=settings.LLM.MINIMAX_BASE_URL,
+        timeout=600.0,
+    )
+    CLIENTS["minimax"] = minimax
+
 SELECTED_PROVIDERS = [
     ("Summary", settings.SUMMARY.PROVIDER),
     ("Deriver", settings.DERIVER.PROVIDER),

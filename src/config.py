@@ -207,6 +207,13 @@ class LLMSettings(HonchoSettings):
     OPENAI_COMPATIBLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
+
+    # MiniMax Anthropic API compatibility endpoint
+    # Routes Anthropic-format requests through MiniMax to cleanly separate
+    # thinking blocks from content (avoids thinking tags polluting content)
+    MINIMAX_API_KEY: str | None = None
+    MINIMAX_BASE_URL: str | None = "https://api.minimaxi.com/anthropic"
+
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
     # Separate vLLM endpoint (for local models)
