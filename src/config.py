@@ -219,6 +219,11 @@ class LLMSettings(HonchoSettings):
     CUSTOM_EMBEDDING_BASE_URL: str | None = None
     CUSTOM_EMBEDDING_API_KEY: str | None = None
     CUSTOM_EMBEDDING_MODEL: str | None = None
+    CUSTOM_EMBEDDING_MAX_TOKENS: Annotated[int, Field(default=4096, gt=0, le=8192)] = 4096
+    CUSTOM_EMBEDDING_MAX_TOKENS_PER_REQUEST: Annotated[
+        int, Field(default=32_000, gt=0, le=300_000)
+    ] = 32_000
+    CUSTOM_EMBEDDING_MAX_BATCH_SIZE: Annotated[int, Field(default=32, gt=0, le=256)] = 32
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500

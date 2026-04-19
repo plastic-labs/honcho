@@ -61,8 +61,8 @@ class _EmbeddingClient:
             base_url = settings.LLM.CUSTOM_EMBEDDING_BASE_URL or "http://localhost:8081/v1"
             self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
             self.model = settings.LLM.CUSTOM_EMBEDDING_MODEL or "Qwen/Qwen3-Embedding-8B"
-            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
-            self.max_batch_size = 256
+            self.max_embedding_tokens = settings.LLM.CUSTOM_EMBEDDING_MAX_TOKENS
+            self.max_batch_size = settings.LLM.CUSTOM_EMBEDDING_MAX_BATCH_SIZE
         else:  # openai
             if api_key is None:
                 api_key = settings.LLM.OPENAI_API_KEY
@@ -75,7 +75,9 @@ class _EmbeddingClient:
 
         self.encoding: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
         self.max_embedding_tokens_per_request: int = (
-            settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
+            settings.LLM.CUSTOM_EMBEDDING_MAX_TOKENS_PER_REQUEST
+            if self.provider == "custom"
+            else settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
         )
 
     async def embed(self, query: str) -> list[float]:
@@ -164,7 +166,7 @@ class _EmbeddingClient:
         # 1. Prepare chunks for all texts if needed
         text_chunks = self._prepare_chunks(id_resource_dict)
 
-        # 2. Create batches that fit API limits (max 2048 embeddings per request, max 300,000 tokens per request)
+        # 2. Create batches that fit the provider's count + token limits
         batches = self._create_batches(text_chunks)
 
         # 3. Process all batches concurrently
