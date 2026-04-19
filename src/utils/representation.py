@@ -696,3 +696,86 @@ def _safe_datetime_from_metadata(
     if isinstance(message_created_at, datetime):
         return _strip_microseconds_and_timezone(message_created_at)
     return _strip_microseconds_and_timezone(fallback_datetime)
+
+
+class NmxrExplicitFact(BaseModel):
+    """A single atomic grounded fact produced by the NMXR teacher trace.
+
+    This is a structural mirror of minccino's ``NmxrExplicitFact`` Pydantic
+    model (see ``minccino/stages/annotate/nmxr_teacher_trace.py``). Honcho
+    owns its own copy so that the Rust/FastAPI layer has no runtime
+    dependency on the Neuromancer training repo; see proposal section
+    A.12.5 for the rationale and A.12.6 for the Option-A adapter context.
+
+    Attributes:
+        fact: Atomic declarative statement about the subject peer.
+        source_message_idx: 0-indexed position in the conversation's
+            messages array that the fact is cited from. Not constrained
+            here -- downstream grounding verifiers (e.g. minccino's
+            ``nmxr_grounding_verifier``) enforce non-negativity and
+            index-in-range.
+        source_span: VERBATIM substring from the cited message. Downstream
+            verifiers substring-check this against the raw conversation
+            before treating the fact as authoritative.
+    """
+
+    fact: str = Field(
+        ...,
+        description="Atomic declarative statement about the subject peer.",
+    )
+    source_message_idx: int = Field(
+        ...,
+        description=(
+            "0-indexed position in the conversation's messages array. "
+            "Not constrained here; grounding verifiers enforce bounds."
+        ),
+    )
+    source_span: str = Field(
+        ...,
+        description=(
+            "VERBATIM substring from messages[source_message_idx].content. "
+            "Enforced downstream by the grounding verifier."
+        ),
+    )
+
+
+class NmxrGroundedRepresentation(BaseModel):
+    """Teacher-trace representation: grounded facts about a subject peer.
+
+    Used as the OpenRouter ``response_format`` JSON schema for NMXR
+    teacher-trace extraction (AI-168). Honcho keeps this type in its
+    own codebase, independent of minccino, so it can accept and store
+    teacher traces without pulling in training-side dependencies. See
+    proposal section A.12.5.
+
+    Attributes:
+        explicit: All atomic grounded facts the teacher extracted.
+        subject_peer: Which peer the facts describe.
+    """
+
+    explicit: list[NmxrExplicitFact] = Field(default_factory=list)
+    subject_peer: str = Field(
+        ...,
+        description="Name/id of the peer the facts describe.",
+    )
+
+    def to_prompt_representation(self) -> "PromptRepresentation":
+        """Project this grounded representation onto a ``PromptRepresentation``.
+
+        Strips the ``source_*`` provenance fields (``source_message_idx``
+        and ``source_span``) and returns a plain ``PromptRepresentation``
+        whose ``explicit`` list contains one ``ExplicitObservationBase``
+        per fact. This is the forward-compatibility bridge noted in
+        proposal section A.12.6: any code path that consumes a
+        ``PromptRepresentation`` today can also consume the grounded
+        variant via this adapter.
+
+        Returns:
+            A ``PromptRepresentation`` with one ``ExplicitObservationBase``
+            entry per fact and no provenance metadata.
+        """
+        return PromptRepresentation(
+            explicit=[
+                ExplicitObservationBase(content=fact.fact) for fact in self.explicit
+            ]
+        )
