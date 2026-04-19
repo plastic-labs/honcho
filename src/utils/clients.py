@@ -1813,8 +1813,25 @@ async def honcho_llm_call_inner(
             # If using response_model, parse the JSON response
             if response_model:
                 try:
-                    # Add back the opening brace that we prefilled
-                    json_content = "{" + text_content
+                    # MiniMax may wrap JSON in a markdown code fence (```json ... ```).
+                    # Strip fence markers to get clean JSON.
+                    cleaned = text_content.strip()
+                    if cleaned.startswith("```"):
+                        # Remove opening fence line (```json or ```)
+                        lines = cleaned.splitlines()
+                        if lines[0].strip().lstrip("`").startswith("json"):
+                            lines = lines[1:]
+                        # Remove closing fence if present
+                        if lines and lines[-1].strip().startswith("```"):
+                            lines = lines[:-1]
+                        cleaned = "\n".join(lines).strip()
+
+                    # Determine if we need to prepend '{' (model consumed the prefill)
+                    # or if the model started with '{' directly (did not consume prefill)
+                    if cleaned.startswith("{"):
+                        json_content = cleaned
+                    else:
+                        json_content = "{" + cleaned
                     parsed_json = json.loads(json_content)
                     parsed_content = response_model.model_validate(parsed_json)
 
