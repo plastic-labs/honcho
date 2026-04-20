@@ -1,0 +1,4 @@
+# Uncomment and point at a self-hosted Honcho to bypass the managed API.
+# wrangler dev reads this file automatically when it exists as `.dev.vars`.
+# For deployed Workers, use: wrangler secret put HONCHO_API_URL
+# HONCHO_API_URL=http://127.0.0.1:28000

@@ -69,6 +69,28 @@ Built on:
 - **[@modelcontextprotocol/sdk](https://www.npmjs.com/package/@modelcontextprotocol/sdk)** — `McpServer` for tool registration
 - **[@honcho-ai/sdk](https://www.npmjs.com/package/@honcho-ai/sdk)** v2 — Honcho TypeScript SDK
 
+## Self-Hosted Honcho
+
+If you run Honcho yourself (for privacy, latency, or offline use), deploy the
+MCP Worker alongside your instance and set `HONCHO_API_URL` in its
+environment.
+
+**Local dev (`bun run dev`):** create `mcp/.dev.vars`:
+
+```
+HONCHO_API_URL=http://127.0.0.1:28000
+```
+
+**Deployed Worker:**
+
+```bash
+wrangler secret put HONCHO_API_URL
+# paste your URL when prompted
+```
+
+When `HONCHO_API_URL` is unset the Worker routes to `https://api.honcho.dev`,
+so this change is backward-compatible.
+
 ## Development
 
 ### Setup
