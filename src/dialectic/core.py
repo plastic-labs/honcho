@@ -24,8 +24,11 @@ from src.utils.agent_tools import (
     search_memory,
 )
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.representation import Representation
 
 logger = logging.getLogger(__name__)
+
+__all__ = ["DialecticAgent", "tracked_db"]
 
 
 class DialecticAgent(BaseDialecticAgent):
@@ -74,8 +77,7 @@ class DialecticAgent(BaseDialecticAgent):
         prefetch_limit = 10 if self.reasoning_level == "minimal" else 25
 
         try:
-            explicit_repr = await search_memory(
-                db=self.db,
+            explicit_repr: Representation = await search_memory(
                 workspace_name=self.workspace_name,
                 observer=self.observer,
                 observed=self.observed,
@@ -84,8 +86,7 @@ class DialecticAgent(BaseDialecticAgent):
                 levels=["explicit"],
             )
 
-            derived_repr = await search_memory(
-                db=self.db,
+            derived_repr: Representation = await search_memory(
                 workspace_name=self.workspace_name,
                 observer=self.observer,
                 observed=self.observed,

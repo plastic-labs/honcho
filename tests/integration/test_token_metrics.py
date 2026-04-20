@@ -707,6 +707,7 @@ class TestDialecticTokenMetrics:
         before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
 
         agent = DialecticAgent(
+            db=db_session,
             workspace_name=workspace.name,
             session_name=session.name,
             observer=peer.name,
@@ -754,6 +755,7 @@ class TestDialecticTokenMetrics:
         before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
 
         agent = DialecticAgent(
+            db=db_session,
             workspace_name=workspace.name,
             session_name=session.name,
             observer=peer.name,
@@ -817,6 +819,7 @@ class TestDialecticTokenMetrics:
         )
 
         agent = DialecticAgent(
+            db=db_session,
             workspace_name=workspace.name,
             session_name=session.name,
             observer=peer.name,

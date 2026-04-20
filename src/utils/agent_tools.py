@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
-from src.dependencies import tracked_db
 from src.crud.message import peer_visibility_condition
+from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.models import Document
 from src.schemas import ResolvedConfiguration
@@ -26,7 +26,7 @@ from src.telemetry.events import (
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
-from src.utils.types import DocumentLevel, get_current_iteration
+from src.utils.types import get_current_iteration
 
 logger = logging.getLogger(__name__)
 
@@ -1214,6 +1214,7 @@ async def extract_preferences(
     Returns:
         Dict with 'messages' list containing potentially relevant messages
     """
+    _ = db
     messages: list[str] = []
     seen_content: set[str] = set()  # Dedupe by content hash
 

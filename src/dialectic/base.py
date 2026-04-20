@@ -16,6 +16,11 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import ReasoningLevel, settings
+from src.llm import (
+    HonchoLLMCallResponse,
+    StreamingResponseWithMetadata,
+    honcho_llm_call,
+)
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, emit
 from src.telemetry.logging import (
@@ -24,11 +29,6 @@ from src.telemetry.logging import (
     log_token_usage_metrics,
 )
 from src.telemetry.prometheus.metrics import DialecticComponents, TokenTypes
-from src.llm import (
-    HonchoLLMCallResponse,
-    StreamingResponseWithMetadata,
-    honcho_llm_call,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +243,7 @@ class BaseDialecticAgent(ABC):
         )
 
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            llm_settings=level_settings,
+            model_config=level_settings.MODEL_CONFIG,
             prompt="",
             max_tokens=max_tokens,
             tools=tools,
@@ -252,7 +252,6 @@ class BaseDialecticAgent(ABC):
             max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
             messages=self.messages,
             track_name=self._track_name,
-            thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
             trace_name=self._trace_name,
         )
@@ -289,7 +288,7 @@ class BaseDialecticAgent(ABC):
         response = cast(
             StreamingResponseWithMetadata,
             await honcho_llm_call(
-                llm_settings=level_settings,
+                model_config=level_settings.MODEL_CONFIG,
                 prompt="",
                 max_tokens=max_tokens,
                 stream=True,
@@ -300,7 +299,6 @@ class BaseDialecticAgent(ABC):
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,
                 track_name=f"{self._track_name} Stream",
-                thinking_budget_tokens=level_settings.THINKING_BUDGET_TOKENS,
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name=self._trace_name,
             ),
