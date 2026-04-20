@@ -1,0 +1,29 @@
+name: CLI Docs
+on:
+  push:
+    paths:
+      - 'honcho-cli/src/honcho_cli/**/*.py'
+      - 'honcho-cli/scripts/generate_cli_docs.py'
+      - 'docs/snippets/cli-commands.mdx'
+
+permissions:
+  contents: read
+
+jobs:
+  cli-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Install the project
+        run: uv sync --all-extras --dev
+      - name: Check CLI docs snippet is up to date
+        run: uv run --package honcho-cli python honcho-cli/scripts/generate_cli_docs.py --check
