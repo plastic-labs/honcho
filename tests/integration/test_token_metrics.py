@@ -19,6 +19,7 @@ from prometheus_client import Counter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.llm import HonchoLLMCallResponse
 from src.models import Peer, Workspace
 from src.schemas import (
     ResolvedConfiguration,
@@ -31,7 +32,6 @@ from src.telemetry.prometheus.metrics import (
     deriver_tokens_processed_counter,
     dialectic_tokens_processed_counter,
 )
-from src.utils.clients import HonchoLLMCallResponse
 from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 from src.utils.summarizer import (
     SummaryType,

@@ -11,10 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
 from src.cache.client import cache as cache_client
-from src.config import settings
+from src.config import ConfiguredModelSettings, settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
+from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.models import Message
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
@@ -24,7 +25,6 @@ from src.telemetry.prometheus.metrics import (
     DeriverTaskTypes,
     TokenTypes,
 )
-from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 
@@ -76,6 +76,10 @@ __all__ = [
     "Summary",
     "to_schema_summary",
 ]
+
+
+def _get_summary_model_config() -> ConfiguredModelSettings:
+    return settings.SUMMARY.MODEL_CONFIG
 
 
 # Configuration constants for summaries
@@ -212,7 +216,7 @@ async def create_short_summary(
     )
 
     return await honcho_llm_call(
-        llm_settings=settings.SUMMARY,
+        model_config=_get_summary_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
     )
@@ -237,7 +241,7 @@ async def create_long_summary(
     )
 
     return await honcho_llm_call(
-        llm_settings=settings.SUMMARY,
+        model_config=_get_summary_model_config(),
         prompt=prompt,
         max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
     )

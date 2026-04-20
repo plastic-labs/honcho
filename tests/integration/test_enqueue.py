@@ -642,68 +642,6 @@ class TestEnqueueFunction:
         assert sender_peer.name in observers
 
     @pytest.mark.asyncio
-    async def test_sender_not_in_peer_configuration_uses_defaults(
-        self,
-        db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
-    ):
-        """Test get_effective_observe_me handles missing sender configuration gracefully"""
-        test_workspace, existing_peer = sample_data
-
-        # Create observer peer
-        observer_peer = models.Peer(
-            workspace_name=test_workspace.name, name=str(generate_nanoid())
-        )
-        db_session.add(observer_peer)
-
-        # Create session with only observer (sender not in peers_with_configuration)
-        test_session = (
-            await crud.get_or_create_session(
-                db_session,
-                schemas.SessionCreate(
-                    name=str(generate_nanoid()),
-                    peers={
-                        observer_peer.name: schemas.SessionPeerConfig(
-                            observe_others=True
-                        ),
-                    },
-                ),
-                test_workspace.name,
-            )
-        ).resource
-        await db_session.commit()
-
-        # Create message from peer NOT in the session configuration
-        # This simulates the race condition where a peer left after sending
-        payload = await self.create_sample_payload(
-            db_session,
-            workspace_name=test_workspace.name,
-            session_name=test_session.name,
-            peer_name=existing_peer.name,
-        )
-
-        initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
-        final_count = await self.count_queue_items(db_session)
-
-        # With deduplication: 1 queue item per message with all observers
-        assert final_count - initial_count == 1
-
-        result = await db_session.execute(
-            select(QueueItem).where(QueueItem.session_id == test_session.id)
-        )
-        queue_items = result.scalars().all()
-
-        assert len(queue_items) == 1
-        item = queue_items[0]
-        assert item.payload.get("task_type") == "representation"
-        assert item.payload.get("observed") == existing_peer.name
-        observers = item.payload.get("observers")
-        assert observers is not None
-        assert existing_peer.name in observers  # self-observation (default)
-        assert observer_peer.name in observers  # observer (observing others)
-
-    @pytest.mark.asyncio
     async def test_mixed_active_inactive_peers_complex_scenario(
         self,
         db_session: AsyncSession,

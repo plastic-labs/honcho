@@ -33,6 +33,205 @@ logger = logging.getLogger(__name__)
 MAX_PEER_CARD_FACTS = 40
 
 
+def _base_observation_properties() -> dict[str, Any]:
+    return {
+        "content": {
+            "type": "string",
+            "description": "The observation content",
+        },
+        "level": {
+            "type": "string",
+            "enum": [
+                "explicit",
+                "deductive",
+                "inductive",
+                "contradiction",
+            ],
+            "description": (
+                "Level: 'explicit' for direct facts, 'deductive' for logical "
+                + "necessities, 'inductive' for patterns, 'contradiction' for "
+                + "conflicting statements"
+            ),
+        },
+        "source_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Document IDs of source or premise observations. Required and "
+                + "must be non-empty for deductive, inductive, and contradiction "
+                + "observations."
+            ),
+        },
+        "premises": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "(For deductive) Human-readable premise text for display",
+        },
+        "sources": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "(For inductive/contradiction) Human-readable source text for display",
+        },
+        "pattern_type": {
+            "type": "string",
+            "enum": [
+                "preference",
+                "behavior",
+                "personality",
+                "tendency",
+                "correlation",
+            ],
+            "description": "(For inductive only) Type of pattern being identified",
+        },
+        "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+            "description": (
+                "(For inductive only) Confidence level: 'high' for 5+ sources, "
+                + "'medium' for 3-4, 'low' for 2"
+            ),
+        },
+    }
+
+
+def _generic_observation_item_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": _base_observation_properties(),
+        "required": ["content", "level"],
+        "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {"properties": {"level": {"const": "deductive"}}},
+                "then": {
+                    "required": ["source_ids", "premises"],
+                    "properties": {
+                        "source_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                        },
+                        "premises": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                        },
+                    },
+                },
+            },
+            {
+                "if": {"properties": {"level": {"const": "inductive"}}},
+                "then": {
+                    "required": [
+                        "source_ids",
+                        "sources",
+                        "pattern_type",
+                        "confidence",
+                    ],
+                    "properties": {
+                        "source_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 2,
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 2,
+                        },
+                    },
+                },
+            },
+            {
+                "if": {"properties": {"level": {"const": "contradiction"}}},
+                "then": {
+                    "required": ["source_ids", "sources"],
+                    "properties": {
+                        "source_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 2,
+                        },
+                        "sources": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 2,
+                        },
+                    },
+                },
+            },
+        ],
+    }
+
+
+def _deductive_observation_item_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "The deductive conclusion as a self-contained statement",
+            },
+            "source_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "description": "Required non-empty list of source observation IDs supporting the deduction",
+            },
+            "premises": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "description": "Required human-readable premise text matching the source observations",
+            },
+        },
+        "required": ["content", "source_ids", "premises"],
+        "additionalProperties": False,
+    }
+
+
+def _inductive_observation_item_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "The inductive pattern or generalization as a self-contained statement",
+            },
+            "source_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 2,
+                "description": "Required list of at least two source observation IDs supporting the pattern",
+            },
+            "sources": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 2,
+                "description": "Required human-readable evidence text matching the source observations",
+            },
+            "pattern_type": {
+                "type": "string",
+                "enum": [
+                    "preference",
+                    "behavior",
+                    "personality",
+                    "tendency",
+                    "correlation",
+                ],
+                "description": "Required pattern category",
+            },
+            "confidence": {
+                "type": "string",
+                "enum": ["high", "medium", "low"],
+                "description": "Required confidence level based on evidence count",
+            },
+        },
+        "required": ["content", "source_ids", "sources", "pattern_type", "confidence"],
+        "additionalProperties": False,
+    }
+
+
 def _safe_int(value: Any, default: int) -> int:
     """Coerce a tool input value to int, returning default on failure.
 
@@ -177,88 +376,44 @@ def _extract_pattern_snippet(
 TOOLS: dict[str, dict[str, Any]] = {
     "create_observations": {
         "name": "create_observations",
-        "description": "Create observations at any level: explicit (facts), deductive (logical necessities), inductive (patterns), or contradiction (conflicting statements). Use this to record facts, logical inferences, patterns, or note when the user has said contradictory things.",
+        "description": "Create observations at any level: explicit (facts), deductive (logical necessities), inductive (patterns), or contradiction (conflicting statements). For deductive, inductive, and contradiction observations, missing or empty source_ids are invalid and will be rejected.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "observations": {
                     "type": "array",
                     "description": "List of observations to create",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "content": {
-                                "type": "string",
-                                "description": "The observation content",
-                            },
-                            "level": {
-                                "type": "string",
-                                "enum": [
-                                    "explicit",
-                                    "deductive",
-                                    "inductive",
-                                    "contradiction",
-                                ],
-                                "description": "Level: 'explicit' for direct facts, 'deductive' for logical necessities, 'inductive' for patterns, 'contradiction' for conflicting statements",
-                            },
-                            "source_ids": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "(For deductive/inductive/contradiction) Document IDs of source/premise observations - REQUIRED",
-                            },
-                            "premises": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "(For deductive) Human-readable premise text for display",
-                            },
-                            "sources": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "(For inductive/contradiction) Human-readable source text for display",
-                            },
-                            "pattern_type": {
-                                "type": "string",
-                                "enum": [
-                                    "preference",
-                                    "behavior",
-                                    "personality",
-                                    "tendency",
-                                    "correlation",
-                                ],
-                                "description": "(For inductive only) Type of pattern being identified",
-                            },
-                            "confidence": {
-                                "type": "string",
-                                "enum": ["high", "medium", "low"],
-                                "description": "(For inductive only) Confidence level: 'high' for 3+ sources, 'medium' for 2+, 'low' for tentative",
-                            },
-                        },
-                        "required": ["content", "level"],
-                    },
+                    "items": _generic_observation_item_schema(),
                 },
             },
             "required": ["observations"],
         },
     },
     "create_observations_deductive": {
-        "name": "create_observations",
-        "description": "Create new deductive observations discovered while answering the query. Use this when you infer something new about the peer that isn't already captured in existing observations. Only use for novel deductions - not for restating existing facts.",
+        "name": "create_observations_deductive",
+        "description": "Create new deductive observations discovered while answering the query. Every observation must include non-empty source_ids and premise text. Use this only for novel deductions grounded in existing observations.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "observations": {
                     "type": "array",
                     "description": "List of new deductive observations to create",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "content": {
-                                "type": "string",
-                                "description": "The observation content - should be a self-contained statement about the peer",
-                            },
-                        },
-                        "required": ["content"],
-                    },
+                    "items": _deductive_observation_item_schema(),
+                },
+            },
+            "required": ["observations"],
+        },
+    },
+    "create_observations_inductive": {
+        "name": "create_observations_inductive",
+        "description": "Create new inductive observations discovered while answering the query. Every observation must include source_ids, source text, pattern_type, and confidence. Use this only for patterns supported by multiple observations.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observations": {
+                    "type": "array",
+                    "description": "List of new inductive observations to create",
+                    "items": _inductive_observation_item_schema(),
                 },
             },
             "required": ["observations"],
@@ -595,7 +750,7 @@ DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["search_memory"],
     TOOLS["search_messages"],
     # Action tools
-    TOOLS["create_observations"],
+    TOOLS["create_observations_deductive"],
     TOOLS["delete_observations"],
     TOOLS["update_peer_card"],
 ]
@@ -610,7 +765,7 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["search_memory"],
     TOOLS["search_messages"],
     # Action tools
-    TOOLS["create_observations"],
+    TOOLS["create_observations_inductive"],
     TOOLS["update_peer_card"],
 ]
 
@@ -1033,8 +1188,11 @@ class ToolContext:
     parent_category: str | None = None  # Parent category for CloudEvents
 
 
-async def _handle_create_observations(
-    ctx: ToolContext, tool_input: dict[str, Any]
+async def _handle_create_observations_impl(
+    ctx: ToolContext,
+    tool_input: dict[str, Any],
+    *,
+    forced_level: str | None = None,
 ) -> str:
     """Handle create_observations tool."""
     raw_observations = tool_input.get("observations", [])
@@ -1045,7 +1203,10 @@ async def _handle_create_observations(
     # Set context-specific default level before Pydantic validation
     default_level = "explicit" if ctx.current_messages else "deductive"
     for obs in raw_observations:
-        obs.setdefault("level", default_level)
+        if forced_level is not None:
+            obs["level"] = forced_level
+        else:
+            obs.setdefault("level", default_level)
 
     # Validate observations individually so valid ones are still processed
     observations: list[schemas.ObservationInput] = []
@@ -1137,6 +1298,32 @@ async def _handle_create_observations(
         response += f"\nFailed {len(all_failures)}: {failure_details}"
 
     return response
+
+
+async def _handle_create_observations(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    return await _handle_create_observations_impl(ctx, tool_input)
+
+
+async def _handle_create_observations_deductive(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    return await _handle_create_observations_impl(
+        ctx,
+        tool_input,
+        forced_level="deductive",
+    )
+
+
+async def _handle_create_observations_inductive(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    return await _handle_create_observations_impl(
+        ctx,
+        tool_input,
+        forced_level="inductive",
+    )
 
 
 async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
@@ -1263,7 +1450,10 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
     try:
         query_embedding = await embedding_client.embed(query)
     except ValueError:
-        return f"ERROR: Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}. Please use a shorter query."
+        return (
+            "ERROR: Query exceeds maximum token limit of "
+            + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
+        )
 
     documents = await crud.query_documents(
         db=None,
@@ -1814,6 +2004,8 @@ async def _handle_get_reasoning_chain(
 # Tool handler dispatch table
 _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "create_observations": _handle_create_observations,
+    "create_observations_deductive": _handle_create_observations_deductive,
+    "create_observations_inductive": _handle_create_observations_inductive,
     "update_peer_card": _handle_update_peer_card,
     "get_recent_history": _handle_get_recent_history,
     "search_memory": _handle_search_memory,

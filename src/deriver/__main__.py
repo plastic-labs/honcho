@@ -50,7 +50,6 @@ def setup_logging():
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("openai._base_client").setLevel(logging.WARNING)
-    logging.getLogger("groq._base_client").setLevel(logging.WARNING)
 
 
 async def run_deriver():

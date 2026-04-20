@@ -648,29 +648,69 @@ sys.path.insert(0, str(project_root))
 # and will be inherited by this subprocess
 
 try:
+    from pydantic import BaseModel
     from src.config import settings
 
-    # Function to recursively print settings
+    SENSITIVE_TOKENS = ('password', 'secret', 'key', 'uri')
+
+    def _mask(full_key, value):
+        if isinstance(full_key, str) and any(t in full_key.lower() for t in SENSITIVE_TOKENS):
+            return '*' * len(value) if value else 'None'
+        return value
+
+    def _compact(model):
+        # Render a pydantic BaseModel as `field=value` pairs, skipping
+        # None / empty-dict fields and recursing into nested models.
+        parts = []
+        for field_name in type(model).model_fields:
+            val = getattr(model, field_name)
+            if val is None:
+                continue
+            if isinstance(val, BaseModel):
+                inner = _compact(val)
+                if inner:
+                    parts.append(f"{{field_name}}=({{inner}})")
+                continue
+            if isinstance(val, dict) and not val:
+                continue
+            parts.append(f"{{field_name}}={{val!r}}")
+        return " ".join(parts)
+
     def print_settings(obj, prefix="", max_depth=3, current_depth=0):
         if current_depth >= max_depth:
             return
-        if hasattr(obj, '__dict__'):
-            for key, value in obj.__dict__.items():
-                if not key.startswith('_'):
-                    full_key = f"{{prefix}}.{{key}}" if prefix else key
-                    # Handle nested settings objects
-                    if hasattr(value, '__dict__') and not isinstance(value, (str, int, float, bool, type(None))):
-                        print(f"\\n📋 {{full_key}}:")
-                        print_settings(value, full_key, max_depth, current_depth + 1)
-                    else:
-                        # Mask sensitive information
-                        if isinstance(full_key, str) and any(sensitive in full_key.lower() for sensitive in ['password', 'secret', 'key', 'uri']):
-                            masked_value = '*' * len(value) if value else 'None'
-                        else:
-                            masked_value = value
-                        print(f"  {{key}}: {{masked_value}}")
+        if not hasattr(obj, '__dict__'):
+            return
+        for key, value in obj.__dict__.items():
+            if key.startswith('_'):
+                continue
+            full_key = f"{{prefix}}.{{key}}" if prefix else key
 
-    # Print all settings
+            # dict-of-BaseModel → print each entry on its own line compactly
+            if (
+                isinstance(value, dict) and value
+                and all(isinstance(v, BaseModel) for v in value.values())
+            ):
+                print(f"\\n📋 {{full_key}}:")
+                for k, v in value.items():
+                    rendered = _compact(v)
+                    print(f"  {{k}}: {{rendered}}")
+                continue
+
+            if isinstance(value, BaseModel):
+                print(f"\\n📋 {{full_key}}:")
+                rendered = _compact(value)
+                if rendered:
+                    print(f"  {{rendered}}")
+                continue
+
+            if hasattr(value, '__dict__') and not isinstance(value, (str, int, float, bool, type(None))):
+                print(f"\\n📋 {{full_key}}:")
+                print_settings(value, full_key, max_depth, current_depth + 1)
+                continue
+
+            print(f"  {{key}}: {{_mask(full_key, value)}}")
+
     print_settings(settings)
 
 except Exception as e:

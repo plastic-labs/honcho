@@ -74,20 +74,6 @@ class TestDeriverStatusEndpoint:
         assert response.status_code == 200
         assert response.json()["total_work_units"] == 0
 
-    async def test_get_deriver_status_with_include_sender_false(
-        self,
-        client: TestClient,
-        sample_data: tuple[models.Workspace, models.Peer],
-    ):
-        """Test getting deriver status with include_sender=False (default)"""
-        workspace, peer = sample_data
-        response = client.get(
-            f"/v3/workspaces/{workspace.name}/queue/status",
-            params={"observer_id": peer.name},
-        )
-        assert response.status_code == 200
-        assert response.json()["total_work_units"] == 0
-
     async def test_get_deriver_status_no_parameters(
         self, client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
     ):

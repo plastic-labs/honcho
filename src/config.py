@@ -1,10 +1,11 @@
 import logging
+import os
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, Protocol
+from typing import Annotated, Any, ClassVar, Literal, cast
 
 import tomllib
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -14,17 +15,27 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from src.utils.types import SupportedProviders
-
 # Load .env file for local development.
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
-load_dotenv(override=True)
+if not os.getenv("PYTHON_DOTENV_DISABLED"):
+    load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
+
+ModelTransport = Literal["anthropic", "openai", "gemini"]
+EmbeddingTransport = Literal["openai", "gemini"]
+
+
+def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
+    if transport == "gemini":
+        return "gemini-embedding-001"
+    return "text-embedding-3-small"
 
 
 def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
     """Load configuration from TOML file if it exists."""
+    if config_path == "config.toml" and os.getenv("HONCHO_CONFIG_TOML_DISABLED"):
+        return {}
     config_file = Path(config_path)
     if config_file.exists():
         try:
@@ -40,13 +51,463 @@ def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
 TOML_CONFIG = load_toml_config()
 
 
-class LLMComponentSettings(Protocol):
-    """Protocol for settings classes that use LLM providers with backup support."""
+ThinkingEffortLevel = Literal[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max"
+]
 
-    PROVIDER: SupportedProviders
-    MODEL: str
-    BACKUP_PROVIDER: SupportedProviders | None
-    BACKUP_MODEL: str | None
+
+class ModelOverrideSettings(BaseModel):
+    """Advanced module-level transport overrides."""
+
+    api_key: str | None = None
+    api_key_env: str | None = None
+    base_url: str | None = None
+
+    provider_params: dict[str, Any] = Field(default_factory=dict)
+
+
+class PromptCachePolicy(BaseModel):
+    """Per-call prompt-caching configuration.
+
+    Lives in config.py (not src/llm/caching.py) so ModelConfig can reference
+    it as a field without a circular import. src/llm/caching.py re-exports
+    this class for existing import paths.
+    """
+
+    mode: Literal["none", "prefix", "gemini_cached_content"] = "none"
+    ttl_seconds: int | None = None
+    key_version: str = "v1"
+
+
+def _normalize_model_transport(data: Any) -> Any:
+    """Normalize 'provider/model' shorthand into separate transport + model fields."""
+    if not isinstance(data, dict):
+        return data
+    raw_data = cast(dict[Any, Any], data)
+    update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
+    model_value = update.get("model")
+    transport_value = update.get("transport")
+    if isinstance(model_value, str) and "/" in model_value and transport_value is None:
+        prefix, bare_model = model_value.split("/", 1)
+        if prefix in {"anthropic", "openai", "gemini"}:
+            update["transport"] = prefix
+            update["model"] = bare_model
+    return update
+
+
+def _validate_thinking_constraints(
+    transport: ModelTransport, thinking_budget_tokens: int | None
+) -> None:
+    """Enforce transport-specific thinking_budget_tokens rules.
+
+    Anthropic requires a minimum of 1024 tokens when thinking is enabled.
+    Gemini/OpenAI accept any non-negative value (including 0 to disable).
+    """
+    if (
+        transport == "anthropic"
+        and thinking_budget_tokens is not None
+        and 0 < thinking_budget_tokens < 1024
+    ):
+        raise ValueError("thinking_budget_tokens must be >= 1024 for Anthropic models")
+
+
+class FallbackModelSettings(BaseModel):
+    """Independent fallback model configuration. No inheritance from primary."""
+
+    model: str
+    transport: ModelTransport
+
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    seed: int | None = None
+
+    thinking_effort: ThinkingEffortLevel | None = Field(
+        default=None,
+        validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
+    )
+    thinking_budget_tokens: int | None = None
+
+    max_output_tokens: int | None = None
+    stop_sequences: list[str] | None = None
+
+    cache_policy: PromptCachePolicy | None = None
+
+    overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        return _normalize_model_transport(data)
+
+    @property
+    def reasoning_effort(self) -> ThinkingEffortLevel | None:
+        return self.thinking_effort
+
+    @model_validator(mode="after")
+    def _validate_runtime_shape(self) -> "FallbackModelSettings":
+        _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        return self
+
+
+class ConfiguredModelSettings(BaseModel):
+    """Operator-configurable persisted model settings."""
+
+    model: str
+    transport: ModelTransport
+
+    fallback: FallbackModelSettings | None = None
+
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    seed: int | None = None
+
+    thinking_effort: ThinkingEffortLevel | None = Field(
+        default=None,
+        validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
+    )
+    thinking_budget_tokens: int | None = None
+
+    max_output_tokens: int | None = None
+    stop_sequences: list[str] | None = None
+
+    cache_policy: PromptCachePolicy | None = None
+
+    overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        return _normalize_model_transport(data)
+
+    @property
+    def reasoning_effort(self) -> ThinkingEffortLevel | None:
+        """Backward-compatible alias for the generic thinking effort field."""
+        return self.thinking_effort
+
+    @model_validator(mode="after")
+    def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
+        _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        return self
+
+
+class ResolvedFallbackConfig(BaseModel):
+    """Runtime-resolved fallback config with credentials already resolved."""
+
+    model: str
+    transport: ModelTransport
+
+    api_key: str | None = None
+    base_url: str | None = None
+
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    seed: int | None = None
+
+    thinking_effort: ThinkingEffortLevel | None = Field(
+        default=None,
+        validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
+    )
+    thinking_budget_tokens: int | None = None
+    provider_params: dict[str, Any] = Field(default_factory=dict)
+
+    max_output_tokens: int | None = None
+    stop_sequences: list[str] | None = None
+
+    cache_policy: PromptCachePolicy | None = None
+
+    @property
+    def reasoning_effort(self) -> ThinkingEffortLevel | None:
+        return self.thinking_effort
+
+
+class ModelConfig(BaseModel):
+    """Reusable model configuration for any non-embedding LLM caller."""
+
+    model: str
+    transport: ModelTransport
+
+    fallback: ResolvedFallbackConfig | None = None
+
+    api_key: str | None = None
+    base_url: str | None = None
+
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    frequency_penalty: float | None = None
+    presence_penalty: float | None = None
+    seed: int | None = None
+
+    thinking_effort: ThinkingEffortLevel | None = Field(
+        default=None,
+        validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
+    )
+    thinking_budget_tokens: int | None = None
+    provider_params: dict[str, Any] = Field(default_factory=dict)
+
+    max_output_tokens: int | None = None
+    stop_sequences: list[str] | None = None
+
+    cache_policy: PromptCachePolicy | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        return _normalize_model_transport(data)
+
+    @property
+    def reasoning_effort(self) -> ThinkingEffortLevel | None:
+        """Backward-compatible alias for the generic thinking effort field."""
+        return self.thinking_effort
+
+    @model_validator(mode="after")
+    def _validate_thinking_constraints_on_self(self) -> "ModelConfig":
+        _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        return self
+
+    def for_model(
+        self,
+        model_override: str,
+        *,
+        transport_override: ModelTransport | None = None,
+    ) -> "ModelConfig":
+        return self.model_copy(
+            update={
+                "model": model_override,
+                "transport": transport_override or self.transport,
+            }
+        )
+
+
+class ConfiguredEmbeddingModelSettings(BaseModel):
+    """Operator-configurable persisted embedding settings."""
+
+    model: str = "text-embedding-3-small"
+    transport: EmbeddingTransport = "openai"
+    overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        raw_data = cast(dict[Any, Any], data)
+        update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
+        model_value = update.get("model")
+        transport_value = update.get("transport")
+        if (
+            isinstance(model_value, str)
+            and "/" in model_value
+            and transport_value is None
+        ):
+            prefix, bare_model = model_value.split("/", 1)
+            if prefix in {"openai", "gemini"}:
+                update["transport"] = prefix
+                update["model"] = bare_model
+        return update
+
+    @model_validator(mode="after")
+    def _default_model_for_transport(self) -> "ConfiguredEmbeddingModelSettings":
+        if "model" not in self.model_fields_set:
+            self.model = _default_embedding_model_for_transport(self.transport)
+        return self
+
+
+class EmbeddingModelConfig(BaseModel):
+    """Runtime embedding configuration with resolved credentials."""
+
+    model: str = "text-embedding-3-small"
+    transport: EmbeddingTransport = "openai"
+    api_key: str | None = None
+    base_url: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_model_format(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        raw_data = cast(dict[Any, Any], data)
+        update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
+        model_value = update.get("model")
+        transport_value = update.get("transport")
+        if (
+            isinstance(model_value, str)
+            and "/" in model_value
+            and transport_value is None
+        ):
+            prefix, bare_model = model_value.split("/", 1)
+            if prefix in {"openai", "gemini"}:
+                update["transport"] = prefix
+                update["model"] = bare_model
+        return update
+
+    @model_validator(mode="after")
+    def _default_model_for_transport(self) -> "EmbeddingModelConfig":
+        if "model" not in self.model_fields_set:
+            self.model = _default_embedding_model_for_transport(self.transport)
+        return self
+
+
+def _resolve_secret(value: str | None, env_name: str | None) -> str | None:
+    if value is not None:
+        return value
+    if env_name is None:
+        return None
+    return os.getenv(env_name)
+
+
+def _resolve_fallback_config(
+    fallback: FallbackModelSettings,
+) -> ResolvedFallbackConfig:
+    """Resolve a FallbackModelSettings into a runtime ResolvedFallbackConfig."""
+    return ResolvedFallbackConfig(
+        model=fallback.model,
+        transport=fallback.transport,
+        api_key=_resolve_secret(
+            fallback.overrides.api_key,
+            fallback.overrides.api_key_env,
+        ),
+        base_url=fallback.overrides.base_url,
+        temperature=fallback.temperature,
+        top_p=fallback.top_p,
+        top_k=fallback.top_k,
+        frequency_penalty=fallback.frequency_penalty,
+        presence_penalty=fallback.presence_penalty,
+        seed=fallback.seed,
+        thinking_effort=fallback.thinking_effort,
+        thinking_budget_tokens=fallback.thinking_budget_tokens,
+        provider_params=fallback.overrides.provider_params,
+        max_output_tokens=fallback.max_output_tokens,
+        stop_sequences=fallback.stop_sequences,
+        cache_policy=fallback.cache_policy,
+    )
+
+
+def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
+    """Resolve persisted model settings into the runtime ModelConfig."""
+
+    resolved_fallback = (
+        _resolve_fallback_config(configured.fallback)
+        if configured.fallback is not None
+        else None
+    )
+
+    return ModelConfig(
+        model=configured.model,
+        transport=configured.transport,
+        fallback=resolved_fallback,
+        api_key=_resolve_secret(
+            configured.overrides.api_key,
+            configured.overrides.api_key_env,
+        ),
+        base_url=configured.overrides.base_url,
+        temperature=configured.temperature,
+        top_p=configured.top_p,
+        top_k=configured.top_k,
+        frequency_penalty=configured.frequency_penalty,
+        presence_penalty=configured.presence_penalty,
+        seed=configured.seed,
+        thinking_effort=configured.thinking_effort,
+        thinking_budget_tokens=configured.thinking_budget_tokens,
+        provider_params=configured.overrides.provider_params,
+        max_output_tokens=configured.max_output_tokens,
+        stop_sequences=configured.stop_sequences,
+        cache_policy=configured.cache_policy,
+    )
+
+
+def _default_embedding_api_key(transport: EmbeddingTransport) -> str | None:
+    """Fall back to the global LLM API key for the matching transport."""
+    if transport == "openai":
+        return settings.LLM.OPENAI_API_KEY
+    if transport == "gemini":
+        return settings.LLM.GEMINI_API_KEY
+
+
+def resolve_embedding_model_config(
+    configured: ConfiguredEmbeddingModelSettings,
+) -> EmbeddingModelConfig:
+    """Resolve persisted embedding settings into the runtime config."""
+
+    api_key = _resolve_secret(
+        configured.overrides.api_key,
+        configured.overrides.api_key_env,
+    )
+    if api_key is None:
+        api_key = _default_embedding_api_key(configured.transport)
+
+    return EmbeddingModelConfig(
+        model=configured.model,
+        transport=configured.transport,
+        api_key=api_key,
+        base_url=configured.overrides.base_url,
+    )
+
+
+_TRANSPORT_SPECIFIC_THINKING_KEYS: frozenset[str] = frozenset(
+    {"thinking_budget_tokens", "thinking_effort"}
+)
+
+
+def _fill_defaults_for_nested_field(
+    data: dict[str, Any],
+    field_name: str,
+    default_factory: Any,
+) -> dict[str, Any]:
+    """Fill missing keys in a partial nested dict from the field's defaults.
+
+    When Pydantic's env_nested_delimiter splits an env var like
+    ``DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=2048`` it produces
+    ``{"MODEL_CONFIG": {"THINKING_BUDGET_TOKENS": 2048}}``.  Without merging
+    that partial dict would fail validation because required keys like
+    ``model`` and ``transport`` are missing.  This helper fills them from
+    the field's ``default_factory`` so partial overrides work.
+
+    If the env override switches ``transport`` to a value that differs from
+    the default's, transport-specific thinking params
+    (``thinking_budget_tokens``, ``thinking_effort``) are dropped from the
+    default before merging.  This prevents e.g. a Gemini default's
+    ``thinking_budget_tokens=1024`` from leaking into an OpenAI override,
+    which would then be rejected by the OpenAI backend (OpenAI uses
+    ``reasoning.effort``, not a token budget). Explicit thinking params in
+    the env override are preserved.
+    """
+    raw: Any = data.get(field_name) or data.get(field_name.lower())
+    if not isinstance(raw, dict):
+        return data
+
+    default_obj = default_factory()
+    if isinstance(default_obj, BaseModel):
+        default_dict: dict[str, Any] = default_obj.model_dump(by_alias=True)
+    else:
+        default_dict = dict(default_obj)
+
+    raw_dict = cast(dict[str, Any], raw)
+    raw_lower = {k.lower(): v for k, v in raw_dict.items()}
+    default_lower = {k.lower(): v for k, v in default_dict.items()}
+    override_transport = raw_lower.get("transport")
+    default_transport = default_lower.get("transport")
+    if override_transport is not None and override_transport != default_transport:
+        for k in list(default_dict.keys()):
+            if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
+                del default_dict[k]
+
+    merged: dict[str, Any] = {**default_dict, **raw_dict}
+    # Preserve the key casing used in data
+    key = field_name if field_name in data else field_name.lower()
+    data[key] = merged
+    return data
 
 
 class TomlConfigSettingsSource(PydanticBaseSettingsSource):
@@ -61,6 +522,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SENTRY": "sentry",
         "CACHE": "cache",
         "LLM": "llm",
+        "EMBEDDING": "embedding",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
         "DIALECTIC": "dialectic",
@@ -132,26 +594,6 @@ class HonchoSettings(BaseSettings):
         )
 
 
-class BackupLLMSettingsMixin:
-    """Mixin class for settings that support backup LLM provider configuration.
-
-    Provides backup provider and model fields along with validation to ensure
-    both fields are set together or both are None.
-    """
-
-    BACKUP_PROVIDER: SupportedProviders | None = None
-    BACKUP_MODEL: str | None = None
-
-    @model_validator(mode="after")
-    def _validate_backup_configuration(self):
-        """Ensure both backup fields are set together or both are None."""
-        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
-            raise ValueError(
-                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
-            )
-        return self
-
-
 class DBSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", extra="ignore")  # pyright: ignore
 
@@ -204,16 +646,7 @@ class LLMSettings(HonchoSettings):
     # API Keys for LLM providers
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
-    OPENAI_COMPATIBLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
-    GROQ_API_KEY: str | None = None
-    OPENAI_COMPATIBLE_BASE_URL: str | None = None
-
-    # Separate vLLM endpoint (for local models)
-    VLLM_API_KEY: str | None = None
-    VLLM_BASE_URL: str | None = None
-
-    EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter"] = "openai"
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
@@ -232,8 +665,41 @@ class LLMSettings(HonchoSettings):
     )
 
 
-class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
+class EmbeddingSettings(HonchoSettings):
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="EMBEDDING_", env_nested_delimiter="__", extra="ignore"
+    )
+
+    @staticmethod
+    def _MODEL_CONFIG_DEFAULT() -> ConfiguredEmbeddingModelSettings:
+        return ConfiguredEmbeddingModelSettings(
+            transport="openai",
+            model="text-embedding-3-small",
+        )
+
+    MODEL_CONFIG: ConfiguredEmbeddingModelSettings = Field(
+        default_factory=_MODEL_CONFIG_DEFAULT
+    )
+    VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
+    MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            _fill_defaults_for_nested_field(
+                cast(dict[str, Any], data),
+                "MODEL_CONFIG",
+                cls._MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
+
+
+class DeriverSettings(HonchoSettings):
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="DERIVER_", env_nested_delimiter="__", extra="ignore"
+    )
 
     ENABLED: bool = True
 
@@ -248,15 +714,20 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
         int, Field(default=30 * 24 * 3600, gt=0)
     ] = 30 * 24 * 3600  # 30 days default
 
-    PROVIDER: SupportedProviders = "google"
-    MODEL: str = "gemini-2.5-flash-lite"
-    TEMPERATURE: float | None = None
+    @staticmethod
+    def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default: transport + model only. Any other knobs would merge
+        # into operator-supplied env / config.toml overrides via
+        # _fill_defaults_for_nested_field and clobber intent.
+        return ConfiguredModelSettings(
+            transport="openai",
+            model="gpt-5.4-mini",
+        )
+
+    MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
 
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
-
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4096, gt=0, le=100_000)] = 4096
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
     LOG_OBSERVATIONS: bool = False
 
@@ -275,6 +746,17 @@ class DeriverSettings(BackupLLMSettingsMixin, HonchoSettings):
 
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            _fill_defaults_for_nested_field(
+                cast(dict[str, Any], data),
+                "MODEL_CONFIG",
+                cls._MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
@@ -307,14 +789,9 @@ class DialecticLevelSettings(BaseModel):
 
     model_config = SettingsConfigDict(populate_by_name=True)  # pyright: ignore
 
-    PROVIDER: Annotated[SupportedProviders, Field(validation_alias="provider")]
-    MODEL: Annotated[str, Field(validation_alias="model")]
-    BACKUP_PROVIDER: Annotated[
-        SupportedProviders | None, Field(validation_alias="backup_provider")
-    ] = None
-    BACKUP_MODEL: Annotated[str | None, Field(validation_alias="backup_model")] = None
-    THINKING_BUDGET_TOKENS: Annotated[
-        int, Field(ge=0, le=100_000, validation_alias="thinking_budget_tokens")
+    MODEL_CONFIG: Annotated[
+        ConfiguredModelSettings,
+        Field(validation_alias="model_config"),
     ]
     MAX_TOOL_ITERATIONS: Annotated[
         int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
@@ -327,26 +804,59 @@ class DialecticLevelSettings(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _validate_backup_configuration(self) -> "DialecticLevelSettings":
-        """Ensure both backup fields are set together or both are None."""
-        if (self.BACKUP_PROVIDER is None) != (self.BACKUP_MODEL is None):
-            raise ValueError(
-                "BACKUP_PROVIDER and BACKUP_MODEL must both be set or both be None"
-            )
-        return self
-
-    @model_validator(mode="after")
     def _validate_anthropic_thinking_budget(self) -> "DialecticLevelSettings":
         """Ensure Anthropic thinking budget is >= 1024 when enabled."""
         if (
-            self.PROVIDER == "anthropic"
-            and self.THINKING_BUDGET_TOKENS > 0
-            and self.THINKING_BUDGET_TOKENS < 1024
+            self.MODEL_CONFIG.transport == "anthropic"
+            and self.MODEL_CONFIG.thinking_budget_tokens is not None
+            and self.MODEL_CONFIG.thinking_budget_tokens > 0
+            and self.MODEL_CONFIG.thinking_budget_tokens < 1024
         ):
             raise ValueError(
-                f"THINKING_BUDGET_TOKENS must be >= 1024 for Anthropic provider when enabled (got {self.THINKING_BUDGET_TOKENS})"
+                "MODEL_CONFIG.thinking_budget_tokens must be >= 1024 for "
+                + "Anthropic models when enabled "
+                + f"(got {self.MODEL_CONFIG.thinking_budget_tokens})"
             )
         return self
+
+
+def _default_dialectic_levels() -> dict[ReasoningLevel, DialecticLevelSettings]:
+    # Minimal defaults per level: transport + model only. Non-MODEL_CONFIG
+    # level tuning (MAX_TOOL_ITERATIONS, MAX_OUTPUT_TOKENS, TOOL_CHOICE)
+    # stays here because it's the per-level behavior, not a model knob —
+    # operators still override any of it via
+    # DIALECTIC_LEVELS__<level>__MODEL_CONFIG__* without conflict.
+    def _default_model_config() -> ConfiguredModelSettings:
+        return ConfiguredModelSettings(
+            transport="openai",
+            model="gpt-5.4-mini",
+        )
+
+    return {
+        "minimal": DialecticLevelSettings(
+            MODEL_CONFIG=_default_model_config(),
+            MAX_TOOL_ITERATIONS=1,
+            MAX_OUTPUT_TOKENS=250,
+            TOOL_CHOICE="any",
+        ),
+        "low": DialecticLevelSettings(
+            MODEL_CONFIG=_default_model_config(),
+            MAX_TOOL_ITERATIONS=5,
+            TOOL_CHOICE="any",
+        ),
+        "medium": DialecticLevelSettings(
+            MODEL_CONFIG=_default_model_config(),
+            MAX_TOOL_ITERATIONS=2,
+        ),
+        "high": DialecticLevelSettings(
+            MODEL_CONFIG=_default_model_config(),
+            MAX_TOOL_ITERATIONS=4,
+        ),
+        "max": DialecticLevelSettings(
+            MODEL_CONFIG=_default_model_config(),
+            MAX_TOOL_ITERATIONS=10,
+        ),
+    }
 
 
 class DialecticSettings(HonchoSettings):
@@ -354,44 +864,8 @@ class DialecticSettings(HonchoSettings):
         env_prefix="DIALECTIC_", env_nested_delimiter="__", extra="ignore"
     )
 
-    # Per-level settings for provider, model, thinking budget, and tool iterations
-    # TODO: Fill in appropriate values for each reasoning level
     LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(
-        default_factory=lambda: {
-            "minimal": DialecticLevelSettings(
-                PROVIDER="google",
-                MODEL="gemini-2.5-flash-lite",
-                THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=1,
-                MAX_OUTPUT_TOKENS=250,
-                TOOL_CHOICE="any",
-            ),
-            "low": DialecticLevelSettings(
-                PROVIDER="google",
-                MODEL="gemini-2.5-flash-lite",
-                THINKING_BUDGET_TOKENS=0,
-                MAX_TOOL_ITERATIONS=5,
-                TOOL_CHOICE="any",
-            ),
-            "medium": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=1024,
-                MAX_TOOL_ITERATIONS=2,
-            ),
-            "high": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=1024,
-                MAX_TOOL_ITERATIONS=4,
-            ),
-            "max": DialecticLevelSettings(
-                PROVIDER="anthropic",
-                MODEL="claude-haiku-4-5",
-                THINKING_BUDGET_TOKENS=2048,
-                MAX_TOOL_ITERATIONS=10,
-            ),
-        }
+        default_factory=_default_dialectic_levels
     )
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
@@ -406,13 +880,68 @@ class DialecticSettings(HonchoSettings):
         int, Field(default=4_096, ge=0, le=16_384)
     ] = 4_096
 
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_level_defaults(cls, data: Any) -> Any:
+        """Merge partial level overrides with built-in defaults."""
+        if not isinstance(data, dict):
+            return data
+        typed_data = cast(dict[str, Any], data)
+        levels_raw: dict[str, Any] | None = typed_data.get("LEVELS") or typed_data.get(
+            "levels"
+        )
+        if not isinstance(levels_raw, dict):
+            return data  # pyright: ignore[reportUnknownVariableType]
+        defaults = _default_dialectic_levels()
+        for level_name_key, level_override_val in levels_raw.items():
+            level_name = str(level_name_key)
+            if not isinstance(level_override_val, dict):
+                continue
+            level_override = cast(dict[str, Any], level_override_val)
+            if level_name in defaults:
+                base: dict[str, Any] = defaults[level_name].model_dump(by_alias=True)
+                # Recursively merge nested MODEL_CONFIG / model_config too.
+                # model_dump() always produces the Python field name
+                # ("MODEL_CONFIG"), but TOML overrides arrive as lowercase
+                # ("model_config").  Check both casings in the override and
+                # resolve the base value from whichever casing is present.
+                for mc_key in ("MODEL_CONFIG", "model_config"):
+                    if mc_key in level_override and isinstance(
+                        level_override[mc_key], dict
+                    ):
+                        base_mc: dict[str, Any] = dict(
+                            base.get("MODEL_CONFIG") or base.get("model_config") or {}
+                        )
+                        override_mc = cast(dict[str, Any], level_override[mc_key])
+                        override_lower = {k.lower(): v for k, v in override_mc.items()}
+                        base_lower = {k.lower(): v for k, v in base_mc.items()}
+                        override_transport = override_lower.get("transport")
+                        base_transport = base_lower.get("transport")
+                        if (
+                            override_transport is not None
+                            and override_transport != base_transport
+                        ):
+                            for k in list(base_mc.keys()):
+                                if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
+                                    del base_mc[k]
+                        level_override[mc_key] = {**base_mc, **override_mc}
+                levels_raw[level_name] = {**base, **level_override}
+        return data  # pyright: ignore[reportUnknownVariableType]
+
     @model_validator(mode="after")
     def _validate_token_budgets(self) -> "DialecticSettings":
         """Ensure the output token limit exceeds all thinking budgets."""
         for level, level_settings in self.LEVELS.items():
-            if self.MAX_OUTPUT_TOKENS <= level_settings.THINKING_BUDGET_TOKENS:
+            thinking_budget = level_settings.MODEL_CONFIG.thinking_budget_tokens or 0
+            effective_max = (
+                level_settings.MAX_OUTPUT_TOKENS
+                if level_settings.MAX_OUTPUT_TOKENS is not None
+                else self.MAX_OUTPUT_TOKENS
+            )
+            if thinking_budget > 0 and thinking_budget >= effective_max:
                 raise ValueError(
-                    f"MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS for level '{level}'"
+                    "MAX_OUTPUT_TOKENS must be greater than MODEL_CONFIG."
+                    + f"thinking_budget_tokens for level '{level}'"
                 )
         return self
 
@@ -425,20 +954,39 @@ class DialecticSettings(HonchoSettings):
         return self
 
 
-class SummarySettings(BackupLLMSettingsMixin, HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
+class SummarySettings(HonchoSettings):
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="SUMMARY_", env_nested_delimiter="__", extra="ignore"
+    )
 
     ENABLED: bool = True
 
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    PROVIDER: SupportedProviders = "google"
-    MODEL: str = "gemini-2.5-flash"
+    @staticmethod
+    def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default; extra knobs would merge into env/TOML overrides.
+        return ConfiguredModelSettings(
+            transport="openai",
+            model="gpt-5.4-mini",
+        )
+
+    MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            _fill_defaults_for_nested_field(
+                cast(dict[str, Any], data),
+                "MODEL_CONFIG",
+                cls._MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
+
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
-
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
 
 
 class WebhookSettings(HonchoSettings):
@@ -528,7 +1076,7 @@ class SurprisalSettings(BaseModel):
     INCLUDE_LEVELS: list[str] = ["explicit", "deductive"]
 
 
-class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
+class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DREAM_", env_nested_delimiter="__", extra="ignore"
     )
@@ -539,11 +1087,6 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["omni"]
 
-    PROVIDER: SupportedProviders = "anthropic"
-    MODEL: str = "claude-sonnet-4-20250514"
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=16_384, gt=0, le=64_000)] = 16_384
-    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=8192, gt=0, le=32_000)] = 8192
-
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
 
@@ -552,23 +1095,66 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
         16_384
     )
 
-    ## NOTE: specialist models use the same provider as the main model
+    @staticmethod
+    def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default; extra knobs would merge into env/TOML overrides.
+        return ConfiguredModelSettings(
+            transport="openai",
+            model="gpt-5.4-mini",
+        )
 
-    # Deduction Specialist: handles logical inference
-    DEDUCTION_MODEL: str = "claude-haiku-4-5"
-    # Induction Specialist: identifies patterns across observations
-    INDUCTION_MODEL: str = "claude-haiku-4-5"
+    DEDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
+        default_factory=_DEDUCTION_MODEL_CONFIG_DEFAULT
+    )
+
+    @staticmethod
+    def _INDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default; extra knobs would merge into env/TOML overrides.
+        return ConfiguredModelSettings(
+            transport="openai",
+            model="gpt-5.4-mini",
+        )
+
+    INDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
+        default_factory=_INDUCTION_MODEL_CONFIG_DEFAULT
+    )
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
 
-    @model_validator(mode="after")
-    def _validate_token_budgets(self) -> "DreamSettings":
-        """Ensure the output token limit exceeds the thinking budget."""
-        if self.MAX_OUTPUT_TOKENS <= self.THINKING_BUDGET_TOKENS:
-            raise ValueError(
-                "MAX_OUTPUT_TOKENS must be greater than THINKING_BUDGET_TOKENS"
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            typed_data = cast(dict[str, Any], data)
+            _fill_defaults_for_nested_field(
+                typed_data,
+                "DEDUCTION_MODEL_CONFIG",
+                cls._DEDUCTION_MODEL_CONFIG_DEFAULT,
             )
+            _fill_defaults_for_nested_field(
+                typed_data,
+                "INDUCTION_MODEL_CONFIG",
+                cls._INDUCTION_MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
+
+    @model_validator(mode="after")
+    def _validate_specialist_token_budgets(self) -> "DreamSettings":
+        """Ensure thinking_budget_tokens < max_output_tokens for each specialist."""
+        for name, cfg in (
+            ("DEDUCTION_MODEL_CONFIG", self.DEDUCTION_MODEL_CONFIG),
+            ("INDUCTION_MODEL_CONFIG", self.INDUCTION_MODEL_CONFIG),
+        ):
+            if (
+                cfg.max_output_tokens is not None
+                and cfg.thinking_budget_tokens is not None
+                and cfg.max_output_tokens <= cfg.thinking_budget_tokens
+            ):
+                raise ValueError(
+                    f"dream.{name}.max_output_tokens must be greater than "
+                    + f"dream.{name}.thinking_budget_tokens"
+                )
         return self
 
 
@@ -633,10 +1219,6 @@ class AppSettings(HonchoSettings):
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
     EMBED_MESSAGES: bool = True
-    MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
-    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = (
-        300_000
-    )
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 
@@ -651,6 +1233,7 @@ class AppSettings(HonchoSettings):
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
     SENTRY: SentrySettings = Field(default_factory=SentrySettings)
     LLM: LLMSettings = Field(default_factory=LLMSettings)
+    EMBEDDING: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
@@ -676,10 +1259,24 @@ class AppSettings(HonchoSettings):
             self.CACHE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
+        if "DIMENSIONS" not in self.VECTOR_STORE.model_fields_set:
+            self.VECTOR_STORE.DIMENSIONS = self.EMBEDDING.VECTOR_DIMENSIONS
+        elif self.VECTOR_STORE.DIMENSIONS != self.EMBEDDING.VECTOR_DIMENSIONS:
+            raise ValueError(
+                "VECTOR_STORE.DIMENSIONS must match EMBEDDING.VECTOR_DIMENSIONS"
+            )
         if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
             self.TELEMETRY.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.METRICS.model_fields_set:
             self.METRICS.NAMESPACE = self.NAMESPACE
+
+        if self.EMBEDDING.VECTOR_DIMENSIONS != 1536 and (
+            self.VECTOR_STORE.TYPE == "pgvector" or not self.VECTOR_STORE.MIGRATED
+        ):
+            raise ValueError(
+                "EMBEDDING.VECTOR_DIMENSIONS must remain 1536 while pgvector is "
+                + "active or vector-store migration is incomplete"
+            )
 
         return self
 

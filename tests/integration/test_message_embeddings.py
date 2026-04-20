@@ -478,7 +478,7 @@ async def test_message_chunking_creates_multiple_embeddings(
     monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", True)
 
     # Mock a low token limit to force chunking
-    monkeypatch.setattr("src.config.settings.MAX_EMBEDDING_TOKENS", 10)
+    monkeypatch.setattr("src.config.settings.EMBEDDING.MAX_INPUT_TOKENS", 10)
 
     test_workspace, test_peer = sample_data
 

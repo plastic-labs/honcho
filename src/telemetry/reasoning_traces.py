@@ -12,7 +12,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from src.config import LLMComponentSettings, settings
+from src.config import (
+    ConfiguredModelSettings,
+    ModelConfig,
+    settings,
+)
 
 
 def get_reasoning_traces_file_path() -> Path | None:
@@ -24,7 +28,7 @@ def get_reasoning_traces_file_path() -> Path | None:
 
 def log_reasoning_trace(
     task_type: str,
-    llm_settings: LLMComponentSettings,
+    model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     response: Any,
     *,
@@ -40,7 +44,7 @@ def log_reasoning_trace(
 
     Args:
         task_type: Type of task (e.g., "minimal_deriver", "dialectic_chat")
-        llm_settings: LLM settings used for the call
+        model_config: Model configuration used for the call
         prompt: The full prompt text sent to the LLM (used if messages is None)
         response: HonchoLLMCallResponse object with the LLM response
         max_tokens: Max output tokens setting
@@ -62,8 +66,8 @@ def log_reasoning_trace(
     trace_entry: dict[str, Any] = {
         "timestamp": time.time(),
         "task_type": task_type,
-        "provider": llm_settings.PROVIDER,
-        "model": llm_settings.MODEL,
+        "provider": model_config.transport,
+        "model": model_config.model,
         "settings": {
             "max_tokens": max_tokens,
             "thinking_budget_tokens": thinking_budget_tokens,
