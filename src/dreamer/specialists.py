@@ -193,22 +193,6 @@ If you update it, send the full deduplicated list and remove stale entries.
             },
         ]
 
-        # Create tool executor with telemetry context
-        tool_executor: Callable[
-            [str, dict[str, Any]], Any
-        ] = await create_tool_executor(
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            session_name=session_name,
-            include_observation_ids=True,
-            history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
-            configuration=configuration,
-            run_id=run_id,
-            agent_type=self.name,
-            parent_category="dream",
-        )
-
         model_config = self.get_model_config()
 
         # Respect operator-configured max_output_tokens on the specialist's
@@ -229,19 +213,36 @@ If you update it, send the full deduplicated list and remove stale entries.
             nonlocal iteration_count
             iteration_count = data.iteration
 
-        # Run the agent loop
-        response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            model_config=model_config,
-            prompt="",  # Ignored since we pass messages
-            max_tokens=effective_max_tokens,
-            tools=self.get_tools(peer_card_enabled=peer_card_enabled),
-            tool_choice=None,
-            tool_executor=tool_executor,
-            max_tool_iterations=self.get_max_iterations(),
-            messages=messages,
-            track_name=f"Dreamer/{self.name}",
-            iteration_callback=iteration_callback,
-        )
+        async with tracked_db("dream.specialist.execute") as db:
+            tool_executor: Callable[
+                [str, dict[str, Any]], Any
+            ] = await create_tool_executor(
+                db=db,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                session_name=session_name,
+                include_observation_ids=True,
+                history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
+                configuration=configuration,
+                run_id=run_id,
+                agent_type=self.name,
+                parent_category="dream",
+            )
+
+            # Run the agent loop
+            response: HonchoLLMCallResponse[str] = await honcho_llm_call(
+                model_config=model_config,
+                prompt="",  # Ignored since we pass messages
+                max_tokens=effective_max_tokens,
+                tools=self.get_tools(peer_card_enabled=peer_card_enabled),
+                tool_choice=None,
+                tool_executor=tool_executor,
+                max_tool_iterations=self.get_max_iterations(),
+                messages=messages,
+                track_name=f"Dreamer/{self.name}",
+                iteration_callback=iteration_callback,
+            )
 
         # Log metrics
         duration_ms = (time.perf_counter() - start_time) * 1000

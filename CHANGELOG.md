@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends
 - Dreamer specialists derive `effective_max_tokens` from `model_config.max_output_tokens` with a per-specialist default fallback
 - Regression tests covering fallback-config thinking-param reach, provider_params → extra_params boundary, OpenAI reasoning-model parameter routing, Gemini blocked finish_reason handling, and fail-fast `max_tool_iterations` validation
+- Workspace-level chat endpoint with streaming support for workspace-wide, cross-peer dialectic queries
+- Workspace chat support in the Python and TypeScript SDKs, plus OpenAPI and docs coverage for the new endpoint
 
 ### Changed
 
@@ -33,6 +35,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Stream-final retries pin to the `AttemptPlan` that succeeded rather than re-running provider selection through the outer `current_attempt` ContextVar (which could roll streaming back to primary after the tool loop had already switched to fallback)
 - OpenAI structured-output calls continue to use `chat.completions.parse()` with strict schema enforcement, while tool-calling paths use `chat.completions.create()` without `strict:True` for broader proxy compatibility (OpenRouter, vLLM, Ollama)
 - Gemini `cached_content` reuse keys now include `system_instruction` and `tool_config` so cache hits don't cross configurations that differ only in those fields
+- Peer-perspective history and message search now respect session membership visibility windows, preventing chat/search tools from seeing messages from before a peer joined a session or from sessions they were never part of
 
 ### Removed
 

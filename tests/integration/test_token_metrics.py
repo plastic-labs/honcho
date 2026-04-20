@@ -707,6 +707,7 @@ class TestDialecticTokenMetrics:
         before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
 
         agent = DialecticAgent(
+            db=db_session,
             workspace_name=workspace.name,
             session_name=session.name,
             observer=peer.name,
@@ -714,7 +715,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.dialectic.base.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")
@@ -754,6 +755,7 @@ class TestDialecticTokenMetrics:
         before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
 
         agent = DialecticAgent(
+            db=db_session,
             workspace_name=workspace.name,
             session_name=session.name,
             observer=peer.name,
@@ -761,7 +763,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.dialectic.base.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")
@@ -817,6 +819,7 @@ class TestDialecticTokenMetrics:
         )
 
         agent = DialecticAgent(
+            db=db_session,
             workspace_name=workspace.name,
             session_name=session.name,
             observer=peer.name,
@@ -824,7 +827,7 @@ class TestDialecticTokenMetrics:
         )
 
         with patch(
-            "src.dialectic.core.honcho_llm_call",
+            "src.dialectic.base.honcho_llm_call",
             new=AsyncMock(return_value=mock_response),
         ):
             await agent.answer("What do you know about this user?")
