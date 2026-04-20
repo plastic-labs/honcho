@@ -23,7 +23,6 @@ from src.vector_store import (
     VectorRecord,
     VectorStore,
     get_external_vector_store,
-    upsert_with_retry,
 )
 
 logger = getLogger(__name__)
@@ -560,11 +559,9 @@ async def create_documents(
                         )
                     )
 
-                # Upsert to external vector store with retry and update sync state
+                # Upsert to external vector store and update sync state
                 try:
-                    await upsert_with_retry(
-                        external_vector_store, namespace, vector_records
-                    )
+                    await external_vector_store.upsert_many(namespace, vector_records)
                     # Success: mark as synced
                     await db.execute(
                         update(models.Document)
@@ -579,7 +576,7 @@ async def create_documents(
 
                 except Exception:
                     # Failed after retries - increment sync_attempts for reconciliation
-                    logger.exception("Failed to upsert vectors after retries")
+                    logger.warning("Failed to upsert vectors after retries")
                     await db.execute(
                         update(models.Document)
                         .where(models.Document.id.in_(doc_ids))
@@ -846,11 +843,9 @@ async def create_observations(
                         )
                     )
 
-                # Upsert to external vector store with retry and update sync state
+                # Upsert to external vector store and update sync state
                 try:
-                    await upsert_with_retry(
-                        external_vector_store, namespace, vector_records
-                    )
+                    await external_vector_store.upsert_many(namespace, vector_records)
                     # Success: mark as synced
                     await db.execute(
                         update(models.Document)
@@ -865,7 +860,7 @@ async def create_observations(
 
                 except Exception:
                     # Failed after retries - increment sync_attempts for reconciliation
-                    logger.exception(
+                    logger.warning(
                         f"Failed to upsert vectors for {namespace} after retries"
                     )
                     await db.execute(

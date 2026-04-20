@@ -17,7 +17,7 @@ from lancedb import AsyncConnection, AsyncTable
 from src.config import settings
 from src.exceptions import VectorStoreError
 
-from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
+from . import VectorQueryResult, VectorRecord, VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class LanceDBVectorStore(VectorStore):
         self,
         namespace: str,
         vectors: list[VectorRecord],
-    ) -> VectorUpsertResult:
+    ) -> None:
         """
         Upsert multiple vectors into LanceDB.
 
@@ -165,7 +165,7 @@ class LanceDBVectorStore(VectorStore):
             vectors: List of VectorRecord objects to upsert
         """
         if not vectors:
-            return VectorUpsertResult(ok=True)
+            return
 
         try:
             rows = [self._row_to_dict(v) for v in vectors]
@@ -180,7 +180,7 @@ class LanceDBVectorStore(VectorStore):
             )
 
             logger.debug(f"Upserted {len(vectors)} vectors to namespace {namespace}")
-            return VectorUpsertResult(ok=True)
+            return
         except Exception as e:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"
