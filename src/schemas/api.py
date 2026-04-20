@@ -590,6 +590,11 @@ class WorkspaceChatOptions(BaseModel):
         description="Level of reasoning to apply: minimal, low, medium, high, or max",
     )
 
+    @field_validator("query", mode="after")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        return v.replace("\x00", "")
+
 
 class DialecticResponse(BaseModel):
     content: str | None

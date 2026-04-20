@@ -9,10 +9,9 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 import src.crud as crud
 from src.config import ReasoningLevel, settings
+from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.dialectic.base import BaseDialecticAgent
 from src.utils.agent_tools import (
@@ -34,13 +33,12 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
 
     def __init__(
         self,
-        db: AsyncSession,
         workspace_name: str,
         session_name: str | None = None,
         reasoning_level: ReasoningLevel = "low",
     ):
         super().__init__(
-            db=db,
+            db=None,
             workspace_name=workspace_name,
             session_name=session_name,
             reasoning_level=reasoning_level,
@@ -54,7 +52,8 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
     async def _prefetch_relevant_observations(self, query: str) -> str | None:
         """Prefetch workspace stats so the agent can orient itself."""
         _ = query
-        stats = await crud.get_workspace_stats(self.db, self.workspace_name)
+        async with tracked_db("dialectic.workspace_prefetch") as db:
+            stats = await crud.get_workspace_stats(db, self.workspace_name)
         if stats.peer_count == 0:
             return None
         lines = [
@@ -70,7 +69,7 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
 
     async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
         return await create_workspace_tool_executor(
-            db=self.db,
+            db=None,
             workspace_name=self.workspace_name,
             session_name=self.session_name,
             history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,

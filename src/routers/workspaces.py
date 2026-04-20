@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
-from src.dependencies import db
+from src.dependencies import db, tracked_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
 from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.exceptions import AuthenticationException
@@ -275,7 +275,6 @@ async def schedule_dream(
 async def chat(
     workspace_id: str = Path(...),
     options: schemas.WorkspaceChatOptions = Body(...),
-    db: AsyncSession = db,
 ):
     """
     Query the workspace's collective knowledge using natural language.
@@ -285,7 +284,8 @@ async def chat(
     cross-peer analysis, discovering common themes, and workspace-wide queries.
     """
     # Verify workspace exists before expensive agent pipeline
-    await crud.get_workspace(db, workspace_name=workspace_id)
+    async with tracked_db("workspaces.chat.preflight") as tracked_session:
+        await crud.get_workspace(tracked_session, workspace_name=workspace_id)
 
     if options.stream:
 

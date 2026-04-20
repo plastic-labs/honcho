@@ -9,6 +9,7 @@ Tests cover:
 import asyncio
 import json
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -17,6 +18,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.models import Peer, Workspace
 from src.utils.agent_tools import (
     WorkspaceToolContext,
@@ -142,6 +144,10 @@ async def workspace_test_data(
     for doc in docs_peer2 + docs_peer3:
         await db_session.refresh(doc)
 
+    # Commit so data is visible to independent tracked_db sessions used by
+    # workspace-level tool handlers.
+    await db_session.commit()
+
     yield workspace, peer1, peer2, peer3, session, messages, docs_peer2, docs_peer3
 
     await db_session.rollback()
@@ -149,7 +155,7 @@ async def workspace_test_data(
 
 @pytest.fixture
 def make_workspace_ctx(
-    db_session: AsyncSession, workspace_test_data: Any
+    workspace_test_data: Any,
 ) -> Callable[..., WorkspaceToolContext]:
     """Factory fixture to create WorkspaceToolContext."""
     workspace, *_ = workspace_test_data
@@ -161,7 +167,6 @@ def make_workspace_ctx(
         include_observation_ids: bool = True,
     ) -> WorkspaceToolContext:
         return WorkspaceToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             session_name=session_name,
             include_observation_ids=include_observation_ids,
@@ -210,10 +215,11 @@ class TestWorkspaceChatEndpoint:
         session_id = str(generate_nanoid())
 
         # Create a session first
-        client.post(
+        create_response = client.post(
             f"/v3/workspaces/{test_workspace.name}/sessions",
             json={"name": session_id},
         )
+        assert create_response.status_code in (200, 201)
 
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/chat",
@@ -353,6 +359,84 @@ class TestWorkspaceChatEndpoint:
         assert "content" in data
 
 
+@pytest.mark.asyncio
+async def test_workspace_chat_releases_preflight_session_before_agent_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active_sessions = 0
+
+    @asynccontextmanager
+    async def fake_tracked_db(_: str | None = None):
+        nonlocal active_sessions
+        active_sessions += 1
+        try:
+            yield object()
+        finally:
+            active_sessions -= 1
+
+    async def fake_get_session(*args: Any, **kwargs: Any) -> object:
+        _ = (args, kwargs)
+        assert active_sessions == 1
+        return object()
+
+    async def fake_answer(_self: Any, query: str) -> str:
+        assert query == "What changed?"
+        assert active_sessions == 0
+        return "ok"
+
+    monkeypatch.setattr("src.dialectic.chat.tracked_db", fake_tracked_db)
+    monkeypatch.setattr("src.dialectic.chat.crud.get_session", fake_get_session)
+    monkeypatch.setattr(
+        "src.dialectic.chat.WorkspaceDialecticAgent.answer", fake_answer
+    )
+
+    result = await workspace_chat("workspace", "session", "What changed?")
+
+    assert result == "ok"
+
+
+@pytest.mark.asyncio
+async def test_workspace_chat_stream_releases_preflight_session_before_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active_sessions = 0
+
+    @asynccontextmanager
+    async def fake_tracked_db(_: str | None = None):
+        nonlocal active_sessions
+        active_sessions += 1
+        try:
+            yield object()
+        finally:
+            active_sessions -= 1
+
+    async def fake_get_session(*args: Any, **kwargs: Any) -> object:
+        _ = (args, kwargs)
+        assert active_sessions == 1
+        return object()
+
+    async def fake_answer_stream(_self: Any, query: str):
+        assert query == "Stream it"
+        assert active_sessions == 0
+        yield "chunk-1"
+        assert active_sessions == 0
+        yield "chunk-2"
+
+    monkeypatch.setattr("src.dialectic.chat.tracked_db", fake_tracked_db)
+    monkeypatch.setattr("src.dialectic.chat.crud.get_session", fake_get_session)
+    monkeypatch.setattr(
+        "src.dialectic.chat.WorkspaceDialecticAgent.answer_stream",
+        fake_answer_stream,
+    )
+
+    chunks = [
+        chunk
+        async for chunk in workspace_chat_stream("workspace", "session", "Stream it")
+    ]
+
+    assert chunks == ["chunk-1", "chunk-2"]
+
+
 # =============================================================================
 # Tool Handler Tests: Workspace-Specific Handlers
 # =============================================================================
@@ -484,7 +568,6 @@ class TestSearchMemoryWorkspace:
         await db_session.flush()
 
         ctx = WorkspaceToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             session_name=session.name,
             include_observation_ids=False,
@@ -559,7 +642,6 @@ class TestGetWorkspaceStats:
         await db_session.flush()
 
         ctx = WorkspaceToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             session_name=None,
             include_observation_ids=False,
@@ -605,7 +687,6 @@ class TestGetActivePeers:
         await db_session.flush()
 
         ctx = WorkspaceToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             session_name=None,
             include_observation_ids=False,
@@ -746,6 +827,42 @@ class TestGetObservationContextWorkspace:
 
         assert "No messages found" in result
 
+    async def test_respects_session_scope(
+        self,
+        db_session: AsyncSession,
+        make_workspace_ctx: Callable[..., WorkspaceToolContext],
+        workspace_test_data: Any,
+    ):
+        """Session-scoped context lookup should not leak snippets from other sessions."""
+        workspace, _peer1, peer2, _peer3, session, messages, *_ = workspace_test_data
+
+        other_session = models.Session(
+            name=str(generate_nanoid()),
+            workspace_name=workspace.name,
+        )
+        db_session.add(other_session)
+        await db_session.flush()
+
+        leaked_message = models.Message(
+            workspace_name=workspace.name,
+            session_name=other_session.name,
+            peer_name=peer2.name,
+            content="LEAKED_FROM_OTHER_SESSION",
+            seq_in_session=messages[0].seq_in_session,
+            token_count=10,
+            created_at=datetime.now(timezone.utc),
+        )
+        db_session.add(leaked_message)
+        await db_session.commit()
+
+        ctx = make_workspace_ctx(session_name=session.name)
+        result = await _handle_get_observation_context_workspace(
+            ctx, {"message_ids": [messages[0].public_id]}
+        )
+
+        assert "LEAKED_FROM_OTHER_SESSION" not in result
+        assert messages[0].content in result
+
 
 @pytest.mark.asyncio
 class TestGetReasoningChainWorkspace:
@@ -827,7 +944,7 @@ class TestGetReasoningChainWorkspace:
             source_ids=[docs_peer2[0].id, docs_peer2[1].id],
         )
         db_session.add(deductive_doc)
-        await db_session.flush()
+        await db_session.commit()
         await db_session.refresh(deductive_doc)
 
         ctx = make_workspace_ctx()

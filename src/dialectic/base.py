@@ -43,13 +43,13 @@ class BaseDialecticAgent(ABC):
 
     def __init__(
         self,
-        db: AsyncSession,
+        db: AsyncSession | None,
         workspace_name: str,
         session_name: str | None,
         reasoning_level: ReasoningLevel,
         system_prompt: str,
     ):
-        self.db: AsyncSession = db
+        self.db: AsyncSession | None = db
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
         self.reasoning_level: ReasoningLevel = reasoning_level

@@ -52,6 +52,7 @@ import {
 } from './validation'
 
 const DEFAULT_BASE_URL = 'https://api.honcho.dev'
+type ReasoningLevel = 'minimal' | 'low' | 'medium' | 'high' | 'max'
 
 /**
  * Main client for the Honcho TypeScript SDK.
@@ -363,7 +364,7 @@ export class Honcho {
       query: string
       stream?: boolean
       session_id?: string
-      reasoning_level?: string
+      reasoning_level?: ReasoningLevel
     }
   ): Promise<WorkspaceChatResponse> {
     await this._ensureWorkspace()
@@ -378,7 +379,7 @@ export class Honcho {
     params: {
       query: string
       session_id?: string
-      reasoning_level?: string
+      reasoning_level?: ReasoningLevel
     }
   ): Promise<Response> {
     await this._ensureWorkspace()
@@ -923,7 +924,7 @@ export class Honcho {
     query: string,
     options?: {
       session?: string | Session
-      reasoningLevel?: string
+      reasoningLevel?: ReasoningLevel
     }
   ): Promise<string | null> {
     const validatedQuery = SearchQuerySchema.parse(query)
@@ -969,7 +970,7 @@ export class Honcho {
     query: string,
     options?: {
       session?: string | Session
-      reasoningLevel?: string
+      reasoningLevel?: ReasoningLevel
     }
   ): Promise<DialecticStreamResponse> {
     const validatedQuery = SearchQuerySchema.parse(query)

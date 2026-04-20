@@ -66,19 +66,18 @@ async def agentic_chat(
                 )
     # DB session closed — agent runs without holding a connection
 
-    async with tracked_db("dialectic.answer") as db:
-        agent = DialecticAgent(
-            db=db,
-            workspace_name=workspace_name,
-            session_name=session_name,
-            observer=observer,
-            observed=observed,
-            observer_peer_card=observer_peer_card,
-            observed_peer_card=observed_peer_card,
-            reasoning_level=reasoning_level,
-        )
+    agent = DialecticAgent(
+        db=None,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        observer=observer,
+        observed=observed,
+        observer_peer_card=observer_peer_card,
+        observed_peer_card=observed_peer_card,
+        reasoning_level=reasoning_level,
+    )
 
-        return await agent.answer(query)
+    return await agent.answer(query)
 
 
 async def agentic_chat_stream(
@@ -129,20 +128,19 @@ async def agentic_chat_stream(
                 )
     # DB session closed — agent streams without holding a connection
 
-    async with tracked_db("dialectic.answer_stream") as db:
-        agent = DialecticAgent(
-            db=db,
-            workspace_name=workspace_name,
-            session_name=session_name,
-            observer=observer,
-            observed=observed,
-            observer_peer_card=observer_peer_card,
-            observed_peer_card=observed_peer_card,
-            reasoning_level=reasoning_level,
-        )
+    agent = DialecticAgent(
+        db=None,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        observer=observer,
+        observed=observed,
+        observer_peer_card=observer_peer_card,
+        observed_peer_card=observed_peer_card,
+        reasoning_level=reasoning_level,
+    )
 
-        async for chunk in agent.answer_stream(query):
-            yield chunk
+    async for chunk in agent.answer_stream(query):
+        yield chunk
 
 
 async def workspace_chat(
@@ -163,19 +161,18 @@ async def workspace_chat(
     Returns:
         The synthesized answer string
     """
-    async with tracked_db("dialectic.workspace_chat") as db:
+    async with tracked_db("dialectic.workspace_chat.preflight") as db:
         if session_name:
             await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
             )
 
-        agent = WorkspaceDialecticAgent(
-            db=db,
-            workspace_name=workspace_name,
-            session_name=session_name,
-            reasoning_level=reasoning_level,
-        )
-        response = await agent.answer(query)
+    agent = WorkspaceDialecticAgent(
+        workspace_name=workspace_name,
+        session_name=session_name,
+        reasoning_level=reasoning_level,
+    )
+    response = await agent.answer(query)
 
     return response
 
@@ -198,17 +195,16 @@ async def workspace_chat_stream(
     Yields:
         Chunks of the response text as they are generated
     """
-    async with tracked_db("dialectic.workspace_chat_stream") as db:
+    async with tracked_db("dialectic.workspace_chat_stream.preflight") as db:
         if session_name:
             await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
             )
 
-        agent = WorkspaceDialecticAgent(
-            db=db,
-            workspace_name=workspace_name,
-            session_name=session_name,
-            reasoning_level=reasoning_level,
-        )
-        async for chunk in agent.answer_stream(query):
-            yield chunk
+    agent = WorkspaceDialecticAgent(
+        workspace_name=workspace_name,
+        session_name=session_name,
+        reasoning_level=reasoning_level,
+    )
+    async for chunk in agent.answer_stream(query):
+        yield chunk

@@ -130,7 +130,7 @@ async def tool_test_data(
 
 @pytest.fixture
 def make_tool_context(
-    db_session: AsyncSession, tool_test_data: Any
+    tool_test_data: Any,
 ) -> Callable[..., ToolContext]:
     """Factory fixture to create ToolContext with custom parameters."""
     workspace, peer1, peer2, session, _messages, _ = tool_test_data
@@ -144,7 +144,6 @@ def make_tool_context(
         session_name: str | None = None,
     ) -> ToolContext:
         return ToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -485,7 +484,6 @@ class TestSearchMemory:
         await db_session.flush()
 
         ctx = ToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -695,7 +693,7 @@ class TestGetRecentHistory:
                 left_at=None,
             )
         )
-        await db_session.flush()
+        await db_session.commit()
 
         ctx = make_tool_context()
 
@@ -726,14 +724,12 @@ class TestGetRecentHistory:
 
     async def test_without_session_uses_observed(
         self,
-        db_session: AsyncSession,
         tool_test_data: Any,
     ):
         """Without session, retrieves messages from observed peer."""
         workspace, peer1, peer2, _, _, _ = tool_test_data
 
         ctx = ToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,
@@ -1071,7 +1067,6 @@ class TestGetPeerCard:
         await db_session.flush()
 
         ctx = ToolContext(
-            db=db_session,
             workspace_name=workspace.name,
             observer=peer1.name,
             observed=peer2.name,

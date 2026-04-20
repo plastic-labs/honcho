@@ -16,6 +16,7 @@ from src.config import ReasoningLevel, settings
 from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.dialectic.base import BaseDialecticAgent
+from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
 from src.utils.agent_tools import (
     DIALECTIC_TOOLS,
@@ -42,7 +43,7 @@ class DialecticAgent(BaseDialecticAgent):
 
     def __init__(
         self,
-        db: AsyncSession,
+        db: AsyncSession | None,
         workspace_name: str,
         session_name: str | None,
         observer: str,
@@ -77,6 +78,8 @@ class DialecticAgent(BaseDialecticAgent):
         prefetch_limit = 10 if self.reasoning_level == "minimal" else 25
 
         try:
+            query_embedding = await embedding_client.embed(query)
+
             explicit_repr: Representation = await search_memory(
                 workspace_name=self.workspace_name,
                 observer=self.observer,
@@ -84,6 +87,7 @@ class DialecticAgent(BaseDialecticAgent):
                 query=query,
                 limit=prefetch_limit,
                 levels=["explicit"],
+                embedding=query_embedding,
             )
 
             derived_repr: Representation = await search_memory(
@@ -93,6 +97,7 @@ class DialecticAgent(BaseDialecticAgent):
                 query=query,
                 limit=prefetch_limit,
                 levels=["deductive", "inductive", "contradiction"],
+                embedding=query_embedding,
             )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
@@ -122,7 +127,7 @@ class DialecticAgent(BaseDialecticAgent):
 
     async def _create_tool_executor(self) -> Callable[[str, dict[str, Any]], Any]:
         return await create_tool_executor(
-            db=self.db,
+            db=None,
             workspace_name=self.workspace_name,
             session_name=self.session_name,
             observer=self.observer,
@@ -210,8 +215,9 @@ class DialecticAgent(BaseDialecticAgent):
             reverse=False,
             peer_perspective=self.observer,
         )
-        result = await self.db.execute(stmt)
-        messages = result.scalars().all()
+        async with tracked_db("dialectic.session_history") as db:
+            result = await db.execute(stmt)
+            messages = result.scalars().all()
 
         if not messages:
             return

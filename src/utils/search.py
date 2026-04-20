@@ -448,6 +448,10 @@ async def search(
 
     async with tracked_db("search.messages") as managed_db:
         combined_results = await _run_search(managed_db)
+        if context_window > 0 and combined_results and not workspace_name:
+            raise ValidationException(
+                "workspace_name or workspace_id is required when context_window > 0."
+            )
         if context_window > 0 and combined_results and workspace_name:
             from src.crud.message import (
                 _build_merged_snippets,  # pyright: ignore[reportPrivateUsage]

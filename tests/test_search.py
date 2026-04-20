@@ -8,7 +8,31 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.exceptions import ValidationException
 from src.utils.search import search
+
+
+@pytest.mark.asyncio
+async def test_search_requires_workspace_when_context_window_requested(
+    db_session: AsyncSession,
+):
+    """Context windows require workspace scope to preserve the snippet return contract."""
+    workspace = models.Workspace(name=generate_nanoid())
+    peer = models.Peer(name="peer1", workspace_name=workspace.name)
+    session = models.Session(name="session1", workspace_name=workspace.name)
+    message = models.Message(
+        content="Message with context",
+        session_name=session.name,
+        peer_name=peer.name,
+        workspace_name=workspace.name,
+        seq_in_session=1,
+        created_at=datetime.datetime.now(datetime.timezone.utc),
+    )
+    db_session.add_all([workspace, peer, session, message])
+    await db_session.commit()
+
+    with pytest.raises(ValidationException):
+        await search("Message", limit=10, context_window=1)
 
 
 @pytest.mark.asyncio
