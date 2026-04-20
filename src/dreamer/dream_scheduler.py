@@ -166,7 +166,10 @@ class DreamScheduler:
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
-        # Find the most recent session and get current document count
+        # Find the most recent explicit-level session and get current document count.
+        # Explicit-only, matching the count query below and check_and_schedule_dream —
+        # if the session is picked from a derived doc while the count filters to
+        # explicit, the two can disagree on which document set the dream is over.
         async with tracked_db("dream_session_lookup") as db:
             stmt = (
                 select(models.Document.session_name)
@@ -174,6 +177,7 @@ class DreamScheduler:
                     models.Document.workspace_name == workspace_name,
                     models.Document.observer == observer,
                     models.Document.observed == observed,
+                    models.Document.level == "explicit",
                 )
                 .order_by(models.Document.created_at.desc())
                 .limit(1)
@@ -186,13 +190,15 @@ class DreamScheduler:
                 )
                 return
 
-            # Get current document count at execution time (not stale from scheduling)
+            # Get current document count at execution time (not stale from scheduling).
+            # Explicit-only, matching check_and_schedule_dream — baseline must be symmetric or the delta goes negative.
             count_stmt = select(func.count(models.Document.id)).where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.observer == observer,
                 models.Document.observed == observed,
+                models.Document.level == "explicit",
             )
-            current_document_count = int(await db.scalar(count_stmt) or 0)
+            current_explicit_count = int(await db.scalar(count_stmt) or 0)
 
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
@@ -212,7 +218,7 @@ class DreamScheduler:
             observer=observer,
             observed=observed,
             dream_type=dream_type,
-            document_count=current_document_count,
+            document_count=current_explicit_count,
             session_name=session_name,
         )
 
@@ -231,11 +237,11 @@ async def check_and_schedule_dream(
     collection: models.Collection,
 ) -> bool:
     """
-    Check if a collection has reached the document threshold and schedule a timer-based dream.
+    Check if a collection has reached the explicit-observation threshold and schedule a timer-based dream.
 
     This function only schedules a timer-based dream if:
     1. Dreams are enabled
-    2. Document threshold is reached
+    2. Explicit-observation threshold is reached (dreamer output does not count)
     3. Minimum hours between dreams have passed
     4. No dream is already scheduled for this collection
 
@@ -254,16 +260,18 @@ async def check_and_schedule_dream(
     last_dream_document_count = dream_metadata.get("last_dream_document_count", 0)
     last_dream_at = dream_metadata.get("last_dream_at")
 
-    # Count current documents in the collection
+    # Count explicit-level docs only: dreamer output (deductive/inductive/
+    # contradiction) would inflate the threshold and create a feedback loop.
     count_stmt = select(func.count(models.Document.id)).where(
         models.Document.workspace_name == collection.workspace_name,
         models.Document.observer == collection.observer,
         models.Document.observed == collection.observed,
+        models.Document.level == "explicit",
     )
-    current_document_count = int(await db.scalar(count_stmt) or 0)
+    current_explicit_count = int(await db.scalar(count_stmt) or 0)
 
     # Calculate documents added since last dream
-    documents_since_last_dream = current_document_count - last_dream_document_count
+    documents_since_last_dream = current_explicit_count - last_dream_document_count
 
     logger.debug(
         "Dream check",
@@ -271,7 +279,7 @@ async def check_and_schedule_dream(
             "workspace_name": collection.workspace_name,
             "observer": collection.observer,
             "observed": collection.observed,
-            "current_document_count": current_document_count,
+            "current_explicit_count": current_explicit_count,
             "last_dream_document_count": last_dream_document_count,
             "documents_since_last_dream": documents_since_last_dream,
             "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,

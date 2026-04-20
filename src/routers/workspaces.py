@@ -224,11 +224,13 @@ async def schedule_dream(
     observed = request.observed if request.observed is not None else request.observer
     dream_type = request.dream_type
 
-    # Count documents in the collection
+    # Explicit-only count, matching dream_scheduler.check_and_schedule_dream and
+    # execute_dream — document_count becomes last_dream_document_count (the baseline).
     count_stmt = select(func.count(models.Document.id)).where(
         models.Document.workspace_name == workspace_id,
         models.Document.observer == observer,
         models.Document.observed == observed,
+        models.Document.level == "explicit",
     )
     document_count = int(await db.scalar(count_stmt) or 0)
 

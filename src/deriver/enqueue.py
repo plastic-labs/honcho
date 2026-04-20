@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from sqlalchemy import exists, insert, select
@@ -451,7 +450,13 @@ async def enqueue_dream(
         observer: Name of the observer peer
         observed: Name of the observed peer
         dream_type: Type of dream to execute
-        document_count: Current document count for metadata update
+        document_count: Count of explicit-level documents only. Written as
+            last_dream_document_count and used as the baseline that
+            dream_scheduler.check_and_schedule_dream subtracts from a future
+            explicit-filtered count to compute documents_since_last_dream.
+            Callers that include non-explicit levels (deductive, inductive,
+            contradiction) will inflate the baseline and suppress the next
+            scheduled dream.
         session_name: Name of the session to scope the dream to if specified
     """
     async with tracked_db("dream_enqueue") as db_session:
@@ -516,19 +521,28 @@ async def enqueue_dream(
             stmt = insert(QueueItem).returning(QueueItem)
             await db_session.execute(stmt, [dream_record])
 
-            # Update collection metadata (CRUD handles cache invalidation)
-            now_iso = datetime.now(timezone.utc).isoformat()
+            # Update collection metadata (CRUD handles cache invalidation).
+            # last_dream_at is written at completion in process_dream, not here.
+            # Read-modify-write: update_collection_internal_metadata uses a
+            # top-level JSONB || merge, so passing {"dream": {"last_dream_document_count": ...}}
+            # alone would replace the whole "dream" subkey and drop sibling
+            # last_dream_at (written by process_dream on the prior completion).
+            # Row-lock the collection during read-modify-write to prevent concurrent enqueue/completion from clobbering each other's dream metadata writes.
+            collection = await crud.get_collection(
+                db_session,
+                workspace_name,
+                observer=observer,
+                observed=observed,
+                with_for_update=True,
+            )
+            dream_meta = dict(collection.internal_metadata.get("dream", {}))
+            dream_meta["last_dream_document_count"] = document_count
             await crud.update_collection_internal_metadata(
                 db_session,
                 workspace_name,
                 observer,
                 observed,
-                update_data={
-                    "dream": {
-                        "last_dream_document_count": document_count,
-                        "last_dream_at": now_iso,
-                    }
-                },
+                update_data={"dream": dream_meta},
             )
             # update_collection_internal_metadata commits already
 
