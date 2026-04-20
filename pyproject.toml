@@ -9,7 +9,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.131.0",
-    "groq>=0.31.0",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.30",
     "fastapi-pagination>=0.14.2",
@@ -97,6 +96,12 @@ asyncio_default_fixture_loop_scope = "session"
 addopts = "--strict-markers -n auto --ignore=tests/alembic"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "live_llm: calls live LLM provider APIs and requires --live-llm",
+    "requires_anthropic: requires LLM_ANTHROPIC_API_KEY",
+    "requires_openai: requires LLM_OPENAI_API_KEY",
+    "requires_gemini: requires LLM_GEMINI_API_KEY",
+]
 filterwarnings = [
     "ignore:Call to deprecated close\\. \\(Use aclose\\(\\) instead\\).*:DeprecationWarning",
     "ignore:websockets\\.legacy is deprecated; see .* for upgrade instructions:DeprecationWarning",

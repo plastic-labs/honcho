@@ -26,13 +26,13 @@ cp config.toml.example config.toml
 
 All config values map to environment variables:
 
-- `{SECTION}_{KEY}` for section settings (e.g., `DB_CONNECTION_URI` → `[db].CONNECTION_URI`)
+- `{SECTION}_{KEY}` for top-level section settings (e.g., `DB_CONNECTION_URI` → `[db].CONNECTION_URI`)
 - `{KEY}` for app-level settings (e.g., `LOG_LEVEL` → `[app].LOG_LEVEL`)
-- `{SECTION}__{NESTED}__{KEY}` for deeply nested settings (double underscore, e.g., `DIALECTIC_LEVELS__minimal__PROVIDER`)
+- Use `__` inside `{KEY}` for nested settings (e.g., `DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT`, `DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL`)
 
 ## LLM Configuration
 
-The [Self-Hosting Guide](./self-hosting#llm-setup) covers the basic setup: one OpenAI-compatible endpoint, one model for all features. This section covers recommended model tiers, using multiple providers, and per-feature tuning.
+The [Self-Hosting Guide](./self-hosting#llm-setup) covers the basic setup: either the built-in OpenAI defaults or one OpenAI-compatible endpoint/model for all features. This section covers recommended model tiers, using multiple providers, and per-feature tuning.
 
 <Note>
 All Honcho agents (deriver, dialectic, dream) require tool calling. Your models must support the OpenAI tool calling format.
@@ -52,103 +52,174 @@ You can mix providers freely — for example, use Gemini for the deriver and Cla
 
 ### Provider Types
 
-| Provider value | What it connects to | Key env var |
+| Transport value | What it connects to | API key env var |
 |---|---|---|
-| `custom` | Any OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, Ollama) | `LLM_OPENAI_COMPATIBLE_API_KEY` + `LLM_OPENAI_COMPATIBLE_BASE_URL` |
-| `vllm` | vLLM self-hosted models | `LLM_VLLM_API_KEY` + `LLM_VLLM_BASE_URL` |
-| `google` | Google Gemini (direct) | `LLM_GEMINI_API_KEY` |
+| `openai` | OpenAI or any OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, LiteLLM, vLLM, Ollama) | `LLM_OPENAI_API_KEY` |
 | `anthropic` | Anthropic Claude (direct) | `LLM_ANTHROPIC_API_KEY` |
-| `openai` | OpenAI (direct) | `LLM_OPENAI_API_KEY` |
-| `groq` | Groq (direct) | `LLM_GROQ_API_KEY` |
+| `gemini` | Google Gemini (direct) | `LLM_GEMINI_API_KEY` |
+
+For OpenAI-compatible proxies (OpenRouter, vLLM, Ollama, etc.), use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature to point at your endpoint.
 
 ### Tiered Model Setup
 
 Once you're past initial setup, you can assign different models per feature for better cost/quality tradeoffs. This example uses OpenRouter with light/medium/heavy tiers:
 
 ```bash
-LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
+LLM_OPENAI_API_KEY=sk-or-v1-...
+
+# All features route through OpenRouter via overrides.base_url
+# (You can set this on each feature's MODEL_CONFIG)
 
 # Light tier — high throughput, cheap
-DERIVER_PROVIDER=custom
-DERIVER_MODEL=google/gemini-2.5-flash-lite
-SUMMARY_PROVIDER=custom
-SUMMARY_MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__minimal__PROVIDER=custom
-DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash-lite
-DIALECTIC_LEVELS__low__PROVIDER=custom
-DIALECTIC_LEVELS__low__MODEL=google/gemini-2.5-flash-lite
+DERIVER_MODEL_CONFIG__TRANSPORT=openai
+DERIVER_MODEL_CONFIG__MODEL=google/gemini-2.5-flash-lite
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
+SUMMARY_MODEL_CONFIG__TRANSPORT=openai
+SUMMARY_MODEL_CONFIG__MODEL=google/gemini-2.5-flash
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT=openai
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL=google/gemini-2.5-flash-lite
+DIALECTIC_LEVELS__low__MODEL_CONFIG__TRANSPORT=openai
+DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL=google/gemini-2.5-flash-lite
 
 # Medium tier — better reasoning
-DIALECTIC_LEVELS__medium__PROVIDER=custom
-DIALECTIC_LEVELS__medium__MODEL=anthropic/claude-haiku-4-5
-DIALECTIC_LEVELS__high__PROVIDER=custom
-DIALECTIC_LEVELS__high__MODEL=anthropic/claude-haiku-4-5
-DIALECTIC_LEVELS__max__PROVIDER=custom
-DIALECTIC_LEVELS__max__MODEL=anthropic/claude-haiku-4-5
+DIALECTIC_LEVELS__medium__MODEL_CONFIG__TRANSPORT=openai
+DIALECTIC_LEVELS__medium__MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
+DIALECTIC_LEVELS__high__MODEL_CONFIG__TRANSPORT=openai
+DIALECTIC_LEVELS__high__MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
+DIALECTIC_LEVELS__max__MODEL_CONFIG__TRANSPORT=openai
+DIALECTIC_LEVELS__max__MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
 
 # Heavy tier — best quality for complex tasks
-DREAM_PROVIDER=custom
-DREAM_MODEL=anthropic/claude-sonnet-4-20250514
-DREAM_DEDUCTION_MODEL=anthropic/claude-haiku-4-5
-DREAM_INDUCTION_MODEL=anthropic/claude-haiku-4-5
+DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=openai
+DREAM_DEDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
+DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT=openai
+DREAM_INDUCTION_MODEL_CONFIG__MODEL=anthropic/claude-haiku-4-5
 ```
 
 ### Direct Vendor Keys
 
-Instead of an OpenAI-compatible proxy, you can use vendor APIs directly. Leave `PROVIDER` overrides unset and the code defaults route per feature:
+Instead of an OpenAI-compatible proxy, you can use vendor APIs directly. Each transport picks up its own `LLM_{TRANSPORT}_API_KEY`.
+
+If you keep the built-in defaults, only `LLM_OPENAI_API_KEY` is required:
 
 ```bash
-LLM_GEMINI_API_KEY=...       # deriver, summary, dialectic minimal/low
-LLM_ANTHROPIC_API_KEY=...    # dialectic medium/high/max, dream
-LLM_OPENAI_API_KEY=...       # embeddings
+LLM_OPENAI_API_KEY=...
+
+# Built-in model defaults
+# - deriver: openai / gpt-5.4-mini
+# - dialectic (all levels): openai / gpt-5.4-mini
+# - summary: openai / gpt-5.4-mini
+# - dream specialists: openai / gpt-5.4-mini
+# - embeddings: openai / text-embedding-3-small
+```
+
+To use Gemini or Anthropic directly, override the features you want to move:
+
+```bash
+LLM_GEMINI_API_KEY=...
+DERIVER_MODEL_CONFIG__TRANSPORT=gemini
+DERIVER_MODEL_CONFIG__MODEL=gemini-2.5-flash
+
+LLM_ANTHROPIC_API_KEY=...
+DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=anthropic
+DREAM_DEDUCTION_MODEL_CONFIG__MODEL=claude-haiku-4-5
 ```
 
 ### Self-Hosted (vLLM / Ollama)
 
+Use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature:
+
 ```bash
 # vLLM
-LLM_VLLM_BASE_URL=http://localhost:8000/v1
-LLM_VLLM_API_KEY=not-needed
-DERIVER_PROVIDER=vllm
-DERIVER_MODEL=your-model-name
+LLM_OPENAI_API_KEY=not-needed
+DERIVER_MODEL_CONFIG__TRANSPORT=openai
+DERIVER_MODEL_CONFIG__MODEL=your-model-name
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 
-# Ollama (uses custom provider)
-LLM_OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1
-LLM_OPENAI_COMPATIBLE_API_KEY=ollama
-DERIVER_PROVIDER=custom
-DERIVER_MODEL=llama3.3:70b
+# Ollama
+LLM_OPENAI_API_KEY=ollama
+DERIVER_MODEL_CONFIG__TRANSPORT=openai
+DERIVER_MODEL_CONFIG__MODEL=llama3.3:70b
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:11434/v1
 ```
 
-Set `PROVIDER` and `MODEL` for each feature the same way.
+Set `MODEL_CONFIG__TRANSPORT`, `MODEL_CONFIG__MODEL`, and `MODEL_CONFIG__OVERRIDES__BASE_URL` for each feature the same way.
+
+The same overrides are available in `config.toml`:
+
+```toml
+[deriver.model_config]
+transport = "openai"
+model = "my-local-model"
+
+[deriver.model_config.overrides]
+base_url = "http://localhost:8000/v1"
+api_key_env = "DERIVER_LOCAL_API_KEY"
+```
 
 ### Thinking Budget
 
-Default configs use `THINKING_BUDGET_TOKENS` tuned for Anthropic models. Non-Anthropic providers don't support extended thinking and will error or silently fail. The [Self-Hosting Guide](./self-hosting#llm-setup) sets these to `0` by default. If you switch to Anthropic models, you can re-enable them:
+Built-in defaults do not set `MODEL_CONFIG__THINKING_BUDGET_TOKENS` or `MODEL_CONFIG__THINKING_EFFORT`. Add one only when your chosen model supports it.
+
+Use `MODEL_CONFIG__THINKING_EFFORT` for OpenAI reasoning models:
 
 ```bash
-# Anthropic models — enable thinking
-DERIVER_THINKING_BUDGET_TOKENS=1024
-SUMMARY_THINKING_BUDGET_TOKENS=512
-DREAM_THINKING_BUDGET_TOKENS=8192
-DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS=1024
-DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS=1024
-DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS=2048
-# minimal and low stay at 0
+DERIVER_MODEL_CONFIG__THINKING_EFFORT=minimal
+DIALECTIC_LEVELS__max__MODEL_CONFIG__THINKING_EFFORT=medium
 ```
+
+Use `MODEL_CONFIG__THINKING_BUDGET_TOKENS` for Anthropic and Gemini models. Set it to `0` or omit it for providers that don't support extended thinking:
+
+```bash
+SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
+DREAM_DEDUCTION_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
+```
+
+### Provider-Specific Parameters
+
+Each model config supports an `overrides.provider_params` dict for passing arbitrary parameters to the underlying provider SDK. Use this for vendor-specific features that aren't part of the standard config:
+
+```toml
+[deriver.model_config.overrides.provider_params]
+# These are passed directly to the provider SDK
+verbosity = "low"
+```
+
+### Changing Transport
+
+When changing a feature's `transport`, always specify `model` explicitly. Partial overrides that change transport without model will keep the previous model name, which may not be valid for the new provider.
 
 ### General LLM Settings
 
 ```bash
 LLM_DEFAULT_MAX_TOKENS=2500
 
-# Embedding provider (used when EMBED_MESSAGES=true)
-LLM_EMBEDDING_PROVIDER=openai  # Options: openai, gemini, openrouter
-
 # Tool output limits (to prevent token explosion)
 LLM_MAX_TOOL_OUTPUT_CHARS=10000  # ~2500 tokens at 4 chars/token
 LLM_MAX_MESSAGE_CONTENT_CHARS=2000  # Max chars per message in tool results
 ```
+
+### Embedding Configuration
+
+Embeddings use their own nested model config, separate from the main text-generation LLM settings.
+
+```bash
+# Embedding vector settings
+EMBEDDING_VECTOR_DIMENSIONS=1536
+EMBEDDING_MAX_INPUT_TOKENS=8192
+EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
+
+# Embedding transport/model selection
+EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
+EMBEDDING_MODEL_CONFIG__MODEL=text-embedding-3-small
+
+# Optional endpoint overrides
+EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
+EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
+```
+
+Current constraint:
+- `EMBEDDING_VECTOR_DIMENSIONS` can be changed for fully migrated external vector stores, but pgvector and dual-write mode still require `1536` until the schema migration lands.
 
 ### Feature-Specific Model Configuration
 
@@ -173,45 +244,51 @@ Each reasoning level has its own provider, model, and settings:
 ```toml
 # config.toml example
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 MAX_OUTPUT_TOKENS = 250
 TOOL_CHOICE = "any"
 
+[dialectic.levels.minimal.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
 TOOL_CHOICE = "any"
 
+[dialectic.levels.low.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 
+[dialectic.levels.medium.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
 
+[dialectic.levels.high.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
+
+[dialectic.levels.max.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 ```
 
 Environment variables for nested levels use double underscores:
 ```bash
-DIALECTIC_LEVELS__minimal__PROVIDER=google
-DIALECTIC_LEVELS__minimal__MODEL=gemini-2.5-flash-lite
-DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT=openai
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL=gpt-5.4-mini
 DIALECTIC_LEVELS__minimal__MAX_TOOL_ITERATIONS=1
+DIALECTIC_LEVELS__minimal__MAX_OUTPUT_TOKENS=250
+DIALECTIC_LEVELS__minimal__TOOL_CHOICE=any
 ```
 
 **Deriver (Theory of Mind):**
@@ -222,12 +299,16 @@ The Deriver extracts facts from messages and builds theory-of-mind representatio
 DERIVER_ENABLED=true
 
 # LLM settings
-DERIVER_PROVIDER=google
-DERIVER_MODEL=gemini-2.5-flash-lite
-DERIVER_MAX_OUTPUT_TOKENS=4096
-DERIVER_THINKING_BUDGET_TOKENS=1024
+DERIVER_MODEL_CONFIG__TRANSPORT=openai
+DERIVER_MODEL_CONFIG__MODEL=gpt-5.4-mini
 DERIVER_MAX_INPUT_TOKENS=23000
-DERIVER_TEMPERATURE=  # Optional override (unset by default)
+# DERIVER_MODEL_CONFIG__THINKING_EFFORT=minimal
+# DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
+# DERIVER_MODEL_CONFIG__TEMPERATURE=0.7  # Optional temperature override
+
+# Backup model (optional)
+# DERIVER_MODEL_CONFIG__FALLBACK__MODEL=claude-haiku-4-5
+# DERIVER_MODEL_CONFIG__FALLBACK__TRANSPORT=anthropic
 
 # Worker settings
 DERIVER_WORKERS=1  # Increase for higher throughput
@@ -256,11 +337,12 @@ Session summaries provide compressed context for long conversations — short su
 
 ```bash
 SUMMARY_ENABLED=true
-SUMMARY_PROVIDER=google
-SUMMARY_MODEL=gemini-2.5-flash
+SUMMARY_MODEL_CONFIG__TRANSPORT=openai
+SUMMARY_MODEL_CONFIG__MODEL=gpt-5.4-mini
 SUMMARY_MAX_TOKENS_SHORT=1000
 SUMMARY_MAX_TOKENS_LONG=4000
-SUMMARY_THINKING_BUDGET_TOKENS=512
+# SUMMARY_MODEL_CONFIG__THINKING_EFFORT=minimal
+# SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20
 SUMMARY_MESSAGES_PER_LONG_SUMMARY=60
 ```
@@ -275,18 +357,14 @@ DREAM_DOCUMENT_THRESHOLD=50
 DREAM_IDLE_TIMEOUT_MINUTES=60
 DREAM_MIN_HOURS_BETWEEN_DREAMS=8
 DREAM_ENABLED_TYPES=["omni"]
-
-# LLM settings
-DREAM_PROVIDER=anthropic
-DREAM_MODEL=claude-sonnet-4-20250514
-DREAM_MAX_OUTPUT_TOKENS=16384
-DREAM_THINKING_BUDGET_TOKENS=8192
 DREAM_MAX_TOOL_ITERATIONS=20
 DREAM_HISTORY_TOKEN_LIMIT=16384
 
-# Specialist models (use same provider as main model)
-DREAM_DEDUCTION_MODEL=claude-haiku-4-5
-DREAM_INDUCTION_MODEL=claude-haiku-4-5
+# Specialist model configs (each is independent)
+DREAM_DEDUCTION_MODEL_CONFIG__TRANSPORT=openai
+DREAM_DEDUCTION_MODEL_CONFIG__MODEL=gpt-5.4-mini
+DREAM_INDUCTION_MODEL_CONFIG__TRANSPORT=openai
+DREAM_INDUCTION_MODEL_CONFIG__MODEL=gpt-5.4-mini
 ```
 
 **Surprisal-Based Sampling (Advanced):**
@@ -315,8 +393,8 @@ GET_CONTEXT_MAX_TOKENS=100000
 MAX_MESSAGE_SIZE=25000
 MAX_FILE_SIZE=5242880  # 5MB
 EMBED_MESSAGES=true
-MAX_EMBEDDING_TOKENS=8192
-MAX_EMBEDDING_TOKENS_PER_REQUEST=300000
+EMBEDDING_MAX_INPUT_TOKENS=8192
+EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 NAMESPACE=honcho
 ```
 
@@ -452,8 +530,10 @@ DEFAULT_TTL_SECONDS = 300
 [deriver]
 ENABLED = true
 WORKERS = 1
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
+
+[deriver.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [peer_card]
 ENABLED = true
@@ -462,44 +542,62 @@ ENABLED = true
 MAX_OUTPUT_TOKENS = 8192
 
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
+MAX_OUTPUT_TOKENS = 250
+TOOL_CHOICE = "any"
+
+[dialectic.levels.minimal.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
+TOOL_CHOICE = "any"
+
+[dialectic.levels.low.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
 
+[dialectic.levels.medium.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
 
+[dialectic.levels.high.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
+
+[dialectic.levels.max.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [summary]
 ENABLED = true
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash"
+MAX_TOKENS_SHORT = 1000
+MAX_TOKENS_LONG = 4000
+
+[summary.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dream]
 ENABLED = true
-PROVIDER = "anthropic"
-MODEL = "claude-sonnet-4-20250514"
+
+[dream.deduction_model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
+[dream.induction_model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [webhook]
 MAX_WORKSPACE_LIMIT = 10
@@ -536,6 +634,6 @@ uv run alembic revision --autogenerate -m "Description"  # Create new migration
 
 4. **Deriver not processing** — Check logs. Increase `DERIVER_WORKERS` for throughput. Verify database and LLM connectivity.
 
-5. **Dialectic level issues** — All five levels must be configured. For Anthropic, `THINKING_BUDGET_TOKENS` must be >= 1024. For non-Anthropic providers, set to `0`. `MAX_OUTPUT_TOKENS` must exceed `THINKING_BUDGET_TOKENS`.
+5. **Dialectic level issues** — Unset level fields inherit from the built-in defaults. For Anthropic, `THINKING_BUDGET_TOKENS` must be >= 1024 when enabled. For providers without budgeted thinking, omit it or set it to `0`. `MAX_OUTPUT_TOKENS` must exceed `THINKING_BUDGET_TOKENS`.
 
 6. **Vector store issues** — For Turbopuffer, set the API key. Check `VECTOR_STORE_DIMENSIONS` matches your embedding model.

@@ -225,7 +225,6 @@ DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psy
 LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for deriver, summary, and dialectic minimal/low by default)
 LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic medium/high/max and dream by default)
 LLM_OPENAI_API_KEY= # API Key for OpenAI (used for embeddings when EMBED_MESSAGES=true)
-LLM_GROQ_API_KEY= # API Key for Groq (optional)
 ```
 
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
@@ -420,16 +419,17 @@ Then modify the values as needed. The TOML file is organized into sections:
 
 All configuration values can be overridden using environment variables. The environment variable names follow this pattern:
 
-- `{SECTION}_{KEY}` for nested settings
+- `{SECTION}_{KEY}` for top-level section settings
+- Use `__` inside `{KEY}` for nested settings
 - Just `{KEY}` for app-level settings
 
 Examples:
 
 - `DB_CONNECTION_URI` - Database connection string
 - `AUTH_JWT_SECRET` - JWT secret key
-- `DIALECTIC_LEVELS__low__MODEL` - Model for low reasoning level
-- `DERIVER_PROVIDER` - Provider for background deriver
-- `SUMMARY_PROVIDER` - Summary generation provider
+- `DERIVER_MODEL_CONFIG__TRANSPORT` - Transport for the background deriver
+- `SUMMARY_MODEL_CONFIG__MODEL` - Summary model override
+- `DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL` - Model for low reasoning level
 - `LOG_LEVEL` - Application log level
 - `METRICS_ENABLED` - Enable Prometheus metrics
 - `TELEMETRY_ENABLED` - Enable CloudEvents telemetry

@@ -2,9 +2,10 @@ import logging
 import time
 
 from src import crud
-from src.config import settings
+from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
+from src.llm import honcho_llm_call
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
@@ -16,7 +17,6 @@ from src.telemetry.prometheus.metrics import (
     TokenTypes,
 )
 from src.telemetry.sentry import with_sentry_transaction
-from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation
@@ -25,6 +25,10 @@ from src.utils.tokens import track_deriver_input_tokens
 from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
 
 logger = logging.getLogger(__name__)
+
+
+def _get_deriver_model_config() -> ConfiguredModelSettings:
+    return settings.DERIVER.MODEL_CONFIG
 
 
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
@@ -119,22 +123,24 @@ async def process_representation_tasks_batch(
     )
 
     # validation on settings means max_tokens will always be > 0
-    max_tokens = settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS
+    base_model_config = _get_deriver_model_config()
+    max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
+    model_config = base_model_config.model_copy(
+        update={
+            "stop_sequences": ["   \n", "\n\n\n\n"],
+        }
+    )
 
     # Single LLM call
     llm_start = time.perf_counter()
     response = await honcho_llm_call(
-        llm_settings=settings.DERIVER,
+        model_config=model_config,
         prompt=prompt,
         max_tokens=max_tokens,
         track_name="Minimal Deriver",
         response_model=PromptRepresentation,
         json_mode=True,
-        temperature=settings.DERIVER.TEMPERATURE,
-        stop_seqs=["   \n", "\n\n\n\n"],
-        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
         max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
-        reasoning_effort="minimal",
         enable_retry=True,
         retry_attempts=3,
         trace_name="minimal_deriver",

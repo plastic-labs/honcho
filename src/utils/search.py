@@ -382,7 +382,7 @@ async def search(
             query_embedding = await embedding_client.embed(query)
         except ValueError as e:
             raise ValidationException(
-                f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+                f"Query exceeds maximum token limit of {settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
 
         if not _uses_pgvector_message_search():

@@ -115,12 +115,12 @@ Messages are stored but no observations, summaries, or representations are being
 
 ### OpenRouter / custom provider not working
 
-If you set `PROVIDER=custom` but calls fail:
+If calls to an OpenAI-compatible proxy fail:
 
-1. **Verify the endpoint and key are set:**
+1. **Verify the endpoint and key are set.** Use `transport = "openai"` with a base URL override:
    ```bash
-   LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-   LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
+   LLM_OPENAI_API_KEY=sk-or-v1-...
+   DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
    ```
 
 2. **Check model names match the provider's format.** OpenRouter uses `vendor/model` format (e.g., `anthropic/claude-haiku-4-5`), not the raw model ID.
@@ -139,29 +139,30 @@ If you set `PROVIDER=custom` but calls fail:
 
 2. **In Docker**, `localhost` inside a container doesn't reach the host. Use `host.docker.internal` (macOS/Windows) or the host's network IP:
    ```bash
-   LLM_VLLM_BASE_URL=http://host.docker.internal:8000/v1
+   DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:8000/v1
    ```
 
 3. **Structured output failures** — vLLM's structured output support is limited to certain response formats. If you see JSON parsing errors, check the deriver/dream logs for the raw response.
 
 ### Thinking budget errors with non-Anthropic providers
 
-If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, your `THINKING_BUDGET_TOKENS` is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking.
+If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, one of your per-component `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS` overrides is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking. The built-in defaults do not set thinking budgets, so this only applies if you added those overrides yourself.
 
-**Fix:** Set `THINKING_BUDGET_TOKENS=0` for every component when using non-Anthropic providers:
+**Fix:** Set `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0` for every component when using models that don't support thinking:
 
 ```bash
-DERIVER_THINKING_BUDGET_TOKENS=0
-SUMMARY_THINKING_BUDGET_TOKENS=0
-DREAM_THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__low__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS=0
-DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS=0
+DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DREAM_DEDUCTION_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DREAM_INDUCTION_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__low__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__medium__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__high__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__max__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
 ```
 
-This applies to OpenRouter (with non-Anthropic models), vLLM, Ollama, Groq, Google, and OpenAI providers. Only Anthropic models support the thinking budget parameter.
+For OpenAI reasoning models, use `*_MODEL_CONFIG__THINKING_EFFORT` instead of `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS`.
 
 ## Database Issues
 

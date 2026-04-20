@@ -36,30 +36,24 @@ You'll need a PostgreSQL database with the pgvector extension. Choose one:
 
 Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dreaming. The server will **fail to start** without a provider configured.
 
-You need one API key and one model. Any OpenAI-compatible endpoint works — OpenRouter, Together, Fireworks, Ollama, vLLM, or a direct vendor API. Models must support tool calling (function calling).
+If you keep the built-in defaults, you only need one API key: all text-generation features default to `openai / gpt-5.4-mini`, and embeddings default to `openai / text-embedding-3-small`. Any OpenAI-compatible endpoint works too — OpenRouter, Together, Fireworks, Ollama, vLLM, or LiteLLM. Models must support tool calling (function calling).
 
-The `.env.template` has provider and model lines ready for each feature. After copying it to `.env`, you need to set three things:
+After copying `.env.template` to `.env`, the default setup is:
 
 ```bash
-# 1. Your endpoint and API key (already uncommented in the template)
-LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-LLM_OPENAI_COMPATIBLE_API_KEY=sk-or-v1-...
-
-# 2. Replace "your-model-here" everywhere with your model
-#    (these are spread across the Deriver, Dialectic, Summary, and Dream sections)
-DERIVER_MODEL=google/gemini-2.5-flash  # e.g. google/gemini-2.5-flash
-SUMMARY_MODEL=google/gemini-2.5-flash
-DREAM_MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash
-# ... same for low, medium, high, max
-
-# 3. Everything else is already configured:
-#    - PROVIDER=custom for all features (routes through your endpoint)
-#    - THINKING_BUDGET_TOKENS=0 (correct for non-Anthropic models)
-#    - LLM_EMBEDDING_PROVIDER=openrouter (uses same endpoint for embeddings)
+# Required for the built-in defaults
+LLM_OPENAI_API_KEY=sk-...
 ```
 
-Use find-and-replace to swap all `your-model-here` with your chosen model in one step.
+If you want a different model or an OpenAI-compatible proxy, uncomment and edit the relevant `*_MODEL_CONFIG__TRANSPORT`, `*_MODEL_CONFIG__MODEL`, and `*_MODEL_CONFIG__OVERRIDES__BASE_URL` lines in the Deriver, Dialectic, Summary, and Dream sections. For example:
+
+```bash
+LLM_OPENAI_API_KEY=sk-or-v1-...
+
+DERIVER_MODEL_CONFIG__TRANSPORT=openai
+DERIVER_MODEL_CONFIG__MODEL=google/gemini-2.5-flash
+DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
+```
 
 <Info>
 For recommended model tiers per feature, using multiple providers, or direct vendor API keys, see the [Configuration Guide](./configuration#llm-configuration).
