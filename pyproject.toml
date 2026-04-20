@@ -62,10 +62,12 @@ dev = [
 [tool.uv.workspace]
 members = [
     "sdks/python",
+    "honcho-cli",
 ]
 
 [tool.uv.sources]
 honcho-ai = { workspace = true }
+honcho-cli = { workspace = true }
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example

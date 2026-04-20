@@ -29,6 +29,9 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
+[project.optional-dependencies]
+cli = ["honcho-cli>=0.1.0"]
+
 [project.urls]
 Homepage = "https://github.com/plastic-labs/honcho"
 Repository = "https://github.com/plastic-labs/honcho"
