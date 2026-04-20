@@ -31,6 +31,7 @@ from .runtime import (
     effective_temperature,
     plan_attempt,
     resolve_runtime_model_config,
+    update_current_langfuse_observation,
 )
 from .tool_loop import execute_tool_loop
 from .types import (
@@ -193,13 +194,19 @@ async def honcho_llm_call(
     current_attempt.set(1)
 
     def _get_attempt_plan() -> AttemptPlan:
-        return plan_attempt(
+        plan = plan_attempt(
             runtime_model_config=runtime_model_config,
             attempt=current_attempt.get(),
             retry_attempts=retry_attempts,
             call_thinking_budget_tokens=thinking_budget_tokens,
             call_reasoning_effort=reasoning_effort,
         )
+        update_current_langfuse_observation(
+            plan.provider,
+            plan.model,
+            name=track_name,
+        )
+        return plan
 
     async def _call_with_provider_selection() -> (
         HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
