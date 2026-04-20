@@ -27,11 +27,10 @@ from pydantic import BaseModel, Field
 
 from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import LLMError
-from src.utils.clients import (
+from src.llm import (
     CLIENTS,
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
-    handle_streaming_response,
     honcho_llm_call,
     honcho_llm_call_inner,
 )
@@ -210,7 +209,7 @@ class TestAnthropicClient:
 
         # Instead of mocking the CLIENTS dict, we mock the entire AsyncAnthropic class
         # to return our configured mock when instantiated
-        with patch("src.utils.clients.AsyncAnthropic") as mock_anthropic_class:
+        with patch("src.llm.registry.AsyncAnthropic") as mock_anthropic_class:
             mock_client_instance = Mock()
             mock_client_instance.messages = mock_messages
             mock_anthropic_class.return_value = mock_client_instance
@@ -253,16 +252,16 @@ class TestAnthropicClient:
 
         with patch.dict(CLIENTS, {"anthropic": mock_client}):
             chunks: list[HonchoLLMCallStreamChunk] = []
-            async for chunk in handle_streaming_response(
-                client=mock_client,
-                params={
-                    "model": "claude-3-sonnet",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": "Hello"}],
-                },
-                json_mode=False,
-                thinking_budget_tokens=None,
-            ):
+            stream = await honcho_llm_call_inner(
+                provider="anthropic",
+                model="claude-3-sonnet",
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                client_override=mock_client,
+                messages=[{"role": "user", "content": "Hello"}],
+            )
+            async for chunk in stream:
                 chunks.append(chunk)
 
             assert len(chunks) == 3  # 2 content chunks + 1 final chunk
@@ -501,16 +500,16 @@ class TestOpenAIClient:
 
         with patch.dict(CLIENTS, {"openai": mock_client}):
             chunks: list[HonchoLLMCallStreamChunk] = []
-            async for chunk in handle_streaming_response(
-                client=mock_client,
-                params={
-                    "model": "gpt-4",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": "Hello"}],
-                },
-                json_mode=False,
-                thinking_budget_tokens=None,
-            ):
+            stream = await honcho_llm_call_inner(
+                provider="openai",
+                model="gpt-4",
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                client_override=mock_client,
+                messages=[{"role": "user", "content": "Hello"}],
+            )
+            async for chunk in stream:
                 chunks.append(chunk)
 
             assert len(chunks) == 3
@@ -693,16 +692,16 @@ class TestGoogleClient:
 
         with patch.dict(CLIENTS, {"gemini": mock_client}):
             chunks: list[HonchoLLMCallStreamChunk] = []
-            async for chunk in handle_streaming_response(
-                client=mock_client,
-                params={
-                    "model": "gemini-1.5-pro",
-                    "max_tokens": 100,
-                    "messages": [{"role": "user", "content": "Hello"}],
-                },
-                json_mode=False,
-                thinking_budget_tokens=None,
-            ):
+            stream = await honcho_llm_call_inner(
+                provider="gemini",
+                model="gemini-1.5-pro",
+                prompt="Hello",
+                max_tokens=100,
+                stream=True,
+                client_override=mock_client,
+                messages=[{"role": "user", "content": "Hello"}],
+            )
+            async for chunk in stream:
                 chunks.append(chunk)
 
             assert len(chunks) == 3

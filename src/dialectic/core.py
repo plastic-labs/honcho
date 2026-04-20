@@ -16,6 +16,11 @@ from src.config import ConfiguredModelSettings, ReasoningLevel, settings
 from src.dependencies import tracked_db
 from src.dialectic import prompts
 from src.embedding_client import embedding_client
+from src.llm import (
+    HonchoLLMCallResponse,
+    StreamingResponseWithMetadata,
+    honcho_llm_call,
+)
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, emit
 from src.telemetry.logging import (
@@ -29,11 +34,6 @@ from src.utils.agent_tools import (
     DIALECTIC_TOOLS_MINIMAL,
     create_tool_executor,
     search_memory,
-)
-from src.utils.clients import (
-    HonchoLLMCallResponse,
-    StreamingResponseWithMetadata,
-    honcho_llm_call,
 )
 from src.utils.formatting import format_new_turn_with_timestamp
 

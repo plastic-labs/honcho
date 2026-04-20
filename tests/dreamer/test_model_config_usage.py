@@ -4,7 +4,7 @@ import pytest
 
 from src.config import settings
 from src.dreamer.specialists import DeductionSpecialist
-from src.utils.clients import HonchoLLMCallResponse
+from src.llm import HonchoLLMCallResponse
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from src.config import ConfiguredModelSettings, settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
+from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.models import Message
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
@@ -24,7 +25,6 @@ from src.telemetry.prometheus.metrics import (
     DeriverTaskTypes,
     TokenTypes,
 )
-from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.tokens import estimate_tokens, track_deriver_input_tokens
 

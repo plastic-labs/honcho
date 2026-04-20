@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.config import settings
-from src.utils.clients import HonchoLLMCallResponse
+from src.llm import HonchoLLMCallResponse
 from src.utils.summarizer import (
     Summary,
     SummaryType,

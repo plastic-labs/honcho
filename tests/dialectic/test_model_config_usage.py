@@ -5,7 +5,7 @@ import pytest
 
 from src.config import settings
 from src.dialectic.core import DialecticAgent
-from src.utils.clients import (
+from src.llm import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
     StreamingResponseWithMetadata,

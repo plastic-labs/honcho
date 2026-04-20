@@ -5,6 +5,7 @@ from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
+from src.llm import honcho_llm_call
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
@@ -16,7 +17,6 @@ from src.telemetry.prometheus.metrics import (
     TokenTypes,
 )
 from src.telemetry.sentry import with_sentry_transaction
-from src.utils.clients import honcho_llm_call
 from src.utils.config_helpers import get_configuration
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation

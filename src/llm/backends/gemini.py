@@ -44,12 +44,8 @@ class GeminiBackend:
         thinking_budget_tokens: int | None = None,
         thinking_effort: str | None = None,
         max_output_tokens: int | None = None,
-        api_key: str | None = None,
-        api_base: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        del api_key, api_base
-
         contents, system_instruction = self._convert_messages(messages)
         config = self._build_config(
             max_tokens=max_output_tokens or max_tokens,
@@ -117,12 +113,8 @@ class GeminiBackend:
         thinking_budget_tokens: int | None = None,
         thinking_effort: str | None = None,
         max_output_tokens: int | None = None,
-        api_key: str | None = None,
-        api_base: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        del api_key, api_base
-
         contents, system_instruction = self._convert_messages(messages)
         config = self._build_config(
             max_tokens=max_output_tokens or max_tokens,

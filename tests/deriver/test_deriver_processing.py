@@ -8,7 +8,7 @@ import pytest
 from src import models
 from src.config import settings
 from src.deriver.deriver import process_representation_tasks_batch
-from src.utils.clients import HonchoLLMCallResponse
+from src.llm import HonchoLLMCallResponse
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 

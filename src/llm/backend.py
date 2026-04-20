@@ -46,7 +46,12 @@ class StreamChunk:
 
 @runtime_checkable
 class ProviderBackend(Protocol):
-    """Transport-agnostic interface for LLM providers."""
+    """Transport-agnostic interface for LLM providers.
+
+    Credentials are baked into the underlying SDK client at backend construction
+    time (see src/llm/registry.py), so these method signatures deliberately do
+    not accept api_key / api_base.
+    """
 
     async def complete(
         self,
@@ -62,8 +67,6 @@ class ProviderBackend(Protocol):
         thinking_budget_tokens: int | None = None,
         thinking_effort: str | None = None,
         max_output_tokens: int | None = None,
-        api_key: str | None = None,
-        api_base: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult: ...
 
@@ -81,7 +84,5 @@ class ProviderBackend(Protocol):
         thinking_budget_tokens: int | None = None,
         thinking_effort: str | None = None,
         max_output_tokens: int | None = None,
-        api_key: str | None = None,
-        api_base: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]: ...

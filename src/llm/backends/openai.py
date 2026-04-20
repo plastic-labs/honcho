@@ -109,11 +109,8 @@ class OpenAIBackend:
         thinking_budget_tokens: int | None = None,
         thinking_effort: str | None = None,
         max_output_tokens: int | None = None,
-        api_key: str | None = None,
-        api_base: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        del api_key, api_base
         if thinking_budget_tokens is not None:
             raise ValidationException(
                 "OpenAI backend does not support thinking_budget_tokens; use thinking_effort instead"
@@ -205,11 +202,8 @@ class OpenAIBackend:
         thinking_budget_tokens: int | None = None,
         thinking_effort: str | None = None,
         max_output_tokens: int | None = None,
-        api_key: str | None = None,
-        api_base: str | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        del api_key, api_base
         if thinking_budget_tokens is not None:
             raise ValidationException(
                 "OpenAI backend does not support thinking_budget_tokens; use thinking_effort instead"

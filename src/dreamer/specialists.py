@@ -21,6 +21,7 @@ from typing import Any
 from src import crud, schemas
 from src.config import ConfiguredModelSettings, settings
 from src.dependencies import tracked_db
+from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DreamSpecialistEvent, emit
@@ -31,7 +32,6 @@ from src.utils.agent_tools import (
     INDUCTION_SPECIALIST_TOOLS,
     create_tool_executor,
 )
-from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 
 logger = logging.getLogger(__name__)
 

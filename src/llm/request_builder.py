@@ -1,3 +1,9 @@
+"""Low-level request assembly: flatten a ModelConfig into backend calls.
+
+Does NOT own: retry, fallback, tool loop, provider selection. Those live in
+src/llm/api.py, src/llm/tool_loop.py, src/llm/runtime.py.
+"""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -5,22 +11,17 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from src.config import ModelConfig
+from src.config import ModelConfig, PromptCachePolicy
 
 from .backend import CompletionResult, ProviderBackend, StreamChunk
-from .caching import PromptCachePolicy
-from .credentials import resolve_credentials
 
 
 def build_config_extra_params(config: ModelConfig) -> dict[str, Any]:
-    """Flatten ModelConfig's optional knobs and provider_params into an extra_params dict.
+    """Flatten ModelConfig's optional knobs and provider_params into extra_params.
 
     Backends read per-call tuning parameters (top_p, top_k, frequency_penalty,
     presence_penalty, seed) and the free-form provider_params passthrough out
-    of ``extra_params``. This helper is the single source of truth for that
-    translation — used by both the new request_builder path and the legacy
-    honcho_llm_call_inner in src/utils/clients.py, so a config knob set by
-    an operator reliably reaches every transport.
+    of ``extra_params``. Single source of truth for that translation.
     """
     extra_params: dict[str, Any] = {}
     if config.top_p is not None:
@@ -53,10 +54,8 @@ async def execute_completion(
     cache_policy: PromptCachePolicy | None = None,
     extra_params: dict[str, Any] | None = None,
 ) -> CompletionResult:
-    credentials = resolve_credentials(config)
     # Preserve 0 as an explicit "disable thinking" value (used by Gemini);
     # only convert to None when the field is truly unset.
-    thinking_budget_tokens = config.thinking_budget_tokens
     effective_max_tokens = config.max_output_tokens or max_tokens
 
     merged_extra_params = {
@@ -75,11 +74,9 @@ async def execute_completion(
         tools=tools,
         tool_choice=tool_choice,
         response_format=response_format,
-        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_budget_tokens=config.thinking_budget_tokens,
         thinking_effort=config.thinking_effort,
         max_output_tokens=effective_max_tokens,
-        api_key=credentials.get("api_key"),
-        api_base=credentials.get("api_base"),
         extra_params=merged_extra_params,
     )
 
@@ -97,8 +94,6 @@ async def execute_stream(
     cache_policy: PromptCachePolicy | None = None,
     extra_params: dict[str, Any] | None = None,
 ) -> AsyncIterator[StreamChunk]:
-    credentials = resolve_credentials(config)
-    thinking_budget_tokens = config.thinking_budget_tokens
     effective_max_tokens = config.max_output_tokens or max_tokens
 
     merged_extra_params = {
@@ -117,10 +112,8 @@ async def execute_stream(
         tools=tools,
         tool_choice=tool_choice,
         response_format=response_format,
-        thinking_budget_tokens=thinking_budget_tokens,
+        thinking_budget_tokens=config.thinking_budget_tokens,
         thinking_effort=config.thinking_effort,
         max_output_tokens=effective_max_tokens,
-        api_key=credentials.get("api_key"),
-        api_base=credentials.get("api_base"),
         extra_params=merged_extra_params,
     )

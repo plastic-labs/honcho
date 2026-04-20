@@ -20,7 +20,7 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, ValidationError
 
-from src.utils.clients import CLIENTS, HonchoLLMCallResponse, honcho_llm_call_inner
+from src.llm import CLIENTS, HonchoLLMCallResponse, honcho_llm_call_inner
 from src.utils.representation import PromptRepresentation
 
 # --- Test models ---
