@@ -1,0 +1,14 @@
+[project]
+name = "honcho-pydantic-ai-example"
+version = "1.0.0"
+description = "Pydantic AI integration with Honcho for persistent memory"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic-ai>=0.0.14",
+    "honcho-ai>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
