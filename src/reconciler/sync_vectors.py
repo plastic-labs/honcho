@@ -19,6 +19,7 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.exceptions import VectorStoreError
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -202,7 +203,7 @@ async def _sync_documents(
                 if store_in_postgres:
                     doc.embedding = emb
         except Exception:
-            logger.warning("Failed to re-embed %s documents", len(docs_needing_embed))
+            logger.exception("Failed to re-embed %s documents", len(docs_needing_embed))
 
     # Mark documents that failed to get an embedding
     failed_to_embed = [
@@ -259,8 +260,16 @@ async def _sync_documents(
                 .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
             )
             synced_count += len(docs_to_sync)
+        except VectorStoreError:
+            logger.warning(
+                "Vector store unavailable while syncing namespace %s", namespace
+            )
+            await _bump_document_sync_attempts(db, docs_to_sync)
+            failed_count += len(docs_to_sync)
         except Exception:
-            logger.warning("Failed to sync documents to namespace %s", namespace)
+            logger.exception(
+                "Unexpected error syncing documents to namespace %s", namespace
+            )
             await _bump_document_sync_attempts(db, docs_to_sync)
             failed_count += len(docs_to_sync)
 
@@ -316,7 +325,7 @@ async def _sync_message_embeddings(
                 if store_in_postgres:
                     emb.embedding = new_emb
         except Exception:
-            logger.warning(
+            logger.exception(
                 "Failed to re-embed %s message embeddings", len(embs_needing_embed)
             )
 
@@ -399,9 +408,17 @@ async def _sync_message_embeddings(
                 .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
             )
             synced_count += len(embs_to_sync)
-        except Exception:
+        except VectorStoreError:
             logger.warning(
-                "Failed to sync message embeddings to namespace %s", namespace
+                "Vector store unavailable while syncing message embeddings to namespace %s",
+                namespace,
+            )
+            await _bump_message_embedding_sync_attempts(db, embs_to_sync)
+            failed_count += len(embs_to_sync)
+        except Exception:
+            logger.exception(
+                "Unexpected error syncing message embeddings to namespace %s",
+                namespace,
             )
             await _bump_message_embedding_sync_attempts(db, embs_to_sync)
             failed_count += len(embs_to_sync)
@@ -482,7 +499,7 @@ async def _reconcile_message_embeddings_batch(
                 db, embs, external_vector_store
             )
         except Exception:
-            logger.warning(
+            logger.exception(
                 "Message embedding reconciliation failed for %s embeddings",
                 len(embs),
             )

@@ -17,7 +17,11 @@ from src.crud.peer import get_peer
 from src.crud.session import get_session
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
-from src.exceptions import ResourceNotFoundException, ValidationException
+from src.exceptions import (
+    ResourceNotFoundException,
+    ValidationException,
+    VectorStoreError,
+)
 from src.utils.filter import apply_filter
 from src.vector_store import (
     VectorRecord,
@@ -573,9 +577,21 @@ async def create_documents(
                     )
                     await db.commit()
 
+                except VectorStoreError:
+                    # Vector store unavailable - increment sync_attempts for reconciliation
+                    logger.warning("Vector store unavailable; leaving docs unsynced")
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_attempts=models.Document.sync_attempts + 1,
+                            last_sync_at=func.now(),
+                        )
+                    )
+                    await db.commit()
+
                 except Exception:
-                    # Failed after retries - increment sync_attempts for reconciliation
-                    logger.warning("Failed to upsert vectors after retries")
+                    logger.exception("Unexpected error upserting vectors")
                     await db.execute(
                         update(models.Document)
                         .where(models.Document.id.in_(doc_ids))
@@ -857,10 +873,24 @@ async def create_observations(
                     )
                     await db.commit()
 
-                except Exception:
-                    # Failed after retries - increment sync_attempts for reconciliation
+                except VectorStoreError:
                     logger.warning(
-                        f"Failed to upsert vectors for {namespace} after retries"
+                        "Vector store unavailable for namespace %s; leaving observations unsynced",
+                        namespace,
+                    )
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_attempts=models.Document.sync_attempts + 1,
+                            last_sync_at=func.now(),
+                        )
+                    )
+                    await db.commit()
+
+                except Exception:
+                    logger.exception(
+                        "Unexpected error upserting vectors for %s", namespace
                     )
                     await db.execute(
                         update(models.Document)

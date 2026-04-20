@@ -11,6 +11,7 @@ from src import models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.exceptions import VectorStoreError
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.vector_store import VectorRecord, get_external_vector_store
@@ -368,11 +369,24 @@ async def create_messages(
                             )
                             await db.commit()
 
-                    except Exception:
-                        # Failed after retries - increment sync_attempts for reconciliation
-                        logger.exception(
-                            "Failed to upsert message vectors after retries"
+                    except VectorStoreError:
+                        logger.warning(
+                            "Vector store unavailable; leaving message vectors unsynced"
                         )
+                        if embedding_ids:
+                            await db.execute(
+                                update(models.MessageEmbedding)
+                                .where(models.MessageEmbedding.id.in_(embedding_ids))
+                                .values(
+                                    sync_attempts=models.MessageEmbedding.sync_attempts
+                                    + 1,
+                                    last_sync_at=func.now(),
+                                )
+                            )
+                            await db.commit()
+
+                    except Exception:
+                        logger.exception("Unexpected error upserting message vectors")
                         if embedding_ids:
                             await db.execute(
                                 update(models.MessageEmbedding)
