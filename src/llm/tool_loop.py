@@ -86,6 +86,7 @@ def append_tool_results(
 
 async def stream_final_response(
     *,
+    winning_plan: AttemptPlan,
     prompt: str,
     max_tokens: int,
     conversation_messages: list[dict[str, Any]],
@@ -94,39 +95,40 @@ async def stream_final_response(
     temperature: float | None,
     stop_seqs: list[str] | None,
     verbosity: VerbosityType,
-    get_attempt_plan: Callable[[], AttemptPlan],
     enable_retry: bool,
     retry_attempts: int,
     before_retry_callback: Callable[[Any], None],
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
     """Stream the final response after tool execution is complete.
 
-    Uses the same attempt-plan + tenacity retry wrapper as the non-streaming
-    ``_final_call`` so streaming picks up cross-transport fallback on the
-    final attempt and retries transient failures. Reasoning params and the
-    selected client are pulled from the attempt plan rather than rebuilt.
+    Uses the AttemptPlan captured at the moment streaming began (typically
+    the plan whose inner LLM call just succeeded) and pins it across any
+    retries of the stream setup. Re-running provider selection here would
+    bleed the outer current_attempt ContextVar into streaming retries,
+    potentially rolling the selection back to primary after the tool loop
+    had already settled on fallback. Tenacity retries re-issue the same
+    streaming call against the same pinned model for transient errors.
     """
 
     async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
-        plan = get_attempt_plan()
         return await honcho_llm_call_inner(
-            plan.provider,
-            plan.model,
+            winning_plan.provider,
+            winning_plan.model,
             prompt,
             max_tokens,
             response_model,
             json_mode,
             effective_temperature(temperature),
             stop_seqs,
-            plan.reasoning_effort,
+            winning_plan.reasoning_effort,
             verbosity,
-            plan.thinking_budget_tokens,
+            winning_plan.thinking_budget_tokens,
             stream=True,
-            client_override=plan.client,
+            client_override=winning_plan.client,
             tools=None,
             tool_choice=None,
             messages=conversation_messages,
-            selected_config=plan.selected_config,
+            selected_config=winning_plan.selected_config,
         )
 
     if enable_retry:
@@ -274,7 +276,12 @@ async def execute_tool_loop(
                 continue
 
             if stream_final:
+                # Snapshot the plan that just succeeded — streaming retries
+                # pin to this exact client/model so we don't bounce back to
+                # primary after the tool loop settled on fallback.
+                winning_plan = get_attempt_plan()
                 stream = stream_final_response(
+                    winning_plan=winning_plan,
                     prompt=prompt,
                     max_tokens=max_tokens,
                     conversation_messages=conversation_messages,
@@ -283,7 +290,6 @@ async def execute_tool_loop(
                     temperature=temperature,
                     stop_seqs=stop_seqs,
                     verbosity=verbosity,
-                    get_attempt_plan=get_attempt_plan,
                     enable_retry=enable_retry,
                     retry_attempts=retry_attempts,
                     before_retry_callback=before_retry_callback,
@@ -400,7 +406,11 @@ async def execute_tool_loop(
         )
 
     if stream_final:
+        # Snapshot the plan the loop settled on — streaming retries pin to
+        # this exact client/model rather than re-running provider selection.
+        winning_plan = get_attempt_plan()
         stream = stream_final_response(
+            winning_plan=winning_plan,
             prompt=prompt,
             max_tokens=max_tokens,
             conversation_messages=conversation_messages,
@@ -409,7 +419,6 @@ async def execute_tool_loop(
             temperature=temperature,
             stop_seqs=stop_seqs,
             verbosity=verbosity,
-            get_attempt_plan=get_attempt_plan,
             enable_retry=enable_retry,
             retry_attempts=retry_attempts,
             before_retry_callback=before_retry_callback,

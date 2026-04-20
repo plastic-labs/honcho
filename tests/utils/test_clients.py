@@ -1066,11 +1066,15 @@ class TestModelConfigExtraParamsPropagation:
             assert kwargs["top_k"] == 40
 
     async def test_provider_params_passthrough(self):
-        """Operator-supplied provider_params must reach extra_params.
+        """Operator-supplied provider_params must reach the backend's extra_params.
 
-        Uses a custom sentinel key that won't be intercepted by a backend —
-        we verify it shows up in the backend call by monkeypatching the
-        OpenAIBackend at the extra_params boundary.
+        Scope: verifies the ModelConfig.provider_params → backend.extra_params
+        boundary inside honcho_llm_call_inner. This is NOT a guarantee that
+        arbitrary keys reach the provider SDK — each backend's _build_params
+        forwards only an allowlist (top_p, top_k, frequency_penalty, seed,
+        etc.). We assert only that the sentinel key arrives in extra_params
+        at the backend boundary, which is the internal contract this test
+        exists to protect.
         """
         from openai import AsyncOpenAI
 

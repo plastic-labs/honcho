@@ -8,7 +8,7 @@ history adapter selection) lives here now.
 
 from __future__ import annotations
 
-from functools import cache, lru_cache
+from functools import lru_cache
 from typing import assert_never
 
 from anthropic import AsyncAnthropic
@@ -23,7 +23,7 @@ from .backend import ProviderBackend
 from .backends.anthropic import AnthropicBackend
 from .backends.gemini import GeminiBackend
 from .backends.openai import OpenAIBackend
-from .credentials import default_transport_api_key, resolve_credentials
+from .credentials import default_transport_api_key
 from .history_adapters import (
     AnthropicHistoryAdapter,
     GeminiHistoryAdapter,
@@ -56,7 +56,9 @@ def get_gemini_client() -> genai.Client:
     return genai.Client(api_key=settings.LLM.GEMINI_API_KEY)
 
 
-@cache
+# Bounded cache — in practice the (base_url, api_key) key space is small
+# and process-scoped, but maxsize=128 keeps worst-case memory predictable.
+@lru_cache(maxsize=128)
 def get_openai_override_client(
     base_url: str | None, api_key: str | None
 ) -> AsyncOpenAI:
@@ -64,7 +66,7 @@ def get_openai_override_client(
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
-@cache
+@lru_cache(maxsize=128)
 def get_anthropic_override_client(
     base_url: str | None,
     api_key: str | None,
@@ -73,7 +75,7 @@ def get_anthropic_override_client(
     return AsyncAnthropic(api_key=api_key, base_url=base_url, timeout=600.0)
 
 
-@cache
+@lru_cache(maxsize=128)
 def get_gemini_override_client(
     base_url: str | None, api_key: str | None
 ) -> genai.Client:
@@ -156,37 +158,16 @@ def history_adapter_for_provider(provider: ModelTransport) -> HistoryAdapter:
 
 
 def get_backend(config: ModelConfig) -> ProviderBackend:
-    """High-level one-shot backend factory: ModelConfig → ProviderBackend."""
-    credentials = resolve_credentials(config)
+    """High-level one-shot backend factory: ModelConfig → ProviderBackend.
 
-    if config.transport == "anthropic":
-        if config.api_key is not None or config.base_url is not None:
-            return AnthropicBackend(
-                get_anthropic_override_client(
-                    credentials.get("api_base"),
-                    credentials.get("api_key"),
-                )
-            )
-        return AnthropicBackend(get_anthropic_client())
-    if config.transport == "gemini":
-        if config.api_key is not None or config.base_url is not None:
-            return GeminiBackend(
-                get_gemini_override_client(
-                    credentials.get("api_base"),
-                    credentials.get("api_key"),
-                )
-            )
-        return GeminiBackend(get_gemini_client())
-    if config.transport == "openai":
-        if config.api_key is not None or config.base_url is not None:
-            return OpenAIBackend(
-                get_openai_override_client(
-                    credentials.get("api_base"),
-                    credentials.get("api_key"),
-                )
-            )
-        return OpenAIBackend(get_openai_client())
-    assert_never(config.transport)
+    Delegates client resolution to ``client_for_model_config``, which owns
+    the CLIENTS fast-path and the missing-API-key validation. Both the
+    production path (via ``honcho_llm_call_inner``) and the live-test path
+    (via this function) now construct clients through the same helper, so
+    validation behavior stays consistent.
+    """
+    client = client_for_model_config(config.transport, config)
+    return backend_for_provider(config.transport, client)
 
 
 __all__ = [
