@@ -288,6 +288,31 @@ uv run python -m src.deriver
 
 The deriver generates representation, summaries, peer cards, and manages dreaming tasks. You can increase the number of deriver's to improve runtime efficiency.
 
+### Example: `chatbot.py` with local Honcho + Ollama
+
+The repo root includes [`chatbot.py`](./chatbot.py), a small CLI that stores turns in Honcho and calls a **local** LLM via [Ollama](https://ollama.com) (no Anthropic/OpenAI credits required for the chat model).
+
+**Honcho base URL (used by the script):** `http://127.0.0.1:8000` — matches the URL `uv run fastapi dev src/main.py` prints (`localhost` and `127.0.0.1` are the same machine, but the dev server banner uses the latter). Override in `.env` with `HONCHO_URL` if you bind the API elsewhere.
+
+**Ollama (optional `.env` overrides):**
+
+```env
+OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.2:1b
+```
+
+Pull the model once: `ollama pull llama3.2:1b` (or match `OLLAMA_MODEL`, e.g. `llama3.2` for a larger model). Keep the Ollama app running (macOS menu bar) so the API is available.
+
+**How to run everything for a manual test**
+
+1. Postgres (and any Redis/cache your `.env` requires) up, `uv sync`, `uv run alembic upgrade head`, `.env` configured.
+2. **Terminal 1 — API:** `uv run fastapi dev src/main.py`
+3. **Terminal 2 — deriver:** `uv run python -m src.deriver`
+4. **Ollama** running; model pulled (see above).
+5. **Terminal 3 — chatbot:** `uv run python chatbot.py`
+
+Chat a few lines as the same user id; with the deriver running, background memory/representation work can populate over time. If `AUTH_USE_AUTH=true`, configure `HONCHO_API_KEY` for the SDK to match your server.
+
 ### Pre-commit Hooks
 
 Honcho uses pre-commit hooks to ensure code quality and consistency across the project. These hooks automatically run checks on your code before each commit, including linting, formatting, type checking, and security scans.
