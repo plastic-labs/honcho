@@ -1,0 +1,114 @@
+---
+title: 'CLI Reference'
+description: 'Command-line interface for Honcho — inspect workspaces, peers, sessions, and memory from your terminal'
+icon: 'terminal'
+---
+
+import CliCommands from "/snippets/cli-commands.mdx";
+
+## Install
+
+<CodeGroup>
+```bash uv (recommended)
+uv tool install honcho-cli
+```
+
+```bash uvx (ephemeral)
+uvx honcho-cli
+```
+</CodeGroup>
+
+## Quick Start
+
+```bash
+honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
+honcho doctor      # verify your config + connectivity
+honcho             # show banner + command list
+```
+
+## Configuration
+
+The CLI resolves config in this order: **flag → env var → config file → default**.
+
+| Value       | File key          | Env var                | Flag                   | Persisted? |
+|-------------|-------------------|------------------------|------------------------|------------|
+| API key     | `apiKey`          | `HONCHO_API_KEY`       | —                      | Yes        |
+| API URL     | `environmentUrl`  | `HONCHO_BASE_URL`      | —                      | Yes        |
+| Workspace   | —                 | `HONCHO_WORKSPACE_ID`  | `-w` / `--workspace`   | No         |
+| Peer        | —                 | `HONCHO_PEER_ID`       | `-p` / `--peer`        | No         |
+| Session     | —                 | `HONCHO_SESSION_ID`    | `-s` / `--session`     | No         |
+| JSON output | —                 | `HONCHO_JSON`          | `--json`               | No         |
+
+### Persisted config
+
+The CLI shares `~/.honcho/config.json` with sibling Honcho tools. It owns only
+`apiKey` and `environmentUrl` at the top level — everything else (`hosts`,
+`sessions`, etc.) is written by other tools and left untouched on save.
+
+```json
+{
+  "apiKey": "hch-v3-...",
+  "environmentUrl": "https://api.honcho.dev",
+  "hosts": { "claude_code": { "...": "..." } }
+}
+```
+<Info>
+Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-s`
+flags or `HONCHO_*` env vars. **Not** persisted as CLI defaults. This is
+deliberate: every invocation is explicit about what it operates on.
+</Info>
+
+### Runtime overrides
+
+Workspace, peer, and session scoping are **per-command only** — pass flags or
+`HONCHO_*` env vars on every invocation.
+
+```bash
+# Per-command flags
+honcho peer card -w prod -p user
+
+# Or export once per shell
+export HONCHO_WORKSPACE_ID=prod
+export HONCHO_PEER_ID=user
+honcho peer card
+
+# One-off against a different server
+HONCHO_BASE_URL=http://localhost:8000 honcho workspace list
+
+# CI/CD — env vars only, no config file needed
+export HONCHO_API_KEY=hch-v3-xxx
+export HONCHO_BASE_URL=https://api.honcho.dev
+honcho workspace list
+```
+
+<CliCommands />
+
+## Agent & Scripting Usage
+
+All commands output JSON when stdout isn't a TTY, or when `--json` is forced.
+Collection commands emit JSON arrays; single-resource commands emit JSON objects.
+
+```bash
+honcho peer list --json
+honcho workspace inspect --json | jq '.peers'
+honcho doctor --json              # machine-parseable health checklist
+```
+
+Errors are structured:
+
+```json
+{
+  "error": {
+    "code": "PEER_NOT_FOUND",
+    "message": "Peer 'abc' not found in workspace 'my-ws'",
+    "details": {"workspace_id": "my-ws", "peer_id": "abc"}
+  }
+}
+```
+
+Non-interactive onboarding:
+
+```bash
+# Pre-seed via flags / env vars; init still prompts for anything missing
+HONCHO_API_KEY=hch-v3-xxx honcho init --base-url https://api.honcho.dev
+```
