@@ -66,8 +66,8 @@ from .webhook import (
 from .workspace import (
     ActivePeer,
     WorkspaceDeletionResult,
-    check_no_active_sessions,
     WorkspaceStats,
+    check_no_active_sessions,
     delete_workspace,
     get_active_peers,
     get_all_workspaces,
