@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- New `src/llm/` package as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy
+- `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback
+- Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends
+- Dreamer specialists derive `effective_max_tokens` from `model_config.max_output_tokens` with a per-specialist default fallback
+- Regression tests covering fallback-config thinking-param reach, provider_params → extra_params boundary, OpenAI reasoning-model parameter routing, Gemini blocked finish_reason handling, and fail-fast `max_tool_iterations` validation
+
+### Changed
+
+- All LLM orchestration moved out of `src/utils/clients.py` into `src/llm/` with modules split by responsibility (api, executor, tool_loop, runtime, registry, conversation, request_builder, credentials, caching, backends, history_adapters)
+- Default `ModelConfig` factories (deriver, summary, dreamer specialists, dialectic levels) normalized to `openai/gpt-5.4-mini` with no extra parameters set by default; operators add transport/thinking overrides explicitly
+- OpenAI reasoning-model routing widened via `_uses_max_completion_tokens` heuristic covering `gpt-5.x` and `o1/o3/o4` — these models receive `max_completion_tokens` instead of `max_tokens`
+- Override client factories switched from unbounded `@cache` to `@lru_cache(maxsize=128)` for predictable memory growth on long-running processes
+- `get_backend` now delegates to `client_for_model_config`, so the live-test path and production path share one missing-API-key validation
+- Blocked Gemini responses (`SAFETY`, `RECITATION`, `PROHIBITED_CONTENT`, `BLOCKLIST`) raise `LLMError` in the streaming path too (previously only the non-streaming path), ensuring retry/fallback logic fires uniformly
+- Transport-change env overrides now strip transport-specific thinking params (thinking_budget_tokens vs. reasoning_effort) during config merge, including at the dialectic-level merge, so switching from Anthropic → OpenAI doesn't leave orphaned Anthropic-only params that the OpenAI backend would reject
+- `max_tool_iterations` out-of-range inputs now raise `ValidationException` instead of being silently clamped
+- Troubleshooting docs updated to reflect nested-env-var form for per-component thinking-budget overrides
+
+### Fixed
+
+- Fallback `ModelConfig` temperature and `thinking_budget_tokens` reach the backend on the final retry — previously the primary's values were pre-populated into caller kwargs early and clobbered fallback values via `effective_config_for_call(update=...)`
+- Stream-final retries pin to the `AttemptPlan` that succeeded rather than re-running provider selection through the outer `current_attempt` ContextVar (which could roll streaming back to primary after the tool loop had already switched to fallback)
+- OpenAI structured-output calls continue to use `chat.completions.parse()` with strict schema enforcement, while tool-calling paths use `chat.completions.create()` without `strict:True` for broader proxy compatibility (OpenRouter, vLLM, Ollama)
+- Gemini `cached_content` reuse keys now include `system_instruction` and `tool_config` so cache hits don't cross configurations that differ only in those fields
+
+### Removed
+
+- `src/utils/clients.py` deleted; its responsibilities are split across `src/llm/registry.py`, `src/llm/credentials.py`, and the backend-specific modules
+
 ## [3.0.5] - 2026-04-03
 
 ### Fixed
