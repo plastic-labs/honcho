@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -375,8 +376,10 @@ def test_partial_env_override_of_transport_drops_default_thinking_params(
     from src.config import DeriverSettings
 
     _clear_deriver_env(monkeypatch)
+    # Exercise the @model_validator(mode="before") merge path with a raw dict
+    # — pyright can't see through the pre-validator that accepts dict input.
     settings = DeriverSettings(
-        MODEL_CONFIG={"transport": "openai", "model": "gpt-4.1-mini"},
+        MODEL_CONFIG={"transport": "openai", "model": "gpt-4.1-mini"},  # pyright: ignore[reportArgumentType]
     )
 
     assert settings.MODEL_CONFIG.transport == "openai"
@@ -394,7 +397,7 @@ def test_partial_env_override_same_transport_keeps_default_thinking_params(
 
     _clear_deriver_env(monkeypatch)
     settings = DeriverSettings(
-        MODEL_CONFIG={"model": "gemini-2.5-pro"},
+        MODEL_CONFIG={"model": "gemini-2.5-pro"},  # pyright: ignore[reportArgumentType]
     )
 
     assert settings.MODEL_CONFIG.transport == "gemini"
@@ -410,7 +413,7 @@ def test_explicit_thinking_effort_survives_transport_override(
 
     _clear_deriver_env(monkeypatch)
     settings = DeriverSettings(
-        MODEL_CONFIG={
+        MODEL_CONFIG={  # pyright: ignore[reportArgumentType]
             "transport": "openai",
             "model": "gpt-5",
             "thinking_effort": "high",
@@ -443,9 +446,14 @@ def test_dialectic_level_transport_override_drops_default_thinking_params() -> N
             }
         }
     }
-    merged = DialecticSettings._merge_level_defaults(data)  # pyright: ignore[reportPrivateUsage]
-    levels = merged["LEVELS"]  # type: ignore[index]
-    minimal_mc = levels["minimal"]["MODEL_CONFIG"]
+    # The @model_validator decorator wraps the classmethod in a descriptor proxy
+    # that pyright can't see as callable; at runtime pydantic routes it correctly.
+    merged = cast(
+        dict[str, Any],
+        DialecticSettings._merge_level_defaults(data),  # pyright: ignore[reportPrivateUsage, reportCallIssue]
+    )
+    levels = cast(dict[str, dict[str, Any]], merged["LEVELS"])
+    minimal_mc = cast(dict[str, Any], levels["minimal"]["MODEL_CONFIG"])
     assert minimal_mc["transport"] == "openai"
     assert minimal_mc["model"] == "gpt-4.1-mini"
     assert "thinking_budget_tokens" not in minimal_mc

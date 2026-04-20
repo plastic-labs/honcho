@@ -12,7 +12,16 @@ from .caching import PromptCachePolicy
 from .credentials import resolve_credentials
 
 
-def _build_config_extra_params(config: ModelConfig) -> dict[str, Any]:
+def build_config_extra_params(config: ModelConfig) -> dict[str, Any]:
+    """Flatten ModelConfig's optional knobs and provider_params into an extra_params dict.
+
+    Backends read per-call tuning parameters (top_p, top_k, frequency_penalty,
+    presence_penalty, seed) and the free-form provider_params passthrough out
+    of ``extra_params``. This helper is the single source of truth for that
+    translation — used by both the new request_builder path and the legacy
+    honcho_llm_call_inner in src/utils/clients.py, so a config knob set by
+    an operator reliably reaches every transport.
+    """
     extra_params: dict[str, Any] = {}
     if config.top_p is not None:
         extra_params["top_p"] = config.top_p
@@ -51,7 +60,7 @@ async def execute_completion(
     effective_max_tokens = config.max_output_tokens or max_tokens
 
     merged_extra_params = {
-        **_build_config_extra_params(config),
+        **build_config_extra_params(config),
         **(extra_params or {}),
     }
     if cache_policy is not None:
@@ -93,7 +102,7 @@ async def execute_stream(
     effective_max_tokens = config.max_output_tokens or max_tokens
 
     merged_extra_params = {
-        **_build_config_extra_params(config),
+        **build_config_extra_params(config),
         **(extra_params or {}),
     }
     if cache_policy is not None:

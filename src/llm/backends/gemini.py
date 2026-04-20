@@ -86,7 +86,7 @@ class GeminiBackend:
         if isinstance(contents, list) and not contents:
             raise LLMError(
                 "No non-system messages to send to Gemini",
-                provider="google",
+                provider="gemini",
                 model=model,
             )
 
@@ -159,7 +159,7 @@ class GeminiBackend:
         if isinstance(contents, list) and not contents:
             raise LLMError(
                 "No non-system messages to send to Gemini",
-                provider="google",
+                provider="gemini",
                 model=model,
             )
 
@@ -319,7 +319,7 @@ class GeminiBackend:
                 if finish_reason in GEMINI_BLOCKED_FINISH_REASONS:
                     raise LLMError(
                         f"Gemini response blocked (finish_reason={finish_reason})",
-                        provider="google",
+                        provider="gemini",
                         model=model_name,
                         finish_reason=finish_reason,
                     )
@@ -336,7 +336,7 @@ class GeminiBackend:
         ):
             raise LLMError(
                 f"Gemini response blocked (finish_reason={finish_reason})",
-                provider="google",
+                provider="gemini",
                 model=model_name,
                 finish_reason=finish_reason,
             )

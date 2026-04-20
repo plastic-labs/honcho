@@ -17,7 +17,6 @@ from src.config import (
     ModelConfig,
     settings,
 )
-from src.utils.types import SupportedProviders
 
 
 def get_reasoning_traces_file_path() -> Path | None:
@@ -25,19 +24,6 @@ def get_reasoning_traces_file_path() -> Path | None:
     if settings.REASONING_TRACES_FILE:
         return Path(settings.REASONING_TRACES_FILE)
     return None
-
-
-def _provider_for_model_config(
-    transport: str,
-) -> SupportedProviders:
-    provider_map: dict[str, SupportedProviders] = {
-        "anthropic": "anthropic",
-        "openai": "openai",
-        "gemini": "google",
-    }
-    if transport not in provider_map:
-        raise ValueError(f"Unsupported reasoning trace transport: {transport}")
-    return provider_map[transport]
 
 
 def log_reasoning_trace(
@@ -77,14 +63,10 @@ def log_reasoning_trace(
     if isinstance(content, BaseModel):
         content = content.model_dump()
 
-    provider = _provider_for_model_config(
-        model_config.transport,
-    )
-
     trace_entry: dict[str, Any] = {
         "timestamp": time.time(),
         "task_type": task_type,
-        "provider": provider,
+        "provider": model_config.transport,
         "model": model_config.model,
         "settings": {
             "max_tokens": max_tokens,

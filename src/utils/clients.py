@@ -40,10 +40,11 @@ from src.llm.history_adapters import (
     GeminiHistoryAdapter,
     OpenAIHistoryAdapter,
 )
+from src.llm.request_builder import build_config_extra_params
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 from src.utils.tokens import estimate_tokens
-from src.utils.types import SupportedProviders, set_current_iteration
+from src.utils.types import set_current_iteration
 
 logger = logging.getLogger(__name__)
 
@@ -83,22 +84,12 @@ ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client
 class ProviderSelection(NamedTuple):
     """Result of selecting a provider for the current attempt."""
 
-    provider: "SupportedProviders"
+    provider: ModelTransport
     model: str
     client: ProviderClient
     thinking_budget_tokens: int | None
     reasoning_effort: ReasoningEffortType
-
-
-def _provider_for_model_config(
-    transport: ModelTransport,
-) -> SupportedProviders:
-    provider_map: dict[ModelTransport, SupportedProviders] = {
-        "anthropic": "anthropic",
-        "openai": "openai",
-        "gemini": "google",
-    }
-    return provider_map[transport]
+    selected_config: ModelConfig
 
 
 def _resolve_runtime_model_config(
@@ -282,7 +273,7 @@ def _get_effective_temperature(temperature: float | None) -> float | None:
     return temperature
 
 
-CLIENTS: dict[SupportedProviders, ProviderClient] = {}
+CLIENTS: dict[ModelTransport, ProviderClient] = {}
 
 if settings.LLM.ANTHROPIC_API_KEY:
     anthropic = AsyncAnthropic(
@@ -298,26 +289,26 @@ if settings.LLM.OPENAI_API_KEY:
     CLIENTS["openai"] = openai_client
 
 if settings.LLM.GEMINI_API_KEY:
-    google = genai.client.Client(
+    gemini_client = genai.client.Client(
         api_key=settings.LLM.GEMINI_API_KEY,
     )
-    CLIENTS["google"] = google
+    CLIENTS["gemini"] = gemini_client
 
 
 def _default_credentials_for_provider(
-    provider: SupportedProviders,
+    provider: ModelTransport,
 ) -> tuple[str | None, str | None]:
     if provider == "anthropic":
         return settings.LLM.ANTHROPIC_API_KEY, None
     if provider == "openai":
         return settings.LLM.OPENAI_API_KEY, None
-    if provider == "google":
+    if provider == "gemini":
         return settings.LLM.GEMINI_API_KEY, None
     assert_never(provider)
 
 
 def _build_client(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     *,
     api_key: str | None,
     base_url: str | None,
@@ -334,7 +325,7 @@ def _build_client(
         if not api_key:
             raise ValueError("Missing API key for OpenAI model config")
         return AsyncOpenAI(api_key=api_key, base_url=base_url)
-    if provider == "google":
+    if provider == "gemini":
         if not api_key:
             raise ValueError("Missing API key for Gemini model config")
         http_options = genai_types.HttpOptions(base_url=base_url) if base_url else None
@@ -343,7 +334,7 @@ def _build_client(
 
 
 def _client_for_model_config(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     model_config: ModelConfig,
 ) -> ProviderClient:
     if model_config.api_key is None and model_config.base_url is None:
@@ -389,111 +380,6 @@ def _select_model_config_for_attempt(
         max_output_tokens=fb.max_output_tokens,
         stop_sequences=fb.stop_sequences,
     )
-
-
-def extract_openai_reasoning_content(response: Any) -> str | None:
-    """
-    Extract reasoning/thinking content from an OpenAI ChatCompletion response.
-
-    GPT-5 and o1 models include reasoning_details in the response message.
-    OpenAI-compatible endpoints may also include this field.
-
-    Args:
-        response: OpenAI ChatCompletion response object
-
-    Returns:
-        Concatenated reasoning content string, or None if not present
-    """
-    try:
-        message = response.choices[0].message
-        # Check for reasoning_details (GPT-5/o1 models)
-        if hasattr(message, "reasoning_details") and message.reasoning_details:
-            # reasoning_details is a list of reasoning steps
-            reasoning_parts: list[Any] = []
-            for detail in message.reasoning_details:
-                if hasattr(detail, "content") and detail.content:
-                    reasoning_parts.append(detail.content)
-                elif isinstance(detail, dict) and detail.get("content"):  # pyright: ignore[reportUnknownMemberType]
-                    reasoning_parts.append(detail["content"])
-            if reasoning_parts:
-                return "\n".join(reasoning_parts)
-        # Check for reasoning_content (some compatible endpoints)
-        if hasattr(message, "reasoning_content") and message.reasoning_content:
-            return message.reasoning_content
-    except (AttributeError, IndexError, TypeError):
-        pass
-    return None
-
-
-def extract_openai_reasoning_details(response: Any) -> list[dict[str, Any]]:
-    """
-    Extract reasoning_details array from an OpenAI/OpenRouter ChatCompletion response.
-
-    OpenRouter returns reasoning blocks in reasoning_details that must be preserved
-    and passed back in subsequent requests for Gemini models with tool use.
-
-    Args:
-        response: OpenAI ChatCompletion response object
-
-    Returns:
-        List of reasoning detail objects, or empty list if not present
-    """
-    try:
-        message = response.choices[0].message
-        # Check for reasoning_details (OpenRouter/Gemini)
-        if hasattr(message, "reasoning_details") and message.reasoning_details:
-            # Return the full array for preservation
-            return [
-                detail.model_dump() if hasattr(detail, "model_dump") else dict(detail)
-                for detail in message.reasoning_details
-            ]
-    except (AttributeError, IndexError, TypeError):
-        pass
-    return []
-
-
-def extract_openai_cache_tokens(usage: Any) -> tuple[int, int]:
-    """
-    Extract cache token counts from OpenAI-style usage objects.
-
-    OpenAI reports cached tokens in usage.prompt_tokens_details.cached_tokens.
-    OpenRouter and some proxies may report in different locations.
-
-    Args:
-        usage: OpenAI CompletionUsage object or similar
-
-    Returns:
-        Tuple of (cache_creation_tokens, cache_read_tokens).
-        For OpenAI-style APIs, cache_creation is always 0 (automatic caching),
-        and cache_read is the cached_tokens count.
-    """
-    if not usage:
-        return 0, 0
-
-    cache_read = 0
-
-    # OpenAI native: usage.prompt_tokens_details.cached_tokens
-    if hasattr(usage, "prompt_tokens_details") and usage.prompt_tokens_details:
-        details = usage.prompt_tokens_details
-        if hasattr(details, "cached_tokens") and details.cached_tokens:
-            cache_read = details.cached_tokens
-
-    # OpenRouter style: usage.cache_read_input_tokens or usage.cached_tokens
-    if cache_read == 0:
-        if hasattr(usage, "cache_read_input_tokens") and usage.cache_read_input_tokens:
-            cache_read = usage.cache_read_input_tokens
-        elif hasattr(usage, "cached_tokens") and usage.cached_tokens:
-            cache_read = usage.cached_tokens
-
-    # OpenRouter/Anthropic-proxy style: cache_creation_input_tokens
-    cache_creation = 0
-    if (
-        hasattr(usage, "cache_creation_input_tokens")
-        and usage.cache_creation_input_tokens
-    ):
-        cache_creation = usage.cache_creation_input_tokens
-
-    return cache_creation, cache_read
 
 
 class HonchoLLMCallResponse(BaseModel, Generic[T]):
@@ -593,24 +479,24 @@ class StreamingResponseWithMetadata:
 
 
 def _get_backend_for_provider(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     client: AsyncAnthropic | AsyncOpenAI | genai.Client,
 ) -> AnthropicBackend | OpenAIBackend | GeminiBackend:
     if provider == "anthropic":
         return AnthropicBackend(client)
     if provider == "openai":
         return OpenAIBackend(client)
-    if provider == "google":
+    if provider == "gemini":
         return GeminiBackend(client)
     assert_never(provider)
 
 
 def _history_adapter_for_provider(
-    provider: SupportedProviders,
+    provider: ModelTransport,
 ) -> AnthropicHistoryAdapter | GeminiHistoryAdapter | OpenAIHistoryAdapter:
     if provider == "anthropic":
         return AnthropicHistoryAdapter()
-    if provider == "google":
+    if provider == "gemini":
         return GeminiHistoryAdapter()
     return OpenAIHistoryAdapter()
 
@@ -694,7 +580,7 @@ async def _stream_final_response(
     Yields:
         HonchoLLMCallStreamChunk objects containing the streaming response
     """
-    provider = _provider_for_model_config(model_config.transport)
+    provider = model_config.transport
     model = model_config.model
     client = _client_for_model_config(provider, model_config)
 
@@ -835,6 +721,7 @@ async def _execute_tool_loop(
                 tools=tools,
                 tool_choice=effective_tool_choice,
                 messages=conversation_messages,
+                selected_config=sel.selected_config,
             )
 
         # Apply retry if enabled
@@ -1091,7 +978,7 @@ async def _execute_tool_loop(
 
 
 def _format_assistant_tool_message(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     content: Any,
     tool_calls: list[dict[str, Any]],
     thinking_blocks: list[dict[str, Any]] | None = None,
@@ -1129,7 +1016,7 @@ def _format_assistant_tool_message(
 
 
 def _append_tool_results(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     tool_results: list[dict[str, Any]],
     conversation_messages: list[dict[str, Any]],
 ) -> None:
@@ -1333,7 +1220,7 @@ async def honcho_llm_call(
             attempt=attempt,
             retry_attempts=retry_attempts,
         )
-        provider = _provider_for_model_config(selected_model_config.transport)
+        provider = selected_model_config.transport
         model = selected_model_config.model
         client = _client_for_model_config(provider, selected_model_config)
 
@@ -1350,9 +1237,7 @@ async def honcho_llm_call(
         )
 
         if attempt == retry_attempts and runtime_model_config.fallback is not None:
-            primary_provider = _provider_for_model_config(
-                runtime_model_config.transport
-            )
+            primary_provider = runtime_model_config.transport
             primary_model = runtime_model_config.model
             logger.warning(
                 f"Final retry attempt {attempt}/{retry_attempts}: switching from "
@@ -1365,6 +1250,7 @@ async def honcho_llm_call(
             client=client,
             thinking_budget_tokens=attempt_thinking_budget,
             reasoning_effort=attempt_reasoning_effort,
+            selected_config=selected_model_config,
         )
 
     async def _call_with_provider_selection() -> (
@@ -1393,6 +1279,7 @@ async def honcho_llm_call(
                 client_override=sel.client,
                 tools=tools,
                 tool_choice=tool_choice,
+                selected_config=sel.selected_config,
             )
         else:
             return await honcho_llm_call_inner(
@@ -1411,6 +1298,7 @@ async def honcho_llm_call(
                 client_override=sel.client,
                 tools=tools,
                 tool_choice=tool_choice,
+                selected_config=sel.selected_config,
             )
 
     decorated = _call_with_provider_selection
@@ -1430,9 +1318,7 @@ async def honcho_llm_call(
         _current_attempt.set(next_attempt)
         exc = retry_state.outcome.exception() if retry_state.outcome else None
         if exc:
-            primary_provider = _provider_for_model_config(
-                runtime_model_config.transport
-            )
+            primary_provider = runtime_model_config.transport
             primary_model = runtime_model_config.model
             logger.warning(
                 f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
@@ -1521,7 +1407,7 @@ async def honcho_llm_call(
 
 @overload
 async def honcho_llm_call_inner(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     model: str,
     prompt: str,
     max_tokens: int,
@@ -1537,12 +1423,13 @@ async def honcho_llm_call_inner(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
+    selected_config: ModelConfig | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
 @overload
 async def honcho_llm_call_inner(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     model: str,
     prompt: str,
     max_tokens: int,
@@ -1558,12 +1445,13 @@ async def honcho_llm_call_inner(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
+    selected_config: ModelConfig | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
 @overload
 async def honcho_llm_call_inner(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     model: str,
     prompt: str,
     max_tokens: int,
@@ -1579,11 +1467,12 @@ async def honcho_llm_call_inner(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
+    selected_config: ModelConfig | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
 async def honcho_llm_call_inner(
-    provider: SupportedProviders,
+    provider: ModelTransport,
     model: str,
     prompt: str,
     max_tokens: int,
@@ -1599,6 +1488,7 @@ async def honcho_llm_call_inner(
     tools: list[dict[str, Any]] | None = None,
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
+    selected_config: ModelConfig | None = None,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     client = client_override or CLIENTS.get(provider)
     if client is None:
@@ -1611,6 +1501,18 @@ async def honcho_llm_call_inner(
         provider,
         client,
     )
+
+    # Config-derived knobs (top_p/top_k/frequency_penalty/presence_penalty/seed
+    # plus operator-supplied provider_params) come first so per-call kwargs
+    # like json_mode and verbosity override any defaults from provider_params.
+    extra_params: dict[str, Any] = (
+        build_config_extra_params(selected_config)
+        if selected_config is not None
+        else {}
+    )
+    extra_params["json_mode"] = json_mode
+    extra_params["verbosity"] = verbosity
+
     if stream:
 
         async def _stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
@@ -1626,10 +1528,7 @@ async def honcho_llm_call_inner(
                 thinking_budget_tokens=thinking_budget_tokens,
                 thinking_effort=reasoning_effort,
                 max_output_tokens=max_tokens,
-                extra_params={
-                    "json_mode": json_mode,
-                    "verbosity": verbosity,
-                },
+                extra_params=extra_params,
             ):
                 yield _stream_chunk_to_response_chunk(chunk)
 
@@ -1647,21 +1546,18 @@ async def honcho_llm_call_inner(
         thinking_budget_tokens=thinking_budget_tokens,
         thinking_effort=reasoning_effort,
         max_output_tokens=max_tokens,
-        extra_params={
-            "json_mode": json_mode,
-            "verbosity": verbosity,
-        },
+        extra_params=extra_params,
     )
     return _completion_result_to_response(result)
 
 
 def _provider_for_streaming_client(
     client: AsyncAnthropic | AsyncOpenAI | genai.Client,
-) -> SupportedProviders:
+) -> ModelTransport:
     if isinstance(client, AsyncAnthropic):
         return "anthropic"
     if isinstance(client, genai.Client):
-        return "google"
+        return "gemini"
     return "openai"
 
 

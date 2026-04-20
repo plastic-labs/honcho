@@ -363,13 +363,13 @@ class TestGeminiJsonRepair:
         )
 
         with (
-            patch.dict(CLIENTS, {"google": mock_client}),
+            patch.dict(CLIENTS, {"gemini": mock_client}),
             patch.object(genai.Client, "__instancecheck__", return_value=True),
         ):
             # We need the match statement to hit the genai.Client case
             mock_client.__class__ = genai.Client  # pyright: ignore[reportAttributeAccessIssue]
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Analyze messages",
                 max_tokens=2000,
@@ -389,9 +389,9 @@ class TestGeminiJsonRepair:
         )
         mock_client.__class__ = genai.Client  # pyright: ignore[reportAttributeAccessIssue]
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Analyze messages",
                 max_tokens=2000,
@@ -419,9 +419,9 @@ class TestGeminiThinkingBudget:
         mock_client = _make_gemini_mock(text="Hello", parsed=None)
         mock_client.__class__ = genai.Client  # pyright: ignore[reportAttributeAccessIssue]
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Think about this",
                 max_tokens=2000,
@@ -442,9 +442,9 @@ class TestGeminiThinkingBudget:
         mock_client = _make_gemini_mock(text="Hello", parsed=None)
         mock_client.__class__ = genai.Client  # pyright: ignore[reportAttributeAccessIssue]
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="No thinking needed",
                 max_tokens=2000,

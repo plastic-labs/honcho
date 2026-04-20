@@ -553,9 +553,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-1.5-pro",
                 prompt="Hello",
                 max_tokens=100,
@@ -600,9 +600,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             _response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-1.5-pro",
                 prompt="Generate JSON",
                 max_tokens=100,
@@ -637,9 +637,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-1.5-pro",
                 prompt="Generate a person",
                 max_tokens=100,
@@ -691,7 +691,7 @@ class TestGoogleClient:
         )
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             chunks: list[HonchoLLMCallStreamChunk] = []
             async for chunk in handle_streaming_response(
                 client=mock_client,
@@ -731,9 +731,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-1.5-pro",
                 prompt="Hello",
                 max_tokens=100,
@@ -769,11 +769,11 @@ class TestGoogleClient:
         mock_client.aio = mock_aio
 
         with (
-            patch.dict(CLIENTS, {"google": mock_client}),
+            patch.dict(CLIENTS, {"gemini": mock_client}),
             pytest.raises(LLMError, match=f"finish_reason={finish_reason}"),
         ):
             await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Summarize this",
                 max_tokens=1000,
@@ -799,9 +799,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Hello",
                 max_tokens=100,
@@ -829,11 +829,11 @@ class TestGoogleClient:
         mock_client.aio = mock_aio
 
         with (
-            patch.dict(CLIENTS, {"google": mock_client}),
+            patch.dict(CLIENTS, {"gemini": mock_client}),
             pytest.raises(LLMError, match="finish_reason=SAFETY"),
         ):
             await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Generate a person",
                 max_tokens=100,
@@ -858,9 +858,9 @@ class TestGoogleClient:
         mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
         mock_client.aio = mock_aio
 
-        with patch.dict(CLIENTS, {"google": mock_client}):
+        with patch.dict(CLIENTS, {"gemini": mock_client}):
             response = await honcho_llm_call_inner(
-                provider="google",
+                provider="gemini",
                 model="gemini-2.5-flash",
                 prompt="Generate a person",
                 max_tokens=100,
@@ -1015,6 +1015,196 @@ class TestModelConfigCalls:
                 "type": "enabled",
                 "budget_tokens": 1024,
             }
+
+
+@pytest.mark.asyncio
+class TestModelConfigExtraParamsPropagation:
+    """Regression tests — config knobs must reach the backend.
+
+    Prior to the fix, honcho_llm_call_inner built extra_params from only
+    {json_mode, verbosity}, silently dropping top_p/top_k/frequency_penalty/
+    presence_penalty/seed/provider_params off the ModelConfig. These tests
+    lock in that each backend now receives them.
+    """
+
+    async def test_openai_propagates_top_p_frequency_seed(self):
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4.1",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content="ok"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"openai": mock_client}):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-4.1",
+                    transport="openai",
+                    top_p=0.92,
+                    frequency_penalty=0.5,
+                    presence_penalty=0.1,
+                    seed=42,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            mock_client.chat.completions.create.assert_called_once()
+            kwargs = mock_client.chat.completions.create.call_args.kwargs
+            assert kwargs["top_p"] == 0.92
+            assert kwargs["frequency_penalty"] == 0.5
+            assert kwargs["presence_penalty"] == 0.1
+            assert kwargs["seed"] == 42
+
+    async def test_anthropic_propagates_top_p_top_k(self):
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="ok", type="text")]
+        mock_response.usage = Usage(input_tokens=8, output_tokens=4)
+        mock_response.stop_reason = "stop"
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="claude-haiku-4-5",
+                    transport="anthropic",
+                    top_p=0.85,
+                    top_k=40,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            await_args = mock_client.messages.create.await_args
+            if await_args is None:
+                raise AssertionError("Expected Anthropic create call")
+            kwargs = await_args.kwargs
+            assert kwargs["top_p"] == 0.85
+            assert kwargs["top_k"] == 40
+
+    async def test_provider_params_passthrough(self):
+        """Operator-supplied provider_params must reach extra_params.
+
+        Uses a custom sentinel key that won't be intercepted by a backend —
+        we verify it shows up in the backend call by monkeypatching the
+        OpenAIBackend at the extra_params boundary.
+        """
+        from openai import AsyncOpenAI
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4.1",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content="ok"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        captured_extra: dict[str, Any] = {}
+
+        from src.llm.backends.openai import OpenAIBackend
+
+        original_complete = OpenAIBackend.complete
+
+        async def capture_extra(self: Any, **kwargs: Any) -> Any:
+            captured_extra.update(kwargs.get("extra_params") or {})
+            return await original_complete(self, **kwargs)
+
+        with (
+            patch.dict(CLIENTS, {"openai": mock_client}),
+            patch.object(OpenAIBackend, "complete", capture_extra),
+        ):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-4.1",
+                    transport="openai",
+                    provider_params={"honcho_sentinel": "zap"},
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+            assert captured_extra.get("honcho_sentinel") == "zap"
+
+    async def test_per_call_kwargs_override_provider_params(self):
+        """json_mode/verbosity from honcho_llm_call must win over provider_params defaults."""
+        from openai import AsyncOpenAI
+
+        from src.llm.backends.openai import OpenAIBackend
+
+        mock_client = AsyncMock(spec=AsyncOpenAI)
+        mock_response = ChatCompletion(
+            id="test-id",
+            object="chat.completion",
+            created=1234567890,
+            model="gpt-4.1",
+            choices=[
+                Choice(
+                    index=0,
+                    message=ChatCompletionMessage(role="assistant", content="{}"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=CompletionUsage(
+                prompt_tokens=10, completion_tokens=5, total_tokens=15
+            ),
+        )
+        mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+        captured_extra: dict[str, Any] = {}
+        original_complete = OpenAIBackend.complete
+
+        async def capture_extra(self: Any, **kwargs: Any) -> Any:
+            captured_extra.update(kwargs.get("extra_params") or {})
+            return await original_complete(self, **kwargs)
+
+        with (
+            patch.dict(CLIENTS, {"openai": mock_client}),
+            patch.object(OpenAIBackend, "complete", capture_extra),
+        ):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gpt-4.1",
+                    transport="openai",
+                    provider_params={"json_mode": False, "verbosity": "low"},
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                json_mode=True,
+                verbosity="high",
+                enable_retry=False,
+            )
+
+            assert captured_extra["json_mode"] is True
+            assert captured_extra["verbosity"] == "high"
 
 
 # Test fixtures and utilities
