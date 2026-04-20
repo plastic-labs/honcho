@@ -51,7 +51,7 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
 
     assert embedding == [0.1] * 8
     assert fake_embeddings.calls == [
-        {"model": "text-embedding-3-small", "input": "hello world"}
+        {"model": "text-embedding-3-small", "input": ["hello world"]}
     ]
 
 
