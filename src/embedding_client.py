@@ -99,7 +99,7 @@ class _EmbeddingClient:
             return self._validate_embedding_dimensions(response.embeddings[0].values)
         else:  # openai
             response = await self.client.embeddings.create(
-                model=self.model, input=query
+                model=self.model, input=[query]
             )
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
