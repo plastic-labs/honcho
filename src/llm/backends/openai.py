@@ -18,6 +18,23 @@ from src.llm.structured_output import (
 logger = logging.getLogger(__name__)
 
 
+def _uses_max_completion_tokens(model: str) -> bool:
+    """OpenAI reasoning models (gpt-5 family + o-series) require
+    ``max_completion_tokens`` instead of the classic ``max_tokens`` parameter.
+
+    Matches: gpt-5, gpt-5-anything, gpt-5.anything (incl. gpt-5.4, gpt-5.4-mini),
+    o1*, o3*, o4*. Anything else (gpt-4.x, gpt-4o, chat models on proxies)
+    stays on ``max_tokens``.
+    """
+    m = model.lower()
+    if m == "gpt-5" or m.startswith("gpt-5-") or m.startswith("gpt-5."):
+        return True
+    for prefix in ("o1", "o3", "o4"):
+        if m == prefix or m.startswith(prefix + "-"):
+            return True
+    return False
+
+
 def extract_openai_reasoning_content(response: Any) -> str | None:
     try:
         message = response.choices[0].message
@@ -274,8 +291,7 @@ class OpenAIBackend:
             "messages": messages,
         }
 
-        model_lower = model.lower()
-        if model_lower == "gpt-5" or model_lower.startswith("gpt-5-"):
+        if _uses_max_completion_tokens(model):
             params["max_completion_tokens"] = max_tokens
             if extra_params and extra_params.get("verbosity"):
                 params["verbosity"] = extra_params["verbosity"]
@@ -388,6 +404,13 @@ class OpenAIBackend:
     def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not tools or tools[0].get("type") == "function":
             return tools
+        # Tool schemas in src/utils/agent_tools.py use optional fields with
+        # defaults and don't declare additionalProperties: false. OpenAI's
+        # strict function-calling mode forbids both, so we intentionally
+        # don't set strict: True. Standard function calling on GPT-4.x /
+        # GPT-5 remains reliable, and this stays compatible with
+        # OpenAI-compatible proxies (OpenRouter, Together, vLLM, Ollama)
+        # whose strict-mode support is inconsistent.
         return [
             {
                 "type": "function",
@@ -395,7 +418,6 @@ class OpenAIBackend:
                     "name": tool["name"],
                     "description": tool["description"],
                     "parameters": tool["input_schema"],
-                    "strict": True,
                 },
             }
             for tool in tools

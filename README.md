@@ -419,16 +419,17 @@ Then modify the values as needed. The TOML file is organized into sections:
 
 All configuration values can be overridden using environment variables. The environment variable names follow this pattern:
 
-- `{SECTION}_{KEY}` for nested settings
+- `{SECTION}_{KEY}` for top-level section settings
+- Use `__` inside `{KEY}` for nested settings
 - Just `{KEY}` for app-level settings
 
 Examples:
 
 - `DB_CONNECTION_URI` - Database connection string
 - `AUTH_JWT_SECRET` - JWT secret key
-- `DIALECTIC_LEVELS__low__MODEL` - Model for low reasoning level
-- `DERIVER_PROVIDER` - Provider for background deriver
-- `SUMMARY_PROVIDER` - Summary generation provider
+- `DERIVER_MODEL_CONFIG__TRANSPORT` - Transport for the background deriver
+- `SUMMARY_MODEL_CONFIG__MODEL` - Summary model override
+- `DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL` - Model for low reasoning level
 - `LOG_LEVEL` - Application log level
 - `METRICS_ENABLED` - Enable Prometheus metrics
 - `TELEMETRY_ENABLED` - Enable CloudEvents telemetry

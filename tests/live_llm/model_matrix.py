@@ -64,11 +64,25 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         provider="openai",
         family="gpt_5_class",
         env_var="LIVE_LLM_OPENAI_GPT5_MODELS",
-        default_models=("gpt-5",),
+        default_models=("gpt-5", "gpt-5.4", "gpt-5.4-mini"),
         supports_structured_output=True,
         supports_caching=True,
         supports_reasoning=True,
         docs_url="https://platform.openai.com/docs/models/gpt-5",
+    ),
+    # OpenAI-compatible transport → OpenRouter-served non-reasoning models.
+    # Best canary for operators routing exotic providers through OpenRouter:
+    # if honcho works here, it works for most OR-served models. Currently
+    # anchored on Inception Labs' Mercury-2 diffusion model (non-chat
+    # architecture, must stay on max_tokens, no reasoning_effort).
+    LiveModelFamily(
+        provider="openai",
+        family="openrouter_non_reasoning",
+        env_var="LIVE_LLM_OPENAI_OPENROUTER_NON_REASONING_MODELS",
+        default_models=("inception/mercury-2",),
+        supports_structured_output=False,
+        supports_caching=False,
+        docs_url="https://openrouter.ai/models",
     ),
     LiveModelFamily(
         provider="gemini",

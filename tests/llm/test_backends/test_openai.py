@@ -224,8 +224,53 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
                     "properties": {"city": {"type": "string"}},
                     "required": ["city"],
                 },
-                "strict": True,
             },
         }
     ]
     assert call["tool_choice"] == "required"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-5",
+        "gpt-5-turbo",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.5-preview",
+        "o1",
+        "o1-mini",
+        "o3",
+        "o3-mini",
+        "o4-preview",
+    ],
+)
+def test_openai_reasoning_models_use_max_completion_tokens(model: str) -> None:
+    """Reasoning model families (gpt-5 incl. x.y versions, o1/o3/o4) must send
+    max_completion_tokens, not max_tokens — OpenAI rejects max_tokens for them
+    with 400 unsupported_parameter."""
+    from src.llm.backends.openai import (
+        _uses_max_completion_tokens,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    assert _uses_max_completion_tokens(model) is True
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gpt-4.1",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-3.5-turbo",
+        "some-proxy-model",
+    ],
+)
+def test_openai_classic_models_use_max_tokens(model: str) -> None:
+    """Non-reasoning OpenAI and OpenAI-compatible proxy models stay on
+    the classic max_tokens parameter."""
+    from src.llm.backends.openai import (
+        _uses_max_completion_tokens,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    assert _uses_max_completion_tokens(model) is False

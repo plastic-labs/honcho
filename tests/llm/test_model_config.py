@@ -392,10 +392,26 @@ def test_partial_env_override_same_transport_keeps_default_thinking_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When env preserves the default transport, default thinking params still
-    apply — we only strip on actual transport change."""
-    from src.config import DeriverSettings
+    apply — we only strip on actual transport change.
+
+    The app-level defaults are intentionally minimal (transport + model only)
+    to avoid clobbering operator config, so this test patches in a deliberately
+    rich default to exercise the merge-preservation behavior.
+    """
+    from src.config import ConfiguredModelSettings, DeriverSettings
 
     _clear_deriver_env(monkeypatch)
+
+    def _rich_default() -> ConfiguredModelSettings:
+        return ConfiguredModelSettings(
+            transport="gemini",
+            model="gemini-2.5-flash-lite",
+            thinking_budget_tokens=1024,
+            max_output_tokens=4096,
+        )
+
+    monkeypatch.setattr(DeriverSettings, "_MODEL_CONFIG_DEFAULT", _rich_default)
+
     settings = DeriverSettings(
         MODEL_CONFIG={"model": "gemini-2.5-pro"},  # pyright: ignore[reportArgumentType]
     )
@@ -403,6 +419,7 @@ def test_partial_env_override_same_transport_keeps_default_thinking_params(
     assert settings.MODEL_CONFIG.transport == "gemini"
     assert settings.MODEL_CONFIG.model == "gemini-2.5-pro"
     assert settings.MODEL_CONFIG.thinking_budget_tokens == 1024
+    assert settings.MODEL_CONFIG.max_output_tokens == 4096
 
 
 def test_explicit_thinking_effort_survives_transport_override(
@@ -425,16 +442,42 @@ def test_explicit_thinking_effort_survives_transport_override(
     assert settings.MODEL_CONFIG.thinking_budget_tokens is None
 
 
-def test_dialectic_level_transport_override_drops_default_thinking_params() -> None:
+def test_dialectic_level_transport_override_drops_default_thinking_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Same leak existed in DialecticSettings._merge_level_defaults.
-    Regression: minimal level default is gemini w/ thinking_budget_tokens=0;
-    env flips it to openai, and the 0 used to leak through, tripping the
-    OpenAI backend's thinking-param rejection at call time.
+    Regression: when a level default has thinking_budget_tokens=0 under a
+    gemini transport and env flips the override to openai, the 0 used to leak
+    through and trip the OpenAI backend's thinking-param rejection.
+
+    The app-level defaults are intentionally minimal (transport + model only)
+    to avoid clobbering operator config, so this test patches in a rich
+    level default to exercise the strip-on-transport-change behavior.
 
     Exercises the before-validator directly to avoid DialecticSettings'
     "all 5 levels required" constraint.
     """
-    from src.config import DialecticSettings
+    from src.config import (
+        ConfiguredModelSettings,
+        DialecticLevelSettings,
+        DialecticSettings,
+    )
+
+    def _rich_levels() -> dict[str, DialecticLevelSettings]:
+        return {
+            "minimal": DialecticLevelSettings(
+                MODEL_CONFIG=ConfiguredModelSettings(
+                    transport="gemini",
+                    model="gemini-2.5-flash-lite",
+                    thinking_budget_tokens=0,
+                ),
+                MAX_TOOL_ITERATIONS=1,
+                MAX_OUTPUT_TOKENS=250,
+                TOOL_CHOICE="any",
+            ),
+        }
+
+    monkeypatch.setattr("src.config._default_dialectic_levels", _rich_levels)
 
     data: dict[str, object] = {
         "LEVELS": {

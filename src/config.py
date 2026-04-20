@@ -716,11 +716,12 @@ class DeriverSettings(HonchoSettings):
 
     @staticmethod
     def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default: transport + model only. Any other knobs would merge
+        # into operator-supplied env / config.toml overrides via
+        # _fill_defaults_for_nested_field and clobber intent.
         return ConfiguredModelSettings(
-            transport="gemini",
-            model="gemini-2.5-flash-lite",
-            thinking_budget_tokens=1024,
-            max_output_tokens=4096,
+            transport="openai",
+            model="gpt-5.4-mini",
         )
 
     MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
@@ -820,48 +821,39 @@ class DialecticLevelSettings(BaseModel):
 
 
 def _default_dialectic_levels() -> dict[ReasoningLevel, DialecticLevelSettings]:
+    # Minimal defaults per level: transport + model only. Non-MODEL_CONFIG
+    # level tuning (MAX_TOOL_ITERATIONS, MAX_OUTPUT_TOKENS, TOOL_CHOICE)
+    # stays here because it's the per-level behavior, not a model knob —
+    # operators still override any of it via
+    # DIALECTIC_LEVELS__<level>__MODEL_CONFIG__* without conflict.
+    def _default_model_config() -> ConfiguredModelSettings:
+        return ConfiguredModelSettings(
+            transport="openai",
+            model="gpt-5.4-mini",
+        )
+
     return {
         "minimal": DialecticLevelSettings(
-            MODEL_CONFIG=ConfiguredModelSettings(
-                transport="gemini",
-                model="gemini-2.5-flash-lite",
-                thinking_budget_tokens=0,
-            ),
+            MODEL_CONFIG=_default_model_config(),
             MAX_TOOL_ITERATIONS=1,
             MAX_OUTPUT_TOKENS=250,
             TOOL_CHOICE="any",
         ),
         "low": DialecticLevelSettings(
-            MODEL_CONFIG=ConfiguredModelSettings(
-                transport="gemini",
-                model="gemini-2.5-flash-lite",
-                thinking_budget_tokens=0,
-            ),
+            MODEL_CONFIG=_default_model_config(),
             MAX_TOOL_ITERATIONS=5,
             TOOL_CHOICE="any",
         ),
         "medium": DialecticLevelSettings(
-            MODEL_CONFIG=ConfiguredModelSettings(
-                transport="anthropic",
-                model="claude-haiku-4-5",
-                thinking_budget_tokens=1024,
-            ),
+            MODEL_CONFIG=_default_model_config(),
             MAX_TOOL_ITERATIONS=2,
         ),
         "high": DialecticLevelSettings(
-            MODEL_CONFIG=ConfiguredModelSettings(
-                transport="anthropic",
-                model="claude-haiku-4-5",
-                thinking_budget_tokens=1024,
-            ),
+            MODEL_CONFIG=_default_model_config(),
             MAX_TOOL_ITERATIONS=4,
         ),
         "max": DialecticLevelSettings(
-            MODEL_CONFIG=ConfiguredModelSettings(
-                transport="anthropic",
-                model="claude-haiku-4-5",
-                thinking_budget_tokens=2048,
-            ),
+            MODEL_CONFIG=_default_model_config(),
             MAX_TOOL_ITERATIONS=10,
         ),
     }
@@ -974,10 +966,10 @@ class SummarySettings(HonchoSettings):
 
     @staticmethod
     def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default; extra knobs would merge into env/TOML overrides.
         return ConfiguredModelSettings(
-            transport="gemini",
-            model="gemini-2.5-flash",
-            thinking_budget_tokens=512,
+            transport="openai",
+            model="gpt-5.4-mini",
         )
 
     MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
@@ -1105,9 +1097,10 @@ class DreamSettings(HonchoSettings):
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default; extra knobs would merge into env/TOML overrides.
         return ConfiguredModelSettings(
-            transport="anthropic",
-            model="claude-haiku-4-5",
+            transport="openai",
+            model="gpt-5.4-mini",
         )
 
     DEDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
@@ -1116,9 +1109,10 @@ class DreamSettings(HonchoSettings):
 
     @staticmethod
     def _INDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default; extra knobs would merge into env/TOML overrides.
         return ConfiguredModelSettings(
-            transport="anthropic",
-            model="claude-haiku-4-5",
+            transport="openai",
+            model="gpt-5.4-mini",
         )
 
     INDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(

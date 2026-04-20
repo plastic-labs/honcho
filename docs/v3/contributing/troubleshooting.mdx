@@ -146,7 +146,7 @@ If calls to an OpenAI-compatible proxy fail:
 
 ### Thinking budget errors with non-Anthropic providers
 
-If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, your `THINKING_BUDGET_TOKENS` is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking.
+If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, your `THINKING_BUDGET_TOKENS` is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking. The built-in defaults do not set thinking budgets, so this only applies if you added those overrides yourself.
 
 **Fix:** Set `THINKING_BUDGET_TOKENS=0` for every component when using models that don't support thinking:
 
