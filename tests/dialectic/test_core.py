@@ -67,7 +67,6 @@ async def test_initialize_session_history_respects_peer_perspective_visibility(
     )
 
     agent = DialecticAgent(
-        db=None,
         workspace_name=workspace.name,
         session_name=session.name,
         observer=observer.name,
@@ -94,7 +93,6 @@ async def test_prefetch_relevant_observations_reuses_query_embedding(
 ):
     workspace, observer = sample_data
     agent = DialecticAgent(
-        db=None,
         workspace_name=workspace.name,
         session_name=None,
         observer=observer.name,

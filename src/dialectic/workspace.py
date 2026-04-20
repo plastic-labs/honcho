@@ -38,7 +38,6 @@ class WorkspaceDialecticAgent(BaseDialecticAgent):
         reasoning_level: ReasoningLevel = "low",
     ):
         super().__init__(
-            db=None,
             workspace_name=workspace_name,
             session_name=session_name,
             reasoning_level=reasoning_level,

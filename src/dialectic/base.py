@@ -13,8 +13,6 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from src.config import ReasoningLevel, settings
 from src.llm import (
     HonchoLLMCallResponse,
@@ -43,13 +41,11 @@ class BaseDialecticAgent(ABC):
 
     def __init__(
         self,
-        db: AsyncSession | None,
         workspace_name: str,
         session_name: str | None,
         reasoning_level: ReasoningLevel,
         system_prompt: str,
     ):
-        self.db: AsyncSession | None = db
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
         self.reasoning_level: ReasoningLevel = reasoning_level

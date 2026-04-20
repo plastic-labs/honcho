@@ -9,8 +9,6 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from src import crud
 from src.config import ReasoningLevel, settings
 from src.dependencies import tracked_db
@@ -43,7 +41,6 @@ class DialecticAgent(BaseDialecticAgent):
 
     def __init__(
         self,
-        db: AsyncSession | None,
         workspace_name: str,
         session_name: str | None,
         observer: str,
@@ -61,7 +58,6 @@ class DialecticAgent(BaseDialecticAgent):
         self._session_history_initialized: bool = False
 
         super().__init__(
-            db=db,
             workspace_name=workspace_name,
             session_name=session_name,
             reasoning_level=reasoning_level,

@@ -67,7 +67,6 @@ async def agentic_chat(
     # DB session closed — agent runs without holding a connection
 
     agent = DialecticAgent(
-        db=None,
         workspace_name=workspace_name,
         session_name=session_name,
         observer=observer,
@@ -129,7 +128,6 @@ async def agentic_chat_stream(
     # DB session closed — agent streams without holding a connection
 
     agent = DialecticAgent(
-        db=None,
         workspace_name=workspace_name,
         session_name=session_name,
         observer=observer,
