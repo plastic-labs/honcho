@@ -215,15 +215,52 @@ class LLMSettings(HonchoSettings):
 
     EMBEDDING_PROVIDER: Literal["openai", "gemini", "openrouter", "custom"] = "openai"
 
-    # Custom embedding provider (local vLLM, TEI, or any OpenAI-compatible endpoint)
+    # Custom embedding provider (local vLLM, TEI, or any OpenAI-compatible endpoint).
+    # The embedding client loads the model's real tokenizer (e.g. Qwen) via
+    # `transformers.AutoTokenizer.from_pretrained(CUSTOM_EMBEDDING_MODEL)` so
+    # token counts and chunking match what the self-hosted server will see.
     CUSTOM_EMBEDDING_BASE_URL: str | None = None
     CUSTOM_EMBEDDING_API_KEY: str | None = None
     CUSTOM_EMBEDDING_MODEL: str | None = None
-    CUSTOM_EMBEDDING_MAX_TOKENS: Annotated[int, Field(default=4096, gt=0, le=8192)] = 4096
+    CUSTOM_EMBEDDING_MAX_TOKENS: Annotated[
+        int,
+        Field(
+            default=4096,
+            gt=0,
+            le=8192,
+            description=(
+                "Client-side pre-check cap on a single input's token count "
+                "(measured with the model's real tokenizer). This is NOT "
+                "synced to the server — the server enforces its own limit "
+                "via `--max-model-len` (vLLM) or equivalent; set this <= "
+                "that value with some headroom."
+            ),
+        ),
+    ] = 4096
     CUSTOM_EMBEDDING_MAX_TOKENS_PER_REQUEST: Annotated[
-        int, Field(default=32_000, gt=0, le=300_000)
+        int,
+        Field(
+            default=32_000,
+            gt=0,
+            le=300_000,
+            description=(
+                "Client-side batching cap on total tokens packed into a "
+                "single HTTP request to the custom server."
+            ),
+        ),
     ] = 32_000
-    CUSTOM_EMBEDDING_MAX_BATCH_SIZE: Annotated[int, Field(default=32, gt=0, le=256)] = 32
+    CUSTOM_EMBEDDING_MAX_BATCH_SIZE: Annotated[
+        int,
+        Field(
+            default=32,
+            gt=0,
+            le=256,
+            description=(
+                "Client-side cap on number of inputs per request. Should "
+                "match the server's `--max-num-seqs` when possible."
+            ),
+        ),
+    ] = 32
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500

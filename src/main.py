@@ -120,10 +120,60 @@ if SENTRY_ENABLED:
     )
 
 
+async def _assert_pgvector_dim_consistency() -> None:
+    """Fail fast if the pgvector column dim doesn't match settings.VECTOR_STORE.DIMENSIONS.
+
+    The ORM in src/models.py declares `Vector(1536)` statically but
+    VectorStoreSettings.DIMENSIONS is user-configurable. If the two drift
+    (e.g. someone sets VECTOR_STORE_DIMENSIONS=1024 but never re-ran a
+    corresponding migration), every embedding write would fail with a
+    pgvector dim mismatch — at message-insert time, not at startup. Surface
+    the mismatch immediately so it's caught before accepting traffic.
+    """
+    from sqlalchemy import text
+
+    expected = settings.VECTOR_STORE.DIMENSIONS
+    try:
+        async with engine.connect() as conn:
+            # pgvector stores dim in pg_attribute.atttypmod. Check the two
+            # tables that carry the embedding column in Honcho's schema.
+            row = await conn.execute(
+                text(
+                    "SELECT c.relname AS tbl, a.atttypmod AS dim "
+                    "FROM pg_attribute a "
+                    "JOIN pg_class c ON a.attrelid = c.oid "
+                    "WHERE a.attname = 'embedding' "
+                    "  AND c.relkind = 'r' "
+                    "  AND c.relname IN ('message_embeddings', 'documents')"
+                )
+            )
+            rows = list(row)
+    except Exception as e:
+        logger.warning(
+            "Could not verify pgvector dim consistency at startup "
+            "(DB unreachable or schema missing): %s",
+            e,
+        )
+        return
+
+    mismatches = [(tbl, dim) for tbl, dim in rows if dim != expected]
+    if mismatches:
+        detail = ", ".join(f"{tbl}.embedding={dim}" for tbl, dim in mismatches)
+        raise RuntimeError(
+            f"pgvector dim mismatch: settings.VECTOR_STORE.DIMENSIONS={expected} "
+            f"but schema has {detail}. Either restore DIMENSIONS to match the "
+            "current schema or run an alembic migration that widens the "
+            "column; Honcho refuses to start with a mismatched schema because "
+            "every embedding write would fail at runtime."
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Initialize CloudEvents telemetry
     await initialize_telemetry_async()
+
+    await _assert_pgvector_dim_consistency()
 
     try:
         await init_cache()

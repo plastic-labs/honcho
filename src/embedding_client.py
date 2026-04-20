@@ -2,8 +2,9 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from typing import NamedTuple
+from typing import Any, Callable, NamedTuple
 
+import httpx
 import tiktoken
 from google import genai
 from openai import AsyncOpenAI
@@ -11,6 +12,15 @@ from openai import AsyncOpenAI
 from .config import settings
 
 logger = logging.getLogger(__name__)
+
+# Lazy sentinel: the `custom` provider needs a HuggingFace tokenizer (e.g. Qwen
+# for Qwen3-Embedding-8B) so that pre-checks and chunk boundaries match what
+# the self-hosted server will actually see. `transformers` stays optional so
+# non-custom deployments don't pay for it.
+try:
+    from transformers import AutoTokenizer as _AutoTokenizer
+except ImportError:  # pragma: no cover
+    _AutoTokenizer = None  # type: ignore[assignment]
 
 
 class BatchItem(NamedTuple):
@@ -59,7 +69,21 @@ class _EmbeddingClient:
             if api_key is None:
                 api_key = settings.LLM.CUSTOM_EMBEDDING_API_KEY or "dummy"
             base_url = settings.LLM.CUSTOM_EMBEDDING_BASE_URL or "http://localhost:8081/v1"
-            self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+            # Bound the connection pool and fail fast on stalls. The upstream
+            # AsyncOpenAI default pool (100 conns, ~10 min timeout) will starve
+            # the deriver if the self-hosted server hangs.
+            http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0, connect=5.0),
+                limits=httpx.Limits(
+                    max_connections=16, max_keepalive_connections=8
+                ),
+            )
+            self.client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                http_client=http_client,
+                max_retries=0,
+            )
             self.model = settings.LLM.CUSTOM_EMBEDDING_MODEL or "Qwen/Qwen3-Embedding-8B"
             self.max_embedding_tokens = settings.LLM.CUSTOM_EMBEDDING_MAX_TOKENS
             self.max_batch_size = settings.LLM.CUSTOM_EMBEDDING_MAX_BATCH_SIZE
@@ -80,8 +104,68 @@ class _EmbeddingClient:
             else settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
         )
 
+        # For `custom` provider, load the real model tokenizer so token counts
+        # and chunk boundaries match what the self-hosted server will see.
+        # tiktoken's o200k_base tokenizer (OpenAI GPT-4o) produces dramatically
+        # different token counts for CJK text vs Qwen's BPE, which would make
+        # pre-checks and `_chunk_text_with_tokens` send oversize requests that
+        # the server rejects.
+        self._accurate_tokenizer: Any = None
+        if self.provider == "custom":
+            if _AutoTokenizer is None:
+                raise ImportError(
+                    "The 'custom' embedding provider requires the 'transformers' "
+                    "package to load the self-hosted model's tokenizer. Install "
+                    "with: uv pip install transformers"
+                )
+            try:
+                self._accurate_tokenizer = _AutoTokenizer.from_pretrained(self.model)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to load tokenizer for custom embedding model "
+                    f"{self.model!r}: {e}. Ensure the model is reachable via "
+                    "HuggingFace Hub or set HF_HUB_OFFLINE / HF_HOME to a cache "
+                    "that contains it."
+                ) from e
+            logger.info(
+                "Custom embedding provider configured: model=%s, "
+                "max_tokens=%d (client-side pre-check only — server enforces "
+                "its own --max-model-len), max_batch_size=%d, "
+                "max_tokens_per_request=%d",
+                self.model,
+                self.max_embedding_tokens,
+                self.max_batch_size,
+                self.max_embedding_tokens_per_request,
+            )
+
+    def _count_tokens(self, text: str) -> int:
+        """Accurate token count for the active provider.
+
+        Falls back to tiktoken o200k_base for non-custom providers (matches
+        OpenAI's billing model and is a reasonable estimate for Gemini).
+        """
+        if self._accurate_tokenizer is not None:
+            return len(
+                self._accurate_tokenizer.encode(text, add_special_tokens=False)
+            )
+        return len(self.encoding.encode(text))
+
+    def _tokenize(self, text: str) -> list[int]:
+        """Return the provider-accurate token id list for *text*."""
+        if self._accurate_tokenizer is not None:
+            return self._accurate_tokenizer.encode(text, add_special_tokens=False)
+        return self.encoding.encode(text)
+
+    def _detokenize(self, token_ids: list[int]) -> str:
+        """Inverse of _tokenize for the active provider."""
+        if self._accurate_tokenizer is not None:
+            return self._accurate_tokenizer.decode(
+                token_ids, skip_special_tokens=True
+            )
+        return self.encoding.decode(token_ids)
+
     async def embed(self, query: str) -> list[float]:
-        token_count = len(self.encoding.encode(query))
+        token_count = self._count_tokens(query)
 
         if token_count > self.max_embedding_tokens:
             raise ValueError(
@@ -183,22 +267,48 @@ class _EmbeddingClient:
         """
         Chunk texts that exceed token limits.
 
+        For the `custom` provider, ignores the caller-supplied `encoded_tokens`
+        (which come from Honcho's global tiktoken encoder) and re-encodes with
+        the real model tokenizer so chunks actually fit the server's
+        `--max-model-len`. Other providers reuse the caller's tokens.
+
+        Overlapping chunks are de-duplicated by exact text match so the 20%
+        overlap (see `_chunk_text_with_tokens`) doesn't produce redundant
+        vector rows when two windows happen to land on identical content.
+
         Args:
             id_resource_dict: Maps text IDs to (text, encoded_tokens) tuples
 
         Returns:
             Maps text IDs to lists of (chunk_text, token_count) tuples
         """
-        return {
-            text_id: (
-                _chunk_text_with_tokens(
-                    text, encoded_tokens, self.max_embedding_tokens, self.encoding
+        prepared: dict[str, list[tuple[str, int]]] = {}
+        for text_id, (text, caller_encoded_tokens) in id_resource_dict.items():
+            if self._accurate_tokenizer is not None:
+                tokens = self._tokenize(text)
+            else:
+                tokens = caller_encoded_tokens
+
+            if len(tokens) > self.max_embedding_tokens:
+                raw_chunks = _chunk_text_with_tokens(
+                    text,
+                    tokens,
+                    self.max_embedding_tokens,
+                    self._detokenize,
                 )
-                if len(encoded_tokens) > self.max_embedding_tokens
-                else [(text, len(encoded_tokens))]
-            )
-            for text_id, (text, encoded_tokens) in id_resource_dict.items()
-        }
+            else:
+                raw_chunks = [(text, len(tokens))]
+
+            seen: set[str] = set()
+            deduped: list[tuple[str, int]] = []
+            for chunk_text, count in raw_chunks:
+                if chunk_text in seen:
+                    continue
+                seen.add(chunk_text)
+                deduped.append((chunk_text, count))
+            prepared[text_id] = deduped
+
+        return prepared
 
     def _create_batches(
         self, text_chunks: dict[str, list[tuple[str, int]]]
@@ -328,7 +438,7 @@ def _chunk_text_with_tokens(
     text: str,
     encoded_tokens: list[int],
     max_tokens: int,
-    encoding: tiktoken.Encoding,
+    decode_fn: Callable[[list[int]], str],
 ) -> list[tuple[str, int]]:
     """
     Split text into chunks that fit within token limits, with 20% overlap.
@@ -337,7 +447,9 @@ def _chunk_text_with_tokens(
         text: Original text to chunk
         encoded_tokens: Pre-encoded tokens for the text
         max_tokens: Maximum tokens per chunk
-        encoding: Tiktoken encoding model
+        decode_fn: Callable turning a token id list back into text — the
+            caller supplies one matching its own tokenizer (tiktoken for
+            OpenAI/Gemini, the model's tokenizer for `custom`)
 
     Returns:
         List of (chunk_text, token_count) tuples
@@ -351,7 +463,7 @@ def _chunk_text_with_tokens(
 
     return [
         (
-            encoding.decode(encoded_tokens[i : i + max_tokens]),
+            decode_fn(encoded_tokens[i : i + max_tokens]),
             min(max_tokens, len(encoded_tokens) - i),
         )
         for i in range(0, len(encoded_tokens), step_size)
