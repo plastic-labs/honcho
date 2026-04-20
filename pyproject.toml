@@ -68,7 +68,7 @@ members = [
 
 [tool.uv.sources]
 honcho-ai = { workspace = true }
-honcho-ai-cli = { workspace = true }
+honcho-cli = { workspace = true }
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example

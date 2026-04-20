@@ -7,7 +7,7 @@
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝
 ```
 
-# honcho-ai-cli
+# honcho-cli
 
 A terminal for [Honcho](https://honcho.dev) — memory that reasons.
 
@@ -16,7 +16,7 @@ A terminal for [Honcho](https://honcho.dev) — memory that reasons.
 As a standalone tool (recommended):
 
 ```bash
-uv tool install honcho-ai-cli
+uv tool install honcho-cli
 ```
 
 As an extra on the Honcho SDK (if you want both the SDK and the CLI in one project):
@@ -201,7 +201,7 @@ Install from source in editable mode so changes are picked up live:
 ```bash
 git clone https://github.com/plastic-labs/honcho
 cd honcho
-uv tool install --force --editable --from ./honcho-cli honcho-ai-cli
+uv tool install --force --editable --from ./honcho-cli honcho-cli
 ```
 
 Re-run any time — changes to `honcho-cli/src/` are reflected immediately without reinstalling.

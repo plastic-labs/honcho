@@ -11,7 +11,7 @@ resolution-markers = [
 members = [
     "honcho",
     "honcho-ai",
-    "honcho-ai-cli",
+    "honcho-cli",
 ]
 
 [[package]]
@@ -1295,7 +1295,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cli = [
-    { name = "honcho-ai-cli" },
+    { name = "honcho-cli" },
 ]
 
 [package.dev-dependencies]
@@ -1305,7 +1305,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-ai-cli", marker = "extra == 'cli'", editable = "honcho-cli" },
+    { name = "honcho-cli", marker = "extra == 'cli'", editable = "honcho-cli" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -1316,7 +1316,7 @@ provides-extras = ["cli"]
 dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
-name = "honcho-ai-cli"
+name = "honcho-cli"
 version = "0.1.0"
 source = { editable = "honcho-cli" }
 dependencies = [

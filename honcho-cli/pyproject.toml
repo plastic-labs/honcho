@@ -1,5 +1,5 @@
 [project]
-name = "honcho-ai-cli"
+name = "honcho-cli"
 version = "0.1.0"
 description = "A terminal for Honcho — memory that reasons."
 readme = "README.md"
