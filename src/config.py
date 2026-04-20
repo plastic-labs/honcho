@@ -615,6 +615,31 @@ class DBSettings(HonchoSettings):
     SQL_DEBUG: bool = False
     TRACING: bool = False
 
+    # AWS IAM authentication fields
+    AUTH_METHOD: Literal["password", "iam"] = "password"
+    AWS_REGION: str | None = None
+    RDS_HOSTNAME: str | None = None
+    RDS_PORT: Annotated[int, Field(default=5432, ge=1, le=65535)] = 5432
+    RDS_USERNAME: str | None = None
+    AWS_PROFILE: str | None = None
+    RDS_SSL_CA_BUNDLE: str | None = None
+
+    @model_validator(mode="after")  # type: ignore
+    def _require_iam_fields(self) -> "DBSettings":
+        if self.AUTH_METHOD == "iam":
+            missing = []
+            if not self.AWS_REGION:
+                missing.append("DB_AWS_REGION")
+            if not self.RDS_HOSTNAME:
+                missing.append("DB_RDS_HOSTNAME")
+            if not self.RDS_USERNAME:
+                missing.append("DB_RDS_USERNAME")
+            if missing:
+                raise ValueError(
+                    f"When AUTH_METHOD is 'iam', the following field(s) must be set: {', '.join(missing)}"
+                )
+        return self
+
 
 class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore

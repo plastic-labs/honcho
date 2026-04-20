@@ -23,7 +23,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241002.0",
+    "fast-check": "^4.6.0",
     "typescript": "^5.3.3",
+    "vitest": "^4.1.4",
     "wrangler": "^4.24.3"
   }
 }
