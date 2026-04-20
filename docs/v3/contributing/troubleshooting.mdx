@@ -146,9 +146,9 @@ If calls to an OpenAI-compatible proxy fail:
 
 ### Thinking budget errors with non-Anthropic providers
 
-If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, your `THINKING_BUDGET_TOKENS` is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking. The built-in defaults do not set thinking budgets, so this only applies if you added those overrides yourself.
+If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, one of your per-component `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS` overrides is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking. The built-in defaults do not set thinking budgets, so this only applies if you added those overrides yourself.
 
-**Fix:** Set `THINKING_BUDGET_TOKENS=0` for every component when using models that don't support thinking:
+**Fix:** Set `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0` for every component when using models that don't support thinking:
 
 ```bash
 DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
@@ -162,7 +162,7 @@ DIALECTIC_LEVELS__high__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
 DIALECTIC_LEVELS__max__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
 ```
 
-For OpenAI reasoning models, use `MODEL_CONFIG__THINKING_EFFORT` instead of `THINKING_BUDGET_TOKENS`.
+For OpenAI reasoning models, use `*_MODEL_CONFIG__THINKING_EFFORT` instead of `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS`.
 
 ## Database Issues
 

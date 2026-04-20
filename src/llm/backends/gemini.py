@@ -162,8 +162,10 @@ class GeminiBackend:
         )
 
         final_chunk = None
+        any_text = False
         async for chunk in stream:
             if chunk.text:
+                any_text = True
                 yield StreamChunk(content=chunk.text)
             final_chunk = chunk
 
@@ -181,6 +183,19 @@ class GeminiBackend:
             and getattr(final_chunk.usage_metadata, "candidates_token_count", None)
         ):
             output_tokens = final_chunk.usage_metadata.candidates_token_count or None
+
+        # Mirror complete()'s behavior on SAFETY / RECITATION / etc. — if
+        # Gemini blocked the response and produced no usable text, raise
+        # LLMError rather than silently yielding a terminal chunk carrying
+        # the blocked finish_reason. Downstream callers should get a clean
+        # exception and a chance to retry / fall back.
+        if not any_text and finish_reason in GEMINI_BLOCKED_FINISH_REASONS:
+            raise LLMError(
+                f"Gemini response blocked (finish_reason={finish_reason})",
+                provider="gemini",
+                model=model,
+                finish_reason=finish_reason,
+            )
 
         yield StreamChunk(
             is_done=True,
@@ -372,6 +387,8 @@ class GeminiBackend:
             cache_policy=cache_policy,
             cacheable_messages=contents,
             tools=tools,
+            system_instruction=config.get("system_instruction"),
+            tool_config=config.get("tool_config"),
         )
         cached_handle = gemini_cache_store.get(cache_key)
         if cached_handle is None:
@@ -441,8 +458,21 @@ class GeminiBackend:
             if isinstance(message.get("content"), list):
                 parts: list[dict[str, Any]] = []
                 for block in message["content"]:
-                    if block.get("type") == "text":
+                    block_type = block.get("type")
+                    if block_type == "text":
                         parts.append({"text": block["text"]})
+                    else:
+                        # Silently dropping non-"text" blocks would mask real
+                        # input-shape bugs — e.g., an Anthropic-shaped
+                        # tool_use/tool_result payload accidentally routed to
+                        # the Gemini backend without going through the
+                        # history adapter. Fail fast so the caller knows.
+                        raise ValidationException(
+                            "Gemini backend cannot translate content block "
+                            + f"of type {block_type!r}; translate to "
+                            + "Gemini-native 'parts' via the history adapter "
+                            + "before passing to the backend"
+                        )
                 if parts:
                     contents.append({"role": role, "parts": parts})
 

@@ -21,6 +21,7 @@ from typing import Any
 from src import crud, schemas
 from src.config import ConfiguredModelSettings, settings
 from src.dependencies import tracked_db
+from src.exceptions import ValidationException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
@@ -42,7 +43,9 @@ def _require_specialist_model_config(
     specialist_name: str,
 ) -> ConfiguredModelSettings:
     if model_config is None:
-        raise ValueError(f"{specialist_name} MODEL_CONFIG must be resolved before use")
+        raise ValidationException(
+            f"{specialist_name} MODEL_CONFIG must be resolved before use"
+        )
     return model_config
 
 
@@ -208,6 +211,17 @@ If you update it, send the full deduplicated list and remove stale entries.
 
         model_config = self.get_model_config()
 
+        # Respect operator-configured max_output_tokens on the specialist's
+        # ModelConfig (e.g. DREAM_DEDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS).
+        # Only fall back to the specialist's hardcoded default when the
+        # config leaves max_output_tokens unset or non-positive.
+        configured_max = model_config.max_output_tokens
+        effective_max_tokens = (
+            configured_max
+            if configured_max and configured_max > 0
+            else self.get_max_tokens()
+        )
+
         # Track iterations via callback
         iteration_count = 0
 
@@ -219,7 +233,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
             model_config=model_config,
             prompt="",  # Ignored since we pass messages
-            max_tokens=self.get_max_tokens(),
+            max_tokens=effective_max_tokens,
             tools=self.get_tools(peer_card_enabled=peer_card_enabled),
             tool_choice=None,
             tool_executor=tool_executor,

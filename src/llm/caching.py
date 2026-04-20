@@ -32,13 +32,25 @@ def build_cache_key(
     cache_policy: PromptCachePolicy,
     cacheable_messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
+    system_instruction: str | None = None,
+    tool_config: dict[str, Any] | None = None,
 ) -> str:
+    """Deterministic key over the cacheable shape of a request.
+
+    ``system_instruction`` and ``tool_config`` must be part of the key
+    because the provider's cached-content handle captures them at creation
+    time — two requests that differ only by system prompt or tool
+    constraints would otherwise hit the same cached handle and silently get
+    the wrong system prompt / tool policy.
+    """
     payload = {
         "transport": config.transport,
         "model": config.model,
         "cache_policy": cache_policy.model_dump(mode="json"),
         "messages": cacheable_messages,
         "tools": tools,
+        "system_instruction": system_instruction,
+        "tool_config": tool_config,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
