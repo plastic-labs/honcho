@@ -1,0 +1,14 @@
+[project]
+name = "honcho-smolagents-example"
+version = "1.0.0"
+description = "Smolagents integration with Honcho for persistent memory"
+requires-python = ">=3.10"
+dependencies = [
+    "smolagents[litellm]>=1.0.0",
+    "honcho-ai>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
