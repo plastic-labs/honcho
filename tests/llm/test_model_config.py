@@ -319,20 +319,24 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
         }
     )
 
-    assert deriver_config.transport == "gemini"
-    assert deriver_config.model == "gemini-2.5-flash-lite"
-    assert deriver_config.thinking_budget_tokens == 1024
-    assert minimal_level.MODEL_CONFIG.model == "gemini-2.5-flash-lite"
-    assert minimal_level.MODEL_CONFIG.transport == "gemini"
-    assert max_level.MODEL_CONFIG.model == "claude-haiku-4-5"
-    assert max_level.MODEL_CONFIG.transport == "anthropic"
-    assert max_level.MODEL_CONFIG.thinking_budget_tokens == 2048
+    # config.toml.example ships the same minimal defaults the app uses:
+    # transport=openai, model=gpt-5.4-mini across every text-generation
+    # feature, with embeddings on openai/text-embedding-3-small. Asserting
+    # these keeps the example file and the in-code defaults in lockstep.
+    assert deriver_config.transport == "openai"
+    assert deriver_config.model == "gpt-5.4-mini"
+    assert deriver_config.thinking_budget_tokens is None
+    assert minimal_level.MODEL_CONFIG.model == "gpt-5.4-mini"
+    assert minimal_level.MODEL_CONFIG.transport == "openai"
+    assert max_level.MODEL_CONFIG.model == "gpt-5.4-mini"
+    assert max_level.MODEL_CONFIG.transport == "openai"
+    assert max_level.MODEL_CONFIG.thinking_budget_tokens is None
     assert embedding_config.transport == "openai"
     assert embedding_config.model == "text-embedding-3-small"
-    assert summary_config.model == "gemini-2.5-flash"
-    assert summary_config.transport == "gemini"
-    assert dream.DEDUCTION_MODEL_CONFIG.model == "claude-haiku-4-5"
-    assert dream.INDUCTION_MODEL_CONFIG.model == "claude-haiku-4-5"
+    assert summary_config.model == "gpt-5.4-mini"
+    assert summary_config.transport == "openai"
+    assert dream.DEDUCTION_MODEL_CONFIG.model == "gpt-5.4-mini"
+    assert dream.INDUCTION_MODEL_CONFIG.model == "gpt-5.4-mini"
 
 
 def test_env_template_uses_nested_model_config_keys() -> None:
