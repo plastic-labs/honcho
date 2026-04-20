@@ -192,3 +192,4 @@ metrics.jsonl
 AGENTS.md
 lancedb_data/
 grafana-data/
+.claude/settings.local.json
