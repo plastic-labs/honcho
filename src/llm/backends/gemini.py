@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from pydantic import BaseModel
 
@@ -459,12 +459,68 @@ class GeminiBackend:
                     {
                         "name": tool["name"],
                         "description": tool["description"],
-                        "parameters": tool["input_schema"],
+                        "parameters": GeminiBackend._sanitize_schema(
+                            tool["input_schema"]
+                        ),
                     }
                     for tool in tools
                 ]
             }
         ]
+
+    # JSON-Schema keywords Gemini's function_declarations validator accepts.
+    # See https://ai.google.dev/api/caching#Schema. Anything outside this set
+    # (e.g. additionalProperties, allOf, if/then/else, $ref, anyOf, oneOf,
+    # patternProperties) triggers an INVALID_ARGUMENT 400 at call time, so we
+    # strip on the way out. Other backends keep the richer schema.
+    _GEMINI_ALLOWED_SCHEMA_KEYS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "type",
+            "format",
+            "description",
+            "nullable",
+            "enum",
+            "properties",
+            "required",
+            "items",
+            "minItems",
+            "maxItems",
+            "minimum",
+            "maximum",
+            "title",
+        }
+    )
+
+    @staticmethod
+    def _sanitize_schema(schema: Any) -> Any:
+        """Recursively strip JSON-Schema keywords Gemini rejects.
+
+        ``properties`` holds user-supplied field names → sub-schemas, so we
+        recurse into its values but preserve its keys. ``required`` and
+        ``enum`` are lists of literals (field names / allowed values) and are
+        passed through verbatim. Everything else is a scalar schema keyword.
+        """
+        if not isinstance(schema, dict):
+            return schema
+        schema_dict = cast(dict[str, Any], schema)
+        cleaned: dict[str, Any] = {}
+        for key, value in schema_dict.items():
+            if key not in GeminiBackend._GEMINI_ALLOWED_SCHEMA_KEYS:
+                continue
+            if key == "properties" and isinstance(value, dict):
+                cleaned["properties"] = {
+                    prop_name: GeminiBackend._sanitize_schema(prop_schema)
+                    for prop_name, prop_schema in cast(dict[str, Any], value).items()
+                }
+            elif key == "items":
+                cleaned["items"] = GeminiBackend._sanitize_schema(value)
+            elif key == "required" and isinstance(value, list):
+                cleaned["required"] = list(cast(list[Any], value))
+            elif key == "enum" and isinstance(value, list):
+                cleaned["enum"] = list(cast(list[Any], value))
+            else:
+                cleaned[key] = value
+        return cleaned
 
     @staticmethod
     def _convert_tool_choice(

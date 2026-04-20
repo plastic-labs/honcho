@@ -313,3 +313,79 @@ async def test_gemini_backend_strips_system_and_tools_when_using_cached_content(
     assert "system_instruction" not in call["config"]
     assert "tools" not in call["config"]
     assert "tool_config" not in call["config"]
+
+
+def test_gemini_sanitize_schema_strips_unsupported_keywords() -> None:
+    """Gemini's function-declarations validator rejects JSON-Schema keywords
+    outside its narrow allowlist (additionalProperties, allOf, if/then, $ref,
+    anyOf, oneOf, patternProperties, ...). _sanitize_schema must strip them
+    recursively so tool schemas authored for OpenAI/Anthropic don't 400 here.
+    """
+    raw = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "level": {"type": "string", "enum": ["a", "b"]},
+                    },
+                    "required": ["content"],
+                    "additionalProperties": False,
+                    "allOf": [
+                        {
+                            "if": {"properties": {"level": {"const": "a"}}},
+                            "then": {"required": ["aux"]},
+                        }
+                    ],
+                },
+            },
+        },
+        "required": ["items"],
+        "$defs": {"Foo": {"type": "string"}},
+    }
+    cleaned = GeminiBackend._sanitize_schema(raw)  # pyright: ignore[reportPrivateUsage]
+
+    # Top-level
+    assert "additionalProperties" not in cleaned
+    assert "$defs" not in cleaned
+    assert cleaned["type"] == "object"
+    assert cleaned["required"] == ["items"]
+
+    # Nested under items
+    item_schema = cleaned["properties"]["items"]["items"]
+    assert "additionalProperties" not in item_schema
+    assert "allOf" not in item_schema
+    assert item_schema["properties"]["level"]["enum"] == ["a", "b"]
+
+
+def test_gemini_convert_tools_sanitizes_parameters_schema() -> None:
+    """End-to-end: feeding a Pydantic/OpenAI-style schema through _convert_tools
+    must produce a Gemini-safe function_declarations payload."""
+    tools = [
+        {
+            "name": "create_observations",
+            "description": "Create observations.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "observations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"content": {"type": "string"}},
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+                "required": ["observations"],
+                "additionalProperties": False,
+            },
+        }
+    ]
+    converted = GeminiBackend._convert_tools(tools)  # pyright: ignore[reportPrivateUsage]
+    params = converted[0]["function_declarations"][0]["parameters"]
+    assert "additionalProperties" not in params
+    assert "additionalProperties" not in params["properties"]["observations"]["items"]
