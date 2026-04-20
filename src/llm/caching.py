@@ -5,17 +5,19 @@ import json
 from collections import OrderedDict
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel
 
-from src.config import ModelConfig
+from src.config import ModelConfig, PromptCachePolicy
 
-
-class PromptCachePolicy(BaseModel):
-    mode: Literal["none", "prefix", "gemini_cached_content"] = "none"
-    ttl_seconds: int | None = None
-    key_version: str = "v1"
+__all__ = [
+    "GeminiCacheHandle",
+    "InMemoryGeminiCacheStore",
+    "PromptCachePolicy",
+    "build_cache_key",
+    "gemini_cache_store",
+]
 
 
 class GeminiCacheHandle(BaseModel):

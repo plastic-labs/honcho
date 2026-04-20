@@ -16,7 +16,6 @@ from typing import (
 
 from anthropic import AsyncAnthropic
 from google import genai
-from google.genai import types as genai_types
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 from sentry_sdk.ai.monitoring import ai_track
@@ -29,18 +28,24 @@ from src.config import (
     resolve_model_config,
     settings,
 )
+from src.llm import (
+    get_anthropic_override_client,
+    get_gemini_override_client,
+    get_openai_override_client,
+)
 from src.llm.backend import CompletionResult as BackendCompletionResult
 from src.llm.backend import StreamChunk as BackendStreamChunk
 from src.llm.backend import ToolCallResult
 from src.llm.backends.anthropic import AnthropicBackend
 from src.llm.backends.gemini import GeminiBackend
 from src.llm.backends.openai import OpenAIBackend
+from src.llm.credentials import default_transport_api_key
 from src.llm.history_adapters import (
     AnthropicHistoryAdapter,
     GeminiHistoryAdapter,
     OpenAIHistoryAdapter,
 )
-from src.llm.request_builder import build_config_extra_params
+from src.llm.request_builder import execute_completion, execute_stream
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 from src.utils.tokens import estimate_tokens
@@ -98,6 +103,48 @@ def _resolve_runtime_model_config(
     if isinstance(model_config, ModelConfig):
         return model_config
     return resolve_model_config(model_config)
+
+
+def _effective_config_for_call(
+    *,
+    selected_config: ModelConfig | None,
+    provider: ModelTransport,
+    model: str,
+    temperature: float | None,
+    stop_seqs: list[str] | None,
+    thinking_budget_tokens: int | None,
+    reasoning_effort: ReasoningEffortType,
+) -> ModelConfig:
+    """Build the ModelConfig passed to execute_completion / execute_stream.
+
+    Per-call kwargs (temperature, stop_seqs, thinking_*) win when set; otherwise
+    the selected_config's values are used. When selected_config is None
+    (test-only callers that pass provider+model directly), a minimal
+    ModelConfig is synthesized.
+
+    max_output_tokens is forced to None so the per-call max_tokens kwarg is
+    authoritative — matching the historical honcho_llm_call_inner behavior.
+    Honoring ModelConfig.max_output_tokens is a separable correctness concern.
+    """
+    if selected_config is None:
+        return ModelConfig(
+            model=model,
+            transport=provider,
+            temperature=temperature,
+            stop_sequences=stop_seqs,
+            thinking_budget_tokens=thinking_budget_tokens,
+            thinking_effort=reasoning_effort,
+        )
+    updates: dict[str, Any] = {"max_output_tokens": None}
+    if temperature is not None:
+        updates["temperature"] = temperature
+    if stop_seqs is not None:
+        updates["stop_sequences"] = stop_seqs
+    if thinking_budget_tokens is not None:
+        updates["thinking_budget_tokens"] = thinking_budget_tokens
+    if reasoning_effort is not None:
+        updates["thinking_effort"] = reasoning_effort
+    return selected_config.model_copy(update=updates)
 
 
 def count_message_tokens(messages: list[dict[str, Any]]) -> int:
@@ -295,61 +342,34 @@ if settings.LLM.GEMINI_API_KEY:
     CLIENTS["gemini"] = gemini_client
 
 
-def _default_credentials_for_provider(
-    provider: ModelTransport,
-) -> tuple[str | None, str | None]:
-    if provider == "anthropic":
-        return settings.LLM.ANTHROPIC_API_KEY, None
-    if provider == "openai":
-        return settings.LLM.OPENAI_API_KEY, None
-    if provider == "gemini":
-        return settings.LLM.GEMINI_API_KEY, None
-    assert_never(provider)
-
-
-def _build_client(
-    provider: ModelTransport,
-    *,
-    api_key: str | None,
-    base_url: str | None,
-) -> ProviderClient:
-    if provider == "anthropic":
-        if not api_key:
-            raise ValueError("Missing API key for Anthropic model config")
-        return AsyncAnthropic(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=600.0,
-        )
-    if provider == "openai":
-        if not api_key:
-            raise ValueError("Missing API key for OpenAI model config")
-        return AsyncOpenAI(api_key=api_key, base_url=base_url)
-    if provider == "gemini":
-        if not api_key:
-            raise ValueError("Missing API key for Gemini model config")
-        http_options = genai_types.HttpOptions(base_url=base_url) if base_url else None
-        return genai.client.Client(api_key=api_key, http_options=http_options)
-    assert_never(provider)
-
-
 def _client_for_model_config(
     provider: ModelTransport,
     model_config: ModelConfig,
 ) -> ProviderClient:
+    """Resolve the provider client for a ModelConfig.
+
+    Fast path: no overrides → reuse the module-level default client from
+    CLIENTS (the test-mockable seam). Otherwise route through the cached
+    override factories in src/llm/__init__.py so both the production path
+    and src/llm/get_backend() share client construction.
+    """
     if model_config.api_key is None and model_config.base_url is None:
         existing_client = CLIENTS.get(provider)
         if existing_client is not None:
             return existing_client
 
-    default_api_key, default_base_url = _default_credentials_for_provider(provider)
-    api_key = model_config.api_key or default_api_key
-    base_url = model_config.base_url or default_base_url
-    return _build_client(
-        provider,
-        api_key=api_key,
-        base_url=base_url,
-    )
+    api_key = model_config.api_key or default_transport_api_key(provider)
+    base_url = model_config.base_url
+    if not api_key:
+        raise ValueError(f"Missing API key for {provider} model config")
+
+    if provider == "anthropic":
+        return get_anthropic_override_client(base_url, api_key)
+    if provider == "openai":
+        return get_openai_override_client(base_url, api_key)
+    if provider == "gemini":
+        return get_gemini_override_client(base_url, api_key)
+    assert_never(provider)
 
 
 def _select_model_config_for_attempt(
@@ -379,6 +399,7 @@ def _select_model_config_for_attempt(
         provider_params=fb.provider_params,
         max_output_tokens=fb.max_output_tokens,
         stop_sequences=fb.stop_sequences,
+        cache_policy=fb.cache_policy,
     )
 
 
@@ -1502,51 +1523,49 @@ async def honcho_llm_call_inner(
         client,
     )
 
-    # Config-derived knobs (top_p/top_k/frequency_penalty/presence_penalty/seed
-    # plus operator-supplied provider_params) come first so per-call kwargs
-    # like json_mode and verbosity override any defaults from provider_params.
-    extra_params: dict[str, Any] = (
-        build_config_extra_params(selected_config)
-        if selected_config is not None
-        else {}
+    effective_config = _effective_config_for_call(
+        selected_config=selected_config,
+        provider=provider,
+        model=model,
+        temperature=temperature,
+        stop_seqs=stop_seqs,
+        thinking_budget_tokens=thinking_budget_tokens,
+        reasoning_effort=reasoning_effort,
     )
-    extra_params["json_mode"] = json_mode
-    extra_params["verbosity"] = verbosity
+    # json_mode + verbosity are per-call transport toggles, not ModelConfig
+    # knobs — they pass through extra_params. execute_completion merges
+    # build_config_extra_params(effective_config) on top for top_p/seed/etc.
+    call_extras: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
 
     if stream:
 
         async def _stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
-            async for chunk in backend.stream(
-                model=model,
+            stream_iter = await execute_stream(
+                backend,
+                effective_config,
                 messages=messages,
                 max_tokens=max_tokens,
-                temperature=temperature,
-                stop=stop_seqs,
                 tools=tools,
                 tool_choice=tool_choice,
                 response_format=response_model,
-                thinking_budget_tokens=thinking_budget_tokens,
-                thinking_effort=reasoning_effort,
-                max_output_tokens=max_tokens,
-                extra_params=extra_params,
-            ):
+                cache_policy=effective_config.cache_policy,
+                extra_params=call_extras,
+            )
+            async for chunk in stream_iter:
                 yield _stream_chunk_to_response_chunk(chunk)
 
         return _stream()
 
-    result = await backend.complete(
-        model=model,
+    result = await execute_completion(
+        backend,
+        effective_config,
         messages=messages,
         max_tokens=max_tokens,
-        temperature=temperature,
-        stop=stop_seqs,
         tools=tools,
         tool_choice=tool_choice,
         response_format=response_model,
-        thinking_budget_tokens=thinking_budget_tokens,
-        thinking_effort=reasoning_effort,
-        max_output_tokens=max_tokens,
-        extra_params=extra_params,
+        cache_policy=effective_config.cache_policy,
+        extra_params=call_extras,
     )
     return _completion_result_to_response(result)
 

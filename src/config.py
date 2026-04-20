@@ -66,6 +66,19 @@ class ModelOverrideSettings(BaseModel):
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
 
+class PromptCachePolicy(BaseModel):
+    """Per-call prompt-caching configuration.
+
+    Lives in config.py (not src/llm/caching.py) so ModelConfig can reference
+    it as a field without a circular import. src/llm/caching.py re-exports
+    this class for existing import paths.
+    """
+
+    mode: Literal["none", "prefix", "gemini_cached_content"] = "none"
+    ttl_seconds: int | None = None
+    key_version: str = "v1"
+
+
 def _normalize_model_transport(data: Any) -> Any:
     """Normalize 'provider/model' shorthand into separate transport + model fields."""
     if not isinstance(data, dict):
@@ -120,6 +133,8 @@ class FallbackModelSettings(BaseModel):
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
+    cache_policy: PromptCachePolicy | None = None
+
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
 
     @model_validator(mode="before")
@@ -133,9 +148,7 @@ class FallbackModelSettings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "FallbackModelSettings":
-        _validate_thinking_constraints(
-            self.transport, self.thinking_budget_tokens
-        )
+        _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
         return self
 
 
@@ -163,6 +176,8 @@ class ConfiguredModelSettings(BaseModel):
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
+    cache_policy: PromptCachePolicy | None = None
+
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
 
     @model_validator(mode="before")
@@ -177,9 +192,7 @@ class ConfiguredModelSettings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
-        _validate_thinking_constraints(
-            self.transport, self.thinking_budget_tokens
-        )
+        _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
         return self
 
 
@@ -208,6 +221,8 @@ class ResolvedFallbackConfig(BaseModel):
 
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
+
+    cache_policy: PromptCachePolicy | None = None
 
     @property
     def reasoning_effort(self) -> ThinkingEffortLevel | None:
@@ -242,6 +257,8 @@ class ModelConfig(BaseModel):
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
+    cache_policy: PromptCachePolicy | None = None
+
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_model_format(cls, data: Any) -> Any:
@@ -254,9 +271,7 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_thinking_constraints_on_self(self) -> "ModelConfig":
-        _validate_thinking_constraints(
-            self.transport, self.thinking_budget_tokens
-        )
+        _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
         return self
 
     def for_model(
@@ -375,6 +390,7 @@ def _resolve_fallback_config(
         provider_params=fallback.overrides.provider_params,
         max_output_tokens=fallback.max_output_tokens,
         stop_sequences=fallback.stop_sequences,
+        cache_policy=fallback.cache_policy,
     )
 
 
@@ -407,6 +423,7 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
         provider_params=configured.overrides.provider_params,
         max_output_tokens=configured.max_output_tokens,
         stop_sequences=configured.stop_sequences,
+        cache_policy=configured.cache_policy,
     )
 
 
@@ -903,9 +920,7 @@ class DialecticSettings(HonchoSettings):
                         base_mc: dict[str, Any] = dict(
                             base.get("MODEL_CONFIG") or base.get("model_config") or {}
                         )
-                        override_mc = cast(
-                            dict[str, Any], level_override[mc_key]
-                        )
+                        override_mc = cast(dict[str, Any], level_override[mc_key])
                         override_lower = {k.lower(): v for k, v in override_mc.items()}
                         base_lower = {k.lower(): v for k, v in base_mc.items()}
                         override_transport = override_lower.get("transport")

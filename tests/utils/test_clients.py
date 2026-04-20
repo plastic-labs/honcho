@@ -185,14 +185,14 @@ class TestAnthropicClient:
                 model="claude-3-sonnet",
                 prompt="Think about this",
                 max_tokens=100,
-                thinking_budget_tokens=1000,
+                thinking_budget_tokens=1024,
             )
 
             # Verify thinking parameter was passed
             mock_client.messages.create.assert_called_once()
             call_args = mock_client.messages.create.call_args
             thinking_config = call_args.kwargs["thinking"]
-            assert thinking_config == {"type": "enabled", "budget_tokens": 1000}
+            assert thinking_config == {"type": "enabled", "budget_tokens": 1024}
 
     async def test_anthropic_response_model_with_json_parsing(self):
         """Test that Anthropic supports response models via JSON schema in prompt"""
@@ -1153,6 +1153,47 @@ class TestModelConfigExtraParamsPropagation:
             )
 
             assert captured_extra.get("honcho_sentinel") == "zap"
+
+    async def test_cache_policy_reaches_gemini_backend(self):
+        """PromptCachePolicy set on ModelConfig must reach the Gemini backend's
+        extra_params as a typed object (so gemini_cached_content reuse fires)."""
+        from google import genai
+
+        from src.config import PromptCachePolicy
+        from src.llm.backends.gemini import GeminiBackend
+
+        mock_client = Mock(spec=genai.Client)
+        mock_client.__class__ = genai.Client  # pyright: ignore[reportAttributeAccessIssue]
+
+        import contextlib
+
+        captured_extra: dict[str, Any] = {}
+
+        async def capture_extra(_self: Any, **kwargs: Any) -> Any:
+            captured_extra.update(kwargs.get("extra_params") or {})
+            return None
+
+        policy = PromptCachePolicy(mode="gemini_cached_content", ttl_seconds=300)
+
+        with (
+            patch.dict(CLIENTS, {"gemini": mock_client}),
+            patch.object(GeminiBackend, "complete", capture_extra),
+            # capture_extra returns None, so downstream normalization will raise;
+            # we only care that extra_params was observed pre-raise.
+            contextlib.suppress(Exception),
+        ):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="gemini-2.5-flash",
+                    transport="gemini",
+                    cache_policy=policy,
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
+            )
+
+        assert captured_extra.get("cache_policy") is policy
 
     async def test_per_call_kwargs_override_provider_params(self):
         """json_mode/verbosity from honcho_llm_call must win over provider_params defaults."""

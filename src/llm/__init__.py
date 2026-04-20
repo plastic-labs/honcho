@@ -17,7 +17,8 @@ from .credentials import resolve_credentials
 
 
 @lru_cache(maxsize=1)
-def _get_anthropic_client() -> AsyncAnthropic:
+def get_anthropic_client() -> AsyncAnthropic:
+    """Default Anthropic client built from settings.LLM.ANTHROPIC_API_KEY."""
     return AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
         timeout=600.0,
@@ -25,36 +26,41 @@ def _get_anthropic_client() -> AsyncAnthropic:
 
 
 @lru_cache(maxsize=1)
-def _get_openai_client() -> AsyncOpenAI:
+def get_openai_client() -> AsyncOpenAI:
+    """Default OpenAI client built from settings.LLM.OPENAI_API_KEY."""
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
     )
 
 
 @lru_cache(maxsize=1)
-def _get_gemini_client() -> genai.Client:
+def get_gemini_client() -> genai.Client:
+    """Default Gemini client built from settings.LLM.GEMINI_API_KEY."""
     return genai.Client(api_key=settings.LLM.GEMINI_API_KEY)
 
 
 @cache
-def _get_openai_override_client(
+def get_openai_override_client(
     base_url: str | None, api_key: str | None
 ) -> AsyncOpenAI:
+    """OpenAI client for a specific (base_url, api_key) pair. Cached by key."""
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
 @cache
-def _get_anthropic_override_client(
+def get_anthropic_override_client(
     base_url: str | None,
     api_key: str | None,
 ) -> AsyncAnthropic:
+    """Anthropic client for a specific (base_url, api_key) pair. Cached by key."""
     return AsyncAnthropic(api_key=api_key, base_url=base_url, timeout=600.0)
 
 
 @cache
-def _get_gemini_override_client(
+def get_gemini_override_client(
     base_url: str | None, api_key: str | None
 ) -> genai.Client:
+    """Gemini client for a specific (base_url, api_key) pair. Cached by key."""
     http_options = genai_types.HttpOptions(base_url=base_url) if base_url else None
     return genai.Client(api_key=api_key, http_options=http_options)
 
@@ -67,30 +73,30 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
     if config.transport == "anthropic":
         if config.api_key is not None or config.base_url is not None:
             return AnthropicBackend(
-                _get_anthropic_override_client(
+                get_anthropic_override_client(
                     credentials.get("api_base"),
                     credentials.get("api_key"),
                 )
             )
-        return AnthropicBackend(_get_anthropic_client())
+        return AnthropicBackend(get_anthropic_client())
     if config.transport == "gemini":
         if config.api_key is not None or config.base_url is not None:
             return GeminiBackend(
-                _get_gemini_override_client(
+                get_gemini_override_client(
                     credentials.get("api_base"),
                     credentials.get("api_key"),
                 )
             )
-        return GeminiBackend(_get_gemini_client())
+        return GeminiBackend(get_gemini_client())
     if config.transport == "openai":
         if config.api_key is not None or config.base_url is not None:
             return OpenAIBackend(
-                _get_openai_override_client(
+                get_openai_override_client(
                     credentials.get("api_base"),
                     credentials.get("api_key"),
                 )
             )
-        return OpenAIBackend(_get_openai_client())
+        return OpenAIBackend(get_openai_client())
     raise ValueError(f"Unknown transport: {config.transport}")
 
 
@@ -99,6 +105,12 @@ __all__ = [
     "ProviderBackend",
     "StreamChunk",
     "ToolCallResult",
+    "get_anthropic_client",
+    "get_anthropic_override_client",
     "get_backend",
+    "get_gemini_client",
+    "get_gemini_override_client",
+    "get_openai_client",
+    "get_openai_override_client",
     "resolve_credentials",
 ]
