@@ -50,17 +50,6 @@ class VectorQueryResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class VectorUpsertResult(BaseModel):
-    """Result for a vector upsert operation."""
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(
-        extra="forbid",
-        frozen=True,
-    )
-
-    ok: bool
-
-
 class VectorStore(ABC):
     """
     Abstract base class for vector store implementations.
@@ -123,7 +112,7 @@ class VectorStore(ABC):
         self,
         namespace: str,
         vectors: list[VectorRecord],
-    ) -> VectorUpsertResult:
+    ) -> None:
         """
         Upsert multiple vectors into the store.
 
@@ -131,8 +120,8 @@ class VectorStore(ABC):
             namespace: The namespace to store the vectors in
             vectors: List of VectorRecord objects to upsert
 
-        Returns:
-            Result describing primary/secondary outcomes.
+        Raises:
+            Exception: If the write fails.
         """
         ...
 
@@ -192,9 +181,6 @@ class VectorStore(ABC):
         ...
 
 
-from src.vector_store.utils import upsert_with_retry  # noqa: E402
-
-
 def _create_store_by_type(store_type: str) -> VectorStore:
     """Create a vector store instance by type name."""
     if store_type == "turbopuffer":
@@ -251,9 +237,7 @@ __all__ = [
     "VectorStore",
     "VectorRecord",
     "VectorQueryResult",
-    "VectorUpsertResult",
     "get_external_vector_store",
     "close_external_vector_store",
-    "upsert_with_retry",
     "_hash_namespace_components",
 ]

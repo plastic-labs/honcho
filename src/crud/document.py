@@ -17,13 +17,16 @@ from src.crud.peer import get_peer
 from src.crud.session import get_session
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
-from src.exceptions import ResourceNotFoundException, ValidationException
+from src.exceptions import (
+    ResourceNotFoundException,
+    ValidationException,
+    VectorStoreError,
+)
 from src.utils.filter import apply_filter
 from src.vector_store import (
     VectorRecord,
     VectorStore,
     get_external_vector_store,
-    upsert_with_retry,
 )
 
 logger = getLogger(__name__)
@@ -560,11 +563,9 @@ async def create_documents(
                         )
                     )
 
-                # Upsert to external vector store with retry and update sync state
+                # Upsert to external vector store and update sync state
                 try:
-                    await upsert_with_retry(
-                        external_vector_store, namespace, vector_records
-                    )
+                    await external_vector_store.upsert_many(namespace, vector_records)
                     # Success: mark as synced
                     await db.execute(
                         update(models.Document)
@@ -577,9 +578,21 @@ async def create_documents(
                     )
                     await db.commit()
 
+                except VectorStoreError:
+                    # Vector store unavailable - increment sync_attempts for reconciliation
+                    logger.warning("Vector store unavailable; leaving docs unsynced")
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_attempts=models.Document.sync_attempts + 1,
+                            last_sync_at=func.now(),
+                        )
+                    )
+                    await db.commit()
+
                 except Exception:
-                    # Failed after retries - increment sync_attempts for reconciliation
-                    logger.exception("Failed to upsert vectors after retries")
+                    logger.exception("Unexpected error upserting vectors")
                     await db.execute(
                         update(models.Document)
                         .where(models.Document.id.in_(doc_ids))
@@ -846,11 +859,9 @@ async def create_observations(
                         )
                     )
 
-                # Upsert to external vector store with retry and update sync state
+                # Upsert to external vector store and update sync state
                 try:
-                    await upsert_with_retry(
-                        external_vector_store, namespace, vector_records
-                    )
+                    await external_vector_store.upsert_many(namespace, vector_records)
                     # Success: mark as synced
                     await db.execute(
                         update(models.Document)
@@ -863,10 +874,24 @@ async def create_observations(
                     )
                     await db.commit()
 
+                except VectorStoreError:
+                    logger.warning(
+                        "Vector store unavailable for namespace %s; leaving observations unsynced",
+                        namespace,
+                    )
+                    await db.execute(
+                        update(models.Document)
+                        .where(models.Document.id.in_(doc_ids))
+                        .values(
+                            sync_attempts=models.Document.sync_attempts + 1,
+                            last_sync_at=func.now(),
+                        )
+                    )
+                    await db.commit()
+
                 except Exception:
-                    # Failed after retries - increment sync_attempts for reconciliation
                     logger.exception(
-                        f"Failed to upsert vectors for {namespace} after retries"
+                        "Unexpected error upserting vectors for %s", namespace
                     )
                     await db.execute(
                         update(models.Document)
