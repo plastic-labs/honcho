@@ -133,8 +133,13 @@ def truncate_messages_to_fit(
 
     units = _group_into_units(conversation)
 
-    # Drop oldest units until conversation fits.
-    while units:
+    if not units:
+        logger.warning("No valid conversation units")
+        return system_messages
+
+    # Drop oldest units until conversation fits, but keep at least one unit so
+    # we never erase the entire non-system conversation.
+    while len(units) > 1:
         flat_messages = [m for unit in units for m in unit]
         if count_message_tokens(flat_messages) <= available_tokens:
             break

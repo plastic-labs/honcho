@@ -74,7 +74,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/unified/",
     "tests/live_llm/",
     # Pure llm unit tests should stay isolated from the broader app/runtime fixtures.
-    "tests/unit/llm/",
+    "tests/llm/",
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",

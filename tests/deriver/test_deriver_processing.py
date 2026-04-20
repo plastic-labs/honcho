@@ -57,13 +57,16 @@ class TestDeriverProcessing:
         kwargs = await_args.kwargs
         expected_config = settings.DERIVER.MODEL_CONFIG.model_copy(
             update={
-                "thinking_effort": "minimal",
                 "stop_sequences": ["   \n", "\n\n\n\n"],
             }
         )
         assert "model_config" in kwargs
         assert kwargs["model_config"].model == expected_config.model
         assert kwargs["model_config"].thinking_effort == expected_config.thinking_effort
+        assert (
+            kwargs["model_config"].thinking_budget_tokens
+            == expected_config.thinking_budget_tokens
+        )
         assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
         assert "llm_settings" not in kwargs
 

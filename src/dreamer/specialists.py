@@ -388,11 +388,12 @@ When statements can't both be true (not just updates), flag them:
 
 ## CREATING OBSERVATIONS
 
+Use `create_observations_deductive`.
+
 ```json
 {{
   "observations": [{{
     "content": "The logical conclusion",
-    "level": "deductive",  // or "contradiction"
     "source_ids": ["id1", "id2"],
     "premises": ["premise 1 text", "premise 2 text"]
   }}]
@@ -404,8 +405,9 @@ When statements can't both be true (not just updates), flag them:
 1. Don't explain your reasoning - just call tools
 2. Create observations based on what you ACTUALLY FIND, not what you expect
 3. Always include source_ids linking to the observations you're synthesizing
-4. Delete outdated observations - don't leave duplicates
-5. Quality over quantity - fewer good deductions beat many weak ones"""
+4. Empty or missing source_ids will be rejected
+5. Delete outdated observations - don't leave duplicates
+6. Quality over quantity - fewer good deductions beat many weak ones"""
 
     def build_user_prompt(
         self,
@@ -528,11 +530,12 @@ Create inductive observations when you see patterns:
 
 ## CREATING OBSERVATIONS
 
+Use `create_observations_inductive`.
+
 ```json
 {{
   "observations": [{{
     "content": "The pattern or generalization",
-    "level": "inductive",
     "source_ids": ["id1", "id2", "id3"],
     "sources": ["evidence 1", "evidence 2"],
     "pattern_type": "tendency",  // preference|behavior|personality|tendency|correlation
@@ -547,7 +550,8 @@ Create inductive observations when you see patterns:
 2. Don't just restate a single fact as a pattern
 3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
 4. Look for HOW things change over time, not just static facts
-5. Include source_ids - always link back to evidence"""
+5. Include source_ids - always link back to evidence
+6. Empty or missing source_ids will be rejected"""
 
     def build_user_prompt(
         self,

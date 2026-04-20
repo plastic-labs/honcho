@@ -127,7 +127,6 @@ async def process_representation_tasks_batch(
     max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
     model_config = base_model_config.model_copy(
         update={
-            "thinking_effort": "minimal",
             "stop_sequences": ["   \n", "\n\n\n\n"],
         }
     )
