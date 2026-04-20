@@ -576,25 +576,6 @@ def test_get_peer_representation_with_all_parameters(
     assert isinstance(data["representation"], str)
 
 
-def test_get_peer_representation_structure(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Test that peer representation response has correct structure"""
-    test_workspace, test_peer = sample_data
-
-    # Get representation and validate structure
-    response = client.post(
-        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
-        json={},
-    )
-    assert response.status_code == 200
-    data = response.json()
-
-    # Validate response structure
-    assert "representation" in data
-    assert isinstance(data["representation"], str)
-
-
 def test_get_peer_representation_boundary_values(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

@@ -191,7 +191,7 @@ class OpenAIBackend:
                         response,
                         content_override=refusal,
                     )
-                raise ValueError("No parsed content in structured response")
+                raise ValidationException("No parsed content in structured response")
             return self._normalize_response(
                 response,
                 content_override=validate_structured_output(parsed, response_format),
@@ -337,12 +337,15 @@ class OpenAIBackend:
                 if tool_call.function.arguments:
                     try:
                         tool_input = json.loads(tool_call.function.arguments)
-                    except (json.JSONDecodeError, TypeError):
+                    except (json.JSONDecodeError, TypeError) as exc:
+                        # Don't log the raw arguments payload — LLM-generated
+                        # tool calls can mirror user PII from the prompt into
+                        # their arguments, and this runs at WARN level.
                         logger.warning(
                             "Malformed tool arguments for %s (id=%s): %s",
                             tool_call.function.name,
                             tool_call.id,
-                            tool_call.function.arguments,
+                            exc.__class__.__name__,
                         )
                 tool_calls.append(
                     ToolCallResult(

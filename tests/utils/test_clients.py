@@ -1,14 +1,12 @@
 """
-Comprehensive tests for src/utils/clients.py
+Comprehensive tests for the public src.llm orchestration surface.
 
 Tests cover:
-- All supported LLM providers (Anthropic, OpenAI, Google/Gemini, Groq)
+- All supported LLM providers (Anthropic, OpenAI, Google/Gemini)
 - Streaming and non-streaming responses
 - Response models (structured output)
 - Error handling and retries
 - Provider-specific features
-- Client initialization
-- Langfuse integration
 """
 
 from typing import Any
@@ -25,8 +23,8 @@ from openai.types.chat.chat_completion_message import ChatCompletionMessage
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, Field
 
-from src.config import ConfiguredModelSettings, ModelConfig
-from src.exceptions import LLMError
+from src.config import ConfiguredModelSettings, ModelConfig, ResolvedFallbackConfig
+from src.exceptions import LLMError, ValidationException
 from src.llm import (
     CLIENTS,
     HonchoLLMCallResponse,
@@ -192,37 +190,6 @@ class TestAnthropicClient:
             call_args = mock_client.messages.create.call_args
             thinking_config = call_args.kwargs["thinking"]
             assert thinking_config == {"type": "enabled", "budget_tokens": 1024}
-
-    async def test_anthropic_response_model_with_json_parsing(self):
-        """Test that Anthropic supports response models via JSON schema in prompt"""
-        from anthropic.types import TextBlock
-
-        # Create an actual Anthropic client mock that passes isinstance checks
-        mock_messages = AsyncMock()
-        mock_response = Mock()
-        # Create an actual TextBlock instance that will pass isinstance checks
-        text_block = TextBlock(type="text", text='"name": "Alice", "age": 30}')
-        mock_response.content = [text_block]
-        mock_response.usage = Mock(output_tokens=10)
-        mock_response.stop_reason = "end_turn"
-        mock_messages.create.return_value = mock_response
-
-        # Instead of mocking the CLIENTS dict, we mock the entire AsyncAnthropic class
-        # to return our configured mock when instantiated
-        with patch("src.llm.registry.AsyncAnthropic") as mock_anthropic_class:
-            mock_client_instance = Mock()
-            mock_client_instance.messages = mock_messages
-            mock_anthropic_class.return_value = mock_client_instance
-
-            # Also need to patch the CLIENTS dict with an instance that passes isinstance
-            # Since this is complex, let's verify the simpler behavior - that response_model
-            # is supported and the prompt is modified (no NotImplementedError)
-
-            # Note: Full integration testing of response_model parsing would require
-            # a more complex setup with actual Anthropic client mocking.
-            # This test verifies that the code path for response_model exists and
-            # modifies the prompt appropriately.
-            pass  # Test simplified - behavior is now supported
 
     async def test_anthropic_streaming(self):
         """Test Anthropic streaming response"""
@@ -1246,45 +1213,103 @@ class TestModelConfigExtraParamsPropagation:
             assert captured_extra["json_mode"] is True
             assert captured_extra["verbosity"] == "high"
 
+    async def test_fallback_config_thinking_params_applied_on_final_retry(
+        self,
+    ) -> None:
+        """When primary fails, the FALLBACK ModelConfig's own temperature and
+        thinking_budget_tokens must reach the backend on the final retry —
+        not the primary's values, and not whatever the caller never set.
 
-# Test fixtures and utilities
-@pytest.fixture
-def sample_test_model():
-    """Fixture providing a sample SampleTestModel instance"""
-    return SampleTestModel(name="Test User", age=25, active=True)
+        Regression for the 'default caller kwargs from runtime_model_config too
+        early' bug: if honcho_llm_call pre-populated temperature from
+        runtime_model_config (the primary) before attempt selection, those
+        primary values would clobber the fallback's own thinking params via
+        effective_config_for_call(update={...}).
+        """
+        mock_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="from fallback", type="text")]
+        mock_response.usage = Usage(input_tokens=5, output_tokens=3)
+        mock_response.stop_reason = "stop"
 
+        # Primary fails twice, then fallback succeeds on attempt 3.
+        mock_client.messages.create = AsyncMock(
+            side_effect=[
+                RuntimeError("primary attempt 1"),
+                RuntimeError("primary attempt 2"),
+                mock_response,
+            ]
+        )
 
-@pytest.fixture
-def mock_anthropic_client():
-    """Fixture providing a mocked Anthropic client"""
-    mock_client = AsyncMock()
-    mock_response = Mock()
-    mock_response.content = [TextBlock(text="Mocked Anthropic response", type="text")]
-    mock_response.usage = Usage(input_tokens=10, output_tokens=5)
-    mock_response.stop_reason = "stop"
-    mock_client.messages.create.return_value = mock_response
-    return mock_client
+        fallback = ResolvedFallbackConfig(
+            model="claude-haiku-4-5",
+            transport="anthropic",
+            temperature=0.9,
+            thinking_budget_tokens=2048,
+        )
 
-
-@pytest.fixture
-def mock_openai_client():
-    """Fixture providing a mocked OpenAI client"""
-    mock_client = AsyncMock()
-    mock_response = ChatCompletion(
-        id="test-id",
-        object="chat.completion",
-        created=1234567890,
-        model="gpt-4",
-        choices=[
-            Choice(
-                index=0,
-                message=ChatCompletionMessage(
-                    role="assistant", content="Mocked OpenAI response"
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
+            await honcho_llm_call(
+                model_config=ModelConfig(
+                    model="claude-sonnet-4-5",
+                    transport="anthropic",
+                    temperature=0.1,
+                    thinking_budget_tokens=1024,
+                    fallback=fallback,
                 ),
-                finish_reason="stop",
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=True,
+                retry_attempts=3,
             )
-        ],
-        usage=CompletionUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-    )
-    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
-    return mock_client
+
+            # Final call should carry the FALLBACK's values, not primary's.
+            final_call = mock_client.messages.create.await_args_list[-1]
+            kwargs = final_call.kwargs
+            assert kwargs["model"] == "claude-haiku-4-5"
+            assert kwargs["temperature"] == 0.9
+            assert kwargs["thinking"] == {
+                "type": "enabled",
+                "budget_tokens": 2048,
+            }
+
+
+@pytest.mark.asyncio
+class TestToolLoopValidation:
+    """Lock in the fail-fast behavior on max_tool_iterations out of range."""
+
+    @pytest.mark.parametrize("bad_value", [0, -1, 101, 1_000])
+    async def test_invalid_max_tool_iterations_raises(self, bad_value: int) -> None:
+        from src.llm.tool_loop import execute_tool_loop
+
+        def _noop_plan() -> Any:  # pragma: no cover - never called
+            raise AssertionError("plan should not be invoked for invalid input")
+
+        def _noop_executor(
+            _name: str, _input: dict[str, Any]
+        ) -> str:  # pragma: no cover
+            return "ok"
+
+        def _noop_retry_callback(_state: Any) -> None:  # pragma: no cover
+            return None
+
+        with pytest.raises(ValidationException, match="max_tool_iterations"):
+            await execute_tool_loop(
+                prompt="x",
+                max_tokens=10,
+                messages=None,
+                tools=[{"name": "t", "description": "d", "input_schema": {}}],
+                tool_choice=None,
+                tool_executor=_noop_executor,
+                max_tool_iterations=bad_value,
+                response_model=None,
+                json_mode=False,
+                temperature=None,
+                stop_seqs=None,
+                verbosity=None,
+                enable_retry=False,
+                retry_attempts=3,
+                max_input_tokens=None,
+                get_attempt_plan=_noop_plan,
+                before_retry_callback=_noop_retry_callback,
+            )

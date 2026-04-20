@@ -35,24 +35,44 @@ def count_message_tokens(messages: list[dict[str, Any]]) -> int:
 
 
 def _is_tool_use_message(msg: dict[str, Any]) -> bool:
-    """Check if a message contains tool calls (any format)."""
+    """Check if a message contains tool calls (any format).
+
+    Recognizes:
+    - Anthropic: ``content`` is a list containing a ``{"type": "tool_use"}`` block.
+    - Gemini: ``parts`` is a list containing a ``{"function_call": …}`` entry.
+    - OpenAI: assistant message with a non-empty ``tool_calls`` field.
+    """
     content = msg.get("content")
     if isinstance(content, list):
         for block in cast(list[dict[str, Any]], content):
             if block.get("type") == "tool_use":
                 return True
-    # OpenAI format: tool_calls field on assistant message.
+    parts = msg.get("parts")
+    if isinstance(parts, list):
+        for part in cast(list[dict[str, Any]], parts):
+            if "function_call" in part:
+                return True
     return bool(msg.get("tool_calls"))
 
 
 def _is_tool_result_message(msg: dict[str, Any]) -> bool:
-    """Check if a message contains tool results (any format)."""
+    """Check if a message contains tool results (any format).
+
+    Recognizes:
+    - Anthropic: ``content`` is a list containing a ``{"type": "tool_result"}`` block.
+    - Gemini: ``parts`` is a list containing a ``{"function_response": …}`` entry.
+    - OpenAI: message with ``role == "tool"``.
+    """
     content = msg.get("content")
     if isinstance(content, list):
         for block in cast(list[dict[str, Any]], content):
             if block.get("type") == "tool_result":
                 return True
-    # OpenAI format: role is "tool".
+    parts = msg.get("parts")
+    if isinstance(parts, list):
+        for part in cast(list[dict[str, Any]], parts):
+            if "function_response" in part:
+                return True
     return msg.get("role") == "tool"
 
 

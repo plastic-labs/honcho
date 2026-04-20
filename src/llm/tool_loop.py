@@ -18,7 +18,8 @@ from typing import Any
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.config import ModelConfig, ModelTransport
+from src.config import ModelTransport
+from src.exceptions import ValidationException
 from src.utils.types import set_current_iteration
 
 from .executor import honcho_llm_call_inner
@@ -33,7 +34,6 @@ from .types import (
     HonchoLLMCallStreamChunk,
     IterationCallback,
     IterationData,
-    ReasoningEffortType,
     StreamingResponseWithMetadata,
     VerbosityType,
 )
@@ -86,7 +86,6 @@ def append_tool_results(
 
 async def stream_final_response(
     *,
-    model_config: ModelConfig,
     prompt: str,
     max_tokens: int,
     conversation_messages: list[dict[str, Any]],
@@ -94,49 +93,58 @@ async def stream_final_response(
     json_mode: bool,
     temperature: float | None,
     stop_seqs: list[str] | None,
-    reasoning_effort: ReasoningEffortType,
     verbosity: VerbosityType,
-    thinking_budget_tokens: int | None,
+    get_attempt_plan: Callable[[], AttemptPlan],
+    enable_retry: bool,
+    retry_attempts: int,
+    before_retry_callback: Callable[[Any], None],
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
     """Stream the final response after tool execution is complete.
 
-    Makes a streaming LLM call with the accumulated conversation (including
-    tool results) to generate the final answer.
+    Uses the same attempt-plan + tenacity retry wrapper as the non-streaming
+    ``_final_call`` so streaming picks up cross-transport fallback on the
+    final attempt and retries transient failures. Reasoning params and the
+    selected client are pulled from the attempt plan rather than rebuilt.
     """
-    # Import here to avoid a runtime cycle with registry.
-    from .registry import client_for_model_config
 
-    provider = model_config.transport
-    model = model_config.model
-    client = client_for_model_config(provider, model_config)
+    async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
+        plan = get_attempt_plan()
+        return await honcho_llm_call_inner(
+            plan.provider,
+            plan.model,
+            prompt,
+            max_tokens,
+            response_model,
+            json_mode,
+            effective_temperature(temperature),
+            stop_seqs,
+            plan.reasoning_effort,
+            verbosity,
+            plan.thinking_budget_tokens,
+            stream=True,
+            client_override=plan.client,
+            tools=None,
+            tool_choice=None,
+            messages=conversation_messages,
+            selected_config=plan.selected_config,
+        )
 
-    stream_response = await honcho_llm_call_inner(
-        provider,
-        model,
-        prompt,
-        max_tokens,
-        response_model,
-        json_mode,
-        effective_temperature(temperature),
-        stop_seqs,
-        reasoning_effort,
-        verbosity,
-        thinking_budget_tokens,
-        stream=True,
-        client_override=client,
-        tools=None,
-        tool_choice=None,
-        messages=conversation_messages,
-        selected_config=model_config,
-    )
+    if enable_retry:
+        wrapped = retry(
+            stop=stop_after_attempt(retry_attempts),
+            wait=wait_exponential(multiplier=1, min=4, max=10),
+            before_sleep=before_retry_callback,
+        )(_setup_stream)
+        stream = await wrapped()
+    else:
+        stream = await _setup_stream()
 
-    async for chunk in stream_response:
+    async for chunk in stream:
         yield chunk
 
 
 async def execute_tool_loop(
     *,
-    model_config: ModelConfig,
     prompt: str,
     max_tokens: int,
     messages: list[dict[str, Any]] | None,
@@ -148,9 +156,7 @@ async def execute_tool_loop(
     json_mode: bool,
     temperature: float | None,
     stop_seqs: list[str] | None,
-    reasoning_effort: ReasoningEffortType,
     verbosity: VerbosityType,
-    thinking_budget_tokens: int | None,
     enable_retry: bool,
     retry_attempts: int,
     max_input_tokens: int | None,
@@ -172,6 +178,13 @@ async def execute_tool_loop(
         history, or a StreamingResponseWithMetadata if stream_final=True.
     """
     from .conversation import truncate_messages_to_fit
+
+    if not MIN_TOOL_ITERATIONS <= max_tool_iterations <= MAX_TOOL_ITERATIONS:
+        raise ValidationException(
+            "max_tool_iterations must be in "
+            + f"[{MIN_TOOL_ITERATIONS}, {MAX_TOOL_ITERATIONS}]; "
+            + f"got {max_tool_iterations}"
+        )
 
     conversation_messages: list[dict[str, Any]] = (
         messages.copy() if messages else [{"role": "user", "content": prompt}]
@@ -262,7 +275,6 @@ async def execute_tool_loop(
 
             if stream_final:
                 stream = stream_final_response(
-                    model_config=model_config,
                     prompt=prompt,
                     max_tokens=max_tokens,
                     conversation_messages=conversation_messages,
@@ -270,9 +282,11 @@ async def execute_tool_loop(
                     json_mode=json_mode,
                     temperature=temperature,
                     stop_seqs=stop_seqs,
-                    reasoning_effort=reasoning_effort,
                     verbosity=verbosity,
-                    thinking_budget_tokens=thinking_budget_tokens,
+                    get_attempt_plan=get_attempt_plan,
+                    enable_retry=enable_retry,
+                    retry_attempts=retry_attempts,
+                    before_retry_callback=before_retry_callback,
                 )
                 return StreamingResponseWithMetadata(
                     stream=stream,
@@ -378,9 +392,15 @@ async def execute_tool_loop(
     )
     conversation_messages.append({"role": "user", "content": synthesis_prompt})
 
+    # Truncate again — the per-iteration truncate ran before the last tool
+    # call, so appending synthesis_prompt could nudge us back over the cap.
+    if max_input_tokens is not None:
+        conversation_messages = truncate_messages_to_fit(
+            conversation_messages, max_input_tokens
+        )
+
     if stream_final:
         stream = stream_final_response(
-            model_config=model_config,
             prompt=prompt,
             max_tokens=max_tokens,
             conversation_messages=conversation_messages,
@@ -388,9 +408,11 @@ async def execute_tool_loop(
             json_mode=json_mode,
             temperature=temperature,
             stop_seqs=stop_seqs,
-            reasoning_effort=reasoning_effort,
             verbosity=verbosity,
-            thinking_budget_tokens=thinking_budget_tokens,
+            get_attempt_plan=get_attempt_plan,
+            enable_retry=enable_retry,
+            retry_attempts=retry_attempts,
+            before_retry_callback=before_retry_callback,
         )
         return StreamingResponseWithMetadata(
             stream=stream,

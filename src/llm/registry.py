@@ -17,6 +17,7 @@ from google.genai import types as genai_types
 from openai import AsyncOpenAI
 
 from src.config import ModelConfig, ModelTransport, settings
+from src.exceptions import ValidationException
 
 from .backend import ProviderBackend
 from .backends.anthropic import AnthropicBackend
@@ -120,7 +121,7 @@ def client_for_model_config(
     api_key = model_config.api_key or default_transport_api_key(provider)
     base_url = model_config.base_url
     if not api_key:
-        raise ValueError(f"Missing API key for {provider} model config")
+        raise ValidationException(f"Missing API key for {provider} model config")
 
     if provider == "anthropic":
         return get_anthropic_override_client(base_url, api_key)

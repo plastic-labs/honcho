@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -253,7 +254,9 @@ def test_app_settings_propagate_embedding_dimensions_to_vector_store() -> None:
 def test_app_settings_require_matching_embedding_and_vector_store_dimensions() -> None:
     with pytest.raises(
         ValueError,
-        match="VECTOR_STORE.DIMENSIONS must match EMBEDDING.VECTOR_DIMENSIONS",
+        match=re.escape(
+            "VECTOR_STORE.DIMENSIONS must match EMBEDDING.VECTOR_DIMENSIONS"
+        ),
     ):
         AppSettings(
             EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
@@ -270,7 +273,7 @@ def test_app_settings_reject_non_1536_dimensions_while_pgvector_or_dual_write_ac
 ):
     with pytest.raises(
         ValueError,
-        match="EMBEDDING.VECTOR_DIMENSIONS must remain 1536",
+        match=re.escape("EMBEDDING.VECTOR_DIMENSIONS must remain 1536"),
     ):
         AppSettings(
             EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
@@ -279,7 +282,7 @@ def test_app_settings_reject_non_1536_dimensions_while_pgvector_or_dual_write_ac
 
     with pytest.raises(
         ValueError,
-        match="EMBEDDING.VECTOR_DIMENSIONS must remain 1536",
+        match=re.escape("EMBEDDING.VECTOR_DIMENSIONS must remain 1536"),
     ):
         AppSettings(
             EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),

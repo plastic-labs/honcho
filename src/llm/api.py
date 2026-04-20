@@ -20,6 +20,7 @@ from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import ConfiguredModelSettings, ModelConfig
+from src.exceptions import ValidationException
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 
@@ -31,7 +32,7 @@ from .runtime import (
     plan_attempt,
     resolve_runtime_model_config,
 )
-from .tool_loop import MAX_TOOL_ITERATIONS, MIN_TOOL_ITERATIONS, execute_tool_loop
+from .tool_loop import execute_tool_loop
 from .types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
@@ -169,24 +170,20 @@ async def honcho_llm_call(
     `fallback`) is used on the final retry attempt, which is 3 by default.
 
     Raises:
-        ValueError: If streaming and tool calling are combined without
-                    `stream_final_only=True`.
+        ValidationException: If streaming and tool calling are combined
+                             without `stream_final_only=True`.
     """
     runtime_model_config = resolve_runtime_model_config(model_config)
-    if temperature is None:
-        temperature = runtime_model_config.temperature
-    if stop_seqs is None:
-        stop_seqs = runtime_model_config.stop_sequences
-    if thinking_budget_tokens is None:
-        thinking_budget_tokens = runtime_model_config.thinking_budget_tokens
-    if reasoning_effort is None and runtime_model_config.thinking_effort is not None:
-        reasoning_effort = cast(
-            ReasoningEffortType,
-            runtime_model_config.thinking_effort,
-        )
+
+    # Caller kwargs left at None are resolved downstream by
+    # effective_config_for_call against whichever ModelConfig wins the
+    # attempt (primary or fallback). Defaulting here from
+    # runtime_model_config would clobber a fallback config's own
+    # temperature/thinking params on the final retry, so we deliberately
+    # keep the locals as the caller supplied them.
 
     if stream and tools and not stream_final_only:
-        raise ValueError(
+        raise ValidationException(
             "Streaming is not supported with tool calling. "
             + "Set stream=False when using tools, or use stream_final_only=True "
             + "to stream only the final response after tool calls."
@@ -280,6 +277,26 @@ async def honcho_llm_call(
             before_sleep=before_retry_callback,
         )(decorated)
 
+    def _trace_thinking_budget() -> int | None:
+        # Trace log should reflect what got applied, so fall back to the
+        # runtime config's value when the caller left the kwarg unset.
+        return (
+            thinking_budget_tokens
+            if thinking_budget_tokens is not None
+            else runtime_model_config.thinking_budget_tokens
+        )
+
+    def _trace_reasoning_effort() -> ReasoningEffortType:
+        if reasoning_effort is not None:
+            return reasoning_effort
+        config_effort = runtime_model_config.thinking_effort
+        return cast(ReasoningEffortType, config_effort) if config_effort else None
+
+    def _trace_stop_seqs() -> list[str] | None:
+        return (
+            stop_seqs if stop_seqs is not None else runtime_model_config.stop_sequences
+        )
+
     # Tool-less path: call once and return.
     if not tools or not tool_executor:
         result: (
@@ -292,39 +309,29 @@ async def honcho_llm_call(
                 prompt=prompt,
                 response=result,
                 max_tokens=max_tokens,
-                thinking_budget_tokens=thinking_budget_tokens,
-                reasoning_effort=reasoning_effort,
+                thinking_budget_tokens=_trace_thinking_budget(),
+                reasoning_effort=_trace_reasoning_effort(),
                 json_mode=json_mode,
-                stop_seqs=stop_seqs,
+                stop_seqs=_trace_stop_seqs(),
                 messages=messages,
             )
         return result
 
-    clamped_iterations = max(
-        MIN_TOOL_ITERATIONS, min(max_tool_iterations, MAX_TOOL_ITERATIONS)
-    )
-    if clamped_iterations != max_tool_iterations:
-        logger.warning(
-            f"max_tool_iterations {max_tool_iterations} clamped to {clamped_iterations} "
-            + f"(valid range: {MIN_TOOL_ITERATIONS}-{MAX_TOOL_ITERATIONS})"
-        )
-
+    # execute_tool_loop raises ValidationException on out-of-range
+    # max_tool_iterations; fail-fast is cheaper than silent clamping here.
     result = await execute_tool_loop(
-        model_config=runtime_model_config,
         prompt=prompt,
         max_tokens=max_tokens,
         messages=messages,
         tools=tools,
         tool_choice=tool_choice,
         tool_executor=tool_executor,
-        max_tool_iterations=clamped_iterations,
+        max_tool_iterations=max_tool_iterations,
         response_model=response_model,
         json_mode=json_mode,
         temperature=temperature,
         stop_seqs=stop_seqs,
-        reasoning_effort=reasoning_effort,
         verbosity=verbosity,
-        thinking_budget_tokens=thinking_budget_tokens,
         enable_retry=enable_retry,
         retry_attempts=retry_attempts,
         max_input_tokens=max_input_tokens,
@@ -340,10 +347,10 @@ async def honcho_llm_call(
             prompt=prompt,
             response=result,
             max_tokens=max_tokens,
-            thinking_budget_tokens=thinking_budget_tokens,
-            reasoning_effort=reasoning_effort,
+            thinking_budget_tokens=_trace_thinking_budget(),
+            reasoning_effort=_trace_reasoning_effort(),
             json_mode=json_mode,
-            stop_seqs=stop_seqs,
+            stop_seqs=_trace_stop_seqs(),
             messages=messages,
         )
     return result
