@@ -43,7 +43,7 @@ The installer:
 1. Clones the extension into `public/scripts/extensions/third-party/sillytavern-honcho`
 2. Symlinks the server plugin to `plugins/honcho-proxy`
 3. Installs the `@honcho-ai/sdk` dependency
-4. Detects your `~/.honcho/config.json` if it exists
+4. Detects your `~/.honcho/config.json` if it exists (if not, the plugin seeds a minimal one on first run)
 
 ### Step 3: Restart SillyTavern
 
@@ -51,10 +51,10 @@ Stop and restart SillyTavern so the server plugin loads. If you have in-progress
 
 ### Step 4: Configure
 
-Open **Extensions** (puzzle piece icon) and expand **Honcho Memory**:
+Open **Extensions** (three-cubes icon, top-right) and expand **Honcho Memory**:
 
 1. Check **Enable Honcho Memory**
-2. Click the API key field to set your key
+2. Click the API key field to set your key (if auto-detected from `~/.honcho/config.json`, you can still enter one here to override)
 3. Enter your workspace ID
 4. Status indicator should show **Ready**
 
@@ -62,7 +62,7 @@ Open **Extensions** (puzzle piece icon) and expand **Honcho Memory**:
 
 If you already use Honcho with other tools (Claude Code, Cursor, Hermes), the extension reads from `~/.honcho/config.json` on startup when resolvable keys are present. Resolution order: `hosts.sillytavern.apiKey` → root-level `apiKey` → fall through to the Extensions-panel key if neither resolves. The Extensions-panel key (SillyTavern's secret manager) takes priority at request time, so entering one in the UI overrides the config file without touching it.
 
-Note that "sillytavern" appears in two namespaces here: as the Honcho workspace ID (a Honcho concept — what you see in the dashboard) and as the `hosts.sillytavern` host key in the config file (a local convention for which tool's settings are which).
+Note that "sillytavern" appears in two namespaces here: as the default Honcho workspace ID (a Honcho concept — what you see in the dashboard; configurable) and as the `hosts.sillytavern` host key in the config file (a local convention for which tool's settings are which).
 
 Flat form:
 
@@ -109,6 +109,10 @@ The **enrichment mode** controls what layers on top of the base context:
 | **Tool call** | Base layer + function tools the LLM can call on demand |
 
 Both the context and reasoning layers use stale-while-revalidate with configurable refresh intervals. After the first turn of a session, there is zero added latency.
+
+<Note>
+**Context only** mode relies on `session.context()`, which is session-scoped — it returns empty output until the session has enough messages for Honcho to derive a representation and summary. For fresh sessions or peers with little history, Reasoning mode is a better default: it queries `peer.chat()` across all of the peer's history, not just the current session.
+</Note>
 
 ### Tool Call Mode
 
@@ -182,6 +186,14 @@ The server plugin reads API credentials from SillyTavern's secrets store first, 
 ## Next Steps
 
 <CardGroup cols={2}>
+  <Card title="Install SillyTavern" icon="download" href="https://docs.sillytavern.app/installation/">
+    New to SillyTavern? Start here — install guide for macOS, Linux, Windows, Docker.
+  </Card>
+
+  <Card title="Claude Code Setup Skill" icon="wand-magic-sparkles" href="https://github.com/plastic-labs/sillytavern-honcho/blob/main/skills/setup/SKILL.md">
+    Agent-assisted install — idempotent, structural patches, end-to-end verification.
+  </Card>
+
   <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/sillytavern-honcho">
     Source code, issues, and install scripts.
   </Card>
