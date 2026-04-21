@@ -378,13 +378,13 @@ class OpenAIBackend:
         response_format: type[BaseModel],
     ) -> Any:
         structured_params = dict(params)
-        structured_params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": response_format.__name__,
-                "schema": response_format.model_json_schema(),
-            },
-        }
+        # Use json_object instead of json_schema — OpenAI-compatible proxies
+        # (Ollama, vLLM, etc.) don't support json_schema and will reject it
+        # or ignore it, returning empty/malformed content. json_object is
+        # widely supported and the repair pipeline (extract_json_from_text
+        # + validate_and_repair_json + repair_response_model_json) handles
+        # markdown-wrapped output correctly.
+        structured_params["response_format"] = {"type": "json_object"}
         return await self._client.chat.completions.create(**structured_params)
 
     @staticmethod

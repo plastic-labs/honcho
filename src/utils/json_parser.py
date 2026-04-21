@@ -352,8 +352,66 @@ def simple_bracket_repair(json_str: str) -> str:
     return repaired
 
 
+def extract_json_from_text(text: str) -> str:
+    """Extract JSON from text that may be wrapped in markdown code fences or prose.
+
+    Handles:
+      - ```json\n{...}\n```
+      - ```\n{...}\n```
+      - Bare JSON surrounded by prose
+    """
+    text = text.strip()
+
+    # Strategy 1: Extract from markdown code fence
+    fence_pattern = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
+    match = fence_pattern.search(text)
+    if match:
+        candidate = match.group(1).strip()
+        try:
+            json.loads(candidate)
+            return candidate
+        except json.JSONDecodeError:
+            pass  # fall through to next strategy
+
+    # Strategy 2: Find outermost { ... } or [ ... ]
+    for open_ch, close_ch in [("{", "}"), ("[", "]")]:
+        start = text.find(open_ch)
+        if start != -1:
+            depth = 0
+            in_string = False
+            escape_next = False
+            for i in range(start, len(text)):
+                ch = text[i]
+                if escape_next:
+                    escape_next = False
+                    continue
+                if ch == "\\":
+                    escape_next = True
+                    continue
+                if ch == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch == open_ch:
+                    depth += 1
+                elif ch == close_ch:
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start : i + 1]
+                        try:
+                            json.loads(candidate)
+                            return candidate
+                        except json.JSONDecodeError:
+                            break  # try the other bracket type
+
+    # Nothing extractable — return as-is (caller will handle the failure)
+    return text
+
+
 def validate_and_repair_json(json_str: str) -> str:
     """Main function with comprehensive repair strategies"""
+    json_str = extract_json_from_text(json_str)
     json_str = json_str.strip()
 
     # Try parsing with repair library
