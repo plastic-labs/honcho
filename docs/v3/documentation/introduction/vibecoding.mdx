@@ -82,9 +82,21 @@ See the [full Claude Code integration guide](/v3/guides/integrations/claudecode)
 
 ---
 
+## OpenCode Plugin
+
+The [OpenCode plugin](/v3/guides/integrations/opencode) gives OpenCode sessions persistent memory that survives context wipes, session restarts, and fresh chats.
+
+```bash
+bunx @honcho-ai/opencode-honcho install
+```
+
+Then run `/honcho:setup` inside OpenCode. See the [full OpenCode integration guide](/v3/guides/integrations/opencode) for setup details.
+
+---
+
 ## Agent Skills
 
-We provide agent skills for coding assistants like Claude Code, Cursor, Windsurf, and others.
+We provide agent skills for coding assistants like Claude Code, OpenCode, Cursor, Windsurf, and others.
 
 <CodeGroup>
 ```bash Install via npx (Recommended)
