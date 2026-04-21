@@ -134,11 +134,13 @@ HONCHO_API_KEY=hch-v3-xxx honcho init --base-url https://api.honcho.dev
 
 ## Agent skill
 
-`honcho-cli` ships with a skill that teaches agents the right commands and conventions for inspecting and debugging a Honcho deployment. Install it anywhere skills are accepted:
+`honcho-cli` ships with a skill that teaches agents the right commands and conventions for inspecting and debugging a Honcho deployment. Install it anywhere skills are accepted (Claude Code, other skill-aware agents):
 
 ```bash
-npx skills install honcho-cli
+npx skills add plastic-labs/honcho
 ```
+
+The picker lists every skill for Honcho — select `honcho-cli` .
 
 ## Environment Variables
 
