@@ -18,13 +18,9 @@ This skill guides you through setting up and running Honcho locally for developm
 
 ### Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) — Python package manager (handles Python version automatically)
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  # or: brew install uv
-  ```
-- **Git**
-- **Docker** with Compose v2 (for Docker setup) — use `docker compose`, not `docker-compose`
+- Python 3.10 or higher
+- [uv](https://docs.astral.sh/uv/) 0.5.0 or higher
+- Docker with Compose v2 (recommended for the database) — use `docker compose` not `docker-compose`
 
 ### Install Dependencies
 
@@ -34,13 +30,17 @@ cd honcho
 uv sync
 ```
 
-Activate the virtual environment (optional — `uv run` handles this automatically):
+Activate the virtual environment:
 
 ```bash
-source .venv/bin/activate        # Unix/macOS
-# .venv\Scripts\activate         # Windows CMD
-# .venv\Scripts\activate.ps1     # Windows PowerShell
+# Unix/macOS
+source .venv/bin/activate
+
+# Windows (Command Prompt): .venv\Scripts\activate
+# Windows (PowerShell):     .venv\Scripts\activate.ps1
 ```
+
+> **Note:** All commands in this guide use `uv run`, which automatically uses the virtual environment — explicit activation is optional.
 
 ### Configure Environment Variables
 
@@ -48,246 +48,280 @@ source .venv/bin/activate        # Unix/macOS
 cp .env.template .env
 ```
 
-#### LLM Setup (required — server will not start without this)
+Open `.env` and set the required values:
 
-Honcho uses LLMs for memory extraction, summarization, dialectic chat, and dreaming. Any OpenAI-compatible endpoint works — OpenRouter, Together, Fireworks, Ollama, vLLM, or a direct vendor API. Models must support tool calling.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DB_CONNECTION_URI` | Yes | PostgreSQL connection string — must use `postgresql+psycopg` prefix |
+| `LLM_OPENAI_COMPATIBLE_BASE_URL` | Yes (default) | Base URL for an OpenAI-compatible endpoint (OpenRouter, Together, Fireworks, local vLLM, etc.) |
+| `LLM_OPENAI_COMPATIBLE_API_KEY` | Yes (default) | API key for the OpenAI-compatible endpoint above |
+| `LLM_ANTHROPIC_API_KEY` | Alternative | Direct Anthropic key — set `DERIVER_PROVIDER=anthropic` etc. to use |
+| `LLM_OPENAI_API_KEY` | Alternative | Direct OpenAI key — set `DERIVER_PROVIDER=openai` etc. to use |
+| `LLM_GEMINI_API_KEY` | Alternative | Direct Gemini key — set `DERIVER_PROVIDER=google` etc. to use |
+| `LLM_GROQ_API_KEY` | Alternative | Direct Groq key — set `DERIVER_PROVIDER=groq` etc. to use |
+| `DERIVER_PROVIDER` | No | LLM provider for the deriver — valid values: `custom`, `anthropic`, `openai`, `google`, `groq` |
+| `DERIVER_MODEL` | No | Model name for the deriver (e.g. `gpt-4o`, `claude-3-5-sonnet-20241022`) |
+| `SUMMARY_PROVIDER` | No | LLM provider for summarization — same valid values as `DERIVER_PROVIDER` |
+| `LLM_EMBEDDING_PROVIDER` | No | Provider for embeddings — defaults to `custom` (OpenAI-compatible); valid values: `custom`, `anthropic`, `openai`, `google`, `groq` |
+| `THINKING_BUDGET_TOKENS` | No | Token budget for extended thinking (Anthropic models only) |
+| `AUTH_USE_AUTH` | No | Defaults to `false`. If set to `true`, every request requires a valid auth token and `AUTH_JWT_SECRET` must also be set |
+| `AUTH_JWT_SECRET` | Conditional | Required when `AUTH_USE_AUTH=true` — JWT signing secret for auth tokens |
+| `SENTRY_ENABLED` | No | Set to `false` for local development |
 
-**Quick start (recommended):**
+> **Important:** Honcho defaults to an OpenAI-compatible endpoint. Set `LLM_OPENAI_COMPATIBLE_BASE_URL` and `LLM_OPENAI_COMPATIBLE_API_KEY` to use OpenRouter, Together, Fireworks, or any compatible provider. To use a direct vendor key instead, set the matching `LLM_*_API_KEY` and point `DERIVER_PROVIDER` (and other role providers) at it.
 
-1. Get a key from [openrouter.ai](https://openrouter.ai) (or any OpenAI-compatible provider)
-2. Edit your `.env`:
+Minimal local development `.env` (OpenAI-compatible example):
 
-```bash
+```env
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
-LLM_OPENAI_COMPATIBLE_API_KEY=your-api-key-here
-LLM_EMBEDDING_PROVIDER=openrouter
-
-DERIVER_PROVIDER=custom
-DERIVER_MODEL=google/gemini-2.5-flash
-
-SUMMARY_PROVIDER=custom
-SUMMARY_MODEL=google/gemini-2.5-flash
-
-DREAM_PROVIDER=custom
-DREAM_MODEL=google/gemini-2.5-flash
-DREAM_DEDUCTION_MODEL=google/gemini-2.5-flash
-DREAM_INDUCTION_MODEL=google/gemini-2.5-flash
-
-DIALECTIC_LEVELS__minimal__PROVIDER=custom
-DIALECTIC_LEVELS__minimal__MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__low__PROVIDER=custom
-DIALECTIC_LEVELS__low__MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__medium__PROVIDER=custom
-DIALECTIC_LEVELS__medium__MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__high__PROVIDER=custom
-DIALECTIC_LEVELS__high__MODEL=google/gemini-2.5-flash
-DIALECTIC_LEVELS__max__PROVIDER=custom
-DIALECTIC_LEVELS__max__MODEL=google/gemini-2.5-flash
+LLM_OPENAI_COMPATIBLE_API_KEY=your-key-here
+SENTRY_ENABLED=false
 ```
 
-> **Tip:** Use find-and-replace to swap all `your-model-here` with your chosen model in one step.
+> **Docker full-stack note:** If you run `docker compose up` (full stack), replace `localhost` with `database` in `DB_CONNECTION_URI` — containers resolve the database by service name, not localhost.
 
-**Alternative — direct vendor keys:**
+### Set Up the Database
+
+Using Docker (recommended):
+
 ```bash
-# Uncomment only the key you want to use
-# LLM_GEMINI_API_KEY=your-key
-# LLM_ANTHROPIC_API_KEY=your-key
-# LLM_OPENAI_API_KEY=your-key
-# LLM_GROQ_API_KEY=your-key
+cp docker-compose.yml.example docker-compose.yml
+docker compose up -d database
 ```
-Then set `DERIVER_PROVIDER=google` (or `anthropic`, `openai`, `groq`) and use the corresponding model name format.
 
-#### Key environment variables reference
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DB_CONNECTION_URI` | `postgresql+psycopg://postgres:postgres@localhost:5432/postgres` | Must use `postgresql+psycopg` prefix |
-| `LLM_OPENAI_COMPATIBLE_BASE_URL` | — | Base URL for OpenAI-compatible endpoint |
-| `LLM_OPENAI_COMPATIBLE_API_KEY` | — | API key for your endpoint |
-| `LLM_EMBEDDING_PROVIDER` | `openrouter` | Routes embeddings through your custom endpoint |
-| `DERIVER_PROVIDER` | `custom` | LLM provider for the background worker |
-| `DERIVER_MODEL` | — | Model name for the deriver |
-| `AUTH_USE_AUTH` | `false` | Set to `true` in production; requires `AUTH_JWT_SECRET` |
+Or use [Supabase](https://supabase.com) as an alternative — set `DB_CONNECTION_URI` to your Supabase connection string.
 
 ---
 
 ## Phase 2: Running Honcho
 
-### Option A: Docker (Recommended)
+### Run Database Migrations
 
-Docker Compose handles the database, Redis cache, API server, and deriver worker.
+Always run migrations before starting the server for the first time or after pulling new changes:
 
-```bash
-cp docker-compose.yml.example docker-compose.yml
-docker compose up -d --build
-```
-
-The first build takes a few minutes. This starts four services:
-- **api** — HTTP server on `localhost:8000`
-- **deriver** — background worker (no HTTP port)
-- **database** — PostgreSQL with pgvector on `localhost:5432`
-- **redis** — cache on `localhost:6379`
-
-Migrations run automatically on startup.
-
-Verify everything is running:
-```bash
-docker compose ps
-curl http://localhost:8000/health
-# {"status":"ok"}
-```
-
-### Option B: Manual Setup
-
-**1. Start PostgreSQL and Redis:**
-```bash
-docker run --name honcho-db \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -p 5432:5432 \
-  -d pgvector/pgvector:pg15
-
-docker run --name honcho-redis \
-  -p 6379:6379 \
-  -d redis:alpine
-```
-
-Or use [Supabase](https://supabase.com) (free, enable pgvector in SQL editor: `CREATE EXTENSION IF NOT EXISTS vector;`).
-
-**2. Run migrations:**
 ```bash
 uv run alembic upgrade head
 ```
 
-**3. Start the API server:**
+### Start the API Server
+
 ```bash
 uv run fastapi dev src/main.py
 ```
 
-**4. Start the deriver** (separate terminal — required for memory processing):
+The API will be available at `http://localhost:8000`. The interactive docs are at `http://localhost:8000/docs`.
+
+### Start the Deriver (Background Worker)
+
+The deriver processes messages asynchronously and builds user representations. Run it in a **separate terminal**:
+
 ```bash
 uv run python -m src.deriver
 ```
 
----
+> **Note:** Both the API server and the deriver must be running for Honcho's memory and reasoning features to work. The API accepts messages; the deriver processes them in the background.
 
-## Phase 3: Verifying Your Setup
+To verify the deriver is working, send a message via the API and watch the deriver terminal for log output showing it picked up the task. If the deriver log is silent, check that a valid LLM API key is set in `.env`.
+
+### Verify Your Setup
+
+With both the API server and deriver running, confirm everything is working:
 
 ```bash
-# Health check
 curl http://localhost:8000/health
-# {"status":"ok"}
-
-# Smoke test — confirms database + migrations
-curl -s -X POST http://localhost:8000/v3/workspaces \
-  -H "Content-Type: application/json" \
-  -d '{"name": "test"}' | python3 -m json.tool
-# Should return a workspace object with an id
 ```
 
-Interactive API docs: `http://localhost:8000/docs`
+Expected response: `{"status":"ok"}`. If the interactive docs are also loading at `http://localhost:8000/docs`, the server is fully up. If `/health` returns an error or times out, check the terminal where you ran `uv run fastapi dev src/main.py` for startup errors.
+
+### Run Everything with Docker
+
+If you prefer to run the full stack via Docker:
+
+```bash
+cp .env.template .env
+cp docker-compose.yml.example docker-compose.yml
+docker compose up
+```
+
+> **Note:** The API container automatically runs database migrations on startup via `docker/entrypoint.sh`. You do not need to run `alembic upgrade head` manually when using Docker.
+
+### Clean Up
+
+Stop the API server and deriver with `Ctrl+C` in each terminal.
+
+Stop Docker containers:
+
+```bash
+docker compose down
+```
+
+Deactivate the virtual environment:
+
+```bash
+deactivate
+```
 
 ---
 
-## Phase 4: Development Tasks
+## Phase 3: Development Tasks
 
-### Running Tests
+### Run Tests
 
 ```bash
 uv run pytest
 ```
 
 Run a specific test file:
+
 ```bash
-uv run pytest tests/test_users.py -v
+uv run pytest tests/test_<filename>.py
 ```
 
-### Creating a New Migration
+Run with verbose output:
 
 ```bash
-uv run alembic revision --autogenerate -m "describe your change"
+uv run pytest -v
 ```
 
-Review the generated file in `migrations/versions/` before applying:
+### Create a New Migration
+
+After modifying a SQLAlchemy model in `src/`:
+
 ```bash
+uv run alembic revision --autogenerate -m "description of your change"
 uv run alembic upgrade head
 ```
 
-Check current migration status:
-```bash
-uv run alembic current
-```
+Review the generated migration file in `migrations/versions/` before applying it.
 
-### Setting Up Pre-commit Hooks
+### Set Up Pre-commit Hooks
 
 ```bash
-uv run pre-commit install
+uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 ```
 
-Hooks run automatically on `git commit`. To run manually:
+Run hooks manually against all files:
+
 ```bash
 uv run pre-commit run --all-files
 ```
 
+Hooks enforce formatting, linting, type checking, and conventional commit messages.
+
 ### Code Standards
 
-- **Formatter:** Black (`uv run black .`)
-- **Types:** Type hints required on all new functions
-- **Docstrings:** Google style
-- **Commits:** Conventional commits (`feat:`, `fix:`, `docs:`, `chore:`)
+Follow these conventions when contributing:
+
+- Format code: `uv run ruff format .`
+- Lint code: `uv run ruff check .`
+- Type check: `uv run basedpyright` (a strict fork of pyright — stricter than standard mypy)
+- Use type hints on all function signatures
+- Write Google-style docstrings
+- Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `test:`, `refactor:`
 
 ---
 
-## Troubleshooting
+## Phase 4: Troubleshooting
 
-### Server fails to start — "LLM provider not configured"
+### ModuleNotFoundError at startup
 
-The server requires at least one LLM provider. Set `LLM_OPENAI_COMPATIBLE_BASE_URL` and `LLM_OPENAI_COMPATIBLE_API_KEY`, then set `DERIVER_MODEL`, `SUMMARY_MODEL`, `DREAM_MODEL`, and all `DIALECTIC_LEVELS__*__MODEL` values. See [LLM Setup](#llm-setup) above.
+**Symptom:** `ModuleNotFoundError: No module named 'honcho'` or similar import errors
+
+**Fix:**
+
+```bash
+uv sync --reinstall
+```
+
+This reinstalls all dependencies from scratch, which resolves corrupted or incomplete installs.
 
 ### Database connection error
 
-```
-sqlalchemy.exc.OperationalError: connection refused
+**Symptom:** `sqlalchemy.exc.OperationalError` or `could not connect to server`
+
+**Fix:**
+1. Confirm Docker is running: `docker compose up -d database`
+2. Check `DB_CONNECTION_URI` in `.env` — must use `postgresql+psycopg` (not `postgresql+psycopg2`)
+3. Verify the database is healthy: `docker compose ps`
+
+### Missing LLM API key
+
+**Symptom:** `DERIVER_PROVIDER not set` or model-related errors at startup or when the deriver runs
+
+**Fix:**
+Honcho defaults to an OpenAI-compatible endpoint. Add these to `.env`:
+
+```env
+LLM_OPENAI_COMPATIBLE_BASE_URL=https://openrouter.ai/api/v1
+LLM_OPENAI_COMPATIBLE_API_KEY=your-key-here
 ```
 
-- Confirm PostgreSQL is running: `docker compose ps` or `brew services list | grep postgresql`
-- Confirm `DB_CONNECTION_URI` uses the `postgresql+psycopg` prefix (not `postgresql://`)
-- Default DB name is `postgres` (not `honcho`)
+To use a direct vendor key instead, set the matching key and point the role providers at it:
 
-### Migrations not applied
-
+```env
+LLM_ANTHROPIC_API_KEY=your-key-here
+DERIVER_PROVIDER=anthropic
+SUMMARY_PROVIDER=anthropic
 ```
-sqlalchemy.exc.ProgrammingError: relation "..." does not exist
-```
-
-Run: `uv run alembic upgrade head`
 
 ### Deriver not processing messages
 
-Check logs:
+**Symptom:** Messages are stored but representations never update; `peer.chat()` returns empty or generic answers
+
+**Fix:**
+1. Confirm the deriver is running in a separate terminal: `uv run python -m src.deriver`
+2. Confirm a valid LLM API key is set — the deriver calls the LLM to build representations
+3. Check deriver logs for errors
+
+### Migration errors
+
+**Symptom:** `alembic.util.exc.CommandError` or `relation does not exist`
+
+**Fix:**
+
 ```bash
-docker compose logs deriver --tail 20
+uv run alembic upgrade head
 ```
 
-- Confirm `DERIVER_PROVIDER` and `DERIVER_MODEL` are set in `.env`
-- Without the deriver, messages are stored but no memory extraction occurs
-- Look for "polling" or "processing" in the logs to confirm it's running
+If you have conflicts or a dirty migration state:
+
+> **Warning:** `alembic downgrade base` drops all tables and deletes all data. Only use this in a local development database.
+
+```bash
+uv run alembic downgrade base
+uv run alembic upgrade head
+```
 
 ### Port already in use
 
+**Symptom:** `ERROR: [Errno 48] Address already in use` (macOS) or `ERROR: [Errno 98] Address already in use` (Linux) on port 8000
+
+**Fix:**
+
+Unix/macOS:
+
 ```bash
-lsof -i :8000   # find what's using port 8000
-kill -9 <PID>
+lsof -ti:8000 | xargs kill -9
 ```
 
-### Docker build fails
+Windows (Command Prompt):
 
-```bash
-docker compose down --volumes
-docker compose up -d --build
+```cmd
+for /f "tokens=5" %a in ('netstat -aon ^| findstr :8000') do taskkill /F /PID %a
 ```
 
-If BuildKit errors occur, ensure Docker Desktop is up to date.
+Windows (PowerShell):
+
+```powershell
+Get-NetTCPConnection -LocalPort 8000 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+```
+
+Then restart the server:
+
+```bash
+uv run fastapi dev src/main.py
+```
 
 ---
 
@@ -295,23 +329,20 @@ If BuildKit errors occur, ensure Docker Desktop is up to date.
 
 | Task | Command |
 |------|---------|
-| Start all services (Docker) | `docker compose up -d --build` |
-| Stop all services | `docker compose down` |
-| Start API server (manual) | `uv run fastapi dev src/main.py` |
-| Start deriver (manual) | `uv run python -m src.deriver` |
+| Install dependencies | `uv sync` |
 | Run migrations | `uv run alembic upgrade head` |
-| New migration | `uv run alembic revision --autogenerate -m "description"` |
+| Start API server | `uv run fastapi dev src/main.py` |
+| Start deriver | `uv run python -m src.deriver` |
 | Run tests | `uv run pytest` |
-| Check health | `curl http://localhost:8000/health` |
-| View API docs | `http://localhost:8000/docs` |
-| View logs (Docker) | `docker compose logs api --tail 50` |
-| Check container status | `docker compose ps` |
+| Format code | `uv run ruff format .` |
+| New migration | `uv run alembic revision --autogenerate -m "description"` |
+| Run all pre-commit hooks | `uv run pre-commit run --all-files` |
 
 ---
 
 ## Resources
 
 - [Honcho Documentation](https://docs.honcho.dev)
-- [Configuration Guide](https://docs.honcho.dev/contributing/configuration)
-- [API Reference](https://docs.honcho.dev/api-reference/introduction)
-- [Discord Community](https://discord.gg/honcho)
+- [Contributing Guide](../../../CONTRIBUTING.md)
+- [API Reference](https://docs.honcho.dev/v3/api-reference/introduction)
+- [Discord Community](https://discord.com/invite/honcho)
