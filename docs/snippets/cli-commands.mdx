@@ -8,96 +8,106 @@
 
 List, search, create, and delete peer conclusions (Honcho's memory atoms).
 
-**Options**
-
-- `--json` — Force JSON output
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--session` / `-s` — Override session ID
-
-**honcho conclusion create**
-
+<AccordionGroup>
+<Accordion title="create">
 Create a conclusion.
 
-**Arguments**
+```bash
+honcho conclusion create <content>
+```
 
-- `<content>`
-
-**Options**
-
-- `--observer` — Observer peer ID
-- `--observed` — Observed peer ID
-- `--session` / `-s` — Session context
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--json` — Force JSON output
-
-**honcho conclusion delete**
-
+<ParamField path="content" type="string" required />
+<ParamField path="--observer" type="string">
+  Observer peer ID.
+</ParamField>
+<ParamField path="--observed" type="string">
+  Observed peer ID.
+</ParamField>
+<ParamField path="--session" type="string">
+  Session context. Short alias: `-s`.
+</ParamField>
+</Accordion>
+<Accordion title="delete">
 Delete a conclusion.
 
-**Arguments**
+```bash
+honcho conclusion delete <conclusion_id>
+```
 
-- `<conclusion_id>`
-
-**Options**
-
-- `--observer` — Observer peer ID
-- `--observed` — Observed peer ID
-- `--yes` / `-y` — Skip confirmation
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--json` — Force JSON output
-
-**honcho conclusion list**
-
+<ParamField path="conclusion_id" type="string" required />
+<ParamField path="--observer" type="string">
+  Observer peer ID.
+</ParamField>
+<ParamField path="--observed" type="string">
+  Observed peer ID.
+</ParamField>
+<ParamField path="--yes" type="boolean">
+  Skip confirmation. Short alias: `-y`.
+</ParamField>
+</Accordion>
+<Accordion title="list">
 List conclusions.
 
-**Options**
+```bash
+honcho conclusion list
+```
 
-- `--observer` — Observer peer ID
-- `--observed` — Observed peer ID
-- `--limit` — Max results
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--json` — Force JSON output
-
-**honcho conclusion search**
-
+<ParamField path="--observer" type="string">
+  Observer peer ID.
+</ParamField>
+<ParamField path="--observed" type="string">
+  Observed peer ID.
+</ParamField>
+<ParamField path="--limit" type="number" default="10">
+  Max results.
+</ParamField>
+</Accordion>
+<Accordion title="search">
 Semantic search over conclusions.
 
-**Arguments**
+```bash
+honcho conclusion search <query>
+```
 
-- `<query>`
-
-**Options**
-
-- `--observer` — Observer peer ID
-- `--observed` — Observed peer ID
-- `--top-k` — Max results
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--json` — Force JSON output
+<ParamField path="query" type="string" required />
+<ParamField path="--observer" type="string">
+  Observer peer ID.
+</ParamField>
+<ParamField path="--observed" type="string">
+  Observed peer ID.
+</ParamField>
+<ParamField path="--top-k" type="number" default="10">
+  Max results.
+</ParamField>
+</Accordion>
+</AccordionGroup>
 
 ## honcho config
 
 Inspect CLI configuration.
 
-**Options**
+```bash
+honcho config
+```
 
-- `--json` — Force JSON output
 
 ## honcho doctor
 
 Verify config and connectivity. Scope with -w / -p to check workspace, peer, and queue health.
 
-**Options**
+```bash
+honcho doctor
+```
 
-- `--json` — Force JSON output
 
 ## honcho help
 
 Show help message.
+
+```bash
+honcho help
+```
+
 
 ## honcho init
 
@@ -107,498 +117,431 @@ Press Enter to keep the current value or type a replacement.
 Workspace / peer / session scoping is per-command via -w / -p / -s
 or HONCHO_* env vars — never persisted.
 
-**Options**
+```bash
+honcho init
+```
 
-- `--api-key` — API key (admin JWT)
-- `--base-url` — Honcho API URL (e.g. https://api.honcho.dev, http://localhost:8000)
-- `--json` — Force JSON output
+<ParamField path="--api-key" type="string">
+  API key (admin JWT).
+</ParamField>
+<ParamField path="--base-url" type="string">
+  Honcho API URL (e.g. https://api.honcho.dev, http://localhost:8000).
+</ParamField>
 
 ## honcho message
 
 List, create, and get messages within a session.
 
-**Options**
-
-- `--json` — Force JSON output
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--session` / `-s` — Override session ID
-
-**honcho message create**
-
+<AccordionGroup>
+<Accordion title="create">
 Create a message in a session.
 
-**Arguments**
+```bash
+honcho message create <content>
+```
 
-- `<content>`
-
-**Options**
-
-- `--peer` / `-p` — Peer ID of the message sender
-- `--metadata` — JSON metadata to associate with the message
-- `--session` / `-s` — Session ID
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho message get**
-
+<ParamField path="content" type="string" required />
+<ParamField path="--peer" type="string" required>
+  Peer ID of the message sender. Short alias: `-p`.
+</ParamField>
+<ParamField path="--metadata" type="string">
+  JSON metadata to associate with the message.
+</ParamField>
+<ParamField path="--session" type="string">
+  Session ID. Short alias: `-s`.
+</ParamField>
+</Accordion>
+<Accordion title="get">
 Get a single message by ID.
 
-**Arguments**
+```bash
+honcho message get <message_id>
+```
 
-- `<message_id>`
-
-**Options**
-
-- `--session` / `-s` — Session ID
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho message list**
-
+<ParamField path="message_id" type="string" required />
+<ParamField path="--session" type="string">
+  Session ID. Short alias: `-s`.
+</ParamField>
+</Accordion>
+<Accordion title="list">
 List messages in a session. Scoped to a peer with -p.
 
-**Arguments**
+```bash
+honcho message list [<session_id>]
+```
 
-- `<session_id>` (optional)
-
-**Options**
-
-- `--last` — Number of recent messages
-- `--reverse` — Show oldest first (default is newest first)
-- `--brief` — Show only IDs, peer, token count, and created_at (no content)
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Filter by peer ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
+<ParamField path="session_id" type="string" />
+<ParamField path="--last" type="number" default="20">
+  Number of recent messages.
+</ParamField>
+<ParamField path="--reverse" type="boolean">
+  Show oldest first (default is newest first).
+</ParamField>
+<ParamField path="--brief" type="boolean">
+  Show only IDs, peer, token count, and created_at (no content).
+</ParamField>
+<ParamField path="--peer" type="string">
+  Filter by peer ID. Short alias: `-p`.
+</ParamField>
+</Accordion>
+</AccordionGroup>
 
 ## honcho peer
 
 List, create, chat with, search, and manage peers and their representations.
 
-**Options**
-
-- `--json` — Force JSON output
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--session` / `-s` — Override session ID
-
-**honcho peer card**
-
+<AccordionGroup>
+<Accordion title="card">
 Get raw peer card content.
 
-**Arguments**
+```bash
+honcho peer card [<peer_id>]
+```
 
-- `<peer_id>` (optional)
-
-**Options**
-
-- `--target` — Target peer for relationship card
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--json` — Force JSON output
-
-**honcho peer chat**
-
+<ParamField path="peer_id" type="string" />
+<ParamField path="--target" type="string">
+  Target peer for relationship card.
+</ParamField>
+</Accordion>
+<Accordion title="chat">
 Query the dialectic about a peer.
 
-**Arguments**
+```bash
+honcho peer chat <query>
+```
 
-- `<query>`
-
-**Options**
-
-- `--target` — Target peer for perspective
-- `--reasoning` / `-r` — Reasoning level: minimal, low, medium, high, max
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho peer create**
-
+<ParamField path="query" type="string" required />
+<ParamField path="--target" type="string">
+  Target peer for perspective.
+</ParamField>
+<ParamField path="--reasoning" type="string">
+  Reasoning level: minimal, low, medium, high, max. Short alias: `-r`.
+</ParamField>
+</Accordion>
+<Accordion title="create">
 Create or get a peer.
 
-**Arguments**
+```bash
+honcho peer create <peer_id>
+```
 
-- `<peer_id>`
-
-**Options**
-
-- `--observe-me` / `--no-observe-me` — Whether Honcho will form a representation of this peer
-- `--metadata` — JSON metadata to associate with the peer
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho peer get-metadata**
-
+<ParamField path="peer_id" type="string" required />
+<ParamField path="--observe-me" type="boolean">
+  Whether Honcho will form a representation of this peer. Negate with `--no-observe-me`.
+</ParamField>
+<ParamField path="--metadata" type="string">
+  JSON metadata to associate with the peer.
+</ParamField>
+</Accordion>
+<Accordion title="get-metadata">
 Get metadata for a peer.
 
-**Arguments**
+```bash
+honcho peer get-metadata [<peer_id>]
+```
 
-- `<peer_id>` (optional)
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--json` — Force JSON output
-
-**honcho peer inspect**
-
+<ParamField path="peer_id" type="string" />
+</Accordion>
+<Accordion title="inspect">
 Inspect a peer: card, session count, recent conclusions.
 
-**Arguments**
+```bash
+honcho peer inspect [<peer_id>]
+```
 
-- `<peer_id>` (optional)
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--json` — Force JSON output
-
-**honcho peer list**
-
+<ParamField path="peer_id" type="string" />
+</Accordion>
+<Accordion title="list">
 List all peers in the workspace.
 
-**Options**
+```bash
+honcho peer list
+```
 
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho peer representation**
-
+</Accordion>
+<Accordion title="representation">
 Get the formatted representation for a peer.
 
-**Arguments**
+```bash
+honcho peer representation [<peer_id>]
+```
 
-- `<peer_id>` (optional)
-
-**Options**
-
-- `--target` — Target peer to get representation about
-- `--search-query` — Semantic search query to filter conclusions
-- `--max-conclusions` — Maximum number of conclusions to include
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho peer search**
-
+<ParamField path="peer_id" type="string" />
+<ParamField path="--target" type="string">
+  Target peer to get representation about.
+</ParamField>
+<ParamField path="--search-query" type="string">
+  Semantic search query to filter conclusions.
+</ParamField>
+<ParamField path="--max-conclusions" type="number">
+  Maximum number of conclusions to include.
+</ParamField>
+</Accordion>
+<Accordion title="search">
 Search a peer's messages.
 
-**Arguments**
+```bash
+honcho peer search <query>
+```
 
-- `<query>`
-
-**Options**
-
-- `--limit` — Max results
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--json` — Force JSON output
-
-**honcho peer set-metadata**
-
+<ParamField path="query" type="string" required />
+<ParamField path="--limit" type="number" default="10">
+  Max results.
+</ParamField>
+</Accordion>
+<Accordion title="set-metadata">
 Set metadata for a peer.
 
-**Arguments**
+```bash
+honcho peer set-metadata <metadata>
+```
 
-- `<metadata>`
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Peer ID (uses default if omitted)
-- `--json` — Force JSON output
+<ParamField path="metadata" type="string" required />
+<ParamField path="--peer" type="string">
+  Peer ID (uses default if omitted). Short alias: `-p`.
+</ParamField>
+</Accordion>
+</AccordionGroup>
 
 ## honcho session
 
 List, inspect, create, delete, and manage conversation sessions and their peers.
 
-**Options**
-
-- `--json` — Force JSON output
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--session` / `-s` — Override session ID
-
-**honcho session add-peers**
-
+<AccordionGroup>
+<Accordion title="add-peers">
 Add peers to a session.
 
-**Arguments**
+```bash
+honcho session add-peers <session_id> <peer_ids>
+```
 
-- `<session_id>`
-- `<peer_ids>`
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho session context**
-
+<ParamField path="session_id" type="string" required />
+<ParamField path="peer_ids" type="string" required />
+</Accordion>
+<Accordion title="context">
 Get session context (what an agent would see).
 
-**Arguments**
+```bash
+honcho session context [<session_id>]
+```
 
-- `<session_id>` (optional)
-
-**Options**
-
-- `--tokens` — Token budget
-- `--summary` / `--no-summary` — Include summary
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho session create**
-
+<ParamField path="session_id" type="string" />
+<ParamField path="--tokens" type="number">
+  Token budget.
+</ParamField>
+<ParamField path="--summary" type="boolean" default="true">
+  Include summary. Negate with `--no-summary`.
+</ParamField>
+</Accordion>
+<Accordion title="create">
 Create or get a session.
 
-**Arguments**
+```bash
+honcho session create <session_id>
+```
 
-- `<session_id>`
-
-**Options**
-
-- `--peers` — Comma-separated peer IDs to add to the session
-- `--metadata` — JSON metadata to associate with the session
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho session delete**
-
+<ParamField path="session_id" type="string" required />
+<ParamField path="--peers" type="string">
+  Comma-separated peer IDs to add to the session.
+</ParamField>
+<ParamField path="--metadata" type="string">
+  JSON metadata to associate with the session.
+</ParamField>
+</Accordion>
+<Accordion title="delete">
 Delete a session and all its data. Destructive — requires --yes or interactive confirm.
 
-**Arguments**
+```bash
+honcho session delete [<session_id>]
+```
 
-- `<session_id>` (optional)
-
-**Options**
-
-- `--yes` / `-y` — Skip confirmation
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho session get-metadata**
-
+<ParamField path="session_id" type="string" />
+<ParamField path="--yes" type="boolean">
+  Skip confirmation. Short alias: `-y`.
+</ParamField>
+</Accordion>
+<Accordion title="get-metadata">
 Get metadata for a session.
 
-**Arguments**
+```bash
+honcho session get-metadata [<session_id>]
+```
 
-- `<session_id>` (optional)
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho session inspect**
-
+<ParamField path="session_id" type="string" />
+</Accordion>
+<Accordion title="inspect">
 Inspect a session: peers, message count, summaries, config.
 
-**Arguments**
+```bash
+honcho session inspect [<session_id>]
+```
 
-- `<session_id>` (optional)
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho session list**
-
+<ParamField path="session_id" type="string" />
+</Accordion>
+<Accordion title="list">
 List sessions in the workspace.
 
-**Options**
+```bash
+honcho session list
+```
 
-- `--peer` / `-p` — Filter by peer
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho session peers**
-
+<ParamField path="--peer" type="string">
+  Filter by peer. Short alias: `-p`.
+</ParamField>
+</Accordion>
+<Accordion title="peers">
 List peers in a session.
 
-**Arguments**
+```bash
+honcho session peers [<session_id>]
+```
 
-- `<session_id>` (optional)
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho session remove-peers**
-
+<ParamField path="session_id" type="string" />
+</Accordion>
+<Accordion title="remove-peers">
 Remove peers from a session.
 
-**Arguments**
+```bash
+honcho session remove-peers <session_id> <peer_ids>
+```
 
-- `<session_id>`
-- `<peer_ids>`
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho session representation**
-
+<ParamField path="session_id" type="string" required />
+<ParamField path="peer_ids" type="string" required />
+</Accordion>
+<Accordion title="representation">
 Get the representation of a peer within a session.
 
-**Arguments**
+```bash
+honcho session representation <peer_id> [<session_id>]
+```
 
-- `<peer_id>`
-- `<session_id>` (optional)
-
-**Options**
-
-- `--target` — Target peer (what peer_id knows about target)
-- `--search-query` — Semantic search query to filter conclusions
-- `--max-conclusions` — Maximum number of conclusions to include
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho session search**
-
+<ParamField path="peer_id" type="string" required />
+<ParamField path="session_id" type="string" />
+<ParamField path="--target" type="string">
+  Target peer (what peer_id knows about target).
+</ParamField>
+<ParamField path="--search-query" type="string">
+  Semantic search query to filter conclusions.
+</ParamField>
+<ParamField path="--max-conclusions" type="number">
+  Maximum number of conclusions to include.
+</ParamField>
+</Accordion>
+<Accordion title="search">
 Search messages in a session.
 
-**Arguments**
+```bash
+honcho session search <query> [<session_id>]
+```
 
-- `<query>`
-- `<session_id>` (optional)
-
-**Options**
-
-- `--limit` — Max results
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho session set-metadata**
-
+<ParamField path="query" type="string" required />
+<ParamField path="session_id" type="string" />
+<ParamField path="--limit" type="number" default="10">
+  Max results.
+</ParamField>
+</Accordion>
+<Accordion title="set-metadata">
 Set metadata for a session.
 
-**Arguments**
+```bash
+honcho session set-metadata [<session_id>]
+```
 
-- `<session_id>` (optional)
-
-**Options**
-
-- `--data` / `-d` — JSON metadata to set (e.g. '\{"key": "value"\}')
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
-
-**honcho session summaries**
-
+<ParamField path="session_id" type="string" />
+<ParamField path="--data" type="string" required>
+  JSON metadata to set (e.g. '\{"key": "value"\}'). Short alias: `-d`.
+</ParamField>
+</Accordion>
+<Accordion title="summaries">
 Get session summaries (short + long).
 
-**Arguments**
+```bash
+honcho session summaries [<session_id>]
+```
 
-- `<session_id>` (optional)
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--json` — Force JSON output
+<ParamField path="session_id" type="string" />
+</Accordion>
+</AccordionGroup>
 
 ## honcho workspace
 
 List, create, inspect, delete, and search workspaces.
 
-**Options**
-
-- `--json` — Force JSON output
-- `--workspace` / `-w` — Override workspace ID
-- `--peer` / `-p` — Override peer ID
-- `--session` / `-s` — Override session ID
-
-**honcho workspace create**
-
+<AccordionGroup>
+<Accordion title="create">
 Create or get a workspace.
 
-**Arguments**
+```bash
+honcho workspace create <workspace_id>
+```
 
-- `<workspace_id>`
-
-**Options**
-
-- `--metadata` — JSON metadata to associate with the workspace
-- `--json` — Force JSON output
-
-**honcho workspace delete**
-
+<ParamField path="workspace_id" type="string" required />
+<ParamField path="--metadata" type="string">
+  JSON metadata to associate with the workspace.
+</ParamField>
+</Accordion>
+<Accordion title="delete">
 Delete a workspace. Use --dry-run first to see what will be deleted.
 
 Requires --yes to skip confirmation, or will prompt interactively.
 If sessions exist, requires --cascade to delete them first.
 
-**Arguments**
+```bash
+honcho workspace delete <workspace_id>
+```
 
-- `<workspace_id>`
-
-**Options**
-
-- `--yes` / `-y` — Skip confirmation prompt (for scripted/agent use)
-- `--cascade` — Delete all sessions before deleting the workspace
-- `--dry-run` — Show what would be deleted without deleting
-- `--json` — Force JSON output
-
-**honcho workspace inspect**
-
+<ParamField path="workspace_id" type="string" required />
+<ParamField path="--yes" type="boolean">
+  Skip confirmation prompt (for scripted/agent use). Short alias: `-y`.
+</ParamField>
+<ParamField path="--cascade" type="boolean">
+  Delete all sessions before deleting the workspace.
+</ParamField>
+<ParamField path="--dry-run" type="boolean">
+  Show what would be deleted without deleting.
+</ParamField>
+</Accordion>
+<Accordion title="inspect">
 Inspect a workspace: peers, sessions, config.
 
-**Arguments**
+```bash
+honcho workspace inspect [<workspace_id>]
+```
 
-- `<workspace_id>` (optional)
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--json` — Force JSON output
-
-**honcho workspace list**
-
+<ParamField path="workspace_id" type="string" />
+</Accordion>
+<Accordion title="list">
 List all accessible workspaces.
 
-**Options**
+```bash
+honcho workspace list
+```
 
-- `--json` — Force JSON output
-
-**honcho workspace queue-status**
-
+</Accordion>
+<Accordion title="queue-status">
 Get queue processing status.
 
-**Options**
+```bash
+honcho workspace queue-status
+```
 
-- `--workspace` / `-w` — Override workspace ID
-- `--session` / `-s` — Override session ID
-- `--observer` — Filter by observer peer
-- `--sender` — Filter by sender peer
-- `--json` — Force JSON output
-
-**honcho workspace search**
-
+<ParamField path="--observer" type="string">
+  Filter by observer peer.
+</ParamField>
+<ParamField path="--sender" type="string">
+  Filter by sender peer.
+</ParamField>
+</Accordion>
+<Accordion title="search">
 Search messages across workspace.
 
-**Arguments**
+```bash
+honcho workspace search <query>
+```
 
-- `<query>`
-
-**Options**
-
-- `--workspace` / `-w` — Override workspace ID
-- `--limit` — Max results
-- `--json` — Force JSON output
+<ParamField path="query" type="string" required />
+<ParamField path="--limit" type="number" default="10">
+  Max results.
+</ParamField>
+</Accordion>
+</AccordionGroup>

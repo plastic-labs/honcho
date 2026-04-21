@@ -1,8 +1,9 @@
 """Generate ``docs/snippets/cli-commands.mdx`` from the Typer app.
 
-Walks the ``honcho`` Typer app and emits a Mintlify snippet describing every
-command, argument, and option. The output is a single snippet intended to be
-included by ``docs/v3/documentation/reference/cli.mdx`` via ``<Snippet>``.
+Walks the ``honcho`` Typer app and emits a Mintlify snippet using native
+Mintlify components: ``<AccordionGroup>`` / ``<Accordion>`` for subcommand
+grouping and ``<ParamField>`` for each argument and option. The output is a
+single snippet included by ``docs/v3/documentation/reference/cli.mdx``.
 
 Usage::
 
@@ -34,6 +35,15 @@ HEADER = """{/*
 
 """
 
+# Documented once in cli.mdx's Configuration table. Skip at the per-command
+# level so each Accordion only shows options specific to that subcommand.
+GLOBAL_OPTIONS: set[tuple[str, str]] = {
+    ("--workspace", "Override workspace ID"),
+    ("--peer", "Override peer ID"),
+    ("--session", "Override session ID"),
+    ("--json", "Force JSON output"),
+}
+
 
 def _escape_mdx(text: str) -> str:
     """Escape MDX-sensitive characters in prose so Mintlify's parser doesn't
@@ -46,46 +56,169 @@ def _escape_mdx(text: str) -> str:
     )
 
 
-def _format_param(param: click.Parameter) -> str:
+def _attr(value: str) -> str:
+    """Escape a string for use inside a JSX double-quoted attribute value."""
+    return value.replace("\\", "\\\\").replace('"', "'")
+
+
+def _long_opt(param: click.Option) -> str | None:
+    return next((o for o in param.opts if o.startswith("--")), None)
+
+
+def _short_opt(param: click.Option) -> str | None:
+    return next(
+        (o for o in param.opts if o.startswith("-") and not o.startswith("--")),
+        None,
+    )
+
+
+def _is_global(param: click.Parameter) -> bool:
+    if not isinstance(param, click.Option) or not param.help:
+        return False
+    return (_long_opt(param), param.help) in GLOBAL_OPTIONS
+
+
+def _param_type(param: click.Parameter) -> str:
+    if isinstance(param, click.Option) and param.is_flag:
+        return "boolean"
+    if isinstance(param.type, click.Choice):
+        return "string"
+    name = getattr(param.type, "name", "")
+    if name in ("integer", "int"):
+        return "number"
+    if name in ("float", "decimal"):
+        return "number"
+    if name == "boolean":
+        return "boolean"
+    return "string"
+
+
+def _param_path(param: click.Parameter) -> str:
     if isinstance(param, click.Argument):
-        name = param.name or ""
-        return f"`<{name}>`" + ("" if param.required else " (optional)")
-    opts = " / ".join(f"`{o}`" for o in param.opts)
-    if param.secondary_opts:
-        opts += " / " + " / ".join(f"`{o}`" for o in param.secondary_opts)
-    if isinstance(param, click.Option) and param.help:
-        return f"{opts} — {_escape_mdx(param.help)}"
-    return opts
+        return param.name or ""
+    return _long_opt(param) or (param.opts[0] if param.opts else "")
 
 
-def _render(cmd: click.Command, path: list[str]) -> list[str]:
-    lines: list[str] = []
-    full = " ".join(path)
-    if len(path) <= 2:
-        lines.append(f"## {full}\n")
-    else:
-        lines.append(f"**{full}**\n")
-    if cmd.help:
-        lines.append(f"{_escape_mdx(cmd.help.strip())}\n")
+def _param_required(param: click.Parameter) -> bool:
+    if isinstance(param, click.Argument):
+        return param.required
+    if isinstance(param, click.Option):
+        return bool(param.required)
+    return False
 
+
+def _default_attr(param: click.Parameter) -> str | None:
+    default = param.default
+    if default is None or default is False or callable(default):
+        return None
+    if isinstance(default, (list, tuple)) and not default:
+        return None
+    if default is True:
+        return "true"
+    return _attr(str(default))
+
+
+def _ensure_period(text: str) -> str:
+    return text if text.endswith((".", "?", "!", ":")) else text + "."
+
+
+def _param_body(param: click.Parameter) -> str:
+    parts: list[str] = []
+    if isinstance(param, click.Option):
+        if param.help:
+            parts.append(_ensure_period(_escape_mdx(param.help.strip())))
+        short = _short_opt(param)
+        if short:
+            parts.append(f"Short alias: `{short}`.")
+        if param.secondary_opts:
+            neg = " / ".join(f"`{o}`" for o in param.secondary_opts)
+            parts.append(f"Negate with {neg}.")
+        if isinstance(param.type, click.Choice):
+            choices = ", ".join(f"`{c}`" for c in param.type.choices)
+            parts.append(f"One of: {choices}.")
+    return " ".join(parts)
+
+
+def _render_param(param: click.Parameter) -> list[str]:
+    props = [
+        f'path="{_attr(_param_path(param))}"',
+        f'type="{_param_type(param)}"',
+    ]
+    if _param_required(param):
+        props.append("required")
+    default_attr = _default_attr(param)
+    if default_attr is not None:
+        props.append(f'default="{default_attr}"')
+    body = _param_body(param).strip()
+    open_tag = f"<ParamField {' '.join(props)}>"
+    if body:
+        return [open_tag, f"  {body}", "</ParamField>"]
+    return [open_tag.replace(">", " />")]
+
+
+def _params_of(
+    cmd: click.Command, *, strip_globals: bool
+) -> list[click.Parameter]:
     args = [p for p in cmd.params if isinstance(p, click.Argument)]
-    opts = [p for p in cmd.params if isinstance(p, click.Option) and not p.hidden]
+    opts = [
+        p
+        for p in cmd.params
+        if isinstance(p, click.Option)
+        and not p.hidden
+        and not (strip_globals and _is_global(p))
+    ]
+    return args + opts
 
-    if args:
-        lines.append("**Arguments**\n")
-        for p in args:
-            lines.append(f"- {_format_param(p)}")
+
+def _invocation_line(cmd: click.Command, path: list[str]) -> str:
+    args = [p for p in cmd.params if isinstance(p, click.Argument)]
+    parts = [" ".join(path)]
+    for a in args:
+        placeholder = f"<{a.name}>"
+        if not a.required:
+            placeholder = f"[{placeholder}]"
+        parts.append(placeholder)
+    return " ".join(parts)
+
+
+def _render_accordion(cmd: click.Command, path: list[str]) -> list[str]:
+    lines = [f'<Accordion title="{_attr(path[-1])}">']
+    if cmd.help:
+        lines.append(_escape_mdx(cmd.help.strip()))
+        lines.append("")
+    lines.append("```bash")
+    lines.append(_invocation_line(cmd, path))
+    lines.append("```")
+    lines.append("")
+    for p in _params_of(cmd, strip_globals=True):
+        lines.extend(_render_param(p))
+    lines.append("</Accordion>")
+    return lines
+
+
+def _render_top(cmd: click.Command, path: list[str]) -> list[str]:
+    lines = [f"## {' '.join(path)}", ""]
+    if cmd.help:
+        lines.append(_escape_mdx(cmd.help.strip()))
         lines.append("")
 
-    if opts:
-        lines.append("**Options**\n")
-        for p in opts:
-            lines.append(f"- {_format_param(p)}")
-        lines.append("")
-
-    if isinstance(cmd, click.Group):
+    if isinstance(cmd, click.Group) and cmd.commands:
+        lines.append("<AccordionGroup>")
         for sub_name in sorted(cmd.commands):
-            lines.extend(_render(cmd.commands[sub_name], path + [sub_name]))
+            lines.extend(
+                _render_accordion(cmd.commands[sub_name], path + [sub_name])
+            )
+        lines.append("</AccordionGroup>")
+        lines.append("")
+        return lines
+
+    lines.append("```bash")
+    lines.append(_invocation_line(cmd, path))
+    lines.append("```")
+    lines.append("")
+    for p in _params_of(cmd, strip_globals=True):
+        lines.extend(_render_param(p))
+    lines.append("")
     return lines
 
 
@@ -96,7 +229,7 @@ def build() -> str:
 
     body: list[str] = []
     for name in sorted(root.commands):
-        body.extend(_render(root.commands[name], ["honcho", name]))
+        body.extend(_render_top(root.commands[name], ["honcho", name]))
     return HEADER + "\n".join(body) + "\n"
 
 

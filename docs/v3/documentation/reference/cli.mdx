@@ -81,20 +81,15 @@ export HONCHO_BASE_URL=https://api.honcho.dev
 honcho workspace list
 ```
 
-<CliCommands />
+## Output & exit codes
 
-## Agent & Scripting Usage
+Every command adapts its output to the context:
 
-All commands output JSON when stdout isn't a TTY, or when `--json` is forced.
-Collection commands emit JSON arrays; single-resource commands emit JSON objects.
+- **TTY** — human-readable tables via Rich.
+- **Piped or redirected** — JSON automatically (detected via `isatty`).
+- **`--json` flag / `HONCHO_JSON=1`** — force JSON regardless of terminal.
 
-```bash
-honcho peer list --json
-honcho workspace inspect --json | jq '.peers'
-honcho doctor --json              # machine-parseable health checklist
-```
-
-Errors are structured:
+Collection commands emit JSON arrays; single-resource commands emit JSON objects. Errors are always structured:
 
 ```json
 {
@@ -104,6 +99,117 @@ Errors are structured:
     "details": {"workspace_id": "my-ws", "peer_id": "abc"}
   }
 }
+```
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Success |
+| `1` | Client error (bad input, resource not found) |
+| `2` | Server error |
+| `3` | Auth error (missing or invalid API key) |
+
+CI pipelines and agent runtimes can branch on these without parsing stderr.
+
+## Command reference
+
+<CliCommands />
+
+## Workflows
+
+### Inspect an unfamiliar workspace
+
+When you pick up a workspace and need to orient — start broad, narrow to the peer and session you care about.
+
+<Steps>
+  <Step title="Survey the workspace">
+    ```bash
+    honcho workspace inspect --json
+    honcho peer list --json
+    ```
+  </Step>
+  <Step title="Inspect a specific peer">
+    ```bash
+    honcho peer inspect <peer_id> --json
+    honcho peer card <peer_id> --json
+    ```
+  </Step>
+  <Step title="Review the peer's memory">
+    ```bash
+    honcho conclusion list --observer <peer_id> --json
+    honcho conclusion search "topic" --observer <peer_id> --json
+    ```
+  </Step>
+  <Step title="Debug a session">
+    ```bash
+    honcho session inspect <session_id> --json
+    honcho message list <session_id> --last 20 --json
+    honcho session context <session_id> --json
+    honcho session summaries <session_id> --json
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  `honcho session context` shows exactly what an agent would receive at inference time — check it before `honcho peer chat` if a response surprises you.
+</Tip>
+
+### A peer isn't learning
+
+If new messages aren't producing new conclusions, work down the diagnostic ladder.
+
+```bash
+# Is observation enabled for this peer?
+honcho peer inspect <peer_id> --json | jq '.configuration'
+
+# Is the deriver actually processing?
+honcho workspace queue-status --json
+
+# Do any conclusions exist at all? Any for the expected topic?
+honcho conclusion list --observer <peer_id> --json
+honcho conclusion search "expected topic" --observer <peer_id> --json
+```
+
+### Session context looks wrong
+
+When an agent's responses don't reflect what you expect it to know.
+
+```bash
+honcho session context <session_id> --json
+honcho session summaries <session_id> --json
+honcho message list <session_id> --last 50 --json
+```
+
+### Dialectic returns bad answers
+
+When `honcho peer chat` or the dialectic API is hallucinating or missing context.
+
+```bash
+# What does the peer card actually say?
+honcho peer card <peer_id> --json
+
+# Any conclusions for this topic?
+honcho conclusion search "topic" --observer <peer_id> --json
+
+# Reproduce the query against the CLI
+honcho peer chat <peer_id> "what do you know about X?" --json
+```
+
+## Scripting & automation
+
+Pipe commands into `jq` for inline transforms, or set `HONCHO_*` env vars for a CI/CD environment with no config file:
+
+```bash
+# Pipe to jq
+honcho peer list --json | jq '.[].id'
+honcho workspace inspect --json | jq '.peers'
+
+# Machine-parseable health check — exit code for CI, details for logs
+honcho doctor --json
+
+# CI/CD — env vars only, no ~/.honcho/config.json
+export HONCHO_API_KEY=hch-v3-xxx
+export HONCHO_BASE_URL=https://api.honcho.dev
+honcho workspace list
 ```
 
 Non-interactive onboarding:
