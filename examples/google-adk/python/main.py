@@ -15,6 +15,7 @@ Environment variables:
 """
 
 import asyncio
+import uuid
 
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -22,13 +23,28 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools import FunctionTool
 from google.genai import types as genai_types
 
-from tools.client import HonchoContext
+from tools.client import HonchoContext, get_client
 from tools.get_context import get_context
 from tools.query_memory import query_memory
 from tools.save_memory import save_memory
 
 APP_NAME = "honcho-memory-agent"
-MODEL_ID = "gemini-2.0-flash"
+MODEL_ID = "gemini-2.5-flash"
+
+
+def setup_session(user_id: str, session_id: str, assistant_id: str = "assistant") -> None:
+    """Register peers in the session once at startup.
+
+    Args:
+        user_id: Unique identifier for the user peer.
+        session_id: Identifier for the conversation session.
+        assistant_id: Peer ID for the assistant. Defaults to ``"assistant"``.
+    """
+    honcho = get_client()
+    user_peer = honcho.peer(user_id)
+    assistant_peer = honcho.peer(assistant_id)
+    session = honcho.session(session_id)
+    session.add_peers([user_peer, assistant_peer])
 
 
 def build_instruction(ctx: HonchoContext) -> str:
@@ -50,6 +66,7 @@ def build_instruction(ctx: HonchoContext) -> str:
     if not history:
         return base
 
+    # Use content directly from structured messages — preserve role context
     formatted = "\n".join(
         f"{msg['role'].title()}: {msg['content']}" for msg in history
     )
@@ -144,7 +161,10 @@ async def chat(user_id: str, message: str, session_id: str) -> str:
 async def main() -> None:
     print("Google ADK HonchoMemoryAgent — type 'quit' to exit\n")
     user_id = "demo-user"
-    session_id = "demo-session"
+    session_id = str(uuid.uuid4())
+
+    # Register peers once at session start — not on every turn
+    setup_session(user_id, session_id)
 
     while True:
         user_input = input("You: ").strip()
