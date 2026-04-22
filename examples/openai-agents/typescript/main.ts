@@ -16,7 +16,6 @@
  */
 
 import { Agent, run } from "@openai/agents";
-import type { RunContext } from "@openai/agents";
 import * as readline from "readline/promises";
 import { randomUUID } from "crypto";
 
@@ -26,21 +25,14 @@ import { getContext } from "./tools/getContext.js";
 import { queryMemoryTool } from "./tools/queryMemory.js";
 import { saveMemory } from "./tools/saveMemory.js";
 
-function buildInstructions(
-  runContext: RunContext<HonchoContext>,
-  _agent: Agent<HonchoContext>
-): string {
-  const base =
-    "You are a helpful assistant with persistent memory powered by Honcho. " +
-    "You remember users across conversations. " +
-    "When a user asks what you remember about them, use the query_memory tool.";
-
-  return base;
-}
+const INSTRUCTIONS =
+  "You are a helpful assistant with persistent memory powered by Honcho. " +
+  "You remember users across conversations. " +
+  "When a user asks what you remember about them, use the query_memory tool.";
 
 const honchoAgent = new Agent<HonchoContext>({
   name: "HonchoMemoryAgent",
-  instructions: buildInstructions,
+  instructions: INSTRUCTIONS,
   tools: [queryMemoryTool],
   model: "gpt-4.1-mini",
 });

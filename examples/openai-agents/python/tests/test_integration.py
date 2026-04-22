@@ -112,15 +112,29 @@ class TestGetContext:
     def test_respects_token_limit(self):
         user_id = unique_id("user")
         session_id = unique_id("session")
-        for i in range(5):
-            save_memory(user_id, f"Message {i} with some longer content here", "user", session_id)
+        # Save enough content that a 50-token budget will truncate it
+        for i in range(10):
+            save_memory(
+                user_id,
+                f"Message {i}: " + "This is a longer sentence to consume tokens. " * 5,
+                "user",
+                session_id,
+            )
 
         ctx = HonchoContext(user_id=user_id, session_id=session_id)
+
+        # Wait until at least some messages are visible (async processing)
+        large: list = []
+        for _ in range(10):
+            large = get_context(ctx, tokens=8000)
+            if len(large) > 0:
+                break
+            time.sleep(1)
+
         small = get_context(ctx, tokens=50)
-        large = get_context(ctx, tokens=8000)
 
         assert isinstance(small, list) and isinstance(large, list)
-        assert len(large) >= len(small)
+        assert len(large) > len(small), "50-token budget should return fewer messages than 8000"
 
 
 class TestSaveGetRoundtrip:
