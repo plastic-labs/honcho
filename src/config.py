@@ -683,6 +683,10 @@ class EmbeddingSettings(HonchoSettings):
     VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
+    # Forward `dimensions` on OpenAI embeddings.create requests so MRL-capable
+    # models return VECTOR_DIMENSIONS-sized vectors. Set False for providers
+    # that reject the field (e.g. text-embedding-ada-002).
+    SEND_DIMENSIONS: bool = True
 
     @model_validator(mode="before")
     @classmethod

@@ -12,8 +12,17 @@ class FakeOpenAIEmbeddingsAPI:
         self.embedding: list[float] = embedding
         self.calls: list[dict[str, Any]] = []
 
-    async def create(self, *, model: str, input: str | list[str]) -> SimpleNamespace:
-        self.calls.append({"model": model, "input": input})
+    async def create(
+        self,
+        *,
+        model: str,
+        input: str | list[str],
+        dimensions: int | None = None,
+    ) -> SimpleNamespace:
+        call: dict[str, Any] = {"model": model, "input": input}
+        if dimensions is not None:
+            call["dimensions"] = dimensions
+        self.calls.append(call)
         if isinstance(input, list):
             data = [SimpleNamespace(embedding=self.embedding) for _ in input]
         else:
@@ -51,7 +60,42 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
 
     assert embedding == [0.1] * 8
     assert fake_embeddings.calls == [
-        {"model": "text-embedding-3-small", "input": ["hello world"]}
+        {
+            "model": "text-embedding-3-small",
+            "input": ["hello world"],
+            "dimensions": 8,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_omits_dimensions_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 1536)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-ada-002",
+            api_key="test-key",
+        ),
+        vector_dimensions=1536,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    await client.embed("hello world")
+
+    assert fake_embeddings.calls == [
+        {"model": "text-embedding-ada-002", "input": ["hello world"]}
     ]
 
 
