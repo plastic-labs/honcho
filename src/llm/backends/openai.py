@@ -309,7 +309,7 @@ class OpenAIBackend:
         if tools:
             params["tools"] = self._convert_tools(tools)
             if tool_choice is not None:
-                params["tool_choice"] = tool_choice
+                params["tool_choice"] = "required" if tool_choice == "any" else tool_choice
         if extra_params:
             for key in (
                 "top_p",
