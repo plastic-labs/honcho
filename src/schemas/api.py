@@ -206,10 +206,42 @@ class PeerRepresentationGet(BaseModel):
         le=100,
         description="Only used if `search_query` is provided. Maximum number of conclusions to include in the representation",
     )
+    memory_domains: list[str] | None = Field(
+        default=None,
+        description="Optional memory taxonomy domains to include, e.g. `user:preferences` or `workspace:rule`.",
+    )
+    memory_horizons: list[str] | None = Field(
+        default=None,
+        description="Optional memory horizons to include, e.g. `short`, `medium`, or `long`.",
+    )
+    memory_thesis_kinds: list[str] | None = Field(
+        default=None,
+        description="Optional thesis kinds to include, e.g. `preference`, `decision`, `rule`, or `state`.",
+    )
+    exclude_expired: bool = Field(
+        default=True,
+        description="Whether expired memory should be excluded from the representation.",
+    )
 
 
 class RepresentationResponse(BaseModel):
     representation: str
+    memory_domains: list[str] = Field(
+        default_factory=list,
+        description="Distinct memory domains surfaced in the representation.",
+    )
+    memory_horizons: list[str] = Field(
+        default_factory=list,
+        description="Distinct memory horizons surfaced in the representation.",
+    )
+    memory_thesis_kinds: list[str] = Field(
+        default_factory=list,
+        description="Distinct memory thesis kinds surfaced in the representation.",
+    )
+    includes_review_due: bool = Field(
+        default=False,
+        description="Whether the surfaced representation contains review-due memory.",
+    )
 
 
 class PeerCardResponse(BaseModel):
@@ -405,6 +437,22 @@ class PeerContext(BaseModel):
         default=None,
         description="The peer card for the target peer from the observer's perspective",
     )
+    memory_domains: list[str] = Field(
+        default_factory=list,
+        description="Distinct memory domains surfaced in the context representation.",
+    )
+    memory_horizons: list[str] = Field(
+        default_factory=list,
+        description="Distinct memory horizons surfaced in the context representation.",
+    )
+    memory_thesis_kinds: list[str] = Field(
+        default_factory=list,
+        description="Distinct memory thesis kinds surfaced in the context representation.",
+    )
+    includes_review_due: bool = Field(
+        default=False,
+        description="Whether the context representation includes review-due memory.",
+    )
 
 
 class SessionSummaries(SessionBase):
@@ -430,6 +478,22 @@ class ConclusionGet(BaseModel):
     """Schema for listing conclusions with optional filters."""
 
     filters: dict[str, Any] | None = None
+    memory_domains: list[str] | None = Field(
+        default=None,
+        description="Optional memory taxonomy domains to include when listing conclusions.",
+    )
+    memory_horizons: list[str] | None = Field(
+        default=None,
+        description="Optional memory horizons to include when listing conclusions.",
+    )
+    memory_thesis_kinds: list[str] | None = Field(
+        default=None,
+        description="Optional memory thesis kinds to include when listing conclusions.",
+    )
+    exclude_expired: bool = Field(
+        default=True,
+        description="Whether expired memory should be excluded when listing conclusions.",
+    )
 
 
 class Conclusion(BaseModel):
@@ -446,7 +510,25 @@ class Conclusion(BaseModel):
         serialization_alias="observed_id",
     )
     session_name: str | None = Field(default=None, serialization_alias="session_id")
+    memory: dict[str, Any] | None = None
     created_at: datetime.datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_memory_from_internal_metadata(cls, data: Any) -> Any:
+        if not hasattr(data, "internal_metadata"):
+            return data
+        internal_metadata = getattr(data, "internal_metadata", None) or {}
+        memory = internal_metadata.get("memory")
+        return {
+            "id": getattr(data, "id"),
+            "content": getattr(data, "content"),
+            "observer": getattr(data, "observer"),
+            "observed": getattr(data, "observed"),
+            "session_name": getattr(data, "session_name"),
+            "created_at": getattr(data, "created_at"),
+            "memory": memory,
+        }
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True,
@@ -474,6 +556,22 @@ class ConclusionQuery(BaseModel):
         default=None,
         description="Additional filters to apply",
     )
+    memory_domains: list[str] | None = Field(
+        default=None,
+        description="Optional memory taxonomy domains to include when querying conclusions.",
+    )
+    memory_horizons: list[str] | None = Field(
+        default=None,
+        description="Optional memory horizons to include when querying conclusions.",
+    )
+    memory_thesis_kinds: list[str] | None = Field(
+        default=None,
+        description="Optional memory thesis kinds to include when querying conclusions.",
+    )
+    exclude_expired: bool = Field(
+        default=True,
+        description="Whether expired memory should be excluded when querying conclusions.",
+    )
 
 
 class ConclusionCreate(BaseModel):
@@ -485,6 +583,10 @@ class ConclusionCreate(BaseModel):
     session_id: str | None = Field(
         default=None,
         description="A session ID to store the conclusion in, if specified",
+    )
+    memory: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional taxonomy metadata for domain, horizon, expiry, thesis type, and lifecycle semantics.",
     )
 
     _token_count: int = PrivateAttr(default=0)

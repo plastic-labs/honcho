@@ -23,6 +23,7 @@ from src.exceptions import (
     VectorStoreError,
 )
 from src.utils.filter import apply_filter
+from src.utils.formatting import parse_datetime_iso
 from src.vector_store import (
     VectorRecord,
     VectorStore,
@@ -30,6 +31,87 @@ from src.vector_store import (
 )
 
 logger = getLogger(__name__)
+
+
+def _get_document_memory(document: models.Document) -> dict[str, Any]:
+    internal_metadata = document.internal_metadata or {}
+    memory = internal_metadata.get("memory")
+    return memory if isinstance(memory, dict) else {}
+
+
+def is_document_memory_expired(
+    document: models.Document,
+    *,
+    now: datetime.datetime | None = None,
+) -> bool:
+    memory = _get_document_memory(document)
+    lifecycle = memory.get("lifecycle")
+    now_dt = now or datetime.datetime.now(datetime.timezone.utc)
+
+    def _parse(value: Any) -> datetime.datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            return parse_datetime_iso(value)
+        except Exception:
+            return None
+
+    if isinstance(lifecycle, dict):
+        if lifecycle.get("superseded_by"):
+            return True
+        review_due_at = _parse(lifecycle.get("review_due_at"))
+        if review_due_at is not None and review_due_at <= now_dt:
+            return True
+
+    expiry = memory.get("expiry")
+    if not isinstance(expiry, dict):
+        return False
+
+    expiry_type = expiry.get("type", "none")
+
+    if expiry_type == "date":
+        expires_at = _parse(expiry.get("expires_at"))
+        return expires_at is not None and expires_at <= now_dt
+    if expiry_type == "review":
+        review_at = _parse(expiry.get("review_at"))
+        return review_at is not None and review_at <= now_dt
+    return False
+
+
+def filter_expired_documents(
+    documents: Sequence[models.Document],
+    *,
+    now: datetime.datetime | None = None,
+) -> list[models.Document]:
+    now_dt = now or datetime.datetime.now(datetime.timezone.utc)
+    return [doc for doc in documents if not is_document_memory_expired(doc, now=now_dt)]
+
+
+def normalize_memory_taxonomy(
+    memory: schemas.MemoryTaxonomy | dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if memory is None:
+        return None
+
+    payload = memory.model_dump(exclude_none=True) if hasattr(memory, "model_dump") else dict(memory)
+    expiry = payload.get("expiry")
+    lifecycle = payload.get("lifecycle")
+    if not isinstance(lifecycle, dict):
+        lifecycle = {}
+
+    if isinstance(expiry, dict):
+        expiry_type = expiry.get("type")
+        if expiry_type == "review" and expiry.get("review_at"):
+            lifecycle.setdefault("review_due_at", expiry["review_at"])
+        if expiry_type == "event" and expiry.get("event_key"):
+            lifecycle.setdefault("pending_event_key", expiry["event_key"])
+
+    if lifecycle:
+        payload["lifecycle"] = lifecycle
+    else:
+        payload.pop("lifecycle", None)
+
+    return payload
 
 
 def get_all_documents(
@@ -126,6 +208,8 @@ async def query_documents_recent(
     observed: str,
     limit: int = 10,
     session_name: str | None = None,
+    filters: dict[str, Any] | None = None,
+    exclude_expired: bool = True,
 ) -> Sequence[models.Document]:
     """
     Query most recent documents.
@@ -151,10 +235,14 @@ async def query_documents_recent(
     if session_name is not None:
         stmt = stmt.where(models.Document.session_name == session_name)
 
+    stmt = apply_filter(stmt, models.Document, filters)
     stmt = stmt.order_by(models.Document.created_at.desc()).limit(limit)
 
     result = await db.execute(stmt)
-    return result.scalars().all()
+    documents = result.scalars().all()
+    if exclude_expired:
+        return filter_expired_documents(documents)
+    return documents
 
 
 async def query_documents_most_derived(
@@ -164,6 +252,8 @@ async def query_documents_most_derived(
     observer: str,
     observed: str,
     limit: int = 10,
+    filters: dict[str, Any] | None = None,
+    exclude_expired: bool = True,
 ) -> Sequence[models.Document]:
     """
     Query documents sorted by times_derived (most reinforced first).
@@ -189,6 +279,7 @@ async def query_documents_most_derived(
         .order_by(models.Document.times_derived.desc())
         .limit(limit)
     )
+    stmt = apply_filter(stmt, models.Document, filters)
 
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -232,9 +323,20 @@ async def query_external_vector_document_ids(
 
     vector_filters: dict[str, Any] = {}
     if filters:
-        for key in ["level", "session_name"]:
+        for key in [
+            "level",
+            "session_name",
+            "metadata.memory.domain",
+            "metadata.memory.horizon",
+            "metadata.memory.thesis_kind",
+        ]:
             if key in filters:
-                vector_filters[key] = filters[key]
+                vector_key = {
+                    "metadata.memory.domain": "memory_domain",
+                    "metadata.memory.horizon": "memory_horizon",
+                    "metadata.memory.thesis_kind": "memory_thesis_kind",
+                }.get(key, key)
+                vector_filters[vector_key] = filters[key]
 
     vector_results = await external_vector_store.query(
         namespace,
@@ -275,7 +377,8 @@ async def fetch_documents_by_ids(
     result = await db.execute(stmt)
     documents = {doc.id: doc for doc in result.scalars().all()}
 
-    return [documents[doc_id] for doc_id in document_ids if doc_id in documents]
+    ordered_documents = [documents[doc_id] for doc_id in document_ids if doc_id in documents]
+    return ordered_documents
 
 
 async def _query_documents_pgvector(
@@ -309,7 +412,8 @@ async def _query_documents_pgvector(
     )
 
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    documents = list(result.scalars().all())
+    return documents
 
 
 async def query_documents(
@@ -323,6 +427,7 @@ async def query_documents(
     max_distance: float | None = None,
     top_k: int = 5,
     embedding: list[float] | None = None,
+    exclude_expired: bool = True,
 ) -> Sequence[models.Document]:
     """
     Query documents using semantic similarity.
@@ -398,7 +503,7 @@ async def query_documents(
         return []
 
     if db is not None:
-        return await fetch_documents_by_ids(
+        docs = await fetch_documents_by_ids(
             db=db,
             workspace_name=workspace_name,
             observer=observer,
@@ -406,6 +511,7 @@ async def query_documents(
             document_ids=document_ids,
             filters=filters,
         )
+        return filter_expired_documents(docs) if exclude_expired else docs
     async with tracked_db("query_documents.fetch") as managed_db:
         docs = await fetch_documents_by_ids(
             db=managed_db,
@@ -417,7 +523,7 @@ async def query_documents(
         )
         for doc in docs:
             managed_db.expunge(doc)
-        return docs
+        return filter_expired_documents(docs) if exclude_expired else docs
 
 
 async def create_documents(
@@ -461,6 +567,7 @@ async def create_documents(
                     continue
 
             metadata_dict = doc.metadata.model_dump(exclude_none=True)
+            memory_metadata = metadata_dict.get("memory")
 
             # Determine if we need to persist embeddings to postgres
             # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
@@ -549,6 +656,11 @@ async def create_documents(
                 # Build vector records with metadata for filtering
                 vector_records: list[VectorRecord] = []
                 for doc, embedding in docs_with_embeddings:
+                    memory_metadata = (
+                        doc.internal_metadata.get("memory")
+                        if isinstance(doc.internal_metadata, dict)
+                        else None
+                    )
                     vector_records.append(
                         VectorRecord(
                             id=doc.id,
@@ -559,6 +671,15 @@ async def create_documents(
                                 "observed": observed,
                                 "session_name": doc.session_name,
                                 "level": doc.level,
+                                "memory_domain": memory_metadata.get("domain")
+                                if isinstance(memory_metadata, dict)
+                                else None,
+                                "memory_horizon": memory_metadata.get("horizon")
+                                if isinstance(memory_metadata, dict)
+                                else None,
+                                "memory_thesis_kind": memory_metadata.get("thesis_kind")
+                                if isinstance(memory_metadata, dict)
+                                else None,
                             },
                         )
                     )
@@ -772,6 +893,9 @@ async def create_observations(
     )
 
     for obs, embedding in zip(observations, embeddings, strict=True):
+        normalized_memory = normalize_memory_taxonomy(obs.memory)
+        internal_metadata = {"memory": normalized_memory} if normalized_memory is not None else {}
+        memory_metadata = normalized_memory or {}
         if store_embeddings_in_postgres:
             doc = models.Document(
                 workspace_name=workspace_name,
@@ -780,7 +904,7 @@ async def create_observations(
                 content=obs.content,
                 level="explicit",  # Manually created observations are always explicit
                 times_derived=1,
-                internal_metadata={},  # No message_ids since not derived from messages
+                internal_metadata=internal_metadata,
                 session_name=obs.session_id,
                 embedding=embedding,
             )
@@ -792,7 +916,7 @@ async def create_observations(
                 content=obs.content,
                 level="explicit",  # Manually created observations are always explicit
                 times_derived=1,
-                internal_metadata={},  # No message_ids since not derived from messages
+                internal_metadata=internal_metadata,
                 session_name=obs.session_id,
             )
         doc.sync_state = "pending"
@@ -844,6 +968,11 @@ async def create_observations(
                 vector_records: list[VectorRecord] = []
                 doc_ids: list[str] = []
                 for doc, embedding in docs_with_embeddings:
+                    memory_metadata = (
+                        doc.internal_metadata.get("memory")
+                        if isinstance(doc.internal_metadata, dict)
+                        else None
+                    )
                     doc_ids.append(doc.id)
                     vector_records.append(
                         VectorRecord(
@@ -855,6 +984,15 @@ async def create_observations(
                                 "observed": observed,
                                 "session_name": doc.session_name,
                                 "level": doc.level,
+                                "memory_domain": memory_metadata.get("domain")
+                                if isinstance(memory_metadata, dict)
+                                else None,
+                                "memory_horizon": memory_metadata.get("horizon")
+                                if isinstance(memory_metadata, dict)
+                                else None,
+                                "memory_thesis_kind": memory_metadata.get("thesis_kind")
+                                if isinstance(memory_metadata, dict)
+                                else None,
                             },
                         )
                     )
