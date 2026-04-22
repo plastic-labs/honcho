@@ -12,21 +12,11 @@ class FakeOpenAIEmbeddingsAPI:
         self.embedding: list[float] = embedding
         self.calls: list[dict[str, Any]] = []
 
-    async def create(
-        self,
-        *,
-        model: str,
-        input: str | list[str],
-        dimensions: int | None = None,
-    ) -> SimpleNamespace:
-        call: dict[str, Any] = {"model": model, "input": input}
-        if dimensions is not None:
-            call["dimensions"] = dimensions
-        self.calls.append(call)
-        if isinstance(input, list):
-            data = [SimpleNamespace(embedding=self.embedding) for _ in input]
-        else:
-            data = [SimpleNamespace(embedding=self.embedding)]
+    async def create(self, **kwargs: Any) -> SimpleNamespace:
+        self.calls.append(dict(kwargs))
+        input_value: str | list[str] = kwargs["input"]
+        count = len(input_value) if isinstance(input_value, list) else 1
+        data = [SimpleNamespace(embedding=self.embedding) for _ in range(count)]
         return SimpleNamespace(data=data)
 
 
