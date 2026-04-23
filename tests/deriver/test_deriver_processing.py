@@ -55,11 +55,7 @@ class TestDeriverProcessing:
         if await_args is None:
             raise AssertionError("Expected deriver LLM call")
         kwargs = await_args.kwargs
-        expected_config = settings.DERIVER.MODEL_CONFIG.model_copy(
-            update={
-                "stop_sequences": ["   \n", "\n\n\n\n"],
-            }
-        )
+        expected_config = settings.DERIVER.MODEL_CONFIG
         assert "model_config" in kwargs
         assert kwargs["model_config"].model == expected_config.model
         assert kwargs["model_config"].thinking_effort == expected_config.thinking_effort
