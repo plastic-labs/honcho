@@ -8,6 +8,7 @@ import type {
   RepresentationOptions,
   RepresentationResponse,
 } from './types/api'
+import { normalizeSearchQuery, RepresentationOptionsSchema } from './validation'
 
 /**
  * Parameters for creating a conclusion.
@@ -101,13 +102,18 @@ export class ConclusionScope {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    reverse?: boolean
   }): Promise<PageResponse<ConclusionResponse>> {
     await this._ensureWorkspace()
     return this._http.post<PageResponse<ConclusionResponse>>(
       `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/list`,
       {
         body: { filters: params.filters },
-        query: { page: params.page, size: params.size },
+        query: {
+          page: params.page,
+          size: params.size,
+          reverse: params.reverse ? 'true' : undefined,
+        },
       }
     )
   }
@@ -182,6 +188,7 @@ export class ConclusionScope {
     page?: number
     size?: number
     session?: string | Session
+    reverse?: boolean
   }): Promise<Page<Conclusion, ConclusionResponse>> {
     const resolvedSessionId = options?.session
       ? typeof options.session === 'string'
@@ -195,18 +202,20 @@ export class ConclusionScope {
     if (resolvedSessionId) {
       filters.session_id = resolvedSessionId
     }
+    const reverse = options?.reverse
 
     const response = await this._list({
       filters,
       page: options?.page ?? 1,
       size: options?.size ?? 50,
+      reverse,
     })
 
     const fetchNextPage = async (
       page: number,
       size: number
     ): Promise<PageResponse<ConclusionResponse>> => {
-      return this._list({ filters, page, size })
+      return this._list({ filters, page, size, reverse })
     }
 
     return new Page(
@@ -277,13 +286,22 @@ export class ConclusionScope {
    * Get the computed representation for this scope.
    */
   async representation(options?: RepresentationOptions): Promise<string> {
+    const searchQuery = normalizeSearchQuery(options?.searchQuery)
+    const validatedOptions = RepresentationOptionsSchema.parse({
+      searchQuery,
+      searchTopK: options?.searchTopK,
+      searchMaxDistance: options?.searchMaxDistance,
+      includeMostFrequent: options?.includeMostFrequent,
+      maxConclusions: options?.maxConclusions,
+    })
+
     const response = await this._getRepresentation(this.observer, {
       target: this.observed,
-      search_query: options?.searchQuery,
-      search_top_k: options?.searchTopK,
-      search_max_distance: options?.searchMaxDistance,
-      include_most_frequent: options?.includeMostFrequent,
-      max_conclusions: options?.maxConclusions,
+      search_query: searchQuery,
+      search_top_k: validatedOptions.searchTopK,
+      search_max_distance: validatedOptions.searchMaxDistance,
+      include_most_frequent: validatedOptions.includeMostFrequent,
+      max_conclusions: validatedOptions.maxConclusions,
     })
     return response.representation
   }

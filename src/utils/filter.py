@@ -107,7 +107,7 @@ def apply_filter(
 
 
 def _build_filter_conditions(
-    filter_dict: dict[str, Any], model_class: type[Any]
+    filter_dict: dict[str, Any], model_class: type[Any], *, _depth: int = 0
 ) -> ColumnElement[bool] | None:
     """
     Recursively build filter conditions from a filter dictionary.
@@ -119,6 +119,9 @@ def _build_filter_conditions(
     Returns:
         SQLAlchemy condition object or None
     """
+    if _depth > 5:
+        raise FilterError("Filter nesting exceeds maximum depth of 5")
+
     conditions: list[ColumnElement[bool]] = []
 
     # Handle logical operators
@@ -129,7 +132,11 @@ def _build_filter_conditions(
             )
         and_conditions: list[ColumnElement[bool]] = []
         for sub_filter in filter_dict["AND"]:  # pyright: ignore
-            sub_condition = _build_filter_conditions(sub_filter, model_class)  # pyright: ignore
+            sub_condition = _build_filter_conditions(
+                sub_filter,  # pyright: ignore[reportUnknownArgumentType]
+                model_class,
+                _depth=_depth + 1,
+            )
             if sub_condition is not None:
                 and_conditions.append(sub_condition)
         if and_conditions:
@@ -142,7 +149,11 @@ def _build_filter_conditions(
             )
         or_conditions: list[ColumnElement[bool]] = []
         for sub_filter in filter_dict["OR"]:  # pyright: ignore
-            sub_condition = _build_filter_conditions(sub_filter, model_class)  # pyright: ignore
+            sub_condition = _build_filter_conditions(
+                sub_filter,  # pyright: ignore[reportUnknownArgumentType]
+                model_class,
+                _depth=_depth + 1,
+            )
             if sub_condition is not None:
                 or_conditions.append(sub_condition)
         if or_conditions:
@@ -157,7 +168,11 @@ def _build_filter_conditions(
             )
         not_conditions: list[ColumnElement[bool]] = []
         for sub_filter in filter_dict["NOT"]:  # pyright: ignore
-            sub_condition = _build_filter_conditions(sub_filter, model_class)  # pyright: ignore
+            sub_condition = _build_filter_conditions(
+                sub_filter,  # pyright: ignore[reportUnknownArgumentType]
+                model_class,
+                _depth=_depth + 1,
+            )
             if sub_condition is not None:
                 not_conditions.append(
                     not_(sub_condition)

@@ -70,8 +70,7 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 queue_payload,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
-        async with tracked_db() as db:
-            await webhook_delivery.deliver_webhook(db, validated, workspace_name)
+        await webhook_delivery.deliver_webhook(validated, workspace_name)
 
     elif task_type == "summary":
         try:
@@ -356,16 +355,16 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
 
     elif reconciler_type == ReconcilerType.CLEANUP_QUEUE:
         logger.debug("Processing cleanup_queue task")
-        await cleanup_queue_items()
+        deleted_count = await cleanup_queue_items()
 
         duration_ms = (time.perf_counter() - start_time) * 1000
 
-        # Emit telemetry event for cleanup stale items
-        emit(
-            CleanupStaleItemsCompletedEvent(
-                total_duration_ms=duration_ms,
+        if deleted_count > 0:
+            # Emit telemetry event for cleanup stale items
+            emit(
+                CleanupStaleItemsCompletedEvent(
+                    total_duration_ms=duration_ms,
+                )
             )
-        )
-
     else:
         raise ValueError(f"Unsupported reconciler type: {reconciler_type}")

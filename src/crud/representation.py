@@ -80,7 +80,8 @@ class RepresentationManager:
             embeddings = await embedding_client.simple_batch_embed(observation_texts)
         except ValueError as e:
             raise exceptions.ValidationException(
-                f"Observation content exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+                "Observation content exceeds maximum token limit of "
+                + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
@@ -162,7 +163,7 @@ class RepresentationManager:
             )
 
         # Use bulk creation with optional duplicate detection
-        new_documents = await crud.create_documents(
+        accepted_documents = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,
@@ -177,7 +178,7 @@ class RepresentationManager:
             except Exception as e:
                 logger.warning(f"Failed to check dream scheduling: {e}")
 
-        return new_documents
+        return len(accepted_documents)
 
     async def get_working_representation(
         self,
@@ -366,6 +367,7 @@ class RepresentationManager:
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
+                models.Document.deleted_at.is_(None),
                 *(
                     [models.Document.session_name == session_name]
                     if session_name is not None
@@ -391,6 +393,7 @@ class RepresentationManager:
                 models.Document.workspace_name == self.workspace_name,
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
+                models.Document.deleted_at.is_(None),
             )
             .order_by(models.Document.times_derived.desc())
         )

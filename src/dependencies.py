@@ -17,14 +17,21 @@ async def get_db():
     db: AsyncSession = SessionLocal()
     try:
         if settings.DB.TRACING:
-            await db.execute(text(f"SET application_name = '{context}'"))
+            await db.execute(
+                text("SELECT set_config('application_name', :name, false)"),
+                {"name": context},
+            )
         yield db
     except Exception:
         await db.rollback()
         raise
     finally:
-        if db.in_transaction():
-            await db.rollback()
+        # Always send ROLLBACK unconditionally so the wire-level transaction
+        # is closed before the TCP connection drops.  Supavisor v2 does NOT
+        # clean up orphaned transactions on client disconnect in transaction-
+        # pooling mode, so relying on `in_transaction()` (Python-side state)
+        # can leave the backend pinned with an open BEGIN.
+        await db.rollback()
         await db.close()
 
 
@@ -45,7 +52,8 @@ async def tracked_db(operation_name: str | None = None):
     try:
         if settings.DB.TRACING:
             await db.execute(
-                text(f"SET application_name = '{context or f'task:{operation_name}'}'")
+                text("SELECT set_config('application_name', :name, false)"),
+                {"name": context or f"task:{operation_name}"},
             )
 
         yield db
@@ -53,8 +61,8 @@ async def tracked_db(operation_name: str | None = None):
         await db.rollback()
         raise
     finally:
-        if db.in_transaction():
-            await db.rollback()
+        # Always send ROLLBACK unconditionally — see get_db() comment.
+        await db.rollback()
         await db.close()
         if token:  # Only reset if we set it
             request_context.reset(token)

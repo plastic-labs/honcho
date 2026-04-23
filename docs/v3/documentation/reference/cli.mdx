@@ -1,0 +1,220 @@
+---
+title: 'CLI Reference'
+description: 'Command-line interface for Honcho — inspect workspaces, peers, sessions, and memory from your terminal'
+icon: 'terminal'
+---
+
+import CliCommands from "/snippets/cli-commands.mdx";
+
+## Install
+
+<CodeGroup>
+```bash uv (recommended)
+uv tool install honcho-cli
+```
+
+```bash uvx (ephemeral)
+uvx honcho-cli
+```
+</CodeGroup>
+
+## Quick Start
+
+```bash
+honcho init        # confirm/set apiKey + Honcho URL in ~/.honcho/config.json
+honcho doctor      # verify your config + connectivity
+honcho             # show banner + command list
+```
+
+## Configuration
+
+The CLI resolves config in this order: **flag → env var → config file → default**.
+
+| Value       | File key          | Env var                | Flag                   | Persisted? |
+|-------------|-------------------|------------------------|------------------------|------------|
+| API key     | `apiKey`          | `HONCHO_API_KEY`       | —                      | Yes        |
+| API URL     | `environmentUrl`  | `HONCHO_BASE_URL`      | —                      | Yes        |
+| Workspace   | —                 | `HONCHO_WORKSPACE_ID`  | `-w` / `--workspace`   | No         |
+| Peer        | —                 | `HONCHO_PEER_ID`       | `-p` / `--peer`        | No         |
+| Session     | —                 | `HONCHO_SESSION_ID`    | `-s` / `--session`     | No         |
+| JSON output | —                 | `HONCHO_JSON`          | `--json`               | No         |
+
+### Persisted config
+
+The CLI shares `~/.honcho/config.json` with sibling Honcho tools. It owns only
+`apiKey` and `environmentUrl` at the top level — everything else (`hosts`,
+`sessions`, etc.) is written by other tools and left untouched on save.
+
+```json
+{
+  "apiKey": "hch-v3-...",
+  "environmentUrl": "https://api.honcho.dev",
+  "hosts": { "claude_code": { "...": "..." } }
+}
+```
+<Info>
+Per-command scoping (workspace / peer / session) is handled via `-w` / `-p` / `-s`
+flags or `HONCHO_*` env vars. **Not** persisted as CLI defaults. This is
+deliberate: every invocation is explicit about what it operates on.
+</Info>
+
+### Runtime overrides
+
+Workspace, peer, and session scoping are **per-command only** — pass flags or
+`HONCHO_*` env vars on every invocation.
+
+```bash
+# Per-command flags
+honcho peer card -w prod -p user
+
+# Or export once per shell
+export HONCHO_WORKSPACE_ID=prod
+export HONCHO_PEER_ID=user
+honcho peer card
+
+# One-off against a different server
+HONCHO_BASE_URL=http://localhost:8000 honcho workspace list
+
+# CI/CD — env vars only, no config file needed
+export HONCHO_API_KEY=hch-v3-xxx
+export HONCHO_BASE_URL=https://api.honcho.dev
+honcho workspace list
+```
+
+## Output & exit codes
+
+Every command adapts its output to the context:
+
+- **TTY** — human-readable tables via Rich.
+- **Piped or redirected** — JSON automatically (detected via `isatty`).
+- **`--json` flag / `HONCHO_JSON=1`** — force JSON regardless of terminal.
+
+Collection commands emit JSON arrays; single-resource commands emit JSON objects. Errors are always structured:
+
+```json
+{
+  "error": {
+    "code": "PEER_NOT_FOUND",
+    "message": "Peer 'abc' not found in workspace 'my-ws'",
+    "details": {"workspace_id": "my-ws", "peer_id": "abc"}
+  }
+}
+```
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Success |
+| `1` | Client error (bad input, resource not found) |
+| `2` | Server error |
+| `3` | Auth error (missing or invalid API key) |
+
+CI pipelines and agent runtimes can branch on these without parsing stderr.
+
+## Command reference
+
+<CliCommands />
+
+## Workflows
+
+### Inspect an unfamiliar workspace
+
+When you pick up a workspace and need to orient — start broad, narrow to the peer and session you care about.
+
+<Steps>
+  <Step title="Survey the workspace">
+    ```bash
+    honcho workspace inspect --json
+    honcho peer list --json
+    ```
+  </Step>
+  <Step title="Inspect a specific peer">
+    ```bash
+    honcho peer inspect <peer_id> --json
+    honcho peer card <peer_id> --json
+    ```
+  </Step>
+  <Step title="Review the peer's memory">
+    ```bash
+    honcho conclusion list --observer <peer_id> --json
+    honcho conclusion search "topic" --observer <peer_id> --json
+    ```
+  </Step>
+  <Step title="Debug a session">
+    ```bash
+    honcho session inspect <session_id> --json
+    honcho message list <session_id> --last 20 --json
+    honcho session context <session_id> --json
+    honcho session summaries <session_id> --json
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  `honcho session context` shows exactly what an agent would receive at inference time — check it before `honcho peer chat` if a response surprises you.
+</Tip>
+
+### A peer isn't learning
+
+If new messages aren't producing new conclusions, work down the diagnostic ladder.
+
+```bash
+# Is observation enabled for this peer?
+honcho peer inspect <peer_id> --json | jq '.configuration'
+
+# Is the deriver actually processing?
+honcho workspace queue-status --json
+
+# Do any conclusions exist at all? Any for the expected topic?
+honcho conclusion list --observer <peer_id> --json
+honcho conclusion search "expected topic" --observer <peer_id> --json
+```
+
+### Session context looks wrong
+
+When an agent's responses don't reflect what you expect it to know.
+
+```bash
+honcho session context <session_id> --json
+honcho session summaries <session_id> --json
+honcho message list <session_id> --last 50 --json
+```
+
+### Dialectic returns bad answers
+
+When `honcho peer chat` or the dialectic API is hallucinating or missing context.
+
+```bash
+# What does the peer card actually say?
+honcho peer card <peer_id> --json
+
+# Any conclusions for this topic?
+honcho conclusion search "topic" --observer <peer_id> --json
+
+# Reproduce the query against the CLI
+honcho peer chat <peer_id> "what do you know about X?" --json
+```
+
+## Scripting & automation
+
+Pipe commands into `jq` for inline transforms, or set `HONCHO_*` env vars for a CI/CD environment with no config file:
+
+```bash
+# Pipe to jq
+honcho peer list --json | jq '.[].id'
+honcho workspace inspect --json | jq '.peers'
+
+# Machine-parseable health check — exit code for CI, details for logs
+honcho doctor --json
+
+# CI/CD — env vars only, no ~/.honcho/config.json
+export HONCHO_API_KEY=hch-v3-xxx
+export HONCHO_BASE_URL=https://api.honcho.dev
+honcho workspace list
+```
+
+Non-interactive onboarding:
+
+```bash
+# Pre-seed via flags / env vars; init still prompts for anything missing
+HONCHO_API_KEY=hch-v3-xxx honcho init --base-url https://api.honcho.dev
+```

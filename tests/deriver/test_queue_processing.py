@@ -1088,8 +1088,16 @@ class TestQueueProcessing:
         db_session: AsyncSession,
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
         create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test that representation work units below token threshold are not claimed"""
+        """Test that representation work units below token threshold are not claimed.
+
+        The token-threshold gate in QueueManager.get_and_claim_work_units is
+        skipped entirely when DERIVER_FLUSH_ENABLED is True, so this test
+        forces it False regardless of what the process env has set (benches
+        commonly enable flush mode for immediate processing).
+        """
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
 
         session, peers = sample_session_with_peers
         peer = peers[0]

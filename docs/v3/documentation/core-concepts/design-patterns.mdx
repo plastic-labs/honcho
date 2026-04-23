@@ -5,7 +5,7 @@ icon: "cubes"
 ---
 
 <Info>
-If you're using a coding agent (Claude Code, Cursor, etc.), the **`/honcho-integration` skill** walks you through these decisions interactively. It explores your codebase, interviews you about peers and sessions, and generates the integration code. The patterns below are the same ones the skill uses.
+If you're using a coding agent (Claude Code, OpenCode, Cursor, etc.), the **`/honcho-integration` skill** walks you through these decisions interactively. It explores your codebase, interviews you about peers and sessions, and generates the integration code. The patterns below are the same ones the skill uses.
 </Info>
 
 ## Quick Reference
@@ -103,7 +103,7 @@ Not every peer needs a representation. Set `observe_me: false` on peers that beh
 
 <CodeGroup>
 ```python Python
-from honcho import PeerConfig
+from honcho.api_types import PeerConfig
 
 # The assistant doesn't need a representation
 assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))

@@ -1,6 +1,6 @@
 # Honcho TypeScript SDK
 
-A high-level, ergonomic TypeScript SDK for the Honcho conversational memory platform. This library wraps [honcho-node-core](../honcho-node-core) to provide a user-friendly, Pythonic API for managing peers, sessions, and conversational context.
+A high-level, ergonomic TypeScript SDK for the Honcho conversational memory platform. Provides a user-friendly API for managing peers, sessions, and conversational context.
 
 ## Installation
 
@@ -15,16 +15,16 @@ import { Honcho } from "@honcho-ai/sdk";
 
 const honcho = new Honcho({
   apiKey: process.env.HONCHO_API_KEY,
-  baseUrl: "http://localhost:8000",
+  baseURL: "http://localhost:8000",
   workspaceId: "test",
 });
 
-const assistant = honcho.peer("bob");
-const alice = honcho.peer("alice");
+const assistant = await honcho.peer("bob");
+const alice = await honcho.peer("alice");
 
-await honcho.getPeers();
+await honcho.peers();
 
-const session = honcho.session("session_1");
+const session = await honcho.session("session_1");
 await session.addPeers([alice, assistant]);
 
 await session.addMessages([

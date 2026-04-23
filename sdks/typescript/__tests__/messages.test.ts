@@ -223,7 +223,7 @@ describe('Messages', () => {
         bob.message('From Bob'),
       ])
 
-      const page = await session.messages({ peer_id: alice.id })
+      const page = await session.messages({ filters: { peer_id: alice.id } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].peerId).toBe(alice.id)
@@ -238,10 +238,26 @@ describe('Messages', () => {
         peer.message('Untagged'),
       ])
 
-      const page = await session.messages({ metadata: { category: 'important' } })
+      const page = await session.messages({ filters: { metadata: { category: 'important' } } })
 
       expect(page.items.length).toBe(1)
       expect(page.items[0].metadata.category).toBe('important')
+    })
+
+    test('accepts legacy raw filter objects', async () => {
+      const session = await client.session('legacy-filter-msg-session', { metadata: {} })
+      const alice = await client.peer('legacy-filter-alice')
+      const bob = await client.peer('legacy-filter-bob')
+      await session.addPeers([alice.id, bob.id])
+      await session.addMessages([
+        alice.message('Legacy Alice'),
+        bob.message('Legacy Bob'),
+      ])
+
+      const page = await session.messages({ peer_id: alice.id })
+
+      expect(page.items.length).toBe(1)
+      expect(page.items[0].peerId).toBe(alice.id)
     })
   })
 
@@ -382,8 +398,8 @@ describe('Messages', () => {
       expect(typeof message.tokenCount).toBe('number')
 
       // Validate date format
-      expect(() => new Date(message.createdAt)).not.toThrow()
       const date = new Date(message.createdAt)
+      expect(Number.isNaN(date.getTime())).toBe(false)
       expect(date.getTime()).toBeGreaterThan(0)
     })
 
@@ -401,6 +417,111 @@ describe('Messages', () => {
       const ids = messages.map((m) => m.id)
       const uniqueIds = new Set(ids)
       expect(uniqueIds.size).toBe(ids.length)
+    })
+  })
+
+  // ===========================================================================
+  // Get Single Message (GET /messages/:id)
+  // ===========================================================================
+
+  describe('GET /messages/:id (getMessage)', () => {
+    test('getMessage returns message by ID', async () => {
+      const session = await client.session('get-msg-session', { metadata: {} })
+      const peer = await client.peer('get-msg-peer')
+      await session.addPeers([peer.id])
+
+      const [created] = await session.addMessages(peer.message('Retrievable'))
+      const fetched = await session.getMessage(created.id)
+
+      expect(fetched.id).toBe(created.id)
+      expect(fetched.content).toBe('Retrievable')
+      expect(fetched.peerId).toBe(peer.id)
+      expect(fetched.sessionId).toBe(session.id)
+    })
+
+    test('getMessage preserves metadata', async () => {
+      const session = await client.session('get-msg-meta-session', {
+        metadata: {},
+      })
+      const peer = await client.peer('get-msg-meta-peer')
+      await session.addPeers([peer.id])
+
+      const [created] = await session.addMessages(
+        peer.message('With metadata', { metadata: { key: 'value' } })
+      )
+      const fetched = await session.getMessage(created.id)
+
+      expect(fetched.metadata).toEqual({ key: 'value' })
+    })
+  })
+
+  // ===========================================================================
+  // Pagination Controls
+  // ===========================================================================
+
+  describe('Pagination controls', () => {
+    test('messages with custom page size', async () => {
+      const session = await client.session('page-size-session', { metadata: {} })
+      const peer = await client.peer('page-size-peer')
+      await session.addPeers([peer.id])
+
+      // Create 3 messages
+      await session.addMessages([
+        peer.message('One'),
+        peer.message('Two'),
+        peer.message('Three'),
+      ])
+
+      // Fetch with size=2
+      const page = await session.messages({ size: 2 })
+      const items = await collectAll(page)
+
+      // Should get all 3 via auto-pagination, but first page had only 2
+      expect(items.length).toBe(3)
+    })
+
+    test('messages with explicit page number', async () => {
+      const session = await client.session('page-num-session', { metadata: {} })
+      const peer = await client.peer('page-num-peer')
+      await session.addPeers([peer.id])
+
+      await session.addMessages([
+        peer.message('A'),
+        peer.message('B'),
+        peer.message('C'),
+      ])
+
+      // Fetch page 1 with size 2
+      const page1 = await session.messages({ page: 1, size: 2 })
+      expect(page1.items.length).toBe(2)
+
+      // Fetch page 2
+      const page2 = await session.messages({ page: 2, size: 2 })
+      expect(page2.items.length).toBe(1)
+    })
+
+    test('messages with reverse ordering', async () => {
+      const session = await client.session('reverse-session', { metadata: {} })
+      const peer = await client.peer('reverse-peer')
+      await session.addPeers([peer.id])
+
+      await session.addMessages([
+        peer.message('First'),
+        peer.message('Second'),
+        peer.message('Third'),
+      ])
+
+      const normal = await session.messages()
+      const reversed = await session.messages({ reverse: true })
+
+      const normalItems = await collectAll(normal)
+      const reversedItems = await collectAll(reversed)
+
+      expect(normalItems.length).toBe(reversedItems.length)
+      // Reversed order should have different first element
+      expect(normalItems[0].content).not.toBe(
+        reversedItems[0].content
+      )
     })
   })
 })

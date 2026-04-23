@@ -72,7 +72,16 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/bench/",
     "tests/alembic/",
     "tests/unified/",
+    "tests/live_llm/",
+    # Pure llm unit tests should stay isolated from the broader app/runtime fixtures.
+    "tests/llm/",
+    # LLM transport tests mock providers directly and don't need database/runtime setup.
+    "tests/utils/test_length_finish_reason.py",
+    "tests/utils/test_clients.py",
 )
+
+_LIVE_LLM_MARKER = "live_llm"
+_LIVE_LLM_SKIP_REASON = "live LLM tests are disabled; pass --live-llm to run them"
 
 
 def _requires_runtime_mocks(nodeid: str) -> bool:
@@ -85,6 +94,28 @@ def _get_nodeid(request: pytest.FixtureRequest) -> str:
     node = getattr(request, "node", None)
     nodeid = getattr(node, "nodeid", "")
     return nodeid if isinstance(nodeid, str) else ""
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--live-llm",
+        action="store_true",
+        default=False,
+        help="Run opt-in live LLM integration tests that call provider APIs.",
+    )
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
+    if config.getoption("--live-llm"):
+        return
+
+    skip_live = pytest.mark.skip(reason=_LIVE_LLM_SKIP_REASON)
+    for item in items:
+        if _LIVE_LLM_MARKER in item.keywords:
+            item.add_marker(skip_live)
 
 
 def _get_test_db_url(worker_id: str) -> URL:
@@ -412,9 +443,10 @@ def _content_to_embedding(content: str) -> list[float]:
 
     # Hash the content to get a deterministic seed
     content_hash = hashlib.sha256(content.encode()).digest()
-    # Use hash bytes to generate 1536 floats between -1 and 1
+    vector_dimensions = settings.EMBEDDING.VECTOR_DIMENSIONS
+    # Use hash bytes to generate deterministic floats between -1 and 1
     embedding: list[float] = []
-    for i in range(1536):
+    for i in range(vector_dimensions):
         # Use different bytes from hash (cycling through)
         byte_val = content_hash[i % len(content_hash)]
         # Normalize to [-1, 1] range
@@ -431,6 +463,9 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
 
     with (
         patch("src.embedding_client.embedding_client.embed") as mock_embed,
+        patch(
+            "src.embedding_client.embedding_client.simple_batch_embed"
+        ) as mock_simple_batch_embed,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
     ):
         # Mock the embed method to return content-dependent embedding
@@ -438,6 +473,11 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
             return _content_to_embedding(content)
 
         mock_embed.side_effect = embed_side_effect
+
+        async def mock_simple_batch_embed_func(texts: list[str]) -> list[list[float]]:
+            return [_content_to_embedding(text) for text in texts]
+
+        mock_simple_batch_embed.side_effect = mock_simple_batch_embed_func
 
         # Mock the batch_embed method to return content-dependent embeddings
         async def mock_batch_embed_func(
@@ -450,7 +490,11 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
 
         mock_batch_embed.side_effect = mock_batch_embed_func
 
-        yield {"embed": mock_embed, "batch_embed": mock_batch_embed}
+        yield {
+            "embed": mock_embed,
+            "simple_batch_embed": mock_simple_batch_embed,
+            "batch_embed": mock_batch_embed,
+        }
 
 
 @pytest.fixture(autouse=True)
@@ -465,21 +509,18 @@ def mock_vector_store(request: pytest.FixtureRequest):
     from src.vector_store import (
         VectorQueryResult,
         VectorRecord,
-        VectorUpsertResult,
         _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
     )
 
     # Create a mock vector store that stores vectors in memory
     vector_storage: dict[str, dict[str, tuple[list[float], dict[str, Any]]]] = {}
 
-    async def mock_upsert_many(
-        namespace: str, vectors: list[VectorRecord]
-    ) -> VectorUpsertResult:
+    async def mock_upsert_many(namespace: str, vectors: list[VectorRecord]) -> None:
         if namespace not in vector_storage:
             vector_storage[namespace] = {}
         for vector in vectors:
             vector_storage[namespace][vector.id] = (vector.embedding, vector.metadata)
-        return VectorUpsertResult(ok=True)
+        return
 
     async def mock_query(
         namespace: str, embedding: list[float], **kwargs: Any
@@ -670,10 +711,10 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
     # Patch the honcho_llm_call decorator to prevent actual LLM calls at module level
     original_decorator = None
     try:
-        import src.utils.clients
+        import src.llm
 
-        original_decorator = src.utils.clients.honcho_llm_call
-        src.utils.clients.honcho_llm_call = lambda *args, **kwargs: lambda func: func  # pyright: ignore[reportUnknownLambdaType]
+        original_decorator = src.llm.honcho_llm_call
+        src.llm.honcho_llm_call = lambda *args, **kwargs: lambda func: func  # pyright: ignore[reportUnknownLambdaType]
     except ImportError:
         pass
 
@@ -707,21 +748,21 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
 
         return mock_llm_decorator
 
-    with patch("src.utils.clients.honcho_llm_call", side_effect=decorator_factory):
+    with patch("src.llm.honcho_llm_call", side_effect=decorator_factory):
         yield decorator_factory
 
     # Restore the original decorator
     if original_decorator:
         try:
-            import src.utils.clients
+            import src.llm
 
-            src.utils.clients.honcho_llm_call = original_decorator
+            src.llm.honcho_llm_call = original_decorator
         except ImportError:
             pass
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
+def mock_tracked_db(request: pytest.FixtureRequest):
     """Mock tracked_db to create fresh sessions per call.
 
     Using a session factory instead of a shared session avoids asyncio lock
@@ -733,6 +774,7 @@ def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
 
     from contextlib import asynccontextmanager
 
+    db_engine = request.getfixturevalue("db_engine")
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     @asynccontextmanager
@@ -752,6 +794,14 @@ def mock_tracked_db(db_engine: AsyncEngine, request: pytest.FixtureRequest):
         patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
         patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
         patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
+        patch("src.webhooks.webhook_delivery.tracked_db", mock_tracked_db_context),
+        patch("src.utils.agent_tools.tracked_db", mock_tracked_db_context),
+        patch("src.utils.search.tracked_db", mock_tracked_db_context),
+        patch("src.crud.document.tracked_db", mock_tracked_db_context),
+        patch("src.crud.message.tracked_db", mock_tracked_db_context),
+        patch("src.dialectic.core.tracked_db", mock_tracked_db_context),
+        patch("src.dreamer.specialists.tracked_db", mock_tracked_db_context),
+        patch("src.dreamer.surprisal.tracked_db", mock_tracked_db_context),
     ):
         yield
 

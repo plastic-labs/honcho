@@ -19,6 +19,7 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.exceptions import VectorStoreError
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -259,8 +260,16 @@ async def _sync_documents(
                 .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
             )
             synced_count += len(docs_to_sync)
+        except VectorStoreError:
+            logger.warning(
+                "Vector store unavailable while syncing namespace %s", namespace
+            )
+            await _bump_document_sync_attempts(db, docs_to_sync)
+            failed_count += len(docs_to_sync)
         except Exception:
-            logger.exception("Failed to sync documents to namespace %s", namespace)
+            logger.exception(
+                "Unexpected error syncing documents to namespace %s", namespace
+            )
             await _bump_document_sync_attempts(db, docs_to_sync)
             failed_count += len(docs_to_sync)
 
@@ -399,9 +408,17 @@ async def _sync_message_embeddings(
                 .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
             )
             synced_count += len(embs_to_sync)
+        except VectorStoreError:
+            logger.warning(
+                "Vector store unavailable while syncing message embeddings to namespace %s",
+                namespace,
+            )
+            await _bump_message_embedding_sync_attempts(db, embs_to_sync)
+            failed_count += len(embs_to_sync)
         except Exception:
             logger.exception(
-                "Failed to sync message embeddings to namespace %s", namespace
+                "Unexpected error syncing message embeddings to namespace %s",
+                namespace,
             )
             await _bump_message_embedding_sync_attempts(db, embs_to_sync)
             failed_count += len(embs_to_sync)

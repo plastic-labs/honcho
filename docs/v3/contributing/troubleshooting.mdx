@@ -1,0 +1,300 @@
+---
+title: 'Troubleshooting'
+sidebarTitle: 'Troubleshooting'
+description: 'Common issues and solutions when self-hosting Honcho'
+icon: 'wrench'
+---
+
+This page covers common issues you may encounter when self-hosting Honcho, what causes them, and how to fix them.
+
+## Startup Failures
+
+### Server won't start: "Missing client for ..."
+
+```
+ValueError: Missing client for Deriver: google
+```
+
+**Cause:** The server validates at startup that all configured LLM providers have API keys. If a provider is referenced in your configuration but the corresponding API key isn't set, the server refuses to start.
+
+**Fix:** Set the API keys for your configured providers. With default configuration, you need:
+
+```bash
+LLM_GEMINI_API_KEY=...    # Used by deriver, summary, dialectic minimal/low
+LLM_ANTHROPIC_API_KEY=... # Used by dialectic medium/high/max, dream
+LLM_OPENAI_API_KEY=...    # Used by embeddings (when EMBED_MESSAGES=true)
+```
+
+See the [LLM Setup](/v3/contributing/self-hosting#llm-setup) section for provider configuration. You can change which providers are used in your `.env` or `config.toml` (see [Configuration Guide](./configuration#llm-configuration)).
+
+### Server won't start: "JWT_SECRET must be set"
+
+```
+ValueError: JWT_SECRET must be set if USE_AUTH is true
+```
+
+**Cause:** You enabled authentication (`AUTH_USE_AUTH=true`) but didn't provide a JWT secret.
+
+**Fix:** Generate a secret and set it:
+
+```bash
+python scripts/generate_jwt_secret.py
+# Then set the output as:
+AUTH_JWT_SECRET=<generated_secret>
+```
+
+Or disable authentication for local development: `AUTH_USE_AUTH=false`
+
+## Runtime Errors
+
+### API returns "An unexpected error occurred" on every request
+
+**Cause:** This is almost always a database issue. The health endpoint (`/health`) will return `{"status": "ok"}` even when the database is unreachable because it doesn't check the database connection. The actual error appears in the server logs.
+
+**Common causes and fixes:**
+
+1. **Database is unreachable** — Check that PostgreSQL is running and the `DB_CONNECTION_URI` is correct
+2. **Migrations haven't been run** — The server starts successfully without tables, but every API call will fail. Run:
+   ```bash
+   uv run alembic upgrade head
+   ```
+   In Docker:
+   ```bash
+   docker compose exec api uv run alembic upgrade head
+   ```
+3. **pgvector extension not installed** — The `vector` extension must be enabled in your database:
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS vector;
+   ```
+
+**How to diagnose:** Check the server logs for the actual error. Look for:
+- `sqlalchemy.exc.OperationalError` — database connection issue
+- `sqlalchemy.exc.ProgrammingError` with "relation does not exist" — migrations not run
+- `psycopg.OperationalError` — connection refused or authentication failed
+
+### Health check passes but API calls fail
+
+The `/health` endpoint is a lightweight check that confirms the server process is running. It does **not** verify:
+- Database connectivity
+- That migrations have been run
+- That LLM providers are reachable
+
+To verify full functionality, try creating a workspace:
+
+```bash
+curl -X POST http://localhost:8000/v3/workspaces \
+  -H "Content-Type: application/json" \
+  -d '{"name": "test"}'
+```
+
+If this succeeds, your database connection and migrations are working.
+
+### Deriver not processing messages
+
+Messages are stored but no observations, summaries, or representations are being generated.
+
+**Common causes:**
+
+1. **Deriver isn't running** — In manual setup, the deriver is a separate process:
+   ```bash
+   uv run python -m src.deriver
+   ```
+   In Docker, it starts automatically via `docker compose up`.
+
+2. **Deriver can't reach the database** — Check deriver logs for connection errors. The deriver uses the same `DB_CONNECTION_URI` as the API server.
+
+3. **Missing LLM API key for deriver provider** — By default the deriver uses Google Gemini (`LLM_GEMINI_API_KEY`). Check deriver logs for API errors.
+
+4. **Processing backlog** — With `DERIVER_WORKERS=1` (default), high message volume can cause a backlog. Increase workers:
+   ```bash
+   DERIVER_WORKERS=4
+   ```
+5. **Representation Batch Max** — By default the deriver is set to buffer its operations until there are enough tokens for a given representation in a session. This is set via the `REPRESENTATION_BATCH_MAX_TOKENS` environment variable. If you aren't seeing tasks continue it may be that the batch size is set too high or enough data hasn't flowed into to the session yet. See [token batching](/v3/documentation/core-concepts/reasoning#token-batching) for more details
+
+## Alternative Provider Issues
+
+### OpenRouter / custom provider not working
+
+If calls to an OpenAI-compatible proxy fail:
+
+1. **Verify the endpoint and key are set.** Use `transport = "openai"` with a base URL override:
+   ```bash
+   LLM_OPENAI_API_KEY=sk-or-v1-...
+   DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
+   ```
+
+2. **Check model names match the provider's format.** OpenRouter uses `vendor/model` format (e.g., `anthropic/claude-haiku-4-5`), not the raw model ID.
+
+3. **Ensure your model supports tool calling.** The deriver, dialectic, and dream agents require tool use. Check the provider's model page for tool calling support.
+
+4. **Check server logs for the actual error.** API errors from the upstream provider will appear in Honcho's logs with the HTTP status code and message body.
+
+### vLLM / Ollama not responding
+
+1. **Verify the model server is running** and accessible from the Honcho process (or container):
+   ```bash
+   curl http://localhost:8000/v1/models   # vLLM
+   curl http://localhost:11434/v1/models  # Ollama
+   ```
+
+2. **In Docker**, `localhost` inside a container doesn't reach the host. Use `host.docker.internal` (macOS/Windows) or the host's network IP:
+   ```bash
+   DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:8000/v1
+   ```
+
+3. **Structured output failures** — vLLM's structured output support is limited to certain response formats. If you see JSON parsing errors, check the deriver/dream logs for the raw response.
+
+### Thinking budget errors with non-Anthropic providers
+
+If you see errors like `thinking budget not supported`, `invalid parameter`, or silent failures where agents produce no output, one of your per-component `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS` overrides is likely set to a value > 0 with a provider that doesn't support Anthropic-style extended thinking. The built-in defaults do not set thinking budgets, so this only applies if you added those overrides yourself.
+
+**Fix:** Set `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0` for every component when using models that don't support thinking:
+
+```bash
+DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+SUMMARY_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DREAM_DEDUCTION_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DREAM_INDUCTION_MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__minimal__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__low__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__medium__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__high__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+DIALECTIC_LEVELS__max__MODEL_CONFIG__THINKING_BUDGET_TOKENS=0
+```
+
+For OpenAI reasoning models, use `*_MODEL_CONFIG__THINKING_EFFORT` instead of `*_MODEL_CONFIG__THINKING_BUDGET_TOKENS`.
+
+## Database Issues
+
+### Connection string format
+
+The connection URI **must** use the `postgresql+psycopg` prefix:
+
+```bash
+# Correct
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+
+# Wrong - will fail
+DB_CONNECTION_URI=postgresql://postgres:postgres@localhost:5432/postgres
+DB_CONNECTION_URI=postgres://postgres:postgres@localhost:5432/postgres
+```
+
+### Checking migration status
+
+```bash
+# See current migration version
+uv run alembic current
+
+# See migration history
+uv run alembic history
+
+# Upgrade to latest
+uv run alembic upgrade head
+```
+
+## Cache & Redis
+
+### Redis is optional
+
+Redis is used for caching when `CACHE_ENABLED=true` (default: `false`). If Redis is unreachable, Honcho **gracefully falls back to in-memory caching** and logs a warning. This means:
+
+- The server and deriver will still start and function normally
+- Performance may be reduced under high load without Redis
+- You do not need Redis for local development or testing
+
+### Redis connection issues
+
+If you see Redis connection warnings in logs but `CACHE_ENABLED=false`, they can be safely ignored. If you want caching:
+
+```bash
+# Start Redis via Docker
+docker run -d -p 6379:6379 redis:latest
+
+# Configure Honcho
+CACHE_ENABLED=true
+CACHE_URL=redis://localhost:6379/0
+```
+
+## Docker Issues
+
+### Docker build fails with permission errors
+
+The Honcho Dockerfile uses BuildKit mount syntax and creates a non-root `app` user. Common build failures:
+
+**1. BuildKit not enabled**
+
+The Dockerfile uses `RUN --mount=type=cache` which requires Docker BuildKit. If you see syntax errors during build:
+
+```bash
+# Ensure BuildKit is enabled
+DOCKER_BUILDKIT=1 docker compose build
+```
+
+Or add to your Docker daemon config (`/etc/docker/daemon.json`):
+```json
+{ "features": { "buildkit": true } }
+```
+
+**2. Permission denied during build or at runtime (Linux)**
+
+On Linux, AppArmor or SELinux can block Docker build operations and volume mounts. Symptoms include permission denied errors during `COPY`, `RUN`, or when the container tries to access mounted volumes.
+
+```bash
+# Check if AppArmor is blocking Docker
+sudo aa-status | grep docker
+
+# Temporarily test without AppArmor (for diagnosis only)
+docker compose down
+sudo aa-remove-unknown
+docker compose up -d
+```
+
+For SELinux, add `:z` to volume mounts in `docker-compose.yml`:
+```yaml
+volumes:
+  - .:/app:z
+```
+
+**3. Volume mount UID mismatch**
+
+The Dockerfile creates a non-root `app` user, but `docker-compose.yml.example` mounts `.:/app` which overlays the container filesystem with host-owned files. The `app` user inside the container may not have permission to read them.
+
+If you see permission errors at runtime (not build time), you can either:
+- Run without the source mount (remove `- .:/app` from volumes — the image already contains the code)
+- Or fix ownership: `sudo chown -R 100:101 .` (matches the `app` user inside the container)
+
+### Containers start but API fails
+
+1. Check container status: `docker compose ps`
+2. Check API logs: `docker compose logs api`
+3. Check database logs: `docker compose logs database`
+4. Ensure migrations ran: `docker compose exec api uv run alembic upgrade head`
+
+### Port conflicts
+
+If port 8000 is already in use:
+
+```bash
+# Check what's using the port
+lsof -i :8000
+
+# Or change the port mapping in docker-compose.yml
+ports:
+  - "8001:8000"  # Map to a different host port
+```
+
+### Rebuilding after code changes
+
+```bash
+docker compose build --no-cache
+docker compose up -d
+```
+
+## Getting Help
+
+If your issue isn't covered here:
+
+- **Check the logs** — most issues are diagnosed from server or deriver logs
+- **GitHub Issues** — [Report bugs](https://github.com/plastic-labs/honcho/issues)
+- **Discord** — [Join our community](https://discord.gg/plasticlabs)
+- **Configuration** — See the [Configuration Guide](./configuration) for all available settings

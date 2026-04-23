@@ -96,14 +96,14 @@ If you have this in `config.toml`:
 
 ```toml
 [db]
-CONNECTION_URI = "postgresql://localhost/honcho_dev"
+CONNECTION_URI = "postgresql+psycopg://localhost/honcho_dev"
 POOL_SIZE = 10
 ```
 
 You can override just the connection URI in production:
 
 ```bash
-export DB_CONNECTION_URI="postgresql://prod-server/honcho_prod"
+export DB_CONNECTION_URI="postgresql+psycopg://prod-server/honcho_prod"
 ```
 
 The application will use the production connection URI while keeping the pool size from config.toml.
@@ -149,7 +149,7 @@ LOCAL_METRICS_FILE=metrics.jsonl
 DB_CONNECTION_URI=postgresql+psycopg://username:password@host:port/database
 
 # Example for local development
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 
 # Example for production
 DB_CONNECTION_URI=postgresql+psycopg://honcho_user:secure_password@db.example.com:5432/honcho_prod

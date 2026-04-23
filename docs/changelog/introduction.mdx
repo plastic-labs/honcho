@@ -27,7 +27,54 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.0.3 (Current)">
+        <Update label="v3.0.6 (Current)">
+        ### Changed
+
+        - Tightened transaction scopes across search, agent tools, queue manager, and webhook delivery to minimize DB connection hold time during external operations (#525)
+        - Search operations refactored to two-phase pattern — external work (embeddings, LLM calls) completes before opening a transaction (#525)
+        - Agent tool executor performs external operations before acquiring DB sessions (#525)
+        - Queue manager transaction scope reduced to only the critical section (#525)
+        - Webhook delivery no longer holds a DB session parameter (#525)
+
+        ### Fixed
+
+        - Session leakage in non-session-scoped dialectic chat calls (#526)
+
+        ### Added
+
+        - Health check endpoint (`/health`) for container orchestration and load balancer probes (#510)
+        </Update>
+
+        <Update label="v3.0.5">
+        ### Fixed
+
+        - explicit rollback on all transactions to force connection closed
+        </Update>
+
+        <Update label="v3.0.4">
+        ### Added
+
+        - JSONB metadata validation enforces 100 key limit and max depth of 5 (#419)
+
+        ### Changed
+
+        - Schemas refactored from single `schemas.py` into `schemas/api.py`, `schemas/configuration.py`, and `schemas/internal.py` with backwards-compatible re-exports (#419)
+
+        ### Fixed
+
+        - Missing `deleted_at` filter on `RepresentationManager._query_documents_recent()` and `._query_documents_most_derived()` allowed soft-deleted documents to leak into the deriver's working representation (#456)
+        - `CleanupStaleItemsCompletedEvent` emitted spuriously when no queue item was actually deleted (#454)
+        - Empty JSON file uploads caused unhandled errors; now returns normalized error responses (#434)
+        - Memory leak: `_observation_locks` switched to `WeakValueDictionary` to prevent unbounded growth (#419)
+        - SQL injection in `dependencies.py`: parameterized `set_config` calls to prevent injection via request context (#419)
+        - NUL byte crashes: string inputs (message content, queries, peer cards) now stripped at schema level (#419)
+        - Filter recursion depth capped at 5 to prevent stack overflow (#419)
+        - Dedup-skipped observations now correctly reflected in created counts (#477)
+        - External vector store support for message search — routes queries through configured external vector store with oversampling and
+          deduplication to handle chunked embeddings (#479)
+        - Dialectic agent no longer holds a DB connection during LLM calls — embeddings are pre-computed before tool execution, DB sessions isolated in `extract_preferences`, `query_documents` no longer accepts a DB session parameter (#477)
+        </Update>
+        <Update label="v3.0.3">
         ### Added
 
         - Consolidated session context into a single DB session with 40/60 token budget allocation between summary and messages
@@ -477,7 +524,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         ### Changed
 
         - `/list` endpoints to not require a request body
-        - `metamessage_type` to `label` with backwards compatability
+        - `metamessage_type` to `label` with backwards compatibility
         - Database Provisioning to rely on alembic
         - Database Session Manager to explicitly rollback transactions before closing
         the connection
@@ -511,7 +558,35 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.0.1 (Current)">
+        <Update label="v2.1.1 (Current)">
+        ### Fixed
+
+        - Broadened HTTP retry logic to cover `httpx.NetworkError` and `httpx.RemoteProtocolError` in addition to `httpx.TimeoutException` and `httpx.ConnectError`, improving resilience against transient network failures
+        </Update>
+        <Update label="v2.1.0">
+        ### Added
+
+        - `created_at` property on `Peer` and `Session` objects
+        - `is_active` property on `Session` objects
+        - `get_message(message_id)` method on `Session` (sync and async) to fetch a single message by ID
+        - `page`, `size`, and `reverse` pagination parameters on all list methods
+
+        ### Changed
+
+        - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization
+        - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
+
+        ### Fixed
+
+        - Sync and async `Session.get_metadata()`, `get_configuration()`, and `refresh()` now refresh cached `created_at` and `is_active` values along with metadata and configuration
+        - `honcho.__version__` now derives from package metadata, with a source-checkout fallback, so it stays aligned with released package versions
+        </Update>
+        <Update label="v2.0.2">
+        ### Changed
+
+        - All input models now reject unknown fields via strict Pydantic validation (`extra="forbid"`). Previously, misspelled or extraneous fields were silently ignored. Now a `ValidationError` is raised with the unrecognized field name.
+        </Update>
+        <Update label="v2.0.1">
             ### Added
 
         - `set_peer_card` method
@@ -625,7 +700,59 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.0.1 (Current)">
+        <Update label="v2.1.1 (Current)">
+        ### Fixed
+
+        - Broadened fetch error retry logic to catch all `TypeError` network failures (connection resets, DNS errors, etc.) instead of only those with `'fetch'` in the message, improving resilience across runtimes (Node, Bun, browsers)
+        </Update>
+        <Update label="v2.1.0">
+        ### Added
+
+        - `createdAt` property on `Peer` and `Session` wrapper objects
+        - `isActive` property on `Session` wrapper objects
+        - `getMessage(messageId)` method on `Session` to fetch a single message by ID
+        - `Peer.representation()`, `Session.representation()`, and `Session.context()` now accept `Message` objects for `searchQuery`
+        - `page`, `size`, and `reverse` pagination controls on all list methods
+
+        ### Changed
+
+        - **Breaking**: `searchQuery` removed from top-level `context()` options — use `representationOptions.searchQuery` instead:
+          ```typescript
+          // Before (v2.0.x)
+          await session.context({ searchQuery: "..." });
+          // After (v2.1.0)
+          await session.context({ representationOptions: { searchQuery: "..." } });
+          ```
+        - List methods (`peers()`, `sessions()`, `messages()`, `workspaces()`) support both the new options object and the legacy raw-filter form
+        - Representation search options now accept strings and content-like objects, including `Message` instances, while rejecting whitespace-only or invalid runtime inputs
+        - **Breaking**: `peer()` and `session()` now always make a get-or-create API call — no more lazy initialization. If you relied on constructing SDK objects without triggering a network request, note that every `peer()` and `session()` call now hits the API:
+          ```typescript
+          // Before (v2.0.x) — no API call
+          const session = honcho.session("my-session");
+          // After (v2.1.0) — makes a get-or-create API call
+          const session = await honcho.session("my-session");
+          ```
+        - Response configuration models now tolerate unknown fields from newer servers for forward compatibility
+        - Moved `@types/node` from `dependencies` to `devDependencies`
+
+        ### Fixed
+
+        - `uploadFile()` now rejects unsupported top-level binary/object inputs and only validates inputs the serializer can actually upload
+        - `uploadFile()` now serializes message configuration using API field names, matching `addMessages()`
+        - Session fetch methods now refresh cached `createdAt` and `isActive` values alongside metadata and configuration
+        </Update>
+        <Update label="v2.0.2">
+        ### Changed
+
+        - Client constructor now rejects unknown options via `.strict()` Zod validation. Previously, misspelled options (e.g., `baseUrl` instead of `baseURL`) were silently ignored, causing the SDK to fall back to defaults. Now a `ZodError` is thrown with the unrecognized key name.
+        - All input schemas now use `.strict()` validation to reject unknown fields.
+        - `FileUploadSchema.configuration` now uses `MessageConfigurationSchema` instead of open record type.
+
+        ### Fixed
+
+        - README example used `baseUrl` instead of `baseURL`.
+        </Update>
+        <Update label="v2.0.1">
         ### Added
 
         - `setPeerCard` method
@@ -745,4 +872,4 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 If you encounter issues using the Honcho API or its SDKs:
 
 1. Open an issue on [GitHub](https://github.com/plastic-labs/honcho/issues)
-2. Join our [Discord community](http://discord.gg/plasticlabs) for support
+2. Join our [Discord community](http://discord.gg/honcho) for support

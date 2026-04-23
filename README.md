@@ -8,10 +8,10 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Version-3.0.3-blue)
+![Static Badge](https://img.shields.io/badge/Version-3.0.6-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
-[![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
+[![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/honcho)
 
 Honcho is an open source memory library with a managed service for building stateful
 agents. Use it with any model, framework, or architecture. It enables agents to build
@@ -162,8 +162,8 @@ Server.
 
 Honcho is developed using [python](https://www.python.org/) and [uv](https://docs.astral.sh/uv/).
 
-The minimum python version is `3.9`
-The minimum uv version is `0.4.9`
+The minimum python version is `3.10`
+The minimum uv version is `0.5.0`
 
 ### Setup
 
@@ -221,11 +221,10 @@ Below are the required configurations:
 ```env
 DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psycopg prefix)
 
-# LLM Provider API Keys (at least one required depending on your configuration)
-LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic by default)
-LLM_OPENAI_API_KEY= # API Key for OpenAI (optional, for embeddings if EMBED_MESSAGES=true)
-LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for summary/deriver by default)
-LLM_GROQ_API_KEY= # API Key for Groq (used for query generation by default)
+# LLM Provider API Keys
+LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for deriver, summary, and dialectic minimal/low by default)
+LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic medium/high/max and dream by default)
+LLM_OPENAI_API_KEY= # API Key for OpenAI (used for embeddings when EMBED_MESSAGES=true)
 ```
 
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
@@ -420,16 +419,17 @@ Then modify the values as needed. The TOML file is organized into sections:
 
 All configuration values can be overridden using environment variables. The environment variable names follow this pattern:
 
-- `{SECTION}_{KEY}` for nested settings
+- `{SECTION}_{KEY}` for top-level section settings
+- Use `__` inside `{KEY}` for nested settings
 - Just `{KEY}` for app-level settings
 
 Examples:
 
 - `DB_CONNECTION_URI` - Database connection string
 - `AUTH_JWT_SECRET` - JWT secret key
-- `DIALECTIC_LEVELS__low__MODEL` - Model for low reasoning level
-- `DERIVER_PROVIDER` - Provider for background deriver
-- `SUMMARY_PROVIDER` - Summary generation provider
+- `DERIVER_MODEL_CONFIG__TRANSPORT` - Transport for the background deriver
+- `SUMMARY_MODEL_CONFIG__MODEL` - Summary model override
+- `DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL` - Model for low reasoning level
 - `LOG_LEVEL` - Application log level
 - `METRICS_ENABLED` - Enable Prometheus metrics
 - `TELEMETRY_ENABLED` - Enable CloudEvents telemetry
@@ -455,14 +455,14 @@ If you have this in `config.toml`:
 
 ```toml
 [db]
-CONNECTION_URI = "postgresql://localhost/honcho_dev"
+CONNECTION_URI = "postgresql+psycopg://localhost/honcho_dev"
 POOL_SIZE = 10
 ```
 
 You can override just the connection URI in production:
 
 ```bash
-export DB_CONNECTION_URI="postgresql://prod-server/honcho_prod"
+export DB_CONNECTION_URI="postgresql+psycopg://prod-server/honcho_prod"
 ```
 
 The application will use the production connection URI while keeping the pool size from config.toml.

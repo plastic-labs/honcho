@@ -5,12 +5,12 @@
     "": {
       "name": "@honcho-ai/sdk",
       "dependencies": {
-        "@types/node": "^24.0.1",
         "zod": "4.0.0",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.1.2",
         "@types/bun": "latest",
+        "@types/node": "^24.0.1",
         "typescript": "^5.0.0",
       },
     },

@@ -62,6 +62,8 @@ class Session(SessionBase, MetadataConfigMixin):
 
     _metadata: dict[str, object] | None = PrivateAttr(default=None)
     _configuration: SessionConfiguration | None = PrivateAttr(default=None)
+    _created_at: datetime | None = PrivateAttr(default=None)
+    _is_active: bool | None = PrivateAttr(default=None)
     _honcho: "Honcho" = PrivateAttr()
 
     @property
@@ -73,6 +75,16 @@ class Session(SessionBase, MetadataConfigMixin):
     def configuration(self) -> SessionConfiguration | None:
         """Cached configuration for this session. May be stale. Use get_configuration() for fresh data."""
         return self._configuration
+
+    @property
+    def created_at(self) -> datetime | None:
+        """Timestamp when this session was created. Only available if fetched from the API."""
+        return self._created_at
+
+    @property
+    def is_active(self) -> bool | None:
+        """Whether this session is active. Only available if fetched from the API."""
+        return self._is_active
 
     # MetadataConfigMixin implementation
     def _get_http_client(self):
@@ -97,6 +109,30 @@ class Session(SessionBase, MetadataConfigMixin):
             exclude_none=True
         )
 
+    def _apply_session_response(self, session: SessionResponse) -> None:
+        self._metadata = session.metadata or {}
+        self._configuration = SessionConfiguration.model_validate(
+            session.configuration.model_dump()
+        )
+        self._created_at = session.created_at
+        self._is_active = session.is_active
+
+    def get_metadata(self) -> dict[str, object]:
+        """
+        Get metadata from the server and update the cache.
+
+        Returns:
+            A dictionary containing the metadata. Returns an empty dictionary
+            if no metadata is set.
+        """
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        session = SessionResponse.model_validate(data)
+        self._apply_session_response(session)
+        return self._metadata or {}
+
     def get_configuration(self) -> SessionConfiguration:  # pyright: ignore[reportIncompatibleMethodOverride]
         """
         Get configuration from the server and update the cache.
@@ -109,9 +145,19 @@ class Session(SessionBase, MetadataConfigMixin):
             self._get_fetch_route(), body=self._get_fetch_body()
         )
         session = SessionResponse.model_validate(data)
-        self._metadata = session.metadata or {}
-        self._configuration = session.configuration
-        return self._configuration
+        self._apply_session_response(session)
+        return self._configuration or SessionConfiguration()
+
+    def refresh(self) -> None:
+        """
+        Refresh cached metadata, configuration, and session status from the server.
+        """
+        self._honcho._ensure_workspace()
+        data = self._get_http_client().post(
+            self._get_fetch_route(), body=self._get_fetch_body()
+        )
+        session = SessionResponse.model_validate(data)
+        self._apply_session_response(session)
 
     @validate_call
     def set_configuration(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -171,6 +217,14 @@ class Session(SessionBase, MetadataConfigMixin):
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),
+        created_at: datetime | None = Field(
+            None,
+            description="Timestamp when this session was created.",
+        ),
+        is_active: bool | None = Field(
+            None,
+            description="Whether this session is active.",
+        ),
     ) -> None:
         """
         Initialize a new Session.
@@ -192,21 +246,9 @@ class Session(SessionBase, MetadataConfigMixin):
         )
         self._honcho = honcho
         self._metadata = metadata
-        self._configuration = configuration
-
-        if configuration is not None or metadata is not None:
-            self._honcho._ensure_workspace()
-            body: dict[str, Any] = {"id": session_id}
-            if metadata is not None:
-                body["metadata"] = metadata
-            if configuration is not None:
-                body["configuration"] = configuration.model_dump(exclude_none=True)
-
-            data = honcho._http.post(routes.sessions(honcho.workspace_id), body=body)
-            session_data = SessionResponse.model_validate(data)
-            # Update cached values with API response
-            self._metadata = session_data.metadata
-            self._configuration = session_data.configuration  # pyright: ignore[reportIncompatibleVariableOverride]
+        self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
+        self._created_at = created_at
+        self._is_active = is_active
 
     def add_peers(
         self,
@@ -405,38 +447,43 @@ class Session(SessionBase, MetadataConfigMixin):
         filters: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[MessageResponse, Message]:
         """
         Get messages from this session with optional filtering.
 
-        Makes an API call to retrieve messages from this session. Results can be
-        filtered based on various criteria.
-
         Args:
-            filters: Dictionary of filter criteria. Supported filters include:
-                    - peer_id: Filter messages by the peer who created them
-                    - metadata: Filter messages by metadata key-value pairs
-                    - timestamp_start: Filter messages after a specific timestamp
-                    - timestamp_end: Filter messages before a specific timestamp
+            filters: Dictionary of filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, returns messages in reverse chronological order. Default: False.
 
         Returns:
-            A list of Message objects matching the specified criteria, ordered by
-            creation time (most recent first)
+            A paginated result of Message objects.
         """
         self._honcho._ensure_workspace()
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
         data = self._honcho._http.post(
             routes.messages_list(self.workspace_id, self.id),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(response: MessageResponse) -> Message:
             return Message.from_api_response(response)
 
-        def fetch_next(page: int) -> SyncPage[MessageResponse, Message]:
+        def fetch_next(next_page: int) -> SyncPage[MessageResponse, Message]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._honcho._http.post(
                 routes.messages_list(self.workspace_id, self.id),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, MessageResponse, transform, fetch_next)
 
@@ -503,6 +550,8 @@ class Session(SessionBase, MetadataConfigMixin):
             self._honcho,
             metadata=cloned.metadata,
             configuration=cloned.configuration,
+            created_at=cloned.created_at,
+            is_active=cloned.is_active,
         )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -918,6 +967,21 @@ class Session(SessionBase, MetadataConfigMixin):
             query=query,
         )
         return QueueStatusResponse.model_validate(data)
+
+    def get_message(self, message_id: str) -> Message:
+        """Get a single message by ID from this session.
+
+        Args:
+            message_id: The ID of the message to retrieve
+
+        Returns:
+            The Message object
+        """
+        self._honcho._ensure_workspace()
+        data = self._honcho._http.get(
+            routes.message(self.workspace_id, self.id, message_id)
+        )
+        return Message.from_api_response(MessageResponse.model_validate(data))
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def update_message(

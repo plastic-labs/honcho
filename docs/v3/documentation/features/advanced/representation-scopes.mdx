@@ -80,7 +80,8 @@ The `target` parameter controls which representation you retrieve:
 
 <CodeGroup>
 ```python Python
-from honcho import Honcho, SessionPeerConfig
+from honcho import Honcho
+from honcho.api_types import SessionPeerConfig
 
 honcho = Honcho()
 session = honcho.session("game-session")
@@ -265,6 +266,20 @@ Directional representations update automatically through the reasoning pipeline 
 3. Other peers in the session have `observe_others=true`
 
 The pipeline respects scoping—Honcho's representations reason over messages across all sessions, while directional representations only reason over messages from sessions where the observer was an active participant.
+
+### Peer Join Order Matters
+
+Reasoning tasks are scheduled at the time a message is created, based on which peers are in the session **at that moment**. Honcho does not retroactively schedule reasoning for peers that join later.
+
+This means:
+
+- If Peer C joins a session **after** messages from Peer A and Peer B have already been sent, Peer C will **not** receive reasoning tasks for those earlier messages—even if Peer C has `observe_others=true`.
+- Peer C will only begin observing new messages sent after they join the session.
+- Similarly, if a peer leaves a session, they stop being included as an observer for any messages sent after their departure.
+
+<Warning>
+There is no retroactive reasoning. If your application needs an observer peer to reason about prior conversation history, add the peer to the session **before** messages are sent. Alternatively, use `peer.chat()` to include conversation history in the agent's context whether or not those messages were previously reasoned over.
+</Warning>
 
 <Note>
 Conclusions are cached for fast retrieval. Use `representation()` to retrieve stored conclusions for dashboards and analytics. Use `peer.chat()` when you need query-specific reasoning with natural language.

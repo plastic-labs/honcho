@@ -19,14 +19,21 @@
   },
   "favicon": "/favicon.svg",
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
   },
   "navigation": {
     "versions": [
       {
-        "version": "v3.0.3",
+        "version": "v3.0.5",
         "api": {
-          "openapi": ["v3/openapi.json"]
+          "openapi": [
+            "v3/openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -77,7 +84,8 @@
                 "group": "Reference",
                 "pages": [
                   "v3/documentation/reference/platform",
-                  "v3/documentation/reference/sdk"
+                  "v3/documentation/reference/sdk",
+                  "v3/documentation/reference/cli"
                 ]
               }
             ]
@@ -87,17 +95,23 @@
             "groups": [
               {
                 "group": "Overview",
-                "pages": ["v3/guides/overview"]
+                "pages": [
+                  "v3/guides/overview"
+                ]
               },
               {
                 "group": "Integrations",
                 "pages": [
                   "v3/guides/integrations/claude-code",
+                  "v3/guides/integrations/opencode",
                   "v3/guides/integrations/crewai",
                   "v3/guides/integrations/langgraph",
                   "v3/guides/integrations/mcp",
                   "v3/guides/integrations/n8n",
                   "v3/guides/integrations/openclaw",
+                  "v3/guides/integrations/hermes",
+                  "v3/guides/integrations/zo-computer",
+                  "v3/guides/integrations/paperclip",
                   "v3/guides/integrations/sillytavern"
                 ]
               },
@@ -105,20 +119,24 @@
                 "group": "Tutorials",
                 "pages": [
                   "v3/guides/discord",
+                  "v3/guides/granola",
                   "v3/guides/telegram",
-                  "v3/guides/integrations/reachy-mini"
+                  "v3/guides/integrations/reachy-mini",
+                  "v3/guides/gmail"
                 ]
               },
               {
                 "group": "Community Integrations",
                 "pages": [
                   "v3/guides/community/agent0",
-                  "v3/guides/community/hermes"
+                  "v3/guides/community/pi-honcho-memory"
                 ]
               },
               {
                 "group": "Migrations",
-                "pages": ["v3/guides/migrations/mem0"]
+                "pages": [
+                  "v3/guides/migrations/mem0"
+                ]
               }
             ]
           },
@@ -129,7 +147,8 @@
                 "group": "Self-Hosting",
                 "pages": [
                   "v3/contributing/self-hosting",
-                  "v3/contributing/configuration"
+                  "v3/contributing/configuration",
+                  "v3/contributing/troubleshooting"
                 ]
               },
               {
@@ -146,7 +165,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v3/api-reference/introduction"]
+                "pages": [
+                  "v3/api-reference/introduction"
+                ]
               },
               {
                 "group": "workspaces",
@@ -224,7 +245,9 @@
               },
               {
                 "group": "miscellaneous",
-                "pages": ["v3/api-reference/endpoint/keys/create-key"]
+                "pages": [
+                  "v3/api-reference/endpoint/keys/create-key"
+                ]
               }
             ]
           },
@@ -245,7 +268,9 @@
       {
         "version": "v2.5.1",
         "api": {
-          "openapi": ["v2/openapi.json"]
+          "openapi": [
+            "v2/openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -292,24 +317,31 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v2/guides/overview"]
+                "pages": [
+                  "v2/guides/overview"
+                ]
               },
               {
                 "group": "Migrations",
-                "pages": ["v2/migrations/from-mem0"]
+                "pages": [
+                  "v2/migrations/from-mem0"
+                ]
               },
               {
                 "group": "Integrations",
                 "pages": [
                   "v2/integrations/crewai",
                   "v2/integrations/langgraph",
-                  "v2/integrations/mcp",
-                  "v2/integrations/n8n"
+                  "v2/integrations/mcp"
                 ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v2/guides/discord", "v2/guides/telegram"]
+                "pages": [
+                  "v2/guides/discord",
+                  "v2/guides/n8n",
+                  "v2/guides/telegram"
+                ]
               }
             ]
           },
@@ -318,7 +350,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v2/api-reference/introduction"]
+                "pages": [
+                  "v2/api-reference/introduction"
+                ]
               },
               {
                 "group": "workspaces",
@@ -422,7 +456,9 @@
       {
         "version": "v1.1.0",
         "api": {
-          "openapi": ["openapi.json"]
+          "openapi": [
+            "openapi.json"
+          ]
         },
         "tabs": [
           {
@@ -452,15 +488,23 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v1/guides/overview", "v1/guides/streaming-response"]
+                "pages": [
+                  "v1/guides/overview",
+                  "v1/guides/streaming-response"
+                ]
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v1/guides/discord", "v1/guides/honcho-mcp"]
+                "pages": [
+                  "v1/guides/discord",
+                  "v1/guides/honcho-mcp"
+                ]
               },
               {
                 "group": "Personal Memory",
-                "pages": ["v1/guides/dialectic-endpoint"]
+                "pages": [
+                  "v1/guides/dialectic-endpoint"
+                ]
               }
             ]
           },
@@ -469,7 +513,9 @@
             "groups": [
               {
                 "group": "API Documentation",
-                "pages": ["v1/api-reference/introduction"]
+                "pages": [
+                  "v1/api-reference/introduction"
+                ]
               },
               {
                 "group": "apps",
@@ -517,7 +563,9 @@
               },
               {
                 "group": "keys",
-                "pages": ["v1/api-reference/endpoint/keys/create-key"]
+                "pages": [
+                  "v1/api-reference/endpoint/keys/create-key"
+                ]
               },
               {
                 "group": "metamessages",

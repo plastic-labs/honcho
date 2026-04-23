@@ -17,7 +17,7 @@ from lancedb import AsyncConnection, AsyncTable
 from src.config import settings
 from src.exceptions import VectorStoreError
 
-from . import VectorQueryResult, VectorRecord, VectorStore, VectorUpsertResult
+from . import VectorQueryResult, VectorRecord, VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _VALID_IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 # Schema for LanceDB tables
-# id: string, vector: fixed_size_list of float32 (1536 dimensions for OpenAI embeddings)
+# id: string, vector: fixed_size_list of float32 (dimension from embedding settings)
 # Additional metadata columns are added dynamically
 
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportUnknownParameterType=false
@@ -93,7 +93,7 @@ class LanceDBVectorStore(VectorStore):
         fields: list[pa.Field] = [
             pa.field("id", pa.string()),
             pa.field(
-                "vector", pa.list_(pa.float32(), settings.VECTOR_STORE.DIMENSIONS)
+                "vector", pa.list_(pa.float32(), settings.EMBEDDING.VECTOR_DIMENSIONS)
             ),
         ]
         fields.extend(self._metadata_fields_for_namespace(namespace))
@@ -156,7 +156,7 @@ class LanceDBVectorStore(VectorStore):
         self,
         namespace: str,
         vectors: list[VectorRecord],
-    ) -> VectorUpsertResult:
+    ) -> None:
         """
         Upsert multiple vectors into LanceDB.
 
@@ -165,7 +165,7 @@ class LanceDBVectorStore(VectorStore):
             vectors: List of VectorRecord objects to upsert
         """
         if not vectors:
-            return VectorUpsertResult(ok=True)
+            return
 
         try:
             rows = [self._row_to_dict(v) for v in vectors]
@@ -180,7 +180,7 @@ class LanceDBVectorStore(VectorStore):
             )
 
             logger.debug(f"Upserted {len(vectors)} vectors to namespace {namespace}")
-            return VectorUpsertResult(ok=True)
+            return
         except Exception as e:
             logger.exception(
                 f"Failed to upsert {len(vectors)} vectors to namespace {namespace}"

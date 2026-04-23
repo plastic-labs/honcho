@@ -27,7 +27,6 @@ from src.reconciler.sync_vectors import (
 from src.vector_store import (
     VectorRecord,
     VectorStore,
-    VectorUpsertResult,
     _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -84,9 +83,7 @@ class TestStateTransitions:
         mock_vector_store.get_vector_namespace = MagicMock(
             return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
         )
-        mock_vector_store.upsert_many = AsyncMock(
-            return_value=VectorUpsertResult(ok=True)
-        )
+        mock_vector_store.upsert_many = AsyncMock(return_value=None)
 
         # Run sync
         synced, failed = await _sync_documents(db_session, docs, mock_vector_store)
@@ -309,13 +306,11 @@ class TestBatchProcessing:
         ) -> str:
             return f"honcho.doc.{_hash_namespace_components(workspace, observer, observed)}"
 
-        async def mock_upsert(
-            namespace: str, vectors: list[VectorRecord]
-        ) -> VectorUpsertResult:
+        async def mock_upsert(namespace: str, vectors: list[VectorRecord]) -> None:
             if namespace not in namespace_calls:
                 namespace_calls[namespace] = []
             namespace_calls[namespace].extend(vectors)
-            return VectorUpsertResult(ok=True)
+            return
 
         mock_vector_store.get_vector_namespace = mock_get_namespace
         mock_vector_store.upsert_many = mock_upsert
@@ -440,9 +435,7 @@ class TestReEmbedding:
             mock_vector_store.get_vector_namespace = MagicMock(
                 return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
             )
-            mock_vector_store.upsert_many = AsyncMock(
-                return_value=VectorUpsertResult(ok=True)
-            )
+            mock_vector_store.upsert_many = AsyncMock(return_value=None)
 
             # Run sync
             synced, failed = await _sync_documents(db_session, docs, mock_vector_store)
@@ -512,9 +505,7 @@ class TestReEmbedding:
             mock_vector_store.get_vector_namespace = MagicMock(
                 return_value=f"honcho.doc.{_hash_namespace_components(workspace.name, peer1.name, peer1.name)}"
             )
-            mock_vector_store.upsert_many = AsyncMock(
-                return_value=VectorUpsertResult(ok=True)
-            )
+            mock_vector_store.upsert_many = AsyncMock(return_value=None)
 
             # Run sync
             await _sync_documents(db_session, docs, mock_vector_store)

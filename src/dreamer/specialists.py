@@ -18,10 +18,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from src import crud, schemas
-from src.config import settings
+from src.config import ConfiguredModelSettings, settings
+from src.dependencies import tracked_db
+from src.exceptions import ValidationException
+from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DreamSpecialistEvent, emit
@@ -32,9 +33,20 @@ from src.utils.agent_tools import (
     INDUCTION_SPECIALIST_TOOLS,
     create_tool_executor,
 )
-from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 
 logger = logging.getLogger(__name__)
+
+
+def _require_specialist_model_config(
+    model_config: ConfiguredModelSettings | None,
+    *,
+    specialist_name: str,
+) -> ConfiguredModelSettings:
+    if model_config is None:
+        raise ValidationException(
+            f"{specialist_name} MODEL_CONFIG must be resolved before use"
+        )
+    return model_config
 
 
 @dataclass
@@ -71,8 +83,8 @@ class BaseSpecialist(ABC):
         ...
 
     @abstractmethod
-    def get_model(self) -> str:
-        """Get the model to use for this specialist."""
+    def get_model_config(self) -> ConfiguredModelSettings:
+        """Get the configured model to use for this specialist."""
         ...
 
     def get_max_tokens(self) -> int:
@@ -116,7 +128,6 @@ If you update it, send the full deduplicated list and remove stale entries.
 
     async def run(
         self,
-        db: AsyncSession,
         workspace_name: str,
         observer: str,
         observed: str,
@@ -128,8 +139,9 @@ If you update it, send the full deduplicated list and remove stale entries.
         """
         Run the specialist agent.
 
+        Uses short-lived DB sessions to avoid holding connections during LLM calls.
+
         Args:
-            db: Database session
             workspace_name: Workspace identifier
             observer: The observing peer
             observed: The peer being observed
@@ -145,23 +157,27 @@ If you update it, send the full deduplicated list and remove stale entries.
         task_name = f"dreamer_{self.name}_{run_id}"
         start_time = time.perf_counter()
 
-        # Validate that the peers exist before proceeding
-        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
-        if observer != observed:
-            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
+        # Short-lived DB session for preflight operations
+        async with tracked_db("dream.specialist.preflight") as db:
+            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+            if observer != observed:
+                await crud.get_peer(
+                    db, workspace_name, schemas.PeerCreate(name=observed)
+                )
 
-        # Determine if peer card tools should be included
-        peer_card_enabled = configuration is None or configuration.peer_card.create
+            # Determine if peer card tools should be included
+            peer_card_enabled = configuration is None or configuration.peer_card.create
 
-        # Fetch current peer card to inject into prompt (saves a tool call)
-        current_peer_card: list[str] | None = None
-        if peer_card_enabled:
-            current_peer_card = await crud.get_peer_card(
-                db,
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-            )
+            # Fetch current peer card to inject into prompt (saves a tool call)
+            current_peer_card: list[str] | None = None
+            if peer_card_enabled:
+                current_peer_card = await crud.get_peer_card(
+                    db,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                )
+        # DB session closed — LLM calls happen without holding a connection
 
         # Build messages
         messages: list[dict[str, str]] = [
@@ -181,7 +197,6 @@ If you update it, send the full deduplicated list and remove stale entries.
         tool_executor: Callable[
             [str, dict[str, Any]], Any
         ] = await create_tool_executor(
-            db=db,
             workspace_name=workspace_name,
             observer=observer,
             observed=observed,
@@ -194,9 +209,18 @@ If you update it, send the full deduplicated list and remove stale entries.
             parent_category="dream",
         )
 
-        # Get model with potential override
-        model = self.get_model()
-        llm_settings = settings.DREAM.model_copy(update={"MODEL": model})
+        model_config = self.get_model_config()
+
+        # Respect operator-configured max_output_tokens on the specialist's
+        # ModelConfig (e.g. DREAM_DEDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS).
+        # Only fall back to the specialist's hardcoded default when the
+        # config leaves max_output_tokens unset or non-positive.
+        configured_max = model_config.max_output_tokens
+        effective_max_tokens = (
+            configured_max
+            if configured_max and configured_max > 0
+            else self.get_max_tokens()
+        )
 
         # Track iterations via callback
         iteration_count = 0
@@ -207,9 +231,9 @@ If you update it, send the full deduplicated list and remove stale entries.
 
         # Run the agent loop
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            llm_settings=llm_settings,
+            model_config=model_config,
             prompt="",  # Ignored since we pass messages
-            max_tokens=self.get_max_tokens(),
+            max_tokens=effective_max_tokens,
             tools=self.get_tools(peer_card_enabled=peer_card_enabled),
             tool_choice=None,
             tool_executor=tool_executor,
@@ -303,8 +327,11 @@ class DeductionSpecialist(BaseSpecialist):
             if t["name"] not in PEER_CARD_TOOL_NAMES
         ]
 
-    def get_model(self) -> str:
-        return settings.DREAM.DEDUCTION_MODEL
+    def get_model_config(self) -> ConfiguredModelSettings:
+        return _require_specialist_model_config(
+            settings.DREAM.DEDUCTION_MODEL_CONFIG,
+            specialist_name="DREAM DEDUCTION",
+        )
 
     def get_max_tokens(self) -> int:
         return 8192
@@ -375,11 +402,12 @@ When statements can't both be true (not just updates), flag them:
 
 ## CREATING OBSERVATIONS
 
+Use `create_observations_deductive`.
+
 ```json
 {{
   "observations": [{{
     "content": "The logical conclusion",
-    "level": "deductive",  // or "contradiction"
     "source_ids": ["id1", "id2"],
     "premises": ["premise 1 text", "premise 2 text"]
   }}]
@@ -391,8 +419,9 @@ When statements can't both be true (not just updates), flag them:
 1. Don't explain your reasoning - just call tools
 2. Create observations based on what you ACTUALLY FIND, not what you expect
 3. Always include source_ids linking to the observations you're synthesizing
-4. Delete outdated observations - don't leave duplicates
-5. Quality over quantity - fewer good deductions beat many weak ones"""
+4. Empty or missing source_ids will be rejected
+5. Delete outdated observations - don't leave duplicates
+6. Quality over quantity - fewer good deductions beat many weak ones"""
 
     def build_user_prompt(
         self,
@@ -446,8 +475,11 @@ class InductionSpecialist(BaseSpecialist):
             if t["name"] not in PEER_CARD_TOOL_NAMES
         ]
 
-    def get_model(self) -> str:
-        return settings.DREAM.INDUCTION_MODEL
+    def get_model_config(self) -> ConfiguredModelSettings:
+        return _require_specialist_model_config(
+            settings.DREAM.INDUCTION_MODEL_CONFIG,
+            specialist_name="DREAM INDUCTION",
+        )
 
     def get_max_tokens(self) -> int:
         return 8192
@@ -512,11 +544,12 @@ Create inductive observations when you see patterns:
 
 ## CREATING OBSERVATIONS
 
+Use `create_observations_inductive`.
+
 ```json
 {{
   "observations": [{{
     "content": "The pattern or generalization",
-    "level": "inductive",
     "source_ids": ["id1", "id2", "id3"],
     "sources": ["evidence 1", "evidence 2"],
     "pattern_type": "tendency",  // preference|behavior|personality|tendency|correlation
@@ -531,7 +564,8 @@ Create inductive observations when you see patterns:
 2. Don't just restate a single fact as a pattern
 3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
 4. Look for HOW things change over time, not just static facts
-5. Include source_ids - always link back to evidence"""
+5. Include source_ids - always link back to evidence
+6. Empty or missing source_ids will be rejected"""
 
     def build_user_prompt(
         self,

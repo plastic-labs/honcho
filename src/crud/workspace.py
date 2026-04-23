@@ -202,7 +202,11 @@ async def update_workspace(
     db: AsyncSession, workspace_name: str, workspace: schemas.WorkspaceUpdate
 ) -> models.Workspace:
     """
-    Update a workspace.
+    Get or create a workspace, then apply metadata and configuration updates.
+
+    Provided metadata replaces the current metadata when present. Provided
+    configuration keys are merged into the existing configuration instead of
+    replacing it wholesale.
 
     Args:
         db: Database session
@@ -211,6 +215,10 @@ async def update_workspace(
 
     Returns:
         The updated workspace
+
+    Raises:
+        ConflictException: If concurrent creation prevents fetching or creating
+            the workspace
     """
     ws_result = await get_or_create_workspace(
         db,
@@ -250,7 +258,6 @@ async def update_workspace(
         return honcho_workspace
 
     await db.commit()
-    await db.refresh(honcho_workspace)
     await ws_result.post_commit()
 
     # Only invalidate if we actually updated

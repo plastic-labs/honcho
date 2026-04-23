@@ -32,13 +32,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
+ENV HOME=/app
+ENV UV_CACHE_DIR=/tmp/uv-cache
 
 # Create non-root user and set ownership
-RUN addgroup --system app && adduser --system --group app && chown -R app:app /app
+RUN addgroup --system app && adduser --system --group app && mkdir -p /tmp/uv-cache && chown -R app:app /app /tmp/uv-cache
 
 COPY --chown=app:app src/ /app/src/
 COPY --chown=app:app migrations/ /app/migrations/
 COPY --chown=app:app scripts/ /app/scripts/
+COPY --chown=app:app docker/ /app/docker/
 COPY --chown=app:app alembic.ini /app/alembic.ini
 # Copy config files - this will copy config.toml if it exists, and config.toml.example
 COPY --chown=app:app config.toml* /app/
@@ -47,8 +50,5 @@ COPY --chown=app:app config.toml* /app/
 USER app
 
 EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json')" || exit 1
 
 CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]

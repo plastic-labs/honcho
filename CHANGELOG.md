@@ -5,6 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- New `src/llm/` package as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy
+- `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback
+- Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends
+- Dreamer specialists derive `effective_max_tokens` from `model_config.max_output_tokens` with a per-specialist default fallback
+- Regression tests covering fallback-config thinking-param reach, provider_params → extra_params boundary, OpenAI reasoning-model parameter routing, Gemini blocked finish_reason handling, and fail-fast `max_tool_iterations` validation
+
+### Changed
+
+- All LLM orchestration moved out of `src/utils/clients.py` into `src/llm/` with modules split by responsibility (api, executor, tool_loop, runtime, registry, conversation, request_builder, credentials, caching, backends, history_adapters)
+- Default `ModelConfig` factories (deriver, summary, dreamer specialists, dialectic levels) normalized to `openai/gpt-5.4-mini` with no extra parameters set by default; operators add transport/thinking overrides explicitly
+- OpenAI reasoning-model routing widened via `_uses_max_completion_tokens` heuristic covering `gpt-5.x` and `o1/o3/o4` — these models receive `max_completion_tokens` instead of `max_tokens`
+- Override client factories switched from unbounded `@cache` to `@lru_cache(maxsize=128)` for predictable memory growth on long-running processes
+- `get_backend` now delegates to `client_for_model_config`, so the live-test path and production path share one missing-API-key validation
+- Blocked Gemini responses (`SAFETY`, `RECITATION`, `PROHIBITED_CONTENT`, `BLOCKLIST`) raise `LLMError` in the streaming path too (previously only the non-streaming path), ensuring retry/fallback logic fires uniformly
+- Transport-change env overrides now strip transport-specific thinking params (thinking_budget_tokens vs. reasoning_effort) during config merge, including at the dialectic-level merge, so switching from Anthropic → OpenAI doesn't leave orphaned Anthropic-only params that the OpenAI backend would reject
+- `max_tool_iterations` out-of-range inputs now raise `ValidationException` instead of being silently clamped
+- Troubleshooting docs updated to reflect nested-env-var form for per-component thinking-budget overrides
+
+### Fixed
+
+- Fallback `ModelConfig` temperature and `thinking_budget_tokens` reach the backend on the final retry — previously the primary's values were pre-populated into caller kwargs early and clobbered fallback values via `effective_config_for_call(update=...)`
+- Stream-final retries pin to the `AttemptPlan` that succeeded rather than re-running provider selection through the outer `current_attempt` ContextVar (which could roll streaming back to primary after the tool loop had already switched to fallback)
+- OpenAI structured-output calls continue to use `chat.completions.parse()` with strict schema enforcement, while tool-calling paths use `chat.completions.create()` without `strict:True` for broader proxy compatibility (OpenRouter, vLLM, Ollama)
+- Gemini `cached_content` reuse keys now include `system_instruction` and `tool_config` so cache hits don't cross configurations that differ only in those fields
+
+### Removed
+
+- `src/utils/clients.py` deleted; its responsibilities are split across `src/llm/registry.py`, `src/llm/credentials.py`, and the backend-specific modules
+
+## [3.0.6] - 2026-04-10
+
+### Changed
+
+- Tightened transaction scopes across search, agent tools, queue manager, and webhook delivery to minimize DB connection hold time during external operations (#525)
+- Search operations refactored to two-phase pattern — external work (embeddings, LLM calls) completes before opening a transaction (#525)
+- Agent tool executor performs external operations before acquiring DB sessions (#525)
+- Queue manager transaction scope reduced to only the critical section (#525)
+- Webhook delivery no longer holds a DB session parameter (#525)
+
+### Fixed
+
+- Session leakage in non-session-scoped dialectic chat calls (#526)
+
+### Added
+
+- Health check endpoint (`/health`) for container orchestration and load balancer probes (#510)
+
+## [3.0.5] - 2026-04-03
+
+### Fixed
+
+- explicit rollback on all transactions to force connection closed
+
+## [3.0.4] - 2026-04-02
+
+### Added
+
+- JSONB metadata validation enforces 100 key limit and max depth of 5 (#419)
+
+### Changed
+
+- Schemas refactored from single `schemas.py` into `schemas/api.py`, `schemas/configuration.py`, and `schemas/internal.py` with backwards-compatible re-exports (#419)
+
+### Fixed
+
+- Missing `deleted_at` filter on `RepresentationManager._query_documents_recent()` and `._query_documents_most_derived()` allowed soft-deleted documents to leak into the deriver's working representation (#456)
+- `CleanupStaleItemsCompletedEvent` emitted spuriously when no queue item was actually deleted (#454)
+- Empty JSON file uploads caused unhandled errors; now returns normalized error responses (#434)
+- Memory leak: `_observation_locks` switched to `WeakValueDictionary` to prevent unbounded growth (#419)
+- SQL injection in `dependencies.py`: parameterized `set_config` calls to prevent injection via request context (#419)
+- NUL byte crashes: string inputs (message content, queries, peer cards) now stripped at schema level (#419)
+- Filter recursion depth capped at 5 to prevent stack overflow (#419)
+- Dedup-skipped observations now correctly reflected in created counts (#477)
+- External vector store support for message search — routes queries through configured external vector store with oversampling and
+  deduplication to handle chunked embeddings (#479)
+- Dialectic agent no longer holds a DB connection during LLM calls — embeddings are pre-computed before tool execution, DB sessions isolated in `extract_preferences`, `query_documents` no longer accepts a DB session parameter (#477)
+
 ## [3.0.3] - 2026-02-25
 
 ### Added
@@ -454,7 +535,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Changed
 
 - `/list` endpoints to not require a request body
-- `metamessage_type` to `label` with backwards compatability
+- `metamessage_type` to `label` with backwards compatibility
 - Database Provisioning to rely on alembic
 - Database Session Manager to explicitly rollback transactions before closing
   the connection
@@ -628,7 +709,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Authentication Middleware now implemented using built-in FastAPI Security
   module
 - Get by name routes for users and collections now include "name" in slug
-- Python SDK moved to separate [respository](https://github.com/plastic-labs/honcho-python)
+- Python SDK moved to separate [repository](https://github.com/plastic-labs/honcho-python)
 
 ### Fixed
 
@@ -699,7 +780,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Changed
 
 - session_data is now metadata
-- session_data is a JSON field used python `dict` for compatability
+- session_data is a JSON field used python `dict` for compatibility
 
 ## [0.0.2] — 2024-02-01
 

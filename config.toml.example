@@ -11,8 +11,6 @@ GET_CONTEXT_MAX_TOKENS = 100000
 MAX_FILE_SIZE = 5242880  # 5MB
 MAX_MESSAGE_SIZE = 25000 # Characters
 EMBED_MESSAGES = true
-MAX_EMBEDDING_TOKENS = 8192
-MAX_EMBEDDING_TOKENS_PER_REQUEST = 300000
 # LANGFUSE_HOST = "https://api.langfuse.com"
 # LANGFUSE_PUBLIC_KEY = "your-public-key-here"
 # COLLECT_METRICS_LOCAL = false
@@ -51,21 +49,32 @@ PROFILES_SAMPLE_RATE = 0.1
 # LLM settings
 [llm]
 DEFAULT_MAX_TOKENS = 2500
-EMBEDDING_PROVIDER = "openai"
 MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
-# API Keys for LLM providers
+# API Keys for LLM providers (set the ones you need)
+# Supported transports: openai, anthropic, gemini
+# Base URLs are set per-module via model_config.overrides.base_url
+# Built-in text-generation defaults use openai / gpt-5.4-mini.
+# Embeddings default to openai / text-embedding-3-small.
+OPENAI_API_KEY = "your-api-key-here"
 # ANTHROPIC_API_KEY = "your-api-key"
-# OPENAI_API_KEY = "your-api-key"
-# OPENAI_COMPATIBLE_API_KEY = "your-api-key"
 # GEMINI_API_KEY = "your-api-key"
-# GROQ_API_KEY = "your-api-key"
-# OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
 
-# Separate vLLM endpoint (for local models)
-# VLLM_API_KEY = "your-api-key"
-# VLLM_BASE_URL = "your-base-url"
+# Embedding settings
+[embedding]
+VECTOR_DIMENSIONS = 1536
+MAX_INPUT_TOKENS = 8192
+MAX_TOKENS_PER_REQUEST = 300000
+
+[embedding.model_config]
+transport = "openai"
+model = "text-embedding-3-small"
+
+# Optional module-level endpoint overrides
+# [embedding.model_config.overrides]
+# base_url = "https://embedding-proxy.internal.example/v1"
+# api_key_env = "EMBEDDING_CUSTOM_API_KEY"
 
 # Deriver settings
 [deriver]
@@ -74,19 +83,37 @@ WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
 STALE_SESSION_TIMEOUT_MINUTES = 5
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-# TEMPERATURE = 0.0
-# BACKUP_PROVIDER = "anthropic"
-# BACKUP_MODEL = "claude-haiku-4-5"
 DEDUPLICATE = true
-MAX_OUTPUT_TOKENS = 4096
-THINKING_BUDGET_TOKENS = 1024
 LOG_OBSERVATIONS = false
 MAX_INPUT_TOKENS = 23000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 1024
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
+
+[deriver.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+# temperature = 0.0
+# thinking_effort = "minimal"
+# thinking_budget_tokens = 1024
+# max_output_tokens = 4096
+
+# Optional module-level endpoint overrides
+# transport = "openai"
+# model = "my-local-model"
+# [deriver.model_config.overrides]
+# base_url = "https://llm.internal.example/v1"
+# api_key_env = "DERIVER_CUSTOM_API_KEY"
+
+# Optional fallback model
+# [deriver.model_config.fallback]
+# transport = "anthropic"
+# model = "claude-haiku-4-5"
+# [deriver.model_config.fallback.overrides]
+# base_url = "https://llm-backup.internal.example/v1"
+# api_key_env = "DERIVER_CUSTOM_BACKUP_API_KEY"
+# [deriver.model_config.overrides.provider_params]
+# verbosity = "low"
 
 # Peer card settings
 [peer_card]
@@ -102,55 +129,64 @@ SESSION_HISTORY_MAX_TOKENS = 4096
 # Per-level settings for reasoning levels
 # MAX_OUTPUT_TOKENS is optional per level; if not set, uses global MAX_OUTPUT_TOKENS
 [dialectic.levels.minimal]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 1
 MAX_OUTPUT_TOKENS = 250
+TOOL_CHOICE = "any"
+
+[dialectic.levels.minimal.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.low]
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash-lite"
-THINKING_BUDGET_TOKENS = 0
 MAX_TOOL_ITERATIONS = 5
-# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+TOOL_CHOICE = "any"
+
+[dialectic.levels.low.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.medium]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 2
-# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+
+[dialectic.levels.medium.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.high]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 1024
 MAX_TOOL_ITERATIONS = 4
-# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
+
+[dialectic.levels.high.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 [dialectic.levels.max]
-PROVIDER = "anthropic"
-MODEL = "claude-haiku-4-5"
-THINKING_BUDGET_TOKENS = 2048
 MAX_TOOL_ITERATIONS = 10
-# MAX_OUTPUT_TOKENS = 8192  # Optional: override global default
-# Backup provider example (optional, must set both or neither):
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-pro"
+
+[dialectic.levels.max.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
+# [dialectic.levels.max.model_config.fallback]
+# transport = "gemini"
+# model = "gemini-2.5-pro"
 
 # Summary settings
 [summary]
 ENABLED = true
 MESSAGES_PER_SHORT_SUMMARY = 20
 MESSAGES_PER_LONG_SUMMARY = 60
-PROVIDER = "google"
-MODEL = "gemini-2.5-flash"
 MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 4000
-THINKING_BUDGET_TOKENS = 512
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-flash"
+
+[summary.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+# thinking_effort = "minimal"
+# thinking_budget_tokens = 1024
+
+# [summary.model_config.fallback]
+# transport = "anthropic"
+# model = "claude-haiku-4-5"
 
 # Dream settings
 [dream]
@@ -159,18 +195,16 @@ DOCUMENT_THRESHOLD = 50
 IDLE_TIMEOUT_MINUTES = 60
 MIN_HOURS_BETWEEN_DREAMS = 8
 ENABLED_TYPES = ["omni"]
-PROVIDER = "anthropic"
-MODEL = "claude-sonnet-4-20250514"
-MAX_OUTPUT_TOKENS = 16384
-THINKING_BUDGET_TOKENS = 8192
 MAX_TOOL_ITERATIONS = 20
 HISTORY_TOKEN_LIMIT = 16384
-# BACKUP_PROVIDER = "google"
-# BACKUP_MODEL = "gemini-2.5-flash"
 
-# Specialist models (use same provider as main model)
-DEDUCTION_MODEL = "claude-haiku-4-5"
-INDUCTION_MODEL = "claude-haiku-4-5"
+[dream.deduction_model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+
+[dream.induction_model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
 
 # Surprisal-based sampling subsystem
 [dream.surprisal]
@@ -220,6 +254,8 @@ TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
 NAMESPACE = "honcho"
+# This should match embedding.vector_dimensions. pgvector and dual-write mode
+# currently still require 1536 until a schema migration lands.
 DIMENSIONS = 1536
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
