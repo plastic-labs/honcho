@@ -428,7 +428,7 @@ Examples:
 - `DB_CONNECTION_URI` - Database connection string
 - `AUTH_JWT_SECRET` - JWT secret key
 - `DERIVER_MODEL_CONFIG__TRANSPORT` - Transport for the background deriver
-- `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` - Explicit prompt budget cap for deriver custom instructions
+- `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` - Explicit prompt budget cap for deriver custom instructions (maximum supported value: `500`)
 - `SUMMARY_MODEL_CONFIG__MODEL` - Summary model override
 - `DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL` - Model for low reasoning level
 - `LOG_LEVEL` - Application log level

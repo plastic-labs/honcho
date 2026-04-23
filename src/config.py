@@ -733,7 +733,7 @@ class DeriverSettings(HonchoSettings):
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
     MAX_CUSTOM_INSTRUCTIONS_TOKENS: Annotated[
-        int | None, Field(default=None, gt=0, le=23000)
+        int | None, Field(default=None, gt=0, le=500)
     ] = None
 
     # Maximum number of observations to return in working representation
