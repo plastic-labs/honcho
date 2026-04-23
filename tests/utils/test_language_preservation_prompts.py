@@ -5,7 +5,9 @@ from src.deriver.prompts import minimal_deriver_prompt
 from src.dreamer.specialists import DeductionSpecialist, InductionSpecialist
 from src.utils.summarizer import long_summary_prompt, short_summary_prompt
 
-load_dotenv(override=True)
+async def _call_llm(prompt: str, max_tokens: int = 500) -> str:
+    """Call the configured LLM directly, bypassing Honcho middleware."""
+    load_dotenv(override=False)
 
 # Estonian parliament debate excerpt
 ESTONIAN_MESSAGES = """\
