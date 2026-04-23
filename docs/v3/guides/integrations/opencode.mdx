@@ -62,7 +62,7 @@ OpenCode will interview you about stable preferences and project context, then p
 
 ## Configuration
 
-Configuration lives in a single shared file at `~/.honcho/config.json`, shared with other Honcho hosts (Claude Code, Cursor, etc.). OpenCode reads and writes this file directly, and OpenCode-specific defaults live under `hosts.opencode`. Edit the file direct or use `/honcho:mode` to change it via OpenCode's chat, or call the `honcho_set_config` tool for other settings.
+Configuration lives in a single shared file at `~/.honcho/config.json`, shared with other Honcho hosts (Claude Code, Cursor, etc.). OpenCode reads and writes this file directly, and OpenCode-specific defaults live under `hosts.opencode`. Edit the file direct or use `/honcho:config` to change it via OpenCode's chat, or call the `honcho_set_config` tool for other settings.
 
 ```jsonc
 {
@@ -125,7 +125,7 @@ If OpenCode is running inside Docker or another remote environment, `localhost` 
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Show effective Honcho status for the current OpenCode project |
 | `/honcho:settings` | Show effective config values and config paths |
-| `/honcho:mode` | Change `recallMode` |
+| `/honcho:config` | Change `recallMode` |
 | `/honcho:interview` | Capture durable preferences or project context into memory |
 
 ## Agent Tools
@@ -138,7 +138,7 @@ The plugin exposes these tools inside OpenCode:
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
 | `honcho_set_config` | Update a persisted shared setting |
-| `honcho_search` | Search Honcho session messages and retrieved context, not durable conclusions |
+| `honcho_search` | Search Honcho session messages |
 | `honcho_chat` | Query Honcho for reasoning-backed context |
 | `honcho_create_conclusion` | Save a durable memory conclusion |
 
