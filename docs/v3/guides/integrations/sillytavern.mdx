@@ -91,37 +91,28 @@ This mode works best with models that support function calling. The LLM decides 
 
 By default, only the user peer accumulates derived memory — Honcho observes the user's messages and derives conclusions across sessions. The AI character's persona comes from its character card, not from peer derivation. If you want the character to have its own Honcho-derived state, configure it as an additional peer in session setup.
 
-### Peer Modes
+### Peer Modes and Session Naming
 
-| Mode | Behavior |
+Peer mode controls memory partitioning; session naming controls conversation partitioning. Pair them to get the isolation you want.
+
+| Peer Mode | Behavior |
 | --- | --- |
 | **Single peer** | One user peer shared across all characters |
 | **Per-persona** | Each character gets its own isolated memory |
 
-### Group Chats
-
-Group chats register **one peer per character** in the group, not a single collapsed `group-<id>` peer. Each character's messages land under their own peer so their derived representations stay distinct. Characters who join the group mid-chat are lazy-added to the session on their first message.
-
-### Session Naming
-
-| Mode | Behavior |
+| Session Naming | Behavior |
 | --- | --- |
 | **Auto** | Per-chat hash (unique per conversation) |
 | **Per-character** | One session per character (persistent) |
 | **Custom** | User-defined session name |
 
-**Session IDs are frozen once assigned.** Changing the naming mode, the custom session name, or the character name only affects *new* chats — existing chats stay linked to their original Honcho session so history, summaries, and derivations don't fragment.
+Session IDs are frozen once assigned. Changing the naming mode, the custom session name, or the character name only affects new chats — existing chats stay linked to their original Honcho session so history, summaries, and derivations don't fragment.
 
-The Active session field in the panel is read-only. To start fresh, use the **Reset** button next to it — it orphans the current session (messages remain in Honcho but the chat unlinks from them) and creates a new session on the next message.
+The Active session field in the panel is read-only. To start fresh, hit **Reset** next to it — the current session gets orphaned (messages stay in Honcho, the chat unlinks) and a new session starts on the next message.
 
-### Event Flow
+### Group Chats
 
-| SillyTavern Event | Action |
-| --- | --- |
-| Chat opened | Creates or retrieves Honcho session + peers |
-| Before generation | Injects memory context into the prompt |
-| User sends message | Stores message in Honcho session |
-| AI responds | Stores response in Honcho session |
+Group chats register one peer per character, not a single collapsed `group-<id>` peer. Each character's messages land under their own peer, so their derived representations stay distinct. Characters who join mid-chat get lazy-added to the session on their first message.
 
 ## Global Config (Multi-Tool Setups)
 
