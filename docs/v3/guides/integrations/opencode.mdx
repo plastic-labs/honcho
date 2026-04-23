@@ -56,49 +56,32 @@ OpenCode will interview you about stable preferences and project context, then p
 - **Cloud or Local Deployments** — Point at Honcho Cloud or a self-hosted / local instance
 - **Workspace Mapping** — OpenCode projects map cleanly to Honcho workspaces
 - **Flexible Session Mapping** — Scope sessions per directory, repo, branch, chat instance, or globally
-- **Durable Writes** — Save stable conclusions and session context, with async/turn/session write policies
-- **Memory Retrieval** — Search memory, query Honcho's reasoning, and inject relevant context into prompts
-- **Peer Modeling** — Default classic peer model plus optional hierarchical modeling for delegated agent flows
+- **Durable Writes** — Save stable conclusions and retain session context across OpenCode runs
+- **Memory Retrieval** — Search session messages, query Honcho's reasoning, and inject relevant context into prompts
 - **Agent Tools** — First-class tools for search, chat, and conclusion-writing inside OpenCode
 
 ## Configuration
 
-Configuration lives in a single global file at `~/.honcho/config.json`, shared with other Honcho hosts (Claude Code, Cursor, etc.). OpenCode-specific defaults live under `hosts.opencode` in the same file. Edit the file directly, use `/honcho:set` / `/honcho:unset`, or call the `honcho_set_config` tool.
+Configuration lives in a single shared file at `~/.honcho/config.json`, shared with other Honcho hosts (Claude Code, Cursor, etc.). OpenCode reads and writes this file directly, and OpenCode-specific defaults live under `hosts.opencode`. Edit the file direct or use `/honcho:mode` to change it via OpenCode's chat, or call the `honcho_set_config` tool for other settings.
 
 ```jsonc
 {
-  // Required
   "apiKey": "hch-...",
-
-  // Identity
-  "peerName": "alice",                  // Your name (default: $USER)
-
-  // Shared endpoint (applies when host has no override)
+  "peerName": "alice",
   "baseUrl": "https://api.honcho.dev",
-
-  // Host-specific settings
   "hosts": {
     "opencode": {
-      "enabled": true,
-      "baseUrl": "https://api.honcho.dev",
-      "workspace": "opencode",          // Workspace for OpenCode sessions
-      "aiPeer": "opencode",             // AI identity in this workspace
-      "globalOverride": false,          // Force all hosts into one workspace
-
-      // Retrieval & reasoning
-      "recallMode": "hybrid",           // "hybrid" | "context" | "tools"
-      "observation": "directional",     // "directional" | "unified"
-      "peerModel": "classic",           // "classic" | "hierarchical"
-
-      // Write policy
-      "writeFrequency": "async",        // "async" | "turn" | "session" | <seconds>
-
-      // Session mapping
+      "workspace": "opencode",
+      "aiPeer": "opencode",
+      "recallMode": "hybrid",
+      "observationMode": "directional",
       "sessionStrategy": "per-directory"
     }
   }
 }
 ```
+
+Top-level shared fields are `apiKey`, `peerName`, and `baseUrl`. OpenCode's host-scoped settings live under `hosts.opencode`: `workspace`, `aiPeer`, `recallMode`, `observationMode`, and `sessionStrategy`.
 
 ### Cloud vs Local
 
@@ -124,15 +107,6 @@ If OpenCode is running inside Docker or another remote environment, `localhost` 
 | `context` | Only inject memory into system prompts | Predictable prompts, no tool calls |
 | `tools` | Only expose memory as tools | Explicit, on-demand retrieval |
 
-### Write Frequencies
-
-| Frequency | Behavior |
-| --- | --- |
-| `async` (default) | Writes happen in the background, non-blocking |
-| `turn` | Persist after every turn |
-| `session` | Persist at session end / compaction |
-| `<number>` | Persist every N seconds |
-
 ### Session Strategies
 
 | Strategy | Behavior | Best for |
@@ -144,26 +118,6 @@ If OpenCode is running inside Docker or another remote environment, `localhost` 
 | `chat-instance` | Session tied to the current chat instance | Highly ephemeral usage |
 | `global` | One session for everything | Shared memory across all work |
 
-### Peer Models
-
-- **`classic`** (default) — User and AI are independent peers in the workspace.
-- **`hierarchical`** — Supports delegated agent flows where sub-agents inherit from a parent peer. Useful when OpenCode spawns task-specific agents that should share the parent's context.
-
-### Global Override
-
-Set `globalOverride: true` (and a flat `workspace` field) if you want all Honcho hosts to share a single workspace instead of per-host isolation:
-
-```jsonc
-{
-  "globalOverride": true,
-  "workspace": "shared",
-  "hosts": {
-    "opencode":    { "aiPeer": "opencode" },
-    "claude_code": { "aiPeer": "claude" }
-  }
-}
-```
-
 ## Operator Commands
 
 | Command | Description |
@@ -171,10 +125,7 @@ Set `globalOverride: true` (and a flat `workspace` field) if you want all Honcho
 | `/honcho:setup` | First-time setup for cloud or local Honcho |
 | `/honcho:status` | Show effective Honcho status for the current OpenCode project |
 | `/honcho:settings` | Show effective config values and config paths |
-| `/honcho:set` | Persist a config field in `~/.honcho/config.json` |
-| `/honcho:unset` | Reset a shared config field back to its default |
 | `/honcho:mode` | Change `recallMode` |
-| `/honcho:write` | Change `writeFrequency` (does not create memory) |
 | `/honcho:interview` | Capture durable preferences or project context into memory |
 
 ## Agent Tools
@@ -187,7 +138,7 @@ The plugin exposes these tools inside OpenCode:
 | `honcho_status` | Show effective runtime status |
 | `honcho_get_config` | Read effective and persisted settings |
 | `honcho_set_config` | Update a persisted shared setting |
-| `honcho_search` | Search Honcho session memory |
+| `honcho_search` | Search Honcho session messages and retrieved context, not durable conclusions |
 | `honcho_chat` | Query Honcho for reasoning-backed context |
 | `honcho_create_conclusion` | Save a durable memory conclusion |
 
@@ -235,11 +186,11 @@ Both write to `team-acme`; Honcho's dialectic reasoning draws on context from bo
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="GitHub Repository" icon="github" href="https://github.com/honcho-ai/opencode-honcho">
+  <Card title="GitHub Repository" icon="github" href="https://github.com/plastic-labs/opencode-honcho">
     Source code, issues, and README.
   </Card>
 
-  <Card title="Honcho Architecture" icon="sitemap" href="/v3/documentation/core-concepts/architecture">
+  <Card title="Honcho Architecture" icon="sitemap" href="../../documentation/core-concepts/architecture">
     Learn about peers, sessions, and dialectic reasoning.
   </Card>
 </CardGroup>
