@@ -125,11 +125,7 @@ async def process_representation_tasks_batch(
     # validation on settings means max_tokens will always be > 0
     base_model_config = _get_deriver_model_config()
     max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
-    model_config = base_model_config.model_copy(
-        update={
-            "stop_sequences": ["   \n", "\n\n\n\n"],
-        }
-    )
+    model_config = base_model_config
 
     # Single LLM call
     llm_start = time.perf_counter()

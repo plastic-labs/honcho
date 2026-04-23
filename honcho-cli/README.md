@@ -19,16 +19,6 @@ As a standalone tool (recommended):
 uv tool install honcho-cli
 ```
 
-As an extra on the Honcho SDK (if you want both the SDK and the CLI in one project):
-
-```bash
-uv add honcho-ai[cli]
-# or
-pip install honcho-ai[cli]
-```
-
-Either way, you'll get the `honcho` command on your PATH.
-
 ## Quick Start
 
 ```bash
@@ -141,6 +131,16 @@ Non-interactive onboarding:
 # Pre-seed via flags / env vars; init still prompts for anything missing
 HONCHO_API_KEY=hch-v3-xxx honcho init --base-url https://api.honcho.dev
 ```
+
+## Agent skill
+
+`honcho-cli` ships with a skill that teaches agents the right commands and conventions for inspecting and debugging a Honcho deployment. Install it anywhere skills are accepted (Claude Code, other skill-aware agents):
+
+```bash
+npx skills add plastic-labs/honcho
+```
+
+The picker lists every skill for Honcho — select `honcho-cli` .
 
 ## Environment Variables
 
