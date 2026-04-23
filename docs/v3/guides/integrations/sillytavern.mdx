@@ -77,12 +77,11 @@ Both the context and reasoning layers use stale-while-revalidate with configurab
 
 ### Tool Call Mode
 
-In tool call mode, the extension registers three function tools that the LLM can invoke:
+In tool call mode, the extension registers two function tools that the LLM can invoke:
 
 | Tool | Description |
 | --- | --- |
 | `honcho_query_memory` | Dialectic chat query -- ask Honcho what it knows |
-| `honcho_save_observation` | Save an insight about the user to memory |
 | `honcho_search_history` | Semantic search across session messages |
 
 This mode works best with models that support function calling. The LLM decides when to query memory rather than firing on every turn.
