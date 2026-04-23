@@ -9,19 +9,15 @@ Give your SillyTavern characters long-term memory. Honcho remembers who you are,
 
 The extension has two parts: a **client extension** (browser) that hooks into SillyTavern events, and a **server plugin** (Node.js) that proxies requests to the Honcho API.
 
+## Prerequisites
+
+- **SillyTavern running locally** (Node ≥ 18). New to it? See the [SillyTavern installation docs](https://docs.sillytavern.app/installation/).
+- A **Honcho API key** from [app.honcho.dev](https://app.honcho.dev).
+- An **LLM backend** (OpenAI, Claude, OpenRouter, local llama.cpp, etc.) connected via SillyTavern's plug icon in the top nav. Honcho stores memory; it doesn't generate text.
+
 ## Quick Start
 
-<Note>
-Honcho stores memory; it doesn't generate text. You'll also need an LLM backend (OpenAI, Claude, OpenRouter, local llama.cpp, etc.) connected via SillyTavern's plug icon in the top nav. Configure that separately before expecting replies in chat.
-</Note>
-
-### Step 1: Get Your Honcho API Key
-
-1. Go to **[app.honcho.dev](https://app.honcho.dev)**
-2. Sign up or log in
-3. Copy your API key
-
-### Step 2: Install
+### Step 1: Install
 
 From your **SillyTavern directory**:
 
@@ -35,36 +31,43 @@ bash <(curl -fsSL https://raw.githubusercontent.com/plastic-labs/sillytavern-hon
 irm https://raw.githubusercontent.com/plastic-labs/sillytavern-honcho/main/install.ps1 | iex
 ```
 
-<Note>
-Server plugins must be enabled for the Honcho plugin to load. The installer configures this automatically on fresh checkouts; if you skipped the installer or started SillyTavern before running it, manually set `enableServerPlugins: true` in `config.yaml` and restart.
-</Note>
-
 The installer:
 1. Clones the extension into `public/scripts/extensions/third-party/sillytavern-honcho`
 2. Symlinks the server plugin to `plugins/honcho-proxy`
 3. Installs the `@honcho-ai/sdk` dependency
-4. Detects your `~/.honcho/config.json` if it exists (if not, the plugin seeds a minimal one on first run)
+4. Bootstraps `config.yaml` if it doesn't exist (briefly runs `npm start` to generate defaults)
+5. Sets `enableServerPlugins: true` in `config.yaml`
+6. Detects your `~/.honcho/config.json` if it exists
 
-### Step 3: Restart SillyTavern
+### Step 2: Restart SillyTavern
 
-Stop and restart SillyTavern so the server plugin loads. If you have in-progress chats open, save them first — the running session ends when you stop the server.
+<Note>
+**Restart is required.** SillyTavern loads server plugins at startup only. After running `install.sh`, stop SillyTavern (⌃C) and start it again. You'll need to restart again whenever `plugin/index.js` changes. Client-side (browser) updates pick up on a hard refresh — no restart needed for those.
+</Note>
 
-### Step 4: Configure
+### Step 3: Configure
 
-Open **Extensions** (three-cubes icon, top-right) and expand **Honcho Memory**:
+Open **Extensions** (puzzle piece icon) and expand **Honcho Memory**:
 
 1. Check **Enable Honcho Memory**
-2. Click the API key field to set your key (if auto-detected from `~/.honcho/config.json`, you can still enter one here to override)
-3. Enter your workspace ID
-4. Status indicator should show **Ready**
+2. Click the API key field to set your key (auto-populated if present in `~/.honcho/config.json`; the UI value overrides the file)
+3. Enter your **Workspace ID** (saves to `hosts.sillytavern.workspace`)
+4. Enter **Your peer name** (saves to `hosts.sillytavern.peerName`; auto-synced from your SillyTavern persona on first boot)
+5. Status indicator should show **Ready**
 
 ## Global Config (Multi-Tool Setups)
 
-If you already use Honcho with other tools (Claude Code, Cursor, Hermes), the extension reads from `~/.honcho/config.json` on startup when resolvable keys are present. Resolution order: `hosts.sillytavern.apiKey` → root-level `apiKey` → fall through to the Extensions-panel key if neither resolves. The Extensions-panel key (SillyTavern's secret manager) takes priority at request time, so entering one in the UI overrides the config file without touching it.
+If you already use Honcho with other tools (Claude Code, Cursor, Hermes), the extension reads from `~/.honcho/config.json` on startup.
 
-Note that "sillytavern" appears in two namespaces here: as the default Honcho workspace ID (a Honcho concept — what you see in the dashboard; configurable) and as the `hosts.sillytavern` host key in the config file (a local convention for which tool's settings are which).
+**Resolution order** for `apiKey`, `workspace`, and `peerName`:
 
-Flat form:
+1. `hosts.sillytavern.<field>` (host-specific override)
+2. Root-level `<field>` (shared default across tools)
+3. For `apiKey` only: fall through to the Extensions-panel key (SillyTavern's secret manager), which takes priority at request time — entering one in the UI overrides the file without touching it.
+
+**Writes** are always scoped to `hosts.sillytavern` — the extension never mutates settings for other tools. Panel edits for Workspace ID and peer name save back to `hosts.sillytavern.workspace` and `hosts.sillytavern.peerName` respectively (debounced). Empty values clear the host override and fall through to the root value.
+
+Flat form (single-tool setup):
 
 ```json
 {
@@ -75,24 +78,33 @@ Flat form:
 }
 ```
 
-Writes are always scoped to `hosts.sillytavern` — the extension never mutates settings for other tools.
-
-Nested form (when multiple tools share the file):
+Nested form (multiple tools sharing the file):
 
 ```jsonc
 {
   "apiKey": "hch-v2-...",
   "peerName": "alice",
+  "workspace": "default",
   "hosts": {
     "sillytavern": {
       "workspace": "sillytavern",
-      "aiPeer": "Assistant"       // Updated automatically per character
+      "peerName": "alice-rp"
     },
-    "claude_code": { "..." : "..." },
-    "cursor": { "..." : "..." }
+    "claude_code": { "...": "..." },
+    "cursor": { "...": "..." }
   }
 }
 ```
+
+### Disable / Enable global config
+
+A toggle button in the panel opts out of auto-detection entirely. When disabled, the extension skips the config fetch on load, hides the source line, and saves peer-name edits to the local SillyTavern extension settings instead of the global file. Re-enabling opens a diff-aware dialog if local and global values diverge, offering:
+
+- **Inherit** — pull global values into this SillyTavern install
+- **Push local** — overwrite the global host entry with your local values
+- **Cancel** — leave both untouched
+
+Empty local values are never pushed, so a blank field cannot accidentally delete a host key.
 
 ## How It Works
 
@@ -180,6 +192,8 @@ The server plugin reads API credentials from SillyTavern's secrets store first, 
 | SDK import error | Run `cd plugins/honcho-proxy && npm install` |
 | Extension loads but nothing happens | Enable the checkbox and ensure workspace ID is set |
 | Plugin on disk but "Honcho Memory" drawer doesn't appear at all | Set `enableServerPlugins: true` in `config.yaml`; the panel can't show plugins the server never loaded |
+| Peer name on a new chat still shows an old value | Clear the panel override field (falls back to root / ST persona) or set a new value |
+| Re-enabling global config didn't populate the UI | You canceled on the diff dialog — click Enable again and choose Inherit |
 
 ---
 
