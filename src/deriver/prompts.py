@@ -11,15 +11,25 @@ from inspect import cleandoc as c
 from src.utils.tokens import estimate_tokens
 
 
+def _normalized_custom_instructions(custom_instructions: str | None) -> str | None:
+    """Return stripped custom instructions, if any."""
+    if custom_instructions is None:
+        return None
+
+    normalized = custom_instructions.strip()
+    return normalized or None
+
+
 def _custom_instructions_section(custom_instructions: str | None) -> str:
     """Render optional custom instructions for the deriver prompt."""
-    if not custom_instructions or not custom_instructions.strip():
+    normalized_custom_instructions = _normalized_custom_instructions(custom_instructions)
+    if normalized_custom_instructions is None:
         return ""
 
     return c(
         f"""
         CUSTOM INSTRUCTIONS:
-        {custom_instructions.strip()}
+        {normalized_custom_instructions}
         """
     )
 
@@ -78,7 +88,8 @@ def estimate_minimal_deriver_prompt_tokens() -> int:
 
 def estimate_deriver_prompt_tokens(custom_instructions: str | None) -> int:
     """Estimate deriver prompt tokens, including optional custom instructions."""
-    if not custom_instructions or not custom_instructions.strip():
+    normalized_custom_instructions = _normalized_custom_instructions(custom_instructions)
+    if normalized_custom_instructions is None:
         try:
             prompt = minimal_deriver_prompt(
                 peer_id="",
@@ -93,7 +104,7 @@ def estimate_deriver_prompt_tokens(custom_instructions: str | None) -> int:
         prompt = minimal_deriver_prompt(
             peer_id="",
             messages="",
-            custom_instructions=custom_instructions,
+            custom_instructions=normalized_custom_instructions,
         )
         return estimate_tokens(prompt)
     except Exception:
