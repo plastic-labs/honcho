@@ -55,57 +55,6 @@ Open **Extensions** (puzzle piece icon) and expand **Honcho Memory**:
 4. Enter **Your peer name** (saves to `hosts.sillytavern.peerName`; auto-synced from your SillyTavern persona on first boot)
 5. Status indicator should show **Ready**
 
-## Global Config (Multi-Tool Setups)
-
-If you already use Honcho with other tools (Claude Code, Cursor, Hermes), the extension reads from `~/.honcho/config.json` on startup.
-
-**Resolution order** for `apiKey`, `workspace`, and `peerName`:
-
-1. `hosts.sillytavern.<field>` (host-specific override)
-2. Root-level `<field>` (shared default across tools)
-3. For `apiKey` only: fall through to the Extensions-panel key (SillyTavern's secret manager), which takes priority at request time — entering one in the UI overrides the file without touching it.
-
-**Writes** are scoped to `hosts.sillytavern.*`. The extension never mutates other tools' entries. Panel edits for Workspace ID and peer name save back to `hosts.sillytavern.workspace` and `hosts.sillytavern.peerName` respectively (debounced). Empty values clear the host override and fall through to the root value.
-
-Flat form (single-tool setup):
-
-```json
-{
-  "apiKey": "your-honcho-api-key",
-  "peerName": "your-name",
-  "workspace": "sillytavern",
-  "enabled": true
-}
-```
-
-Nested form (multiple tools sharing the file):
-
-```jsonc
-{
-  "apiKey": "hch-v2-...",
-  "peerName": "alice",
-  "workspace": "default",
-  "hosts": {
-    "sillytavern": {
-      "workspace": "sillytavern",
-      "peerName": "alice-rp"
-    },
-    "claude_code": { "...": "..." },
-    "cursor": { "...": "..." }
-  }
-}
-```
-
-### Disable / Enable global config
-
-A toggle button in the panel opts out of auto-detection entirely. When disabled, the extension skips the config fetch on load, hides the source line, and saves peer-name edits to the local SillyTavern extension settings instead of the global file. Re-enabling opens a diff-aware dialog if local and global values diverge, offering:
-
-- **Inherit** — pull global values into this SillyTavern install
-- **Push local** — overwrite the global host entry with your local values
-- **Cancel** — leave both untouched
-
-Empty local values are never pushed, so a blank field cannot accidentally delete a host key.
-
 ## How It Works
 
 ### Context Architecture
@@ -165,6 +114,57 @@ By default, only the user peer accumulates derived memory — Honcho observes th
 | Before generation | Injects memory context into the prompt |
 | User sends message | Stores message in Honcho session |
 | AI responds | Stores response in Honcho session |
+
+## Global Config (Multi-Tool Setups)
+
+If you already use Honcho with other tools (Claude Code, Cursor, Hermes), the extension reads from `~/.honcho/config.json` on startup.
+
+**Resolution order** for `apiKey`, `workspace`, and `peerName`:
+
+1. `hosts.sillytavern.<field>` (host-specific override)
+2. Root-level `<field>` (shared default across tools)
+3. For `apiKey` only: fall through to the Extensions-panel key (SillyTavern's secret manager), which takes priority at request time — entering one in the UI overrides the file without touching it.
+
+**Writes** are scoped to `hosts.sillytavern.*`. The extension never mutates other tools' entries. Panel edits for Workspace ID and peer name save back to `hosts.sillytavern.workspace` and `hosts.sillytavern.peerName` respectively (debounced). Empty values clear the host override and fall through to the root value.
+
+Flat form (single-tool setup):
+
+```json
+{
+  "apiKey": "your-honcho-api-key",
+  "peerName": "your-name",
+  "workspace": "sillytavern",
+  "enabled": true
+}
+```
+
+Nested form (multiple tools sharing the file):
+
+```jsonc
+{
+  "apiKey": "hch-v2-...",
+  "peerName": "alice",
+  "workspace": "default",
+  "hosts": {
+    "sillytavern": {
+      "workspace": "sillytavern",
+      "peerName": "alice-rp"
+    },
+    "claude_code": { "...": "..." },
+    "cursor": { "...": "..." }
+  }
+}
+```
+
+### Disable / Enable global config
+
+A toggle button in the panel opts out of auto-detection entirely. When disabled, the extension skips the config fetch on load, hides the source line, and saves peer-name edits to the local SillyTavern extension settings instead of the global file. Re-enabling opens a diff-aware dialog if local and global values diverge, offering:
+
+- **Inherit** — pull global values into this SillyTavern install
+- **Push local** — overwrite the global host entry with your local values
+- **Cancel** — leave both untouched
+
+Empty local values are never pushed, so a blank field cannot accidentally delete a host key.
 
 ## Architecture
 
