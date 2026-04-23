@@ -165,22 +165,6 @@ A toggle button in the panel opts out of auto-detection entirely. When disabled,
 
 Empty local values are never pushed, so a blank field cannot accidentally delete a host key.
 
-## Architecture
-
-```
-Browser (Client Extension)              Server (Plugin)
-+-----------------------+               +------------------------------+
-| index.js              |  fetch()      | plugin/index.js              |
-|                       | ------------> |                              |
-| - Settings UI         | /api/plugins/ | - Express router (9 routes)  |
-| - Event hooks         |  honcho-proxy | - Honcho SDK (@honcho-ai/sdk)|
-| - Prompt injection    |               | - API key from ST secrets or |
-| - Tool registration   |               |   ~/.honcho/config.json      |
-+-----------------------+               +------------------------------+
-```
-
-The server plugin reads API credentials from SillyTavern's secrets store first, falling back to `~/.honcho/config.json`. It re-reads the global config before every write to prevent race conditions with concurrent tools.
-
 ## Troubleshooting
 
 | Symptom | Fix |
