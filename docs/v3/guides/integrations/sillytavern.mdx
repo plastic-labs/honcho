@@ -77,11 +77,12 @@ Both the context and reasoning layers use stale-while-revalidate with configurab
 
 ### Tool Call Mode
 
-In tool call mode, the extension registers two function tools that the LLM can invoke:
+In tool call mode, the extension registers three function tools that the LLM can invoke:
 
 | Tool | Description |
 | --- | --- |
 | `honcho_query_memory` | Dialectic chat query -- ask Honcho what it knows |
+| `honcho_save_conclusion` | Save a key insight or biographical detail about the user to persistent memory |
 | `honcho_search_history` | Semantic search across session messages |
 
 This mode works best with models that support function calling. The LLM decides when to query memory rather than firing on every turn.
@@ -97,6 +98,10 @@ By default, only the user peer accumulates derived memory — Honcho observes th
 | **Single peer** | One user peer shared across all characters |
 | **Per-persona** | Each character gets its own isolated memory |
 
+### Group Chats
+
+Group chats register **one peer per character** in the group, not a single collapsed `group-<id>` peer. Each character's messages land under their own peer so their derived representations stay distinct. Characters who join the group mid-chat are lazy-added to the session on their first message.
+
 ### Session Naming
 
 | Mode | Behavior |
@@ -104,6 +109,10 @@ By default, only the user peer accumulates derived memory — Honcho observes th
 | **Auto** | Per-chat hash (unique per conversation) |
 | **Per-character** | One session per character (persistent) |
 | **Custom** | User-defined session name |
+
+**Session IDs are frozen once assigned.** Changing the naming mode, the custom session name, or the character name only affects *new* chats — existing chats stay linked to their original Honcho session so history, summaries, and derivations don't fragment.
+
+The Active session field in the panel is read-only. To start fresh, use the **Reset** button next to it — it orphans the current session (messages remain in Honcho but the chat unlinks from them) and creates a new session on the next message.
 
 ### Event Flow
 
