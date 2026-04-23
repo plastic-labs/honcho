@@ -65,7 +65,7 @@ If you already use Honcho with other tools (Claude Code, Cursor, Hermes), the ex
 2. Root-level `<field>` (shared default across tools)
 3. For `apiKey` only: fall through to the Extensions-panel key (SillyTavern's secret manager), which takes priority at request time — entering one in the UI overrides the file without touching it.
 
-**Writes** are always scoped to `hosts.sillytavern` — the extension never mutates settings for other tools. Panel edits for Workspace ID and peer name save back to `hosts.sillytavern.workspace` and `hosts.sillytavern.peerName` respectively (debounced). Empty values clear the host override and fall through to the root value.
+**Writes** are scoped to `hosts.sillytavern.*` and a root-level `sessions` map (SillyTavern dir → last Honcho session ID). The extension never mutates other tools' host entries or root fields they own. Panel edits for Workspace ID and peer name save back to `hosts.sillytavern.workspace` and `hosts.sillytavern.peerName` respectively (debounced). Empty values clear the host override and fall through to the root value.
 
 Flat form (single-tool setup):
 
