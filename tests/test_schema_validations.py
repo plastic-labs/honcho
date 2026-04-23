@@ -3,11 +3,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from src.config import settings
 from src.schemas import (
     DocumentCreate,
     DocumentMetadata,
     MessageCreate,
     PeerCreate,
+    ReasoningConfiguration,
     ResolvedConfiguration,
     SessionCreate,
     WorkspaceCreate,
@@ -203,3 +205,65 @@ class TestResolvedConfigurationMigration:
             ResolvedConfiguration.model_validate(payload)
 
         assert any(e["loc"] == ("reasoning",) for e in exc_info.value.errors())
+
+
+class TestReasoningCustomInstructionsValidation:
+    def test_reasoning_configuration_rejects_oversized_custom_instructions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 1, raising=False
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            ReasoningConfiguration(
+                custom_instructions="repeat repeat repeat repeat repeat"
+            )
+
+        assert any(
+            error["loc"] == ("custom_instructions",)
+            for error in exc_info.value.errors()
+        )
+
+    def test_oversized_custom_instructions_are_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 1, raising=False
+        )
+
+        payload = {
+            "reasoning": {
+                "enabled": True,
+                "custom_instructions": "repeat repeat repeat repeat repeat",
+            },
+            "peer_card": {"use": True, "create": True},
+            "summary": {
+                "enabled": True,
+                "messages_per_short_summary": 20,
+                "messages_per_long_summary": 60,
+            },
+            "dream": {"enabled": False},
+        }
+
+        with pytest.raises(ValidationError) as exc_info:
+            ResolvedConfiguration.model_validate(payload)
+
+        assert any(
+            error["loc"] == ("reasoning", "custom_instructions")
+            for error in exc_info.value.errors()
+        )
+
+    @pytest.mark.parametrize("custom_instructions", ["", "   \n\t  "])
+    def test_blank_custom_instructions_do_not_require_token_cap(
+        self, monkeypatch: pytest.MonkeyPatch, custom_instructions: str
+    ) -> None:
+        monkeypatch.setattr(
+            settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", None, raising=False
+        )
+
+        configuration = ReasoningConfiguration(
+            custom_instructions=custom_instructions
+        )
+
+        assert configuration.custom_instructions == custom_instructions

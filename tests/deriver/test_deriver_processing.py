@@ -70,6 +70,69 @@ class TestDeriverProcessing:
         assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
         assert "llm_settings" not in kwargs
 
+    async def test_process_representation_tasks_batch_passes_custom_instructions_into_prompt(
+        self,
+    ) -> None:
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(timezone.utc),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = (
+            "Prefer explicit facts with dates."
+        )
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(explicit=[]),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        with (
+            patch(
+                "src.deriver.deriver.estimate_deriver_prompt_tokens",
+                return_value=123,
+            ) as mock_estimate_prompt_tokens,
+            patch(
+                "src.deriver.deriver.minimal_deriver_prompt",
+                return_value="prompt",
+            ) as mock_prompt,
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ) as mock_llm_call,
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+            )
+
+        mock_estimate_prompt_tokens.assert_called_once_with(
+            "Prefer explicit facts with dates."
+        )
+        mock_prompt.assert_called_once()
+        assert (
+            mock_prompt.call_args.kwargs["custom_instructions"]
+            == "Prefer explicit facts with dates."
+        )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected deriver LLM call")
+        assert await_args.kwargs["prompt"] == "prompt"
+
     async def test_work_unit_key_generation(
         self,
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],

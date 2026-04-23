@@ -732,6 +732,9 @@ class DeriverSettings(HonchoSettings):
     LOG_OBSERVATIONS: bool = False
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
+    MAX_CUSTOM_INSTRUCTIONS_TOKENS: Annotated[
+        int | None, Field(default=None, gt=0, le=23000)
+    ] = None
 
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
@@ -764,7 +767,24 @@ class DeriverSettings(HonchoSettings):
             raise ValueError(
                 f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
+        if (
+            self.MAX_CUSTOM_INSTRUCTIONS_TOKENS is not None
+            and self.MAX_CUSTOM_INSTRUCTIONS_TOKENS > self.MAX_INPUT_TOKENS
+        ):
+            raise ValueError(
+                f"MAX_CUSTOM_INSTRUCTIONS_TOKENS ({self.MAX_CUSTOM_INSTRUCTIONS_TOKENS}) "
+                + f"cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+            )
         return self
+
+    @property
+    def effective_max_custom_instructions_tokens(self) -> int:
+        if self.MAX_CUSTOM_INSTRUCTIONS_TOKENS is None:
+            raise ValueError(
+                "DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS is not set; set "
+                + "[deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS in config.toml"
+            )
+        return self.MAX_CUSTOM_INSTRUCTIONS_TOKENS
 
 
 class PeerCardSettings(HonchoSettings):

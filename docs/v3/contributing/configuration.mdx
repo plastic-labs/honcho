@@ -30,6 +30,8 @@ All config values map to environment variables:
 - `{KEY}` for app-level settings (e.g., `LOG_LEVEL` → `[app].LOG_LEVEL`)
 - Use `__` inside `{KEY}` for nested settings (e.g., `DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT`, `DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL`)
 
+Deriver uses `reasoning.custom_instructions` from workspace, session, and message configuration. If non-blank custom instructions are provided and `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` / `[deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS` is unset, validation fails. If the limit is set, non-blank values that exceed it are rejected during validation.
+
 ## LLM Configuration
 
 The [Self-Hosting Guide](./self-hosting#llm-setup) covers the basic setup: either the built-in OpenAI defaults or one OpenAI-compatible endpoint/model for all features. This section covers recommended model tiers, using multiple providers, and per-feature tuning.
@@ -530,6 +532,7 @@ DEFAULT_TTL_SECONDS = 300
 [deriver]
 ENABLED = true
 WORKERS = 1
+MAX_CUSTOM_INSTRUCTIONS_TOKENS = 1024
 
 [deriver.model_config]
 transport = "openai"

@@ -404,7 +404,7 @@ Then modify the values as needed. The TOML file is organized into sections:
 - `[auth]` - Authentication configuration
 - `[cache]` - Redis cache configuration
 - `[llm]` - LLM provider API keys and general settings
-- `[deriver]` - Background worker settings and representation configuration
+- `[deriver]` - Background worker settings and representation configuration. `reasoning.custom_instructions` is active for deriver. If non-blank custom instructions are provided and `MAX_CUSTOM_INSTRUCTIONS_TOKENS` is unset, validation fails.
 - `[peer_card]` - Peer card generation settings
 - `[dialectic]` - Dialectic API configuration with per-level reasoning settings
 - `[summary]` - Session summarization settings
@@ -428,6 +428,7 @@ Examples:
 - `DB_CONNECTION_URI` - Database connection string
 - `AUTH_JWT_SECRET` - JWT secret key
 - `DERIVER_MODEL_CONFIG__TRANSPORT` - Transport for the background deriver
+- `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` - Explicit prompt budget cap for deriver custom instructions
 - `SUMMARY_MODEL_CONFIG__MODEL` - Summary model override
 - `DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL` - Model for low reasoning level
 - `LOG_LEVEL` - Application log level
@@ -448,6 +449,8 @@ This allows you to:
 - Use `config.toml` for base configuration
 - Override specific values with environment variables in production
 - Use `.env` files for local development without modifying config.toml
+
+Non-blank `reasoning.custom_instructions` values fail validation if `DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS` / `[deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS` is unset, and they are rejected if they exceed the configured limit.
 
 ### Example
 

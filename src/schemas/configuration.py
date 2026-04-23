@@ -7,7 +7,10 @@ the fully-resolved variants used at runtime.
 from enum import Enum
 from typing import Any, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from src.config import settings
+from src.utils.tokens import estimate_tokens
 
 
 class DreamType(str, Enum):
@@ -23,8 +26,13 @@ class ReasoningConfiguration(BaseModel):
     )
     custom_instructions: str | None = Field(
         default=None,
-        description="TODO: currently unused. Custom instructions to use for the reasoning system on this workspace/session/message.",
+        description="Optional custom instructions for the reasoning system on this workspace/session/message. Non-blank values require an explicit deriver custom-instruction token cap and are rejected if they exceed it.",
     )
+
+    @field_validator("custom_instructions")
+    @classmethod
+    def validate_custom_instructions(cls, value: str | None) -> str | None:
+        return _validate_custom_instructions_budget(value)
 
 
 class PeerCardConfiguration(BaseModel):
@@ -73,6 +81,23 @@ class DreamConfiguration(BaseModel):
         default=None,
         description="Whether to enable dream functionality. If reasoning is disabled, dreams will also be disabled and this setting will be ignored.",
     )
+
+
+def _validate_custom_instructions_budget(
+    custom_instructions: str | None,
+) -> str | None:
+    if custom_instructions is None:
+        return None
+    if not custom_instructions.strip():
+        return custom_instructions
+
+    max_tokens = settings.DERIVER.effective_max_custom_instructions_tokens
+    if estimate_tokens(custom_instructions) > max_tokens:
+        raise ValueError(
+            f"custom_instructions exceeds DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS ({max_tokens} tokens)"
+        )
+
+    return custom_instructions
 
 
 class WorkspaceConfiguration(BaseModel):
@@ -127,6 +152,12 @@ class MessageConfiguration(BaseModel):
 
 class ResolvedReasoningConfiguration(BaseModel):
     enabled: bool
+    custom_instructions: str | None = None
+
+    @field_validator("custom_instructions")
+    @classmethod
+    def validate_custom_instructions(cls, value: str | None) -> str | None:
+        return _validate_custom_instructions_budget(value)
 
 
 class ResolvedPeerCardConfiguration(BaseModel):
