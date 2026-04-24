@@ -208,6 +208,25 @@ class TestResolvedConfigurationMigration:
 
 
 class TestReasoningCustomInstructionsValidation:
+    def test_nonblank_custom_instructions_require_enabled_deployment_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", None, raising=False
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            ReasoningConfiguration(custom_instructions="Prefer concrete facts.")
+
+        errors = exc_info.value.errors()
+        assert any(
+            error["loc"] == ("custom_instructions",)
+            and "custom_instructions are not enabled for this deployment"
+            in error["msg"]
+            for error in errors
+        )
+        assert "[deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS" not in str(exc_info.value)
+
     def test_reasoning_configuration_rejects_oversized_custom_instructions(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

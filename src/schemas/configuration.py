@@ -91,7 +91,10 @@ def _validate_custom_instructions_budget(
     if not custom_instructions.strip():
         return custom_instructions
 
-    max_tokens = settings.DERIVER.effective_max_custom_instructions_tokens
+    max_tokens = settings.DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS
+    if max_tokens is None:
+        raise ValueError("custom_instructions are not enabled for this deployment")
+
     if estimate_tokens(custom_instructions) > max_tokens:
         raise ValueError(
             f"custom_instructions exceeds DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS ({max_tokens} tokens)"
