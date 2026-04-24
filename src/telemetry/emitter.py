@@ -19,6 +19,8 @@ import httpx
 from cloudevents.conversion import to_json  # pyright: ignore[reportUnknownVariableType]
 from cloudevents.http import CloudEvent
 
+from ..httpx_utils import get_async_transport
+
 if TYPE_CHECKING:
     from src.telemetry.events.base import BaseEvent
 
@@ -109,6 +111,7 @@ class TelemetryEmitter:
 
         self._client = httpx.AsyncClient(
             timeout=30.0,
+            transport=get_async_transport(),
             headers={
                 "Content-Type": "application/cloudevents+json",
                 **self.headers,
