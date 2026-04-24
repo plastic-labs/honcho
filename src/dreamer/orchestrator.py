@@ -21,8 +21,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 import sentry_sdk
+from sqlalchemy import func, select
 
-from src import crud
+from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.specialists import SPECIALISTS, SpecialistResult
@@ -324,15 +325,12 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )
 
-                    # Write last_dream_at at completion (not enqueue) so duplicate
-                    # enqueues can't reset the 8h guard. Lenient: any non-null result.
-                    # Read-modify-write: update_collection_internal_metadata uses a
-                    # top-level JSONB || merge, so passing {"dream": {"last_dream_at": ...}}
-                    # alone would replace the whole "dream" subkey and drop
-                    # last_dream_document_count (written by enqueue_dream).
-                    # Row-lock the collection during read-modify-write to prevent concurrent enqueue/completion from clobbering each other's dream metadata writes.
+                    # Atomic pair write: both guard fields advance together only
+                    # when consolidation actually happened. Splitting the writes
+                    # across enqueue + completion creates an in-flight window
+                    # where the pair tells contradictory stories.
                     now_iso = datetime.now(timezone.utc).isoformat()
-                    async with tracked_db("dream.last_dream_at_write") as db:
+                    async with tracked_db("dream.guard_pair_write") as db:
                         collection = await crud.get_collection(
                             db,
                             workspace_name,
@@ -340,8 +338,16 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             observed=payload.observed,
                             with_for_update=True,
                         )
+                        count_stmt = select(func.count(models.Document.id)).where(
+                            models.Document.workspace_name == workspace_name,
+                            models.Document.observer == payload.observer,
+                            models.Document.observed == payload.observed,
+                            models.Document.level == "explicit",
+                        )
+                        current_explicit_count = int(await db.scalar(count_stmt) or 0)
                         dream_meta = dict(collection.internal_metadata.get("dream", {}))
                         dream_meta["last_dream_at"] = now_iso
+                        dream_meta["last_dream_document_count"] = current_explicit_count
                         await crud.update_collection_internal_metadata(
                             db,
                             workspace_name,

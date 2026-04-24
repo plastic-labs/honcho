@@ -435,33 +435,29 @@ async def enqueue_dream(
     observer: str,
     observed: str,
     dream_type: schemas.DreamType,
-    document_count: int,
     session_name: str | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
 
+    Does not touch collection.internal_metadata["dream"]. Both guard fields
+    (last_dream_at and last_dream_document_count) are written atomically in
+    process_dream on successful completion, so failed dreams retry against
+    the same corpus and a queued dream already acts as a stampede latch via
+    check_and_schedule_dream's in-flight check.
+
     Deduplication: If a dream with the same work_unit_key is already in-progress
-    (has an ActiveQueueSession), the enqueue is skipped to prevent running
-    multiple dreams concurrently for the same collection.
+    (has an ActiveQueueSession) or pending in the queue, the enqueue is skipped.
 
     Args:
         workspace_name: Name of the workspace
         observer: Name of the observer peer
         observed: Name of the observed peer
         dream_type: Type of dream to execute
-        document_count: Count of explicit-level documents only. Written as
-            last_dream_document_count and used as the baseline that
-            dream_scheduler.check_and_schedule_dream subtracts from a future
-            explicit-filtered count to compute documents_since_last_dream.
-            Callers that include non-explicit levels (deductive, inductive,
-            contradiction) will inflate the baseline and suppress the next
-            scheduled dream.
         session_name: Name of the session to scope the dream to if specified
     """
     async with tracked_db("dream_enqueue") as db_session:
         try:
-            # Create the dream queue record
             dream_record = create_dream_record(
                 workspace_name,
                 observer=observer,
@@ -472,11 +468,6 @@ async def enqueue_dream(
 
             work_unit_key = dream_record["work_unit_key"]
 
-            # Check if a dream with this work_unit_key is currently in progress
-            # (has an ActiveQueueSession, meaning a worker is processing it)
-            # We only block on in-progress dreams, not pending ones - if there's
-            # a pending dream, we don't need to add another one anyway since
-            # the queue processor will pick it up.
             in_progress_check = select(
                 exists(
                     select(models.ActiveQueueSession.id).where(
@@ -496,7 +487,6 @@ async def enqueue_dream(
                 )
                 return
 
-            # Check if there's already a pending dream with the same work_unit_key
             pending_check = select(
                 exists(
                     select(QueueItem.id).where(
@@ -517,34 +507,9 @@ async def enqueue_dream(
                 )
                 return
 
-            # Insert into queue
             stmt = insert(QueueItem).returning(QueueItem)
             await db_session.execute(stmt, [dream_record])
-
-            # Update collection metadata (CRUD handles cache invalidation).
-            # last_dream_at is written at completion in process_dream, not here.
-            # Read-modify-write: update_collection_internal_metadata uses a
-            # top-level JSONB || merge, so passing {"dream": {"last_dream_document_count": ...}}
-            # alone would replace the whole "dream" subkey and drop sibling
-            # last_dream_at (written by process_dream on the prior completion).
-            # Row-lock the collection during read-modify-write to prevent concurrent enqueue/completion from clobbering each other's dream metadata writes.
-            collection = await crud.get_collection(
-                db_session,
-                workspace_name,
-                observer=observer,
-                observed=observed,
-                with_for_update=True,
-            )
-            dream_meta = dict(collection.internal_metadata.get("dream", {}))
-            dream_meta["last_dream_document_count"] = document_count
-            await crud.update_collection_internal_metadata(
-                db_session,
-                workspace_name,
-                observer,
-                observed,
-                update_data={"dream": dream_meta},
-            )
-            # update_collection_internal_metadata commits already
+            await db_session.commit()
 
             logger.info(
                 "Enqueued dream task for %s/%s/%s (type: %s)",

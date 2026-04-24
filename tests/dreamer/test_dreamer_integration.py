@@ -18,7 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.deriver.enqueue import enqueue_dream
-from src.dreamer.dream_scheduler import DreamScheduler, set_dream_scheduler
+from src.dreamer.dream_scheduler import (
+    DreamScheduler,
+    check_and_schedule_dream,
+    set_dream_scheduler,
+)
 from src.dreamer.orchestrator import DreamResult, process_dream
 from src.schemas import (
     DreamType,
@@ -144,29 +148,36 @@ class TestLastDreamAtCompletionWrite:
         )
 
     @pytest.mark.asyncio
-    async def test_completion_preserves_last_dream_document_count(
+    async def test_completion_writes_guard_pair_atomically(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """Completion write must NOT drop sibling keys in the `dream` sub-object.
+        """Completion writes last_dream_at AND last_dream_document_count together.
 
-        `update_collection_internal_metadata` uses a top-level JSONB `||` merge,
-        which replaces the whole `"dream"` key. Without a read-modify-write, the
-        completion write (`last_dream_at`) would wipe `last_dream_document_count`
-        that enqueue set — causing the next `check_and_schedule_dream` to read 0
-        as the baseline and let a fresh dream trigger after the 8h guard expires
-        even without any new explicit documents.
+        Both guard fields advance only on successful consolidation, recomputed
+        inside the row-locked RMW block so the pair stays coherent. Baseline
+        reflects the actual explicit-doc count at completion, not a stale
+        enqueue-time snapshot.
         """
         workspace, peer = sample_data
-        # Pre-seed collection as if enqueue_dream already wrote the baseline.
         collection = models.Collection(
             observer=peer.name,
             observed=peer.name,
             workspace_name=workspace.name,
-            internal_metadata={"dream": {"last_dream_document_count": 42}},
+            internal_metadata={},
         )
         db_session.add(collection)
+        for i in range(7):
+            db_session.add(
+                models.Document(
+                    content=f"explicit {i}",
+                    level="explicit",
+                    workspace_name=workspace.name,
+                    observer=peer.name,
+                    observed=peer.name,
+                )
+            )
         await db_session.commit()
         await db_session.refresh(collection)
 
@@ -184,10 +195,9 @@ class TestLastDreamAtCompletionWrite:
 
         dream_meta = await _get_dream_metadata(db_session, collection)
         assert "last_dream_at" in dream_meta, "last_dream_at must be written"
-        assert dream_meta.get("last_dream_document_count") == 42, (
-            "last_dream_document_count from enqueue must be preserved across "
-            "the completion write — top-level JSONB || would drop it without "
-            "the read-modify-write in process_dream."
+        assert dream_meta.get("last_dream_document_count") == 7, (
+            "last_dream_document_count must equal the current explicit-doc count "
+            "at completion time; both guard fields advance together."
         )
 
     @pytest.mark.asyncio
@@ -225,38 +235,33 @@ class TestLastDreamAtCompletionWrite:
         )
 
 
-class TestEnqueueDreamPreservesSiblings:
-    """Regression test for the symmetric sibling-drop bug in enqueue_dream.
+class TestEnqueueDreamLeavesMetadataAlone:
+    """enqueue_dream must not touch collection.internal_metadata["dream"].
 
-    `update_collection_internal_metadata` uses a top-level JSONB `||` merge,
-    so writing `{"dream": {"last_dream_document_count": N}}` without a prior
-    read-modify-write would replace the whole `"dream"` subkey and drop
-    `last_dream_at` (written by process_dream on the prior completion).
-
-    Symmetric to the orchestrator fix in c8fe40a (and the
-    test_completion_preserves_last_dream_document_count test above).
+    After the Loop 4 fix, the guard fields advance only on successful
+    completion in process_dream. enqueue_dream should preserve whatever
+    metadata is already on the collection (e.g. a prior completion's
+    timestamp and baseline) and add nothing of its own.
     """
 
     @pytest.mark.asyncio
-    async def test_enqueue_preserves_last_dream_at(
+    async def test_enqueue_does_not_modify_dream_metadata(
         self,
         db_session: AsyncSession,
         sample_data: tuple[models.Workspace, models.Peer],
     ):
-        """enqueue_dream must merge into existing dream metadata, not replace it.
-
-        Pre-seeds `last_dream_at` (as if a prior dream completed), calls
-        `enqueue_dream`, and asserts both:
-        1. `last_dream_document_count` is written (the new baseline), and
-        2. `last_dream_at` is preserved (the sibling key from the prior completion).
-        """
         workspace, peer = sample_data
-        prior_timestamp = "2026-04-17T12:00:00+00:00"
+        prior_metadata = {
+            "dream": {
+                "last_dream_at": "2026-04-17T12:00:00+00:00",
+                "last_dream_document_count": 99,
+            }
+        }
         collection = models.Collection(
             observer=peer.name,
             observed=peer.name,
             workspace_name=workspace.name,
-            internal_metadata={"dream": {"last_dream_at": prior_timestamp}},
+            internal_metadata=prior_metadata,
         )
         db_session.add(collection)
         await db_session.commit()
@@ -267,30 +272,23 @@ class TestEnqueueDreamPreservesSiblings:
             observer=collection.observer,
             observed=collection.observed,
             dream_type=DreamType.OMNI,
-            document_count=77,
             session_name=None,
         )
 
         dream_meta = await _get_dream_metadata(db_session, collection)
-        assert (
-            dream_meta.get("last_dream_document_count") == 77
-        ), "enqueue_dream must write last_dream_document_count as the new baseline"
-        assert dream_meta.get("last_dream_at") == prior_timestamp, (
-            "last_dream_at from a prior completion must be preserved across "
-            "the enqueue write — top-level JSONB || would drop it without the "
-            "read-modify-write in enqueue_dream."
+        assert dream_meta == prior_metadata["dream"], (
+            "enqueue_dream must leave dream metadata untouched; the guard fields "
+            "advance only at completion."
         )
 
 
 class TestExecuteDreamSessionFilter:
     """Regression test for the session lookup asymmetry in execute_dream.
 
-    The baseline count query in execute_dream filters to `level == "explicit"`
-    (symmetric with check_and_schedule_dream). The session_name lookup must
-    filter the same way — otherwise the session is picked from a derived doc
-    and can disagree with the document set the count is measuring, producing
-    a dream scoped to a session that wasn't even in the triggering document
-    cohort.
+    The session_name lookup filters to `level == "explicit"`, symmetric with
+    check_and_schedule_dream's count query. Otherwise a derived doc could win
+    ORDER BY created_at DESC and the dream would be scoped to a session that
+    wasn't in the triggering document cohort.
     """
 
     @pytest.mark.asyncio
@@ -307,7 +305,8 @@ class TestExecuteDreamSessionFilter:
 
         Without the explicit filter on the session lookup, the newer deductive
         doc's session_name (B) would be returned. With the filter, A is
-        returned — matching the explicit-only count query immediately below.
+        returned — matching the explicit-only count query in
+        check_and_schedule_dream.
         """
         workspace, peer = sample_data
 
@@ -360,8 +359,6 @@ class TestExecuteDreamSessionFilter:
         db_session.add(deductive_doc)
         await db_session.commit()
 
-        # Capture kwargs passed to enqueue_dream (we don't want to actually
-        # run it — just verify which session_name execute_dream picks).
         captured_kwargs: dict[str, Any] = {}
 
         async def capture_enqueue_dream(
@@ -370,7 +367,6 @@ class TestExecuteDreamSessionFilter:
             observer: str,
             observed: str,
             dream_type: Any,
-            document_count: int,
             session_name: str,
         ) -> None:
             captured_kwargs.update(
@@ -379,7 +375,6 @@ class TestExecuteDreamSessionFilter:
                     "observer": observer,
                     "observed": observed,
                     "dream_type": dream_type,
-                    "document_count": document_count,
                     "session_name": session_name,
                 }
             )
@@ -433,7 +428,171 @@ class TestExecuteDreamSessionFilter:
             f"that the count query ignores — the dream would be scoped to a "
             f"session that wasn't in the triggering cohort."
         )
-        # Sanity: the count must reflect explicit-only too (baseline symmetry).
+
+
+class TestGuardPairCoherence:
+    """Loop 4 coherence tests for the invariant preserved by the atomic pair
+    write and the in-flight stampede defense.
+
+    Invariant: From the moment a dream is scheduled until it completes or
+    fails, no second dream may be enqueued for the same
+    (workspace, observer, observed) — and the baseline count advances only
+    when consolidation actually happened.
+    """
+
+    @pytest_asyncio.fixture
+    async def _scheduler(self):
+        DreamScheduler.reset_singleton()
+        scheduler = DreamScheduler()
+        set_dream_scheduler(scheduler)
+        with (
+            patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED", True),
+            patch("src.dreamer.dream_scheduler.settings.DREAM.DOCUMENT_THRESHOLD", 50),
+            patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED_TYPES", ["omni"]),
+        ):
+            yield scheduler
+        DreamScheduler.reset_singleton()
+
+    @pytest.mark.asyncio
+    async def test_pending_queue_item_blocks_second_schedule(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        _scheduler: DreamScheduler,
+    ):
+        """In-flight window: pending QueueItem must block a second schedule.
+
+        Walks the stampede timeline: enqueue fires a dream, more explicit
+        docs arrive past the threshold again, but check_and_schedule_dream
+        sees the pending queue row and returns False — no second QueueItem.
+        """
+        workspace, peer = sample_data
+        collection = models.Collection(
+            observer=peer.name,
+            observed=peer.name,
+            workspace_name=workspace.name,
+            internal_metadata={},
+        )
+        db_session.add(collection)
+        for i in range(50):
+            db_session.add(
+                models.Document(
+                    content=f"explicit {i}",
+                    level="explicit",
+                    workspace_name=workspace.name,
+                    observer=peer.name,
+                    observed=peer.name,
+                )
+            )
+        await db_session.commit()
+        await db_session.refresh(collection)
+
+        await enqueue_dream(
+            workspace_name=workspace.name,
+            observer=peer.name,
+            observed=peer.name,
+            dream_type=DreamType.OMNI,
+            session_name=None,
+        )
+
+        pending_q = select(models.QueueItem).where(
+            models.QueueItem.task_type == "dream",
+            models.QueueItem.processed == False,  # noqa: E712
+            models.QueueItem.workspace_name == workspace.name,
+        )
+        pending_rows = (await db_session.execute(pending_q)).scalars().all()
+        assert len(pending_rows) == 1, (
+            "enqueue_dream must insert exactly one pending dream QueueItem "
+            "(baseline for the stampede test)."
+        )
+
+        for i in range(50, 100):
+            db_session.add(
+                models.Document(
+                    content=f"explicit {i}",
+                    level="explicit",
+                    workspace_name=workspace.name,
+                    observer=peer.name,
+                    observed=peer.name,
+                )
+            )
+        await db_session.commit()
+        await db_session.refresh(collection)
+
+        scheduled = await check_and_schedule_dream(db_session, collection)
+
+        assert scheduled is False, (
+            "check_and_schedule_dream must return False while a dream is "
+            "pending in the queue — the in-flight window must not admit a "
+            "second schedule regardless of how many explicit docs arrive."
+        )
+        pending_rows_after = (await db_session.execute(pending_q)).scalars().all()
+        assert len(pending_rows_after) == 1, (
+            "No second QueueItem may be inserted while the first is pending. "
+            f"Found {len(pending_rows_after)} pending rows."
+        )
+
+    @pytest.mark.asyncio
+    async def test_silent_failure_allows_retry_on_same_corpus(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        _scheduler: DreamScheduler,
+    ):
+        """Failed dream (run_dream returns None) leaves both guard fields
+        untouched, so check_and_schedule_dream re-schedules on the same
+        corpus instead of silently consuming the baseline.
+        """
+        workspace, peer = sample_data
+        collection = models.Collection(
+            observer=peer.name,
+            observed=peer.name,
+            workspace_name=workspace.name,
+            internal_metadata={},
+        )
+        db_session.add(collection)
+        for i in range(50):
+            db_session.add(
+                models.Document(
+                    content=f"explicit {i}",
+                    level="explicit",
+                    workspace_name=workspace.name,
+                    observer=peer.name,
+                    observed=peer.name,
+                )
+            )
+        await db_session.commit()
+        await db_session.refresh(collection)
+
+        payload = DreamPayload(
+            dream_type=DreamType.OMNI,
+            observer=peer.name,
+            observed=peer.name,
+        )
+        with patch(
+            "src.dreamer.orchestrator.run_dream",
+            new=AsyncMock(return_value=None),
+        ):
+            await process_dream(payload, workspace.name)
+
+        dream_meta = await _get_dream_metadata(db_session, collection)
+        assert dream_meta.get("last_dream_document_count", 0) == 0, (
+            "Failed dream must not advance last_dream_document_count; "
+            "pre-Loop-4 the baseline was consumed at enqueue time and a "
+            "silent failure would lock out retries on the same corpus."
+        )
         assert (
-            captured_kwargs["document_count"] == 1
-        ), "document_count must reflect explicit-only (1), not total (2)."
+            "last_dream_at" not in dream_meta
+        ), "Failed dream must not advance last_dream_at either."
+
+        with patch.object(
+            _scheduler, "schedule_dream", new_callable=AsyncMock
+        ) as mock_schedule:
+            scheduled = await check_and_schedule_dream(db_session, collection)
+
+        assert scheduled is True, (
+            "After a silent failure both guards should still allow the "
+            "same-corpus retry — 50 explicit docs ≥ threshold, no prior "
+            "last_dream_at, no pending queue item."
+        )
+        assert mock_schedule.called, "schedule_dream must be invoked on the retry path."

@@ -1,34 +1,24 @@
 """Regression tests for `enqueue_dream` metadata write shape.
 
-Finding 3 (code-level) moves the `last_dream_at` timestamp write from
-enqueue time to dream-completion time (in `process_dream`). These tests
-verify that `enqueue_dream` no longer writes `last_dream_at` and still
-writes `last_dream_document_count`.
+Loop 4 (PR #573): `enqueue_dream` no longer touches collection.internal_metadata
+at all. Both guard fields (last_dream_at and last_dream_document_count) are
+written atomically in `process_dream` on successful completion — this preserves
+the invariant that the baseline advances only when consolidation actually
+happened, and prevents the in-flight stampede from false-advancing a guard.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src import models, schemas
+from src import schemas
 from src.deriver.enqueue import enqueue_dream
 
 
 class TestEnqueueDreamMetadataShape:
-    """Regression tests for Finding 3 code-level: `last_dream_at` relocation."""
-
     @pytest.mark.asyncio
-    async def test_update_data_omits_last_dream_at(self):
-        """`enqueue_dream` must NOT write `last_dream_at`.
-
-        Moved to completion (in `process_dream`) so duplicate enqueues can't
-        reset the 8-hour guard and failed dreams don't falsely advance it.
-        """
-        # Mock a Collection with empty dream metadata so the read-modify-write
-        # in enqueue_dream has something to merge into.
-        mock_collection = MagicMock(spec=models.Collection)
-        mock_collection.internal_metadata = {}
-
+    async def test_enqueue_does_not_touch_collection_metadata(self):
+        """`enqueue_dream` must not call update_collection_internal_metadata."""
         with (
             patch(
                 "src.deriver.enqueue.crud.update_collection_internal_metadata",
@@ -37,11 +27,7 @@ class TestEnqueueDreamMetadataShape:
             patch(
                 "src.deriver.enqueue.crud.get_collection",
                 new_callable=AsyncMock,
-                return_value=mock_collection,
-            ),
-            # Short-circuit the dedup / insert paths so we only exercise the
-            # metadata update call. db_session.scalar returns False for both
-            # the in-progress and pending checks; db_session.execute is a no-op.
+            ) as mock_get_collection,
             patch(
                 "src.deriver.enqueue.tracked_db",
             ) as mock_db_ctx,
@@ -49,6 +35,7 @@ class TestEnqueueDreamMetadataShape:
             mock_session = AsyncMock()
             mock_session.scalar = AsyncMock(return_value=False)
             mock_session.execute = AsyncMock()
+            mock_session.commit = AsyncMock()
             mock_db_ctx.return_value.__aenter__.return_value = mock_session
 
             await enqueue_dream(
@@ -56,23 +43,17 @@ class TestEnqueueDreamMetadataShape:
                 observer="alice",
                 observed="bob",
                 dream_type=schemas.DreamType.OMNI,
-                document_count=42,
                 session_name=None,
             )
 
-            assert (
-                mock_update.called
-            ), "update_collection_internal_metadata must be called"
-            call_kwargs = mock_update.call_args.kwargs
-            update_data = call_kwargs["update_data"]
-            dream_metadata = update_data["dream"]
-
-            assert (
-                "last_dream_document_count" in dream_metadata
-            ), "last_dream_document_count should still be written at enqueue"
-            assert dream_metadata["last_dream_document_count"] == 42
-
-            assert "last_dream_at" not in dream_metadata, (
-                "last_dream_at must NOT be written at enqueue — it now writes "
-                "at dream completion in process_dream (orchestrator.py)."
+            assert not mock_update.called, (
+                "enqueue_dream must not write to collection.internal_metadata; "
+                "guard fields advance atomically in process_dream on success."
             )
+            assert not mock_get_collection.called, (
+                "enqueue_dream must not need to load the collection — it no "
+                "longer touches dream metadata."
+            )
+            assert (
+                mock_session.execute.called
+            ), "enqueue_dream must still insert the QueueItem row."

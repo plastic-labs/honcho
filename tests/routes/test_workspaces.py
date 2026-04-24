@@ -575,32 +575,20 @@ def test_delete_workspace_after_session_deletion(client: TestClient):
 
 
 @pytest.mark.asyncio
-async def test_schedule_dream_passes_explicit_only_document_count(
+async def test_schedule_dream_invokes_enqueue_dream(
     client: TestClient,
     db_session: AsyncSession,
     sample_data: tuple[Workspace, Peer],
 ):
-    """POST /schedule_dream must count only explicit-level docs.
+    """POST /schedule_dream forwards observer/observed/dream_type to enqueue_dream.
 
-    Regression test for the third caller of `enqueue_dream`. The manual
-    schedule_dream endpoint computes `document_count` and passes it to
-    `enqueue_dream`, where it becomes `last_dream_document_count` — the
-    baseline that `check_and_schedule_dream` and `execute_dream` subtract
-    against to compute the NEW-doc delta.
-
-    Both of those callers filter to `level == "explicit"` (see Loop 2's
-    fixes). If this route doesn't match, the next auto-scheduled dream
-    sees a negative/suppressed delta because the baseline was inflated by
-    deductive/inductive docs.
-
-    Seeds 5 explicit + 10 deductive (total 15) and asserts the count
-    passed to enqueue_dream is 5, not 15.
+    After Loop 4, the manual schedule_dream route no longer touches the
+    baseline count — the orchestrator writes both guard fields atomically on
+    successful completion. The route's job shrinks to forwarding the dream
+    request.
     """
     workspace, peer = sample_data
 
-    # Seed collection + mixed-level documents. Must commit so the
-    # endpoint's DB session sees them (separate tracked_db path under
-    # some configs; safe regardless).
     collection = models.Collection(
         observer=peer.name,
         observed=peer.name,
@@ -608,34 +596,8 @@ async def test_schedule_dream_passes_explicit_only_document_count(
         internal_metadata={},
     )
     db_session.add(collection)
-    await db_session.flush()
-
-    for _ in range(5):
-        db_session.add(
-            models.Document(
-                content="explicit doc",
-                level="explicit",
-                workspace_name=workspace.name,
-                observer=peer.name,
-                observed=peer.name,
-            )
-        )
-    for _ in range(10):
-        db_session.add(
-            models.Document(
-                content="deductive doc",
-                level="deductive",
-                workspace_name=workspace.name,
-                observer=peer.name,
-                observed=peer.name,
-            )
-        )
     await db_session.commit()
 
-    # Capture kwargs passed to enqueue_dream (patched at the router's
-    # import site — the route does `from src.deriver.enqueue import
-    # enqueue_dream` at module load, so patching the symbol on the
-    # router module is what actually intercepts the call).
     captured: dict[str, Any] = {}
 
     async def fake_enqueue_dream(*args: Any, **kwargs: Any) -> None:
@@ -660,8 +622,9 @@ async def test_schedule_dream_passes_explicit_only_document_count(
 
     assert response.status_code == 204, response.text
     assert "kwargs" in captured, "enqueue_dream was not called"
-    assert captured["kwargs"]["document_count"] == 5, (
-        "schedule_dream must pass explicit-only count (5), "
-        f"got {captured['kwargs']['document_count']} — the unfiltered "
-        "count would be 15 and would inflate last_dream_document_count."
+    assert captured["kwargs"]["observer"] == peer.name
+    assert captured["kwargs"]["observed"] == peer.name
+    assert "document_count" not in captured["kwargs"], (
+        "Loop 4: enqueue_dream no longer accepts document_count; the baseline "
+        "is written atomically with last_dream_at in process_dream."
     )
