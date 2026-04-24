@@ -82,30 +82,24 @@ Messages to analyze:
 
 @cache
 def estimate_minimal_deriver_prompt_tokens() -> int:
-    """Estimate base prompt tokens (cached)."""
-    return estimate_deriver_prompt_tokens(None)
+    """Estimate the static minimal deriver prompt without custom instructions."""
+    prompt = minimal_deriver_prompt(
+        peer_id="",
+        messages="",
+        custom_instructions=None,
+    )
+    return estimate_tokens(prompt)
 
 
 def estimate_deriver_prompt_tokens(custom_instructions: str | None) -> int:
-    """Estimate deriver prompt tokens, including optional custom instructions."""
+    """Estimate minimal deriver prompt tokens, including custom instructions if present."""
     normalized_custom_instructions = _normalized_custom_instructions(custom_instructions)
     if normalized_custom_instructions is None:
-        try:
-            prompt = minimal_deriver_prompt(
-                peer_id="",
-                messages="",
-                custom_instructions=None,
-            )
-            return estimate_tokens(prompt)
-        except Exception:
-            return 300
+        return estimate_minimal_deriver_prompt_tokens()
 
-    try:
-        prompt = minimal_deriver_prompt(
-            peer_id="",
-            messages="",
-            custom_instructions=normalized_custom_instructions,
-        )
-        return estimate_tokens(prompt)
-    except Exception:
-        return 300
+    prompt = minimal_deriver_prompt(
+        peer_id="",
+        messages="",
+        custom_instructions=normalized_custom_instructions,
+    )
+    return estimate_tokens(prompt)

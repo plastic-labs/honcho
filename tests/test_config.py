@@ -5,7 +5,7 @@ from src.config import ConfiguredModelSettings, DeriverSettings
 
 def _make_deriver_settings(
     *,
-    MAX_INPUT_TOKENS: int = 23000,
+    MAX_INPUT_TOKENS: int = 25000,
     MAX_CUSTOM_INSTRUCTIONS_TOKENS: int | None = None,
     REPRESENTATION_BATCH_MAX_TOKENS: int = 1024,
 ) -> DeriverSettings:
@@ -31,9 +31,16 @@ def test_effective_custom_instructions_tokens_requires_explicit_limit() -> None:
 
 
 def test_effective_custom_instructions_tokens_uses_explicit_limit() -> None:
-    settings = _make_deriver_settings(MAX_CUSTOM_INSTRUCTIONS_TOKENS=500)
+    settings = _make_deriver_settings(MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000)
 
-    assert settings.effective_max_custom_instructions_tokens == 500
+    assert settings.effective_max_custom_instructions_tokens == 2000
+
+
+def test_deriver_defaults_allow_larger_custom_instruction_budget() -> None:
+    settings = _make_deriver_settings(MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000)
+
+    assert settings.MAX_INPUT_TOKENS == 25000
+    assert settings.effective_max_custom_instructions_tokens == 2000
 
 
 def test_custom_instructions_tokens_cannot_exceed_input_budget() -> None:
@@ -49,5 +56,5 @@ def test_custom_instructions_tokens_cannot_exceed_input_budget() -> None:
 
 
 def test_custom_instructions_tokens_cannot_exceed_supported_cap() -> None:
-    with pytest.raises(ValueError, match="less than or equal to 500"):
-        _make_deriver_settings(MAX_CUSTOM_INSTRUCTIONS_TOKENS=501)
+    with pytest.raises(ValueError, match="less than or equal to 2000"):
+        _make_deriver_settings(MAX_CUSTOM_INSTRUCTIONS_TOKENS=2001)
