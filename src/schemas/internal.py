@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.schemas.api import MessageCreate
 from src.schemas.configuration import SessionPeerConfig
+from src.utils.formatting import parse_datetime_iso
 from src.utils.types import DocumentLevel
 
 
@@ -27,6 +28,64 @@ class ReconcilerType(str, Enum):
 
 class DocumentBase(BaseModel):
     pass
+
+
+class MemoryExpiry(BaseModel):
+    type: Literal["none", "review", "date", "event"] = "none"
+    review_at: str | None = None
+    expires_at: str | None = None
+    event_key: str | None = None
+
+    @model_validator(mode="after")
+    def validate_expiry_fields(self) -> Self:
+        if self.type == "review" and not self.review_at:
+            raise ValueError("review expiry requires review_at")
+        if self.type == "date" and not self.expires_at:
+            raise ValueError("date expiry requires expires_at")
+        if self.type == "event" and not self.event_key:
+            raise ValueError("event expiry requires event_key")
+        return self
+
+
+class MemoryLifecycle(BaseModel):
+    review_due_at: str | None = None
+    pending_event_key: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    superseded_by: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    supersedes: list[Annotated[str, Field(min_length=1, max_length=256)]] | None = None
+    demote_after: str | None = None
+
+    @field_validator(
+        "review_due_at",
+        "demote_after",
+        mode="after",
+    )
+    @classmethod
+    def validate_datetime_fields(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parse_datetime_iso(value)
+        return value
+
+    @field_validator("supersedes", mode="after")
+    @classmethod
+    def validate_supersedes(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and len(value) == 0:
+            raise ValueError("supersedes must contain at least one document id when provided")
+        return value
+
+
+class MemoryTaxonomy(BaseModel):
+    domain: Annotated[str, Field(min_length=1, max_length=256)]
+    horizon: Literal["short", "medium", "long"]
+    thesis_kind: Literal["preference", "fact", "decision", "plan", "state", "rule"]
+    expiry: MemoryExpiry = Field(default_factory=MemoryExpiry)
+    confidence: Literal["low", "medium", "high"] | None = None
+    lifecycle: MemoryLifecycle | None = None
+
+    @field_validator("domain", mode="after")
+    @classmethod
+    def sanitize_domain(cls, v: str) -> str:
+        return v.replace("\x00", "").strip()
 
 
 class DocumentMetadata(BaseModel):
@@ -55,6 +114,10 @@ class DocumentMetadata(BaseModel):
     confidence: str | None = Field(
         default=None,
         description="Confidence level (high, medium, low) -- only applicable for inductive documents",
+    )
+    memory: MemoryTaxonomy | None = Field(
+        default=None,
+        description="Optional taxonomy metadata for domain, retention horizon, expiry, and thesis type.",
     )
 
 
@@ -95,6 +158,7 @@ class ObservationInput(BaseModel):
         | None
     ) = None
     confidence: Literal["high", "medium", "low"] | None = None
+    memory: MemoryTaxonomy | None = None
 
     @field_validator("content", mode="after")
     @classmethod

@@ -2,10 +2,12 @@ import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi_pagination import Page
+from fastapi_pagination.api import create_page
+from fastapi_pagination.bases import AbstractParams
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
+from src import crud, models, schemas
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import require_auth
@@ -17,6 +19,43 @@ router = APIRouter(
     tags=["conclusions"],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
+
+
+def _merge_conclusion_memory_filters(
+    filters: dict[str, object] | None,
+    *,
+    memory_domains: list[str] | None = None,
+    memory_horizons: list[str] | None = None,
+    memory_thesis_kinds: list[str] | None = None,
+) -> dict[str, object] | None:
+    merged = dict(filters or {})
+
+    if memory_domains:
+        merged["metadata.memory.domain"] = {"in": memory_domains}
+    if memory_horizons:
+        merged["metadata.memory.horizon"] = {"in": memory_horizons}
+    if memory_thesis_kinds:
+        merged["metadata.memory.thesis_kind"] = {"in": memory_thesis_kinds}
+
+    return merged or None
+
+
+def _normalize_memory_lifecycle(document: schemas.Conclusion) -> schemas.Conclusion:
+    memory = document.memory if isinstance(document.memory, dict) else None
+    if not memory:
+        return document
+
+    normalized = crud.normalize_memory_taxonomy(memory)
+    if normalized is not None:
+        document.memory = normalized
+    return document
+
+
+def _page_params_from_page(page: Page[schemas.Conclusion]) -> AbstractParams:
+    return Page[schemas.Conclusion].__params_type__(
+        page=page.page,
+        size=page.size,
+    )
 
 
 @router.post(
@@ -76,13 +115,40 @@ async def list_conclusions(
         if filters == {}:
             filters = None
 
+    if options:
+        filters = _merge_conclusion_memory_filters(
+            filters,
+            memory_domains=options.memory_domains,
+            memory_horizons=options.memory_horizons,
+            memory_thesis_kinds=options.memory_thesis_kinds,
+        )
+
     stmt = crud.get_documents_with_filters(
         workspace_name=workspace_id,
         filters=filters,
         reverse=reverse or False,
     )
 
-    return await apaginate(db, stmt)
+    page = await apaginate(db, stmt)
+    items = [
+        _normalize_memory_lifecycle(schemas.Conclusion.model_validate(item))
+        for item in page.items
+    ]
+    if options and options.exclude_expired:
+        items = [
+            item
+            for item in items
+            if not crud.is_document_memory_expired(
+                models.Document(internal_metadata={"memory": item.memory or {}})
+            )
+        ]
+        return create_page(
+            items,
+            total=len(items),
+            params=_page_params_from_page(page),
+        )
+    page.items = items
+    return page
 
 
 @router.post(
@@ -102,9 +168,15 @@ async def query_conclusions(
     """
     observer = None
     observed = None
-    if body.filters:
-        observer = body.filters.get("observer") or body.filters.get("observer_id")
-        observed = body.filters.get("observed") or body.filters.get("observed_id")
+    filters = _merge_conclusion_memory_filters(
+        body.filters,
+        memory_domains=body.memory_domains,
+        memory_horizons=body.memory_horizons,
+        memory_thesis_kinds=body.memory_thesis_kinds,
+    )
+    if filters:
+        observer = filters.get("observer") or filters.get("observer_id")
+        observed = filters.get("observed") or filters.get("observed_id")
 
     if not observer or not observed:
         raise ValidationException(
@@ -117,11 +189,15 @@ async def query_conclusions(
         query=body.query,
         observer=observer,
         observed=observed,
-        filters=body.filters,
+        filters=filters,
         max_distance=body.distance,
         top_k=body.top_k,
+        exclude_expired=body.exclude_expired,
     )
-    return [schemas.Conclusion.model_validate(doc) for doc in documents]
+    return [
+        _normalize_memory_lifecycle(schemas.Conclusion.model_validate(doc))
+        for doc in documents
+    ]
 
 
 @router.delete(

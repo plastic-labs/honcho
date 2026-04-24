@@ -4,9 +4,13 @@ import pytest
 from pydantic import ValidationError
 
 from src.schemas import (
+    ConclusionCreate,
     DocumentCreate,
     DocumentMetadata,
+    MemoryExpiry,
+    MemoryTaxonomy,
     MessageCreate,
+    ObservationInput,
     PeerCreate,
     ResolvedConfiguration,
     SessionCreate,
@@ -100,6 +104,12 @@ class TestDocumentValidations:
             message_ids=[1],
             premises=[],
             message_created_at="2021-01-01T00:00:00Z",
+            memory=MemoryTaxonomy(
+                domain="project:decision",
+                horizon="medium",
+                thesis_kind="decision",
+                expiry=MemoryExpiry(type="none"),
+            ),
         )
         doc = DocumentCreate(
             content="test content",
@@ -143,6 +153,95 @@ class TestDocumentValidations:
             )
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
+
+
+class TestMemoryTaxonomyValidations:
+    def test_observation_input_accepts_memory_taxonomy(self):
+        observation = ObservationInput.model_validate(
+            {
+                "content": "User prefers concise responses.",
+                "level": "explicit",
+                "memory": {
+                    "domain": "user:preferences",
+                    "horizon": "long",
+                    "thesis_kind": "preference",
+                    "expiry": {"type": "none"},
+                },
+            }
+        )
+
+        assert observation.memory is not None
+        assert observation.memory.domain == "user:preferences"
+        assert observation.memory.horizon == "long"
+        assert observation.memory.thesis_kind == "preference"
+
+    def test_memory_expiry_requires_review_at_for_review_type(self):
+        with pytest.raises(ValidationError):
+            MemoryExpiry(type="review")
+
+    def test_conclusion_create_accepts_memory_taxonomy(self):
+        conclusion = ConclusionCreate.model_validate(
+            {
+                "content": "Use the canonical LLM Wiki path.",
+                "observer_id": "observer-a",
+                "observed_id": "observed-b",
+                "session_id": "session-1",
+                "memory": {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "none"},
+                },
+            }
+        )
+
+        assert conclusion.memory is not None
+        memory = MemoryTaxonomy.model_validate(conclusion.memory)
+        assert memory.domain == "workspace:rule"
+        assert memory.thesis_kind == "rule"
+
+    def test_conclusion_create_accepts_lifecycle_native_fields(self):
+        conclusion = ConclusionCreate.model_validate(
+            {
+                "content": "The workspace now uses the Windows-visible wiki path.",
+                "observer_id": "observer-a",
+                "observed_id": "observed-b",
+                "memory": {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "event", "event_key": "workspace.reconfigured"},
+                    "lifecycle": {
+                        "review_due_at": "2026-05-01T00:00:00Z",
+                        "pending_event_key": "workspace.reconfigured",
+                        "supersedes": ["old-rule-1"],
+                        "superseded_by": "new-rule-2",
+                        "demote_after": "2026-06-01T00:00:00Z",
+                    },
+                },
+            }
+        )
+
+        memory = MemoryTaxonomy.model_validate(conclusion.memory)
+        assert memory.lifecycle is not None
+        assert memory.lifecycle.review_due_at == "2026-05-01T00:00:00Z"
+        assert memory.lifecycle.pending_event_key == "workspace.reconfigured"
+        assert memory.lifecycle.supersedes == ["old-rule-1"]
+        assert memory.lifecycle.superseded_by == "new-rule-2"
+
+    def test_conclusion_create_rejects_invalid_lifecycle_supersedes(self):
+        with pytest.raises(ValidationError):
+            MemoryTaxonomy.model_validate(
+                {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "none"},
+                    "lifecycle": {
+                        "supersedes": [],
+                    },
+                }
+            )
 
 
 class TestResolvedConfigurationMigration:

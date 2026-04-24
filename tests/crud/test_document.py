@@ -1,4 +1,5 @@
 import datetime
+from unittest.mock import patch
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -7,6 +8,122 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.exceptions import ResourceNotFoundException
+
+
+class TestMemoryLifecycleHelpers:
+    def test_filter_expired_documents_excludes_superseded_memory(self):
+        active_doc = models.Document(
+            id="active-doc",
+            workspace_name="workspace-a",
+            observer="observer-a",
+            observed="observed-b",
+            content="Active memory",
+            internal_metadata={
+                "memory": {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "none"},
+                }
+            },
+        )
+        superseded_doc = models.Document(
+            id="superseded-doc",
+            workspace_name="workspace-a",
+            observer="observer-a",
+            observed="observed-b",
+            content="Superseded memory",
+            internal_metadata={
+                "memory": {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "none"},
+                    "lifecycle": {"superseded_by": "active-doc"},
+                }
+            },
+        )
+
+        filtered = crud.filter_expired_documents([active_doc, superseded_doc])
+
+        assert [doc.id for doc in filtered] == ["active-doc"]
+
+    def test_is_document_memory_expired_treats_due_review_as_expired(self):
+        review_due_doc = models.Document(
+            id="review-due-doc",
+            workspace_name="workspace-a",
+            observer="observer-a",
+            observed="observed-b",
+            content="Needs review",
+            internal_metadata={
+                "memory": {
+                    "domain": "project:decision",
+                    "horizon": "medium",
+                    "thesis_kind": "decision",
+                    "expiry": {"type": "none"},
+                    "lifecycle": {"review_due_at": "2000-01-01T00:00:00Z"},
+                }
+            },
+        )
+
+        assert crud.is_document_memory_expired(review_due_doc) is True
+
+    @pytest.mark.asyncio
+    async def test_create_observations_persists_lifecycle_native_fields(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.flush()
+
+        await crud.get_or_create_collection(
+            db_session,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        await db_session.commit()
+
+        observation = schemas.ConclusionCreate.model_validate(
+            {
+                "content": "Workspace policy now prefers Windows-visible paths.",
+                "observer_id": test_peer.name,
+                "observed_id": test_peer2.name,
+                "session_id": test_session.name,
+                "memory": {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "event", "event_key": "workspace.reconfigured"},
+                    "lifecycle": {
+                        "supersedes": ["old-policy-1"],
+                        "demote_after": "2026-07-01T00:00:00Z",
+                    },
+                },
+            }
+        )
+
+        created = await crud.create_observations(
+            db_session,
+            observations=[observation],
+            workspace_name=test_workspace.name,
+        )
+
+        memory = created[0].internal_metadata["memory"]
+        assert memory["lifecycle"]["pending_event_key"] == "workspace.reconfigured"
+        assert memory["lifecycle"]["supersedes"] == ["old-policy-1"]
+        assert memory["lifecycle"]["demote_after"] == "2026-07-01T00:00:00Z"
 
 
 class TestDocumentCRUD:
@@ -273,6 +390,68 @@ class TestDocumentCRUD:
 
         assert len(results) == 1
         assert results[0].id == times_derived_map[2]
+
+    @pytest.mark.asyncio
+    async def test_query_documents_recent_excludes_expired_memory(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        live_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Active rule",
+            session_name=test_session.name,
+            internal_metadata={
+                "memory": {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "none"},
+                }
+            },
+        )
+        expired_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Expired blocker state",
+            session_name=test_session.name,
+            internal_metadata={
+                "memory": {
+                    "domain": "project:current-state",
+                    "horizon": "short",
+                    "thesis_kind": "state",
+                    "expiry": {
+                        "type": "date",
+                        "expires_at": (
+                            datetime.datetime.now(datetime.UTC)
+                            - datetime.timedelta(days=1)
+                        ).isoformat(),
+                    },
+                }
+            },
+        )
+        db_session.add_all([live_doc, expired_doc])
+        await db_session.flush()
+
+        results = await crud.query_documents_recent(
+            db_session,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            limit=10,
+        )
+
+        result_ids = [doc.id for doc in results]
+        assert live_doc.id in result_ids
+        assert expired_doc.id not in result_ids
 
     @pytest.mark.asyncio
     async def test_delete_document_success(

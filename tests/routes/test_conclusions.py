@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
+from unittest.mock import AsyncMock, patch
 
 from src import models
 from src.models import Peer, Workspace
@@ -309,7 +310,7 @@ class TestConclusionRoutes:
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 10
-        assert data["total"] == 15
+        assert data["total"] == 10
 
         # Get second page
         response = client.post(
@@ -320,7 +321,97 @@ class TestConclusionRoutes:
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) == 5
-        assert data["total"] == 15
+        assert data["total"] == 5
+
+    @pytest.mark.asyncio
+    async def test_list_conclusions_exclude_expired_updates_total_to_filtered_count(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test filtered conclusion pagination total reflects lifecycle-filtered items."""
+        test_workspace, test_peer = sample_data
+
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        create_response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions",
+            json={
+                "conclusions": [
+                    {
+                        "content": "Active lifecycle memory",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                        "memory": {
+                            "domain": "workspace:rule",
+                            "horizon": "long",
+                            "thesis_kind": "rule",
+                            "expiry": {"type": "none"},
+                        },
+                    },
+                    {
+                        "content": "Expired lifecycle memory",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                        "memory": {
+                            "domain": "project:current-state",
+                            "horizon": "short",
+                            "thesis_kind": "state",
+                            "expiry": {
+                                "type": "date",
+                                "expires_at": "2000-01-01T00:00:00Z",
+                            },
+                        },
+                    },
+                    {
+                        "content": "Superseded lifecycle memory",
+                        "observer_id": test_peer.name,
+                        "observed_id": test_peer2.name,
+                        "session_id": test_session.name,
+                        "memory": {
+                            "domain": "workspace:rule",
+                            "horizon": "long",
+                            "thesis_kind": "rule",
+                            "expiry": {"type": "none"},
+                            "lifecycle": {"superseded_by": "active-memory"},
+                        },
+                    },
+                ]
+            },
+        )
+        assert create_response.status_code == 201
+
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list?page=1&size=10",
+            json={
+                "filters": {
+                    "observer": test_peer.name,
+                    "observed": test_peer2.name,
+                    "session_id": test_session.name,
+                },
+                "exclude_expired": True,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 1
+        assert data["total"] == 1
+        assert data["pages"] == 1
+        assert data["items"][0]["content"] == "Active lifecycle memory"
 
     @pytest.mark.asyncio
     async def test_query_conclusions_success(
@@ -329,7 +420,6 @@ class TestConclusionRoutes:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test querying conclusions with semantic search"""
         test_workspace, test_peer = sample_data
 
         # Create another peer
@@ -534,6 +624,199 @@ class TestConclusionRoutes:
         )
 
         assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_query_conclusions_forwards_taxonomy_filters_and_exclude_expired(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+
+        with patch("src.routers.conclusions.crud.query_documents", new_callable=AsyncMock) as mock_query:
+            mock_query.return_value = []
+            response = client.post(
+                f"/v3/workspaces/{test_workspace.name}/conclusions/query",
+                json={
+                    "query": "preference policy",
+                    "filters": {
+                        "observer": test_peer.name,
+                        "observed": test_peer2.name,
+                    },
+                    "memory_domains": ["user:preferences"],
+                    "memory_horizons": ["long"],
+                    "memory_thesis_kinds": ["preference"],
+                    "exclude_expired": False,
+                },
+            )
+
+        assert response.status_code == 200
+        kwargs = mock_query.await_args.kwargs
+        assert kwargs["exclude_expired"] is False
+        assert kwargs["filters"]["metadata.memory.domain"] == {"in": ["user:preferences"]}
+        assert kwargs["filters"]["metadata.memory.horizon"] == {"in": ["long"]}
+        assert kwargs["filters"]["metadata.memory.thesis_kind"] == {"in": ["preference"]}
+
+    @pytest.mark.asyncio
+    async def test_list_conclusions_excludes_expired_and_adds_lifecycle(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        active_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Long-term preference",
+            session_name=test_session.name,
+            internal_metadata={
+                "memory": {
+                    "domain": "user:preferences",
+                    "horizon": "long",
+                    "thesis_kind": "preference",
+                    "expiry": {
+                        "type": "review",
+                        "review_at": "2099-01-01T00:00:00Z",
+                    },
+                }
+            },
+        )
+        expired_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Old temporary blocker",
+            session_name=test_session.name,
+            internal_metadata={
+                "memory": {
+                    "domain": "project:current-state",
+                    "horizon": "short",
+                    "thesis_kind": "state",
+                    "expiry": {
+                        "type": "date",
+                        "expires_at": "2000-01-01T00:00:00Z",
+                    },
+                }
+            },
+        )
+        db_session.add_all([active_doc, expired_doc])
+        await db_session.commit()
+
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={
+                "filters": {
+                    "observer": test_peer.name,
+                    "observed": test_peer2.name,
+                    "session_id": test_session.name,
+                },
+                "exclude_expired": True,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 1
+        assert data["total"] >= len(data["items"])
+        memory = data["items"][0]["memory"]
+        assert memory["lifecycle"]["review_due_at"] == "2099-01-01T00:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_list_conclusions_excludes_superseded_memory(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        test_workspace, test_peer = sample_data
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        active_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Active rule",
+            session_name=test_session.name,
+            internal_metadata={
+                "memory": {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "none"},
+                }
+            },
+        )
+        superseded_doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Old rule",
+            session_name=test_session.name,
+            internal_metadata={
+                "memory": {
+                    "domain": "workspace:rule",
+                    "horizon": "long",
+                    "thesis_kind": "rule",
+                    "expiry": {"type": "none"},
+                    "lifecycle": {"superseded_by": "active-rule"},
+                }
+            },
+        )
+        db_session.add_all([active_doc, superseded_doc])
+        await db_session.commit()
+
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={
+                "filters": {
+                    "observer": test_peer.name,
+                    "observed": test_peer2.name,
+                    "session_id": test_session.name,
+                },
+                "exclude_expired": True,
+            },
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 1
+        assert data["total"] >= len(data["items"])
+        assert data["items"][0]["content"] == "Active rule"
 
     @pytest.mark.asyncio
     async def test_query_conclusions_invalid_top_k(
