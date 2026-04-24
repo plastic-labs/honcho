@@ -661,6 +661,48 @@ async def delete_document(
     await db.commit()
 
 
+async def delete_documents(
+    db: AsyncSession,
+    workspace_name: str,
+    document_ids: Sequence[str],
+    *,
+    observer: str,
+    observed: str,
+    session_name: str | None = None,
+) -> list[tuple[str, str]]:
+    """
+    Soft-delete multiple documents in a single UPDATE ... RETURNING statement.
+
+    Returns (id, level) tuples for rows that actually got deleted — i.e. rows
+    that matched the workspace/observer/observed filter and were not already
+    soft-deleted. IDs that didn't match are silently skipped; callers can diff
+    the returned ids against the input to detect misses.
+    """
+    if not document_ids:
+        return []
+
+    conditions = [
+        models.Document.id.in_(document_ids),
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
+        models.Document.deleted_at.is_(None),
+    ]
+    if session_name is not None:
+        conditions.append(models.Document.session_name == session_name)
+
+    stmt = (
+        update(models.Document)
+        .where(*conditions)
+        .values(deleted_at=func.now())
+        .returning(models.Document.id, models.Document.level)
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+    await db.commit()
+    return [(row.id, row.level) for row in rows]
+
+
 async def delete_document_by_id(
     db: AsyncSession,
     workspace_name: str,

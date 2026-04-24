@@ -184,6 +184,7 @@ def sample_conclusions_deleted_event(
         observer="assistant",
         observed="user_peer",
         conclusion_count=3,
+        levels=["explicit", "deductive", "explicit"],
     )
 
 

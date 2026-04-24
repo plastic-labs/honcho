@@ -1812,22 +1812,24 @@ async def _handle_delete_observations(
     if not observation_ids:
         return "ERROR: observation_ids list is empty"
 
-    deleted_count = 0
     async with ctx.db_lock, tracked_db("tool.delete_observations") as db:
-        for obs_id in observation_ids:
-            try:
-                await crud.delete_document(
-                    db,
-                    workspace_name=ctx.workspace_name,
-                    document_id=obs_id,
-                    observer=ctx.observer,
-                    observed=ctx.observed,
-                )
-                deleted_count += 1
-            except Exception as e:
-                logger.warning("Failed to delete observation %s: %s", obs_id, e)
+        deleted = await crud.delete_documents(
+            db,
+            workspace_name=ctx.workspace_name,
+            document_ids=observation_ids,
+            observer=ctx.observer,
+            observed=ctx.observed,
+        )
 
-    # Emit telemetry event if context is available
+    deleted_ids = {doc_id for doc_id, _ in deleted}
+    for obs_id in observation_ids:
+        if obs_id not in deleted_ids:
+            logger.warning(
+                "Failed to delete observation %s (not found, already deleted, or wrong scope)",
+                obs_id,
+            )
+
+    deleted_count = len(deleted)
     if deleted_count > 0 and ctx.run_id and ctx.agent_type and ctx.parent_category:
         emit(
             AgentToolConclusionsDeletedEvent(
@@ -1839,6 +1841,7 @@ async def _handle_delete_observations(
                 observer=ctx.observer,
                 observed=ctx.observed,
                 conclusion_count=deleted_count,
+                levels=[level for _, level in deleted],
             )
         )
 

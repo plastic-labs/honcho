@@ -140,6 +140,9 @@ def make_tool_context(tool_test_data: Any) -> Callable[..., ToolContext]:
         include_observation_ids: bool = False,
         history_token_limit: int = 8192,
         session_name: str | None = None,
+        run_id: str | None = None,
+        agent_type: str | None = None,
+        parent_category: str | None = None,
     ) -> ToolContext:
         return ToolContext(
             workspace_name=workspace.name,
@@ -150,6 +153,9 @@ def make_tool_context(tool_test_data: Any) -> Callable[..., ToolContext]:
             include_observation_ids=include_observation_ids,
             history_token_limit=history_token_limit,
             db_lock=shared_lock,
+            run_id=run_id,
+            agent_type=agent_type,
+            parent_category=parent_category,
         )
 
     return _make_context
@@ -411,6 +417,82 @@ class TestDeleteObservations:
 
         # Should report 0 deleted (graceful handling)
         assert "Deleted 0 observations" in result
+
+    async def test_delete_batch_emits_levels_for_successful_only(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Batch delete with mixed levels emits levels only for rows actually deleted."""
+        workspace, peer1, peer2, session, _messages, documents = tool_test_data
+
+        # Add two extra documents with non-explicit levels so the batch spans levels.
+        deductive_doc = models.Document(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            content="Works in tech",
+            embedding=[0.42] * 1536,
+            session_name=session.name,
+            level="deductive",
+            metadata={},
+        )
+        inductive_doc = models.Document(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            content="Tends to be an early riser",
+            embedding=[0.43] * 1536,
+            session_name=session.name,
+            level="inductive",
+            metadata={},
+        )
+        db_session.add_all([deductive_doc, inductive_doc])
+        await db_session.flush()
+        await db_session.refresh(deductive_doc)
+        await db_session.refresh(inductive_doc)
+        await db_session.commit()
+
+        # Capture emitted telemetry events.
+        from src.telemetry.events import AgentToolConclusionsDeletedEvent
+        from src.telemetry.events.base import BaseEvent
+        from src.utils import agent_tools as agent_tools_module
+
+        captured: list[BaseEvent] = []
+
+        def _capture(event: BaseEvent) -> None:
+            captured.append(event)
+
+        monkeypatch.setattr(agent_tools_module, "emit", _capture)
+
+        ctx = make_tool_context(
+            include_observation_ids=True,
+            run_id="test_run",
+            agent_type="deduction",
+            parent_category="dream",
+        )
+
+        explicit_doc_id = documents[0].id
+        ids_to_delete = [
+            explicit_doc_id,
+            deductive_doc.id,
+            inductive_doc.id,
+            "nonexistent_id_12345",
+        ]
+
+        result = await _handle_delete_observations(
+            ctx, {"observation_ids": ids_to_delete}
+        )
+
+        assert "Deleted 3 observations" in result
+        assert len(captured) == 1
+        event = captured[0]
+        assert isinstance(event, AgentToolConclusionsDeletedEvent)
+        assert event.conclusion_count == 3
+        # RETURNING order is not guaranteed; compare as multiset.
+        assert sorted(event.levels) == sorted(["explicit", "deductive", "inductive"])
 
 
 @pytest.mark.asyncio
