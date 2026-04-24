@@ -292,11 +292,8 @@ async def check_and_schedule_dream(
                     f"Invalid last_dream_at timestamp: {last_dream_at}, error: {e}"
                 )
 
-        # In-flight stampede defense: the guard fields don't advance until a
-        # dream completes, so a queued-but-unprocessed dream leaves the time
-        # and count guards stale. Query the queue directly (source of truth,
-        # matches uq_queue_dream_pending_work_unit_key) to block a second
-        # schedule for any enabled dream_type on this collection.
+        # Queue is source of truth for in-flight dreams; mirrors
+        # uq_queue_dream_pending_work_unit_key.
         enabled_dream_types = settings.DREAM.ENABLED_TYPES
         pending_keys = [
             construct_work_unit_key(

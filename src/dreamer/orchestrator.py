@@ -325,10 +325,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )
 
-                    # Atomic pair write: both guard fields advance together only
-                    # when consolidation actually happened. Splitting the writes
-                    # across enqueue + completion creates an in-flight window
-                    # where the pair tells contradictory stories.
+                    # Both guard fields advance together only on successful consolidation.
                     now_iso = datetime.now(timezone.utc).isoformat()
                     async with tracked_db("dream.guard_pair_write") as db:
                         collection = await crud.get_collection(

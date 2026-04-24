@@ -440,11 +440,8 @@ async def enqueue_dream(
     """
     Enqueue a dream task for immediate processing by the deriver.
 
-    Does not touch collection.internal_metadata["dream"]. Both guard fields
-    (last_dream_at and last_dream_document_count) are written atomically in
-    process_dream on successful completion, so failed dreams retry against
-    the same corpus and a queued dream already acts as a stampede latch via
-    check_and_schedule_dream's in-flight check.
+    Does not touch collection.internal_metadata["dream"] — both guard fields
+    are written atomically in process_dream on successful completion.
 
     Deduplication: If a dream with the same work_unit_key is already in-progress
     (has an ActiveQueueSession) or pending in the queue, the enqueue is skipped.
