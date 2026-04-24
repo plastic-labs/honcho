@@ -27,6 +27,18 @@ Run the installer:
 bunx @honcho-ai/opencode-honcho install
 ```
 
+<Accordion title="Windows install">
+
+Windows Command Prompt:
+
+```cmd
+git clone --branch main https://github.com/plastic-labs/opencode-honcho.git
+cd opencode-honcho
+bun install && bun run build && bun .\dist\cli.js install --plugin-spec "%CD%" --force
+```
+
+</Accordion>
+
 The installer:
 
 - registers `@honcho-ai/opencode-honcho` with OpenCode
