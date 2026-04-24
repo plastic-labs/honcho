@@ -36,11 +36,10 @@ def test_effective_custom_instructions_tokens_uses_explicit_limit() -> None:
     assert settings.effective_max_custom_instructions_tokens == 2000
 
 
-def test_deriver_defaults_allow_larger_custom_instruction_budget() -> None:
-    settings = _make_deriver_settings(MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000)
+def test_deriver_default_input_budget_accommodates_custom_instruction_cap() -> None:
+    settings = _make_deriver_settings()
 
     assert settings.MAX_INPUT_TOKENS == 25000
-    assert settings.effective_max_custom_instructions_tokens == 2000
 
 
 def test_custom_instructions_tokens_cannot_exceed_input_budget() -> None:

@@ -23,9 +23,7 @@ def _session(configuration: dict[str, Any]) -> models.Session:
 def test_preserves_workspace_custom_instructions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 100, raising=False
-    )
+    monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 100)
 
     workspace = _workspace(
         {
@@ -46,9 +44,7 @@ def test_preserves_workspace_custom_instructions(
 def test_message_custom_instructions_override_session_and_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 100, raising=False
-    )
+    monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 100)
 
     workspace = _workspace(
         {
