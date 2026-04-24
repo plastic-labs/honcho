@@ -561,12 +561,14 @@ class DreamSettings(BackupLLMSettingsMixin, HonchoSettings):
         16_384
     )
 
-    ## NOTE: specialist models use the same provider as the main model
-
     # Deduction Specialist: handles logical inference
     DEDUCTION_MODEL: str = "claude-haiku-4-5"
+    DEDUCTION_PROVIDER: SupportedProviders | None = None  # falls back to PROVIDER
+    DEDUCTION_THINKING_BUDGET_TOKENS: int | None = None  # falls back to THINKING_BUDGET_TOKENS
     # Induction Specialist: identifies patterns across observations
     INDUCTION_MODEL: str = "claude-haiku-4-5"
+    INDUCTION_PROVIDER: SupportedProviders | None = None  # falls back to PROVIDER
+    INDUCTION_THINKING_BUDGET_TOKENS: int | None = None  # falls back to THINKING_BUDGET_TOKENS
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)

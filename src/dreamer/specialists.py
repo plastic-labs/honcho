@@ -74,6 +74,14 @@ class BaseSpecialist(ABC):
         """Get the model to use for this specialist."""
         ...
 
+    def get_provider(self) -> str | None:
+        """Get the provider override for this specialist, or None to inherit from DREAM."""
+        return None
+
+    def get_thinking_budget(self) -> int | None:
+        """Get the thinking budget override, or None to inherit from DREAM."""
+        return None
+
     def get_max_tokens(self) -> int:
         """Get max output tokens for this specialist."""
         return 16384
@@ -196,9 +204,16 @@ If you update it, send the full deduplicated list and remove stale entries.
             parent_category="dream",
         )
 
-        # Get model with potential override
+        # Get model, provider, and thinking budget with potential overrides
         model = self.get_model()
-        llm_settings = settings.DREAM.model_copy(update={"MODEL": model})
+        provider = self.get_provider()
+        thinking_budget = self.get_thinking_budget()
+        overrides: dict[str, Any] = {"MODEL": model}
+        if provider is not None:
+            overrides["PROVIDER"] = provider
+        if thinking_budget is not None:
+            overrides["THINKING_BUDGET_TOKENS"] = thinking_budget
+        llm_settings = settings.DREAM.model_copy(update=overrides)
 
         # Track iterations via callback
         iteration_count = 0
@@ -219,6 +234,7 @@ If you update it, send the full deduplicated list and remove stale entries.
             messages=messages,
             track_name=f"Dreamer/{self.name}",
             iteration_callback=iteration_callback,
+            thinking_budget_tokens=llm_settings.THINKING_BUDGET_TOKENS,
         )
 
         # Log metrics
@@ -307,6 +323,12 @@ class DeductionSpecialist(BaseSpecialist):
 
     def get_model(self) -> str:
         return settings.DREAM.DEDUCTION_MODEL
+
+    def get_provider(self) -> str | None:
+        return settings.DREAM.DEDUCTION_PROVIDER
+
+    def get_thinking_budget(self) -> int | None:
+        return settings.DREAM.DEDUCTION_THINKING_BUDGET_TOKENS
 
     def get_max_tokens(self) -> int:
         return 8192
@@ -450,6 +472,12 @@ class InductionSpecialist(BaseSpecialist):
 
     def get_model(self) -> str:
         return settings.DREAM.INDUCTION_MODEL
+
+    def get_provider(self) -> str | None:
+        return settings.DREAM.INDUCTION_PROVIDER
+
+    def get_thinking_budget(self) -> int | None:
+        return settings.DREAM.INDUCTION_THINKING_BUDGET_TOKENS
 
     def get_max_tokens(self) -> int:
         return 8192
