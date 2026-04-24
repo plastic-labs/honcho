@@ -31,13 +31,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/plastic-labs/sillytavern-hon
 irm https://raw.githubusercontent.com/plastic-labs/sillytavern-honcho/main/install.ps1 | iex
 ```
 
-The installer:
+The installer (macOS / Linux):
 1. Clones the extension into `public/scripts/extensions/third-party/sillytavern-honcho`
 2. Symlinks the server plugin to `plugins/honcho-proxy`
 3. Installs the `@honcho-ai/sdk` dependency
 4. Bootstraps `config.yaml` if it doesn't exist (briefly runs `npm start` to generate defaults)
 5. Sets `enableServerPlugins: true` in `config.yaml`
-6. Detects your `~/.honcho/config.json` if it exists
+6. Detects your `~/.honcho/config.json` and warns if no resolvable `apiKey`
+
+The Windows installer does steps 1–3 (using a directory junction via `mklink /J` instead of a symlink) and checks for `~/.honcho/config.json`, but does **not** bootstrap `config.yaml` or flip `enableServerPlugins`. If `config.yaml` is missing, start SillyTavern once to generate it; then set `enableServerPlugins: true` manually before restarting.
 
 ### Step 2: Restart SillyTavern
 
@@ -47,10 +49,10 @@ The installer:
 
 ### Step 3: Configure
 
-Open **Extensions** (puzzle piece icon) and expand **Honcho Memory**:
+Open **Extensions** (puzzle blocks icon) and expand **Honcho Memory**:
 
 1. Check **Enable Honcho Memory**
-2. Click the API key field to set your key (auto-populated if present in `~/.honcho/config.json`; the UI value overrides the file)
+2. Click the API key field to set your key. The plugin falls back to `~/.honcho/config.json` at request time if no panel key is set; a panel value always wins.
 3. Enter your **Workspace ID** (saves to `hosts.sillytavern.workspace`)
 4. Enter **Your peer name** (saves to `hosts.sillytavern.peerName`; auto-synced from your SillyTavern persona on first boot)
 5. Status indicator should show **Ready**
@@ -66,10 +68,10 @@ The **enrichment mode** controls what layers on top of the base context:
 | Mode | Behavior |
 | --- | --- |
 | **Context only** | Base layer only -- peer representation + session summary |
-| **Reasoning** (default) | Base layer + dialectic `peer.chat()` queries on a configurable interval |
+| **Reasoning** (default) | Base layer + dialectic `peer.chat()` queries on a configurable per-turn cadence |
 | **Tool call** | Base layer + function tools the LLM can call on demand |
 
-Both the context and reasoning layers use stale-while-revalidate with configurable refresh intervals. After the first turn of a session, there is zero added latency.
+Both the context and reasoning layers use stale-while-revalidate with a configurable cadence ("Refresh every N turns" and "Reason every N turns"). After the first turn of a session, there is zero added latency.
 
 <Note>
 **Context only** mode relies on `session.context()`, which is session-scoped — it returns empty output until the session has enough messages for Honcho to derive a representation and summary. For fresh sessions or peers with little history, Reasoning mode is a better default: it queries `peer.chat()` across all of the peer's history, not just the current session.
@@ -87,9 +89,13 @@ In tool call mode, the extension registers three function tools that the LLM can
 
 This mode works best with models that support function calling. The LLM decides when to query memory rather than firing on every turn.
 
+### Other Panel Knobs
+
+The Extensions panel also exposes: **Context settings** (token budget, refresh cadence in turns, include session summary), **Injection position** (After/Before main prompt, or In-chat @ Depth with a numeric depth field), a **Prompt Template** textarea that wraps Honcho output via a `{{text}}` placeholder, and a **Reasoning queries** textarea (`{{message}}` placeholder) for customizing the dialectic prompts used in Reasoning mode.
+
 ### Peer Observability
 
-By default, only the user peer accumulates derived memory — Honcho observes the user's messages and derives conclusions across sessions. The AI character's persona comes from its character card, not from peer derivation. If you want the character to have its own Honcho-derived state, configure it as an additional peer in session setup.
+By default, only the user peer accumulates derived memory — Honcho observes the user's messages and derives conclusions across sessions. The AI character's persona comes from its character card, not from peer derivation.
 
 ### Peer Modes and Session Naming
 
@@ -97,13 +103,13 @@ Peer mode controls memory partitioning; session naming controls conversation par
 
 | Peer Mode | Behavior |
 | --- | --- |
-| **Single peer** | One user peer shared across all characters |
-| **Per-persona** | Each character gets its own isolated memory |
+| **Single peer for all personas** | One user peer shared across all personas |
+| **Separate peer per persona** | Each persona gets its own isolated memory |
 
 | Session Naming | Behavior |
 | --- | --- |
 | **Auto** | Per-chat hash (unique per conversation) |
-| **Per-character** | One session per character (persistent) |
+| **Per character** | One session per character (persistent) |
 | **Custom** | User-defined session name |
 
 Session IDs are frozen once assigned. Changing the naming mode, the custom session name, or the character name only affects new chats — existing chats stay linked to their original Honcho session so history, summaries, and derivations don't fragment.
@@ -155,16 +161,6 @@ Nested form (multiple tools sharing the file):
 }
 ```
 
-### Disable / Enable global config
-
-A toggle button in the panel opts out of auto-detection entirely. When disabled, the extension skips the config fetch on load, hides the source line, and saves peer-name edits to the local SillyTavern extension settings instead of the global file. Re-enabling opens a diff-aware dialog if local and global values diverge, offering:
-
-- **Inherit** — pull global values into this SillyTavern install
-- **Push local** — overwrite the global host entry with your local values
-- **Cancel** — leave both untouched
-
-Empty local values are never pushed, so a blank field cannot accidentally delete a host key.
-
 ## Troubleshooting
 
 | Symptom | Fix |
@@ -187,7 +183,7 @@ Empty local values are never pushed, so a blank field cannot accidentally delete
     New to SillyTavern? Start here — install guide for macOS, Linux, Windows, Docker.
   </Card>
 
-  <Card title="Claude Code Setup Skill" icon="wand-magic-sparkles" href="https://github.com/plastic-labs/sillytavern-honcho/blob/main/skills/setup/SKILL.md">
+  <Card title="Agent Skill for Setup" icon="wand-magic-sparkles" href="https://github.com/plastic-labs/sillytavern-honcho/blob/main/skills/setup/SKILL.md">
     Agent-assisted install — idempotent, structural patches, end-to-end verification.
   </Card>
 
