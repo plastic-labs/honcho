@@ -281,20 +281,23 @@ async def fetch_documents_by_ids(
 async def _query_documents_pgvector(
     db: AsyncSession,
     workspace_name: str,
-    observer: str,
-    observed: str,
+    observer: str | None,
+    observed: str | None,
     embedding: list[float],
     filters: dict[str, Any] | None,
     max_distance: float | None,
     top_k: int,
 ) -> list[models.Document]:
     """pgvector similarity search — pure DB operation."""
+    stmt = select(models.Document).where(
+        models.Document.workspace_name == workspace_name
+    )
+    if observer is not None:
+        stmt = stmt.where(models.Document.observer == observer)
+    if observed is not None:
+        stmt = stmt.where(models.Document.observed == observed)
     stmt = (
-        select(models.Document)
-        .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.observer == observer)
-        .where(models.Document.observed == observed)
-        .where(models.Document.embedding.isnot(None))
+        stmt.where(models.Document.embedding.isnot(None))
         .where(models.Document.deleted_at.is_(None))
     )
 
@@ -317,8 +320,8 @@ async def query_documents(
     workspace_name: str,
     query: str,
     *,
-    observer: str,
-    observed: str,
+    observer: str | None = None,
+    observed: str | None = None,
     filters: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
@@ -335,8 +338,8 @@ async def query_documents(
         db: Database session, or None to let the function manage its own
         workspace_name: Name of the workspace
         query: Search query text
-        observer: Name of the observing peer
-        observed: Name of the observed peer
+        observer: Name of the observing peer. If None, results are not filtered by observer.
+        observed: Name of the observed peer. If None, results are not filtered by observed.
         filters: Optional filters to apply at vector store level (supports: level, session_name)
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
