@@ -1,13 +1,38 @@
 """Tests for search functionality including peer knowledge search."""
 
 import datetime
+from typing import cast
 
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.exceptions import ValidationException
 from src.utils.search import search
+
+
+@pytest.mark.asyncio
+async def test_search_requires_workspace_when_context_window_requested(
+    db_session: AsyncSession,
+):
+    """Context windows require workspace scope to preserve the snippet return contract."""
+    workspace = models.Workspace(name=generate_nanoid())
+    peer = models.Peer(name="peer1", workspace_name=workspace.name)
+    session = models.Session(name="session1", workspace_name=workspace.name)
+    message = models.Message(
+        content="Message with context",
+        session_name=session.name,
+        peer_name=peer.name,
+        workspace_name=workspace.name,
+        seq_in_session=1,
+        created_at=datetime.datetime.now(datetime.timezone.utc),
+    )
+    db_session.add_all([workspace, peer, session, message])
+    await db_session.commit()
+
+    with pytest.raises(ValidationException):
+        await search("Message", limit=10, context_window=1)
 
 
 @pytest.mark.asyncio
@@ -65,11 +90,13 @@ async def test_peer_perspective_search_single_session(
     await db_session.commit()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    # context_window=0 (default) returns flat list
+    results = cast(list[models.Message], result)
 
     # peer1 should see both messages
     assert len(results) == 2
@@ -134,11 +161,12 @@ async def test_peer_perspective_search_multiple_sessions(
     await db_session.commit()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should see messages from both sessions
     assert len(results) == 2
@@ -213,11 +241,12 @@ async def test_peer_perspective_search_temporal_constraints(
     await db_session.commit()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should only see the message during their participation
     assert len(results) == 1
@@ -279,11 +308,12 @@ async def test_peer_perspective_search_active_member(
     await db_session.commit()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should see all messages after join time (no left_at limit)
     assert len(results) == 2
@@ -338,11 +368,12 @@ async def test_peer_perspective_search_no_sessions(
     await db_session.commit()
 
     # Search with peer_perspective filter for peer1 (not in any sessions)
-    results = await search(
+    result = await search(
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should see no messages
     assert len(results) == 0
@@ -406,11 +437,12 @@ async def test_peer_perspective_search_boundary_timestamps(
     await db_session.commit()
 
     # Search with peer_perspective filter
-    results = await search(
+    result = await search(
         "Message",
         filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
         limit=10,
     )
+    results = cast(list[models.Message], result)
 
     # peer1 should see both boundary messages (inclusive bounds)
     assert len(results) == 2
@@ -518,7 +550,7 @@ async def test_grep_messages_observer_scoping_excludes_non_member_sessions(
         workspace_name=workspace.name,
         session_name=None,
         text="keyword",
-        observer=peer1.name,
+        peer_perspective=peer1.name,
     )
     scoped_ids = [m.public_id for matches, _ in results_scoped for m in matches]
     assert msg_visible.public_id in scoped_ids
@@ -555,7 +587,7 @@ async def test_get_messages_by_date_range_observer_scoping(
         db_session,
         workspace_name=workspace.name,
         session_name=None,
-        observer=peer1.name,
+        peer_perspective=peer1.name,
     )
     scoped_ids = [m.public_id for m in results_scoped]
     assert msg_visible.public_id in scoped_ids
@@ -563,10 +595,10 @@ async def test_get_messages_by_date_range_observer_scoping(
 
 
 @pytest.mark.asyncio
-async def test_grep_messages_observer_scoping_noop_when_session_provided(
+async def test_grep_messages_observer_scoping_applies_with_session_provided(
     db_session: AsyncSession,
 ):
-    """When session_name is provided, observer is ignored."""
+    """When session_name is provided, peer_perspective still applies."""
     (
         workspace,
         peer1,
@@ -581,10 +613,10 @@ async def test_grep_messages_observer_scoping_noop_when_session_provided(
         workspace_name=workspace.name,
         session_name=session_hidden.name,
         text="keyword",
-        observer=peer1.name,
+        peer_perspective=peer1.name,
     )
     matched_ids = [m.public_id for matches, _ in results for m in matches]
-    assert msg_hidden.public_id in matched_ids
+    assert msg_hidden.public_id not in matched_ids
 
 
 @pytest.mark.asyncio
@@ -631,19 +663,16 @@ async def test_grep_messages_observer_scoping_empty_when_no_sessions(
         workspace_name=workspace.name,
         session_name=None,
         text="keyword",
-        observer=loner.name,
+        peer_perspective=loner.name,
     )
     assert results == []
 
 
 @pytest.mark.asyncio
-async def test_grep_messages_observer_scoping_left_session_still_visible(
+async def test_grep_messages_observer_scoping_respects_left_at(
     db_session: AsyncSession,
 ):
-    """Observer who left a session still sees all messages in that session.
-
-    Any membership record (regardless of left_at) grants full session visibility.
-    """
+    """Observer visibility ends at left_at for grep_messages."""
     workspace = models.Workspace(name=generate_nanoid())
     db_session.add(workspace)
     await db_session.flush()
@@ -683,7 +712,7 @@ async def test_grep_messages_observer_scoping_left_session_still_visible(
         seq_in_session=1,
         created_at=join_time + datetime.timedelta(minutes=2),
     )
-    # Message after observer left — still visible because any membership grants full access
+    # Message after observer left should be hidden.
     msg_after = models.Message(
         content="keyword after",
         session_name=session.name,
@@ -699,8 +728,8 @@ async def test_grep_messages_observer_scoping_left_session_still_visible(
         workspace_name=workspace.name,
         session_name=None,
         text="keyword",
-        observer=observer.name,
+        peer_perspective=observer.name,
     )
     matched_ids = [m.public_id for matches, _ in results for m in matches]
     assert msg_during.public_id in matched_ids
-    assert msg_after.public_id in matched_ids
+    assert msg_after.public_id not in matched_ids

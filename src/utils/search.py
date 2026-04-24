@@ -313,7 +313,9 @@ async def search(
     *,
     filters: dict[str, Any] | None = None,
     limit: int = 10,
-) -> list[models.Message]:
+    context_window: int = 0,
+    semantic_only: bool = False,
+) -> list[models.Message] | list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search across message content using a hybrid approach with Reciprocal Rank Fusion (RRF).
 
@@ -326,9 +328,14 @@ async def search(
             Special filter 'peer_perspective' will search across all messages from sessions that the peer is/was a member of,
             filtered by the time window when they were actually in the session.
         limit: Maximum number of results to return
+        context_window: Number of messages before/after each match to include as context.
+            If 0 (default), returns flat list. If > 0, returns snippets with context.
+        semantic_only: If True, skip full-text search and only use semantic search.
+            Useful for performance when only semantic relevance is needed.
 
     Returns:
-        list of messages that match the search query, ordered by RRF relevance or individual search relevance
+        If context_window == 0: list of messages ordered by relevance
+        If context_window > 0: list of (matched_messages, context_messages) tuples
 
     Raises:
         ValidationException: If query exceeds maximum token limit for embeddings
@@ -395,7 +402,6 @@ async def search(
 
     async def _run_search(active_db: AsyncSession) -> list[models.Message]:
         search_results: list[list[models.Message]] = []
-
         if (
             settings.EMBED_MESSAGES
             and isinstance(workspace_name, str)
@@ -423,16 +429,16 @@ async def search(
                     workspace_name,
                     peer_perspective_name,
                 )
-
             search_results.append(semantic_results)
 
-        fulltext_results = await _fulltext_search(
-            db=active_db,
-            query=query,
-            stmt=stmt,
-            limit=limit * 2,
-        )
-        search_results.append(fulltext_results)
+        if not semantic_only:
+            fulltext_results = await _fulltext_search(
+                db=active_db,
+                query=query,
+                stmt=stmt,
+                limit=limit * 2,
+            )
+            search_results.append(fulltext_results)
 
         if len(search_results) > 1:
             return reciprocal_rank_fusion(*search_results, limit=limit)
@@ -442,6 +448,26 @@ async def search(
 
     async with tracked_db("search.messages") as managed_db:
         combined_results = await _run_search(managed_db)
+        if context_window > 0 and combined_results and not workspace_name:
+            raise ValidationException(
+                "workspace_name or workspace_id is required when context_window > 0."
+            )
+        if context_window > 0 and combined_results and workspace_name:
+            from src.crud.message import (
+                _build_merged_snippets,  # pyright: ignore[reportPrivateUsage]
+                _expunge_snippets,  # pyright: ignore[reportPrivateUsage]
+            )
+
+            snippets = await _build_merged_snippets(
+                managed_db,
+                workspace_name,
+                combined_results,
+                context_window,
+                peer_perspective_name,
+            )
+            _expunge_snippets(managed_db, snippets)
+            return snippets
+
         for message in combined_results:
             managed_db.expunge(message)
         return combined_results

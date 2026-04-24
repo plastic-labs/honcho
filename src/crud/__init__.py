@@ -64,12 +64,16 @@ from .webhook import (
     list_webhook_endpoints,
 )
 from .workspace import (
+    ActivePeer,
     WorkspaceDeletionResult,
+    WorkspaceStats,
     check_no_active_sessions,
     delete_workspace,
+    get_active_peers,
     get_all_workspaces,
     get_or_create_workspace,
     get_workspace,
+    get_workspace_stats,
     update_workspace,
 )
 
@@ -137,11 +141,15 @@ __all__ = [
     "delete_webhook_endpoint",
     "list_webhook_endpoints",
     # Workspace
+    "ActivePeer",
     "WorkspaceDeletionResult",
     "check_no_active_sessions",
+    "WorkspaceStats",
     "delete_workspace",
+    "get_active_peers",
+    "get_all_workspaces",
     "get_or_create_workspace",
     "get_workspace",
-    "get_all_workspaces",
+    "get_workspace_stats",
     "update_workspace",
 ]

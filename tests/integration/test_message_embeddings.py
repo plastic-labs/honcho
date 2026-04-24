@@ -6,7 +6,7 @@ These tests verify that message embeddings are created, stored, and can be searc
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -243,13 +243,15 @@ async def test_semantic_search_when_embeddings_enabled(
     # Check the call count before search
     initial_call_count: int = mock_openai_embeddings["embed"].call_count
 
-    search_results = await search(
+    result = await search(
         search_query,
         filters={
             "workspace_id": test_workspace.name,
             "session_id": test_session.name,
         },
     )
+    # context_window=0 (default) returns flat list
+    search_results = cast(list[models.Message], result)
 
     # Verify that the embed method was called during search - e.g. we used semantic search
     assert mock_openai_embeddings["embed"].call_count == initial_call_count + 1
@@ -314,8 +316,9 @@ async def test_search_messages_external_lookup_happens_before_tracked_db(
         *,
         after_date: datetime | None = None,
         before_date: datetime | None = None,
+        peer_perspective: str | None = None,
     ) -> list[models.Message]:
-        _ = (workspace_name, message_ids, after_date, before_date)
+        _ = (workspace_name, message_ids, after_date, before_date, peer_perspective)
         assert db is fake_db
         call_order.append("fetch")
         return [message]
@@ -325,8 +328,9 @@ async def test_search_messages_external_lookup_happens_before_tracked_db(
         workspace_name: str,
         matched_messages: list[models.Message],
         context_window: int,
+        peer_perspective: str | None = None,
     ) -> list[tuple[list[models.Message], list[models.Message]]]:
-        _ = (workspace_name, context_window)
+        _ = (workspace_name, context_window, peer_perspective)
         assert db is fake_db
         assert matched_messages == [message]
         call_order.append("build")
@@ -416,8 +420,9 @@ async def test_search_messages_temporal_external_lookup_happens_before_tracked_d
         *,
         after_date: datetime | None = None,
         before_date: datetime | None = None,
+        peer_perspective: str | None = None,
     ) -> list[models.Message]:
-        _ = (workspace_name, message_ids)
+        _ = (workspace_name, message_ids, peer_perspective)
         assert db is fake_db
         assert after_date is not None
         assert before_date is not None
@@ -429,8 +434,9 @@ async def test_search_messages_temporal_external_lookup_happens_before_tracked_d
         workspace_name: str,
         matched_messages: list[models.Message],
         context_window: int,
+        peer_perspective: str | None = None,
     ) -> list[tuple[list[models.Message], list[models.Message]]]:
-        _ = (workspace_name, context_window)
+        _ = (workspace_name, context_window, peer_perspective)
         assert db is fake_db
         assert matched_messages == [message]
         call_order.append("build")

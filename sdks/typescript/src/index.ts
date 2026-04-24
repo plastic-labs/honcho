@@ -54,6 +54,7 @@ export type {
   SessionResponse,
   SessionSummariesResponse,
   SummaryResponse,
+  WorkspaceChatResponse,
   WorkspaceResponse,
 } from './types/api'
 

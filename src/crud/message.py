@@ -70,6 +70,31 @@ async def get_peer_session_names(
     return [row[0] for row in result.all()]
 
 
+def peer_visibility_condition(
+    workspace_name: str, peer_perspective: str
+) -> ColumnElement[bool]:
+    """
+    Build a condition that enforces session membership visibility for a peer.
+
+    A message is visible when the peer was a member of the message's session at the
+    message timestamp (between joined_at and left_at).
+    """
+    return (
+        select(models.session_peers_table.c.peer_name)
+        .where(models.session_peers_table.c.workspace_name == workspace_name)
+        .where(models.session_peers_table.c.session_name == models.Message.session_name)
+        .where(models.session_peers_table.c.peer_name == peer_perspective)
+        .where(models.Message.created_at >= models.session_peers_table.c.joined_at)
+        .where(
+            or_(
+                models.session_peers_table.c.left_at.is_(None),
+                models.Message.created_at <= models.session_peers_table.c.left_at,
+            )
+        )
+        .exists()
+    )
+
+
 def _apply_token_limit(
     base_conditions: list[ColumnElement[Any]], token_limit: int
 ) -> Select[tuple[models.Message]]:
@@ -112,6 +137,7 @@ async def _build_merged_snippets(
     workspace_name: str,
     matched_messages: list[models.Message],
     context_window: int,
+    peer_perspective: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Group matched messages by session, merge overlapping context ranges, and fetch context.
@@ -175,6 +201,10 @@ async def _build_merged_snippets(
             .where(or_(*range_conditions))
             .order_by(models.Message.seq_in_session.asc())
         )
+        if peer_perspective:
+            context_stmt = context_stmt.where(
+                peer_visibility_condition(workspace_name, peer_perspective)
+            )
 
         context_result = await db.execute(context_stmt)
         all_context_messages = list(context_result.scalars().all())
@@ -417,6 +447,7 @@ async def get_messages(
     filters: dict[str, Any] | None = None,
     token_limit: int | None = None,
     message_count_limit: int | None = None,
+    peer_perspective: str | None = None,
 ) -> Select[tuple[models.Message]]:
     """
     Get messages from a session. If token_limit is provided, the n most recent messages
@@ -431,6 +462,7 @@ async def get_messages(
         filters: Filter to apply to the messages
         token_limit: Maximum number of tokens to include in the messages
         message_count_limit: Maximum number of messages to include
+        peer_perspective: Optional peer name to enforce session membership visibility
 
     Returns:
         Select statement for the messages
@@ -440,6 +472,10 @@ async def get_messages(
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == session_name,
     ]
+    if peer_perspective:
+        base_conditions.append(
+            peer_visibility_condition(workspace_name, peer_perspective)
+        )
 
     # Apply message count limit first (takes precedence over token limit)
     if message_count_limit is not None:
@@ -706,6 +742,7 @@ async def _fetch_messages_by_ids(
     *,
     after_date: datetime | None = None,
     before_date: datetime | None = None,
+    peer_perspective: str | None = None,
 ) -> list[models.Message]:
     """Fetch messages by ID, preserving the supplied ordering."""
     fetch_stmt = (
@@ -713,6 +750,10 @@ async def _fetch_messages_by_ids(
         .where(models.Message.public_id.in_(message_ids))
         .where(models.Message.workspace_name == workspace_name)
     )
+    if peer_perspective:
+        fetch_stmt = fetch_stmt.where(
+            peer_visibility_condition(workspace_name, peer_perspective)
+        )
     if after_date:
         fetch_stmt = fetch_stmt.where(models.Message.created_at >= after_date)
     if before_date:
@@ -735,6 +776,7 @@ async def _search_messages_pgvector(
     before_date: datetime | None = None,
     limit: int = 10,
     context_window: int = 2,
+    peer_perspective: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Run semantic message search against pgvector-backed embeddings."""
     # pgvector path: cosine distance in SQL
@@ -761,6 +803,11 @@ async def _search_messages_pgvector(
             models.MessageEmbedding.session_name.in_(allowed_session_names)
         )
 
+    if peer_perspective:
+        match_stmt = match_stmt.where(
+            peer_visibility_condition(workspace_name, peer_perspective)
+        )
+
     if after_date:
         match_stmt = match_stmt.where(models.Message.created_at >= after_date)
     if before_date:
@@ -770,7 +817,7 @@ async def _search_messages_pgvector(
     matched_messages = _deduplicate_messages(result.scalars().all(), limit)
 
     return await _build_merged_snippets(
-        db, workspace_name, matched_messages, context_window
+        db, workspace_name, matched_messages, context_window, peer_perspective
     )
 
 
@@ -784,19 +831,21 @@ async def _semantic_search_messages(
     operation_name: str,
     after_date: datetime | None = None,
     before_date: datetime | None = None,
-    observer: str | None = None,
+    peer_perspective: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Run semantic message search with optional temporal filters.
 
-    When observer is provided and session_name is None, results are
-    scoped to sessions the observer has any membership record in.
+    When peer_perspective is provided and session_name is None, results are
+    scoped to sessions the peer has visibility into. External vector search
+    uses a coarse session prefilter and then applies exact visibility checks
+    when fetching message rows.
     """
     # Pre-fetch peer session scope if needed (short-lived DB session)
     allowed_session_names: list[str] | None = None
-    if observer and not session_name:
+    if peer_perspective and not session_name:
         async with tracked_db(f"{operation_name}.peer_scope") as db:
             allowed_session_names = await get_peer_session_names(
-                db, workspace_name, observer
+                db, workspace_name, peer_perspective
             )
         if not allowed_session_names:
             return []
@@ -822,10 +871,15 @@ async def _semantic_search_messages(
                     message_ids,
                     after_date=after_date,
                     before_date=before_date,
+                    peer_perspective=peer_perspective,
                 )
             )[:limit]
             snippets = await _build_merged_snippets(
-                db, workspace_name, matched_messages, context_window
+                db,
+                workspace_name,
+                matched_messages,
+                context_window,
+                peer_perspective,
             )
             _expunge_snippets(db, snippets)
             return snippets
@@ -841,6 +895,7 @@ async def _semantic_search_messages(
             before_date=before_date,
             limit=limit,
             context_window=context_window,
+            peer_perspective=peer_perspective,
         )
         _expunge_snippets(db, snippets)
         return snippets
@@ -853,7 +908,7 @@ async def search_messages(
     limit: int = 10,
     context_window: int = 2,
     embedding: list[float] | None = None,
-    observer: str | None = None,
+    peer_perspective: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity and return conversation snippets.
@@ -868,8 +923,7 @@ async def search_messages(
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
         embedding: Optional pre-computed embedding
-        observer: When provided and session_name is None, scope results
-            to sessions this peer belongs to
+        peer_perspective: Optional peer name to enforce session membership visibility
 
     Returns:
         List of tuples: (matched_messages, context_messages)
@@ -886,7 +940,7 @@ async def search_messages(
         limit=limit,
         context_window=context_window,
         operation_name="message.search_messages",
-        observer=observer,
+        peer_perspective=peer_perspective,
     )
 
 
@@ -897,7 +951,7 @@ async def _grep_messages_internal(
     text: str,
     limit: int = 10,
     context_window: int = 2,
-    allowed_session_names: list[str] | None = None,
+    peer_perspective: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Internal implementation of exact-text message search."""
     # Build the base query with ILIKE for case-insensitive text search
@@ -914,16 +968,16 @@ async def _grep_messages_internal(
 
     if session_name:
         match_stmt = match_stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
+    if peer_perspective:
         match_stmt = match_stmt.where(
-            models.Message.session_name.in_(allowed_session_names)
+            peer_visibility_condition(workspace_name, peer_perspective)
         )
 
     result = await db.execute(match_stmt)
     matched_messages = list(result.scalars().all())
 
     return await _build_merged_snippets(
-        db, workspace_name, matched_messages, context_window
+        db, workspace_name, matched_messages, context_window, peer_perspective
     )
 
 
@@ -933,7 +987,7 @@ async def grep_messages(
     text: str,
     limit: int = 10,
     context_window: int = 2,
-    observer: str | None = None,
+    peer_perspective: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages containing specific text (case-insensitive substring match).
@@ -947,23 +1001,13 @@ async def grep_messages(
         text: Text to search for (case-insensitive)
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
-        observer: When provided and session_name is None, scope results
-            to sessions this peer belongs to
+        peer_perspective: Optional peer name to enforce session membership visibility
 
     Returns:
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
     async with tracked_db("message.grep_messages") as db:
-        # Pre-fetch peer session scope if needed
-        allowed_session_names = None
-        if observer and not session_name:
-            allowed_session_names = await get_peer_session_names(
-                db, workspace_name, observer
-            )
-            if not allowed_session_names:
-                return []
-
         snippets = await _grep_messages_internal(
             db,
             workspace_name,
@@ -971,7 +1015,7 @@ async def grep_messages(
             text,
             limit,
             context_window,
-            allowed_session_names=allowed_session_names,
+            peer_perspective=peer_perspective,
         )
         _expunge_snippets(db, snippets)
         return snippets
@@ -985,7 +1029,7 @@ async def get_messages_by_date_range(
     before_date: datetime | None = None,
     limit: int = 20,
     order: str = "desc",
-    observer: str | None = None,
+    peer_perspective: str | None = None,
 ) -> list[models.Message]:
     """
     Get messages within a date range.
@@ -998,27 +1042,17 @@ async def get_messages_by_date_range(
         before_date: Return messages before this datetime
         limit: Maximum messages to return
         order: Sort order - 'asc' for oldest first, 'desc' for newest first
-        observer: When provided and session_name is None, scope results
-            to sessions this peer belongs to
+        peer_perspective: Optional peer name to enforce session membership visibility
 
     Returns:
         List of messages within the date range
     """
-    # Pre-fetch peer session scope if needed
-    allowed_session_names = None
-    if observer and not session_name:
-        allowed_session_names = await get_peer_session_names(
-            db, workspace_name, observer
-        )
-        if not allowed_session_names:
-            return []
-
     stmt = select(models.Message).where(models.Message.workspace_name == workspace_name)
 
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
-    elif allowed_session_names is not None:
-        stmt = stmt.where(models.Message.session_name.in_(allowed_session_names))
+    if peer_perspective:
+        stmt = stmt.where(peer_visibility_condition(workspace_name, peer_perspective))
     if after_date:
         stmt = stmt.where(models.Message.created_at >= after_date)
     if before_date:
@@ -1044,7 +1078,7 @@ async def search_messages_temporal(
     limit: int = 10,
     context_window: int = 2,
     embedding: list[float] | None = None,
-    observer: str | None = None,
+    peer_perspective: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity with optional date filtering.
@@ -1061,8 +1095,7 @@ async def search_messages_temporal(
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
         embedding: Optional pre-computed embedding for the query
-        observer: When provided and session_name is None, scope results
-            to sessions this peer belongs to
+        peer_perspective: Optional peer name to enforce session membership visibility
 
     Returns:
         List of tuples: (matched_messages, context_messages)
@@ -1080,5 +1113,5 @@ async def search_messages_temporal(
         limit=limit,
         context_window=context_window,
         operation_name="message.search_messages_temporal",
-        observer=observer,
+        peer_perspective=peer_perspective,
     )

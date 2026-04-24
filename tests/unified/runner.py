@@ -330,6 +330,17 @@ class UnifiedTestExecutor:
             )
             return response
 
+        elif step.target == "workspace_chat":
+            if step.input is None:
+                raise ValueError("input required for workspace_chat")
+
+            response = await self.client.aio.chat(
+                step.input,
+                session=step.session_id,
+                reasoning_level=step.reasoning_level,
+            )
+            return response
+
         elif step.target == "get_context":
             if not step.session_id:
                 raise ValueError("session_id required for get_context")

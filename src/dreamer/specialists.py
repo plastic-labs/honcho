@@ -193,22 +193,6 @@ If you update it, send the full deduplicated list and remove stale entries.
             },
         ]
 
-        # Create tool executor with telemetry context
-        tool_executor: Callable[
-            [str, dict[str, Any]], Any
-        ] = await create_tool_executor(
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            session_name=session_name,
-            include_observation_ids=True,
-            history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
-            configuration=configuration,
-            run_id=run_id,
-            agent_type=self.name,
-            parent_category="dream",
-        )
-
         model_config = self.get_model_config()
 
         # Respect operator-configured max_output_tokens on the specialist's
@@ -229,7 +213,24 @@ If you update it, send the full deduplicated list and remove stale entries.
             nonlocal iteration_count
             iteration_count = data.iteration
 
-        # Run the agent loop
+        tool_executor: Callable[
+            [str, dict[str, Any]], Any
+        ] = await create_tool_executor(
+            db=None,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            session_name=session_name,
+            include_observation_ids=True,
+            history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
+            configuration=configuration,
+            run_id=run_id,
+            agent_type=self.name,
+            parent_category="dream",
+        )
+
+        # Run the agent loop outside any tracked_db scope so no DB session is
+        # held while the LLM iterates over tools.
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
             model_config=model_config,
             prompt="",  # Ignored since we pass messages

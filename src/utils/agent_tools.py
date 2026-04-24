@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import weakref
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
+from src.crud.message import peer_visibility_condition
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.models import Document
@@ -679,6 +680,79 @@ TOOLS: dict[str, dict[str, Any]] = {
             "properties": {},
         },
     },
+    "search_memory_workspace": {
+        "name": "search_memory",
+        "description": "Search within a specific peer representation's memory using semantic similarity. You MUST specify observer and observed. To get a peer's global representation, set observer AND observed to the SAME peer name (this is where most information lives). Only use different observer/observed when seeking one peer's specific understanding of another.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observer": {
+                    "type": "string",
+                    "description": "Name of the observer peer",
+                },
+                "observed": {
+                    "type": "string",
+                    "description": "Name of the observed peer",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query text",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "(Optional) number of results to return (default: 20, max: 40)",
+                    "default": 20,
+                },
+            },
+            "required": ["observer", "observed", "query"],
+        },
+    },
+    "get_workspace_stats": {
+        "name": "get_workspace_stats",
+        "description": "Get workspace-level statistics: peer count, session count, message count, and date range of messages. Use this to understand the scale of the workspace before deciding how to explore it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    "get_active_peers": {
+        "name": "get_active_peers",
+        "description": "Get the most active peers in the workspace, ranked by recent activity or message count. Returns peer names with their message counts and last-active timestamps. Use this to discover which peers are most relevant.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of peers to return (default: 20, max: 50)",
+                    "default": 20,
+                },
+                "sort_by": {
+                    "type": "string",
+                    "enum": ["recent_activity", "message_count"],
+                    "description": "Sort order: 'recent_activity' for most recently active, 'message_count' for most messages (default: recent_activity)",
+                    "default": "recent_activity",
+                },
+            },
+        },
+    },
+    "get_peer_card_by_name": {
+        "name": "get_peer_card",
+        "description": "Get the peer card for a specific peer relationship. Specify the observer and observed peer names.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observer": {
+                    "type": "string",
+                    "description": "Name of the observer peer",
+                },
+                "observed": {
+                    "type": "string",
+                    "description": "Name of the observed peer",
+                },
+            },
+            "required": ["observer", "observed"],
+        },
+    },
     "get_reasoning_chain": {
         "name": "get_reasoning_chain",
         "description": "Get the reasoning chain for an observation - traverse the tree to find premises (for deductive) or sources (for inductive), and/or find conclusions derived from this observation. Use this to understand how an observation was derived or what conclusions depend on it.",
@@ -767,6 +841,31 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Action tools
     TOOLS["create_observations_inductive"],
     TOOLS["update_peer_card"],
+]
+
+
+# Fallthrough tools that are safe to call with an empty-string ToolContext
+# (observer/observed=""). These handlers filter by workspace_name/session_name
+# only and do not use observer/observed.
+_WORKSPACE_SAFE_FALLTHROUGH_TOOLS = {
+    "search_messages",
+    "grep_messages",
+    "get_messages_by_date_range",
+    "search_messages_temporal",
+}
+
+# Tools for the workspace dialectic agent (workspace-level analysis)
+WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
+    TOOLS["get_workspace_stats"],
+    TOOLS["get_active_peers"],
+    TOOLS["search_memory_workspace"],
+    TOOLS["search_messages"],
+    TOOLS["get_observation_context"],
+    TOOLS["grep_messages"],
+    TOOLS["get_peer_card_by_name"],
+    TOOLS["get_messages_by_date_range"],
+    TOOLS["search_messages_temporal"],
+    TOOLS["get_reasoning_chain"],
 ]
 
 
@@ -908,6 +1007,7 @@ async def get_recent_history(
     workspace_name: str,
     session_name: str | None,
     observed: str | None = None,
+    peer_perspective: str | None = None,
     token_limit: int = 8192,
 ) -> list[models.Message]:
     """
@@ -922,6 +1022,7 @@ async def get_recent_history(
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: Peer name to filter by when no session specified (optional)
+        peer_perspective: Optional peer perspective for visibility enforcement
         token_limit: Maximum tokens to retrieve (default: 8192)
 
     Returns:
@@ -934,6 +1035,7 @@ async def get_recent_history(
             session_name=session_name,
             token_limit=token_limit,
             reverse=True,  # Get most recent first
+            peer_perspective=peer_perspective,
         )
         result = await db.execute(messages_stmt)
         messages = result.scalars().all()
@@ -948,6 +1050,10 @@ async def get_recent_history(
             .order_by(models.Message.created_at.desc())
             .limit(50)  # Limit to recent messages
         )
+        if peer_perspective:
+            stmt = stmt.where(
+                peer_visibility_condition(workspace_name, peer_perspective)
+            )
         result = await db.execute(stmt)
         messages = list(result.scalars().all())
         # Return in chronological order
@@ -1101,8 +1207,7 @@ async def extract_preferences(
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
         observed: The peer whose preferences to extract
-        observer: When provided and session_name is None, scope results
-            to sessions this peer belongs to
+        observer: Optional peer perspective to enforce session membership visibility
 
     Returns:
         Dict with 'messages' list containing potentially relevant messages
@@ -1110,7 +1215,6 @@ async def extract_preferences(
     messages: list[str] = []
     seen_content: set[str] = set()  # Dedupe by content hash
 
-    # Semantic queries to find preference-like content
     semantic_queries = [
         "user preferences and communication style",
         "standing instructions and rules to follow",
@@ -1119,34 +1223,28 @@ async def extract_preferences(
         "things user wants or does not want",
     ]
 
-    # Batch embed all queries in a single API call (no DB needed).
-    # If batching fails, each search call will generate its own embedding.
-    query_embeddings_by_query: dict[str, list[float]] | None = None
-    try:
-        query_embeddings = await embedding_client.simple_batch_embed(semantic_queries)
-        query_embeddings_by_query = dict(
-            zip(semantic_queries, query_embeddings, strict=True)
-        )
-    except Exception as e:
-        logger.warning(
-            "Batch embedding failed for extract_preferences; falling back to per-query embedding in search_messages: %s",
-            e,
-        )
-
     for query in semantic_queries:
         try:
-            snippets = await crud.search_messages(
-                workspace_name=workspace_name,
-                session_name=session_name,
-                query=query,
+            from typing import cast
+
+            from src.utils.search import search
+
+            filters: dict[str, Any] = {"workspace_id": workspace_name}
+            if observer:
+                filters["peer_perspective"] = observer
+            if session_name:
+                filters["session_id"] = session_name
+
+            result = await search(
+                query,
+                filters=filters,
                 limit=10,
-                context_window=0,
-                embedding=(
-                    query_embeddings_by_query.get(query)
-                    if query_embeddings_by_query is not None
-                    else None
-                ),
-                observer=observer,
+                context_window=2,
+                semantic_only=False,
+            )
+            # context_window > 0 guarantees tuple return type
+            snippets = cast(
+                list[tuple[list[models.Message], list[models.Message]]], result
             )
             for matches, _ in snippets:
                 for msg in matches:
@@ -1427,13 +1525,14 @@ async def _handle_get_recent_history(
             workspace_name=ctx.workspace_name,
             session_name=ctx.session_name,
             observed=ctx.observed,
+            peer_perspective=ctx.observer or None,
             token_limit=ctx.history_token_limit,
         )
-        if not history:
-            return "No conversation history available"
-        history_text = "\n".join(
-            [f"{m.peer_name}: {_truncate_message_content(m.content)}" for m in history]
-        )
+    if not history:
+        return "No conversation history available"
+    history_text = "\n".join(
+        [f"{m.peer_name}: {_truncate_message_content(m.content)}" for m in history]
+    )
     scope = (
         f"from session {ctx.session_name}"
         if ctx.session_name
@@ -1473,17 +1572,30 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
         # doesn't short-circuit and think there's nothing here, we
         # automatically search the message history for relevant information.
         if ctx.agent_type == "dialectic":
+            from typing import cast
+
+            from src.utils.search import search
+
             limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
-            message_output = None
-            snippets = await crud.search_messages(
-                workspace_name=ctx.workspace_name,
-                session_name=ctx.session_name,
-                query=query,
+            filters: dict[str, Any] = {"workspace_id": ctx.workspace_name}
+
+            if ctx.observer:
+                filters["peer_perspective"] = ctx.observer
+
+            if ctx.session_name:
+                filters["session_id"] = ctx.session_name
+
+            result = await search(
+                query,
+                filters=filters,
                 limit=limit,
-                context_window=0,
-                embedding=query_embedding,
-                observer=ctx.observer,
+                context_window=2,
+                semantic_only=False,
             )
+            snippets = cast(
+                list[tuple[list[models.Message], list[models.Message]]], result
+            )
+            message_output = None
             if snippets:
                 message_output = _format_message_snippets(
                     snippets, f"for query '{query}'"
@@ -1501,50 +1613,77 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
     return f"Found {total_count} observations for query '{query}':\n\n{mem_str}"
 
 
-async def _handle_get_observation_context(
-    ctx: ToolContext, tool_input: dict[str, Any]
+async def _get_observation_context_impl(
+    workspace_name: str,
+    session_name: str | None,
+    tool_input: dict[str, Any],
+    *,
+    observer: str | None = None,
+    operation_name: str = "tool.get_observation_context",
 ) -> str:
-    """Handle get_observation_context tool."""
-    async with tracked_db("tool.get_observation_context") as db:
+    """Shared implementation for get_observation_context (peer and workspace)."""
+    async with tracked_db(operation_name) as db:
         messages = await get_observation_context(
             db,
-            workspace_name=ctx.workspace_name,
-            session_name=ctx.session_name,
+            workspace_name=workspace_name,
+            session_name=session_name,
             message_ids=tool_input["message_ids"],
-            observer=ctx.observer,
+            observer=observer,
         )
-        if not messages:
-            return f"No messages found for IDs {tool_input['message_ids']}"
-        messages_text = "\n".join(
-            [
-                format_new_turn_with_timestamp(
-                    _truncate_message_content(m.content),
-                    m.created_at,
-                    m.peer_name,
-                )
-                for m in messages
-            ]
-        )
+    if not messages:
+        return f"No messages found for IDs {tool_input['message_ids']}"
+    messages_text = "\n".join(
+        [
+            format_new_turn_with_timestamp(
+                _truncate_message_content(m.content),
+                m.created_at,
+                m.peer_name,
+            )
+            for m in messages
+        ]
+    )
     output = f"Retrieved {len(messages)} messages with context:\n{messages_text}"
     return _truncate_tool_output(output)
 
 
-async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
-    """Handle search_messages tool."""
-    query = tool_input["query"]
-    limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
-    # Pre-compute embedding outside DB session to avoid holding a connection
-    # during the external API call (same pattern as _handle_search_memory).
-    query_embedding = await embedding_client.embed(query)
-    snippets = await crud.search_messages(
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        query=query,
-        limit=limit,
-        context_window=2,
-        embedding=query_embedding,
+async def _handle_get_observation_context(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_observation_context tool."""
+    return await _get_observation_context_impl(
+        ctx.workspace_name,
+        ctx.session_name,
+        tool_input,
         observer=ctx.observer,
     )
+
+
+async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+    """Handle search_messages tool using hybrid search with external vector store support."""
+    from typing import cast
+
+    from src.utils.search import search
+
+    query = tool_input["query"]
+    limit = min(_safe_int(tool_input.get("limit"), 10), 20)
+
+    filters: dict[str, Any] = {"workspace_id": ctx.workspace_name}
+
+    if ctx.observer:
+        filters["peer_perspective"] = ctx.observer
+
+    if ctx.session_name:
+        filters["session_id"] = ctx.session_name
+
+    result = await search(
+        query,
+        filters=filters,
+        limit=limit,
+        context_window=2,
+        semantic_only=False,
+    )
+    snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
+
     if not snippets:
         return f"No messages found for query '{query}'"
     formatted = _format_message_snippets(snippets, f"for query '{query}'")
@@ -1567,7 +1706,7 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
         text=text,
         limit=limit,
         context_window=context_window,
-        observer=ctx.observer,
+        peer_perspective=ctx.observer or None,
     )
     if not snippets:
         return f"No messages found containing '{text}'"
@@ -1631,21 +1770,21 @@ async def _handle_get_messages_by_date_range(
             before_date=before_date,
             limit=limit,
             order=order,
-            observer=ctx.observer,
+            peer_perspective=ctx.observer or None,
         )
-        msg_count = len(messages)
-        messages_text = (
-            "\n".join(
-                [
-                    format_new_turn_with_timestamp(
-                        _truncate_message_content(m.content), m.created_at, m.peer_name
-                    )
-                    for m in messages
-                ]
-            )
-            if messages
-            else ""
+    msg_count = len(messages)
+    messages_text = (
+        "\n".join(
+            [
+                format_new_turn_with_timestamp(
+                    _truncate_message_content(m.content), m.created_at, m.peer_name
+                )
+                for m in messages
+            ]
         )
+        if messages
+        else ""
+    )
 
     date_range: list[str] = []
     if after_date_str:
@@ -1669,7 +1808,12 @@ async def _handle_get_messages_by_date_range(
 async def _handle_search_messages_temporal(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
-    """Handle search_messages_temporal tool."""
+    """Handle search_messages_temporal tool using hybrid search with date filtering."""
+    from typing import Any as typing_Any
+    from typing import cast
+
+    from src.utils.search import search
+
     query = tool_input.get("query", "")
     if not query:
         return "ERROR: 'query' parameter is required"
@@ -1687,26 +1831,37 @@ async def _handle_search_messages_temporal(
     if isinstance(before_date, str):
         return before_date
 
-    # Pre-compute embedding outside DB session to avoid holding a connection
-    # during the external API call.
-    query_embedding = await embedding_client.embed(query)
-    snippets = await crud.search_messages_temporal(
-        workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        query=query,
-        after_date=after_date,
-        before_date=before_date,
+    filters: dict[str, typing_Any] = {"workspace_id": ctx.workspace_name}
+
+    if ctx.observer:
+        filters["peer_perspective"] = ctx.observer
+
+    if ctx.session_name:
+        filters["session_id"] = ctx.session_name
+
+    if after_date or before_date:
+        date_filter: dict[str, str] = {}
+        if after_date:
+            date_filter["gte"] = after_date.isoformat()
+        if before_date:
+            date_filter["lte"] = before_date.isoformat()
+        filters["created_at"] = date_filter
+
+    result = await search(
+        query,
+        filters=filters,
         limit=limit,
         context_window=context_window,
-        embedding=query_embedding,
-        observer=ctx.observer,
+        semantic_only=False,
     )
-    date_filter: list[str] = []
+    snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
+
+    date_filter_desc: list[str] = []
     if after_date_str:
-        date_filter.append(f"after {after_date_str}")
+        date_filter_desc.append(f"after {after_date_str}")
     if before_date_str:
-        date_filter.append(f"before {before_date_str}")
-    filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
+        date_filter_desc.append(f"before {before_date_str}")
+    filter_desc = f" ({' and '.join(date_filter_desc)})" if date_filter_desc else ""
 
     if not snippets:
         return f"No messages found for query '{query}'{filter_desc}"
@@ -1863,7 +2018,7 @@ async def _handle_extract_preferences(
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
         observed=ctx.observed,
-        observer=ctx.observer,
+        observer=ctx.observer or None,
     )
 
     messages = results.get("messages", [])
@@ -1907,10 +2062,22 @@ def _format_message_snippets(
     return _truncate_tool_output(output)
 
 
-async def _handle_get_reasoning_chain(
-    ctx: ToolContext, tool_input: dict[str, Any]
+async def _get_reasoning_chain_impl(
+    workspace_name: str,
+    tool_input: dict[str, Any],
+    *,
+    observer: str | None = None,
+    observed: str | None = None,
+    include_attribution: bool = False,
+    operation_name: str = "tool.get_reasoning_chain",
 ) -> str:
-    """Handle get_reasoning_chain tool."""
+    """Shared implementation for get_reasoning_chain (peer and workspace).
+
+    Args:
+        observer/observed: Passed through to crud.get_child_observations.
+            None means no filter (workspace-level).
+        include_attribution: If True, adds (observer->observed) to the header.
+    """
     observation_id = tool_input.get("observation_id")
     if not observation_id:
         return "ERROR: 'observation_id' is required"
@@ -1919,25 +2086,25 @@ async def _handle_get_reasoning_chain(
     if direction not in ("premises", "conclusions", "both"):
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
-    # Get the observation itself
-    async with tracked_db("tool.get_reasoning_chain") as db:
-        docs = await crud.get_documents_by_ids(db, ctx.workspace_name, [observation_id])
+    async with tracked_db(operation_name) as db:
+        docs = await crud.get_documents_by_ids(db, workspace_name, [observation_id])
         if not docs or not docs[0]:
             return f"ERROR: Observation '{observation_id}' not found"
 
         doc: Document = docs[0]
-
         output_parts: list[str] = []
 
-        # Format the main observation
         level = doc.level or "explicit"
-        output_parts.append(f"**Observation [id:{doc.id}] ({level}):**\n{doc.content}")
+        header = f"**Observation [id:{doc.id}] ({level}"
+        if include_attribution:
+            header += f", {doc.observer}\u2192{doc.observed}"
+        header += f"):**\n{doc.content}"
+        output_parts.append(header)
 
-        # Get premises/sources if requested
         if direction in ("premises", "both"):
             if level == "deductive" and doc.source_ids:
                 premises = await crud.get_documents_by_ids(
-                    db, ctx.workspace_name, doc.source_ids
+                    db, workspace_name, doc.source_ids
                 )
                 if premises:
                     premise_lines: list[Any] = []
@@ -1956,7 +2123,7 @@ async def _handle_get_reasoning_chain(
                     )
             elif level == "inductive" and doc.source_ids:
                 sources = await crud.get_documents_by_ids(
-                    db, ctx.workspace_name, doc.source_ids
+                    db, workspace_name, doc.source_ids
                 )
                 if sources:
                     source_lines: list[Any] = []
@@ -1977,14 +2144,13 @@ async def _handle_get_reasoning_chain(
             else:
                 output_parts.append("\n**Premises/Sources:** None recorded")
 
-        # Get conclusions if requested
         if direction in ("conclusions", "both"):
             children = await crud.get_child_observations(
                 db,
-                ctx.workspace_name,
+                workspace_name,
                 observation_id,
-                observer=ctx.observer,
-                observed=ctx.observed,
+                observer=observer,
+                observed=observed,
             )
             if children:
                 child_lines: list[Any] = []
@@ -1999,6 +2165,18 @@ async def _handle_get_reasoning_chain(
                 output_parts.append("\n**Derived Conclusions:** None found")
 
     return "\n".join(output_parts)
+
+
+async def _handle_get_reasoning_chain(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_reasoning_chain tool."""
+    return await _get_reasoning_chain_impl(
+        ctx.workspace_name,
+        tool_input,
+        observer=ctx.observer,
+        observed=ctx.observed,
+    )
 
 
 # Tool handler dispatch table
@@ -2025,7 +2203,38 @@ _TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
 }
 
 
+async def _execute_with_error_handling(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    dispatch: Callable[[], Awaitable[str]],
+    log_prefix: str = "tool",
+) -> str:
+    """Execute a tool dispatch function with unified logging and error handling.
+
+    Handles ValueError/KeyError (returned to LLM) and unexpected exceptions
+    (logged with traceback and returned to the LLM).
+    """
+    logger.info(f"[{log_prefix} call] {tool_name} {tool_input}")
+    try:
+        result = await dispatch()
+        logger.info(f"[{log_prefix} result] {tool_name} {result}")
+        return result
+    except ValueError as e:
+        error_msg = f"Tool {tool_name} failed with invalid input: {e}"
+        logger.warning(error_msg)
+        return error_msg
+    except KeyError as e:
+        error_msg = f"Tool {tool_name} missing required parameter: {e}"
+        logger.warning(error_msg)
+        return error_msg
+    except Exception as e:
+        error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
+        logger.error(error_msg, exc_info=True)
+        return error_msg
+
+
 async def create_tool_executor(
+    db: AsyncSession | None,
     workspace_name: str,
     observer: str,
     observed: str,
@@ -2042,12 +2251,11 @@ async def create_tool_executor(
     Create a unified tool executor function for all agent operations.
 
     This factory function captures the agent's context and returns an async callable
-    that can execute any tool from AGENT_TOOLS or DIALECTIC_AGENT_TOOLS.
-
-    Each tool handler manages its own short-lived DB sessions via tracked_db(),
-    so no long-lived database session is needed.
+    that can execute any tool registered in _TOOL_HANDLERS.
 
     Args:
+        db: Optional legacy database session. The returned executor does not
+            retain this session.
         workspace_name: Workspace identifier
         observer: The peer making observations/queries
         observed: The peer being observed/queried about
@@ -2063,6 +2271,7 @@ async def create_tool_executor(
     Returns:
         An async callable that executes tools with the captured context
     """
+    _ = db
     # Get shared lock from registry to prevent race conditions when multiple
     # tool executors operate on the same workspace/observer/observed concurrently
     shared_lock = await get_observation_lock(workspace_name, observer, observed)
@@ -2083,43 +2292,272 @@ async def create_tool_executor(
     )
 
     async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
-        """
-        Execute a tool and return result for LLM.
-
-        Args:
-            tool_name: Name of the tool to execute
-            tool_input: Tool input arguments
-
-        Returns:
-            String result describing what was done
-        """
-        logger.info("[tool call] %s %s", tool_name, tool_input)
-
-        try:
+        async def dispatch() -> str:
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
-                result = await handler(ctx, tool_input)
-                logger.info("[tool result] %s %s", tool_name, result)
-                return result
+                return await handler(ctx, tool_input)
             return f"Unknown tool: {tool_name}"
 
-        except ValueError as e:
-            # Recoverable errors (bad input, validation failures) - return to LLM
-            error_msg = f"Tool {tool_name} failed with invalid input: {e}"
-            logger.warning(error_msg)
-            return error_msg
-        except KeyError as e:
-            # Missing required parameters - return to LLM
-            error_msg = f"Tool {tool_name} missing required parameter: {e}"
-            logger.warning(error_msg)
-            return error_msg
-        except Exception as e:
-            # Unexpected errors - log with full traceback but still return to LLM
-            # We don't re-raise because the LLM should be able to continue with other tools
-            error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
-            logger.error(error_msg, exc_info=True)
-            # No explicit rollback needed — each handler uses tracked_db() which
-            # handles rollback in its finally block
-            return error_msg
+        return await _execute_with_error_handling(tool_name, tool_input, dispatch)
+
+    return execute_tool
+
+
+# =============================================================================
+# Workspace-level tool handlers
+# =============================================================================
+
+
+@dataclass
+class WorkspaceToolContext:
+    """Context object passed to workspace-level tool handlers."""
+
+    workspace_name: str
+    session_name: str | None
+    include_observation_ids: bool
+    history_token_limit: int
+    db_lock: asyncio.Lock
+    run_id: str | None = None
+    agent_type: str | None = None
+    parent_category: str | None = None
+
+
+async def _handle_search_memory_workspace(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle workspace-level search_memory tool (scoped to a specific peer pair)."""
+    observer = tool_input.get("observer", "")
+    observed = tool_input.get("observed", "")
+    if not observer or not observed:
+        return "ERROR: 'observer' and 'observed' are required parameters. Use the peer list provided in your query."
+
+    top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
+    documents = await crud.query_documents(
+        db=None,
+        workspace_name=ctx.workspace_name,
+        observer=observer,
+        observed=observed,
+        query=tool_input["query"],
+        top_k=top_k,
+    )
+    if not documents:
+        # Fallback to message search
+        from typing import cast
+
+        from src.utils.search import search
+
+        filters = {
+            "workspace_id": ctx.workspace_name,
+            "peer_perspective": observer,  # Use observer for visibility scoping
+            "peer_id": observed,
+        }
+        if ctx.session_name:
+            filters["session_id"] = ctx.session_name
+
+        result = await search(
+            tool_input["query"],
+            filters=filters,
+            limit=min(tool_input.get("top_k", 20), 20),
+            context_window=2,
+            semantic_only=False,
+        )
+        # context_window > 0 guarantees tuple return type
+        snippets = cast(list[tuple[list[models.Message], list[models.Message]]], result)
+        if snippets:
+            message_output = _format_message_snippets(
+                snippets, f"for query '{tool_input['query']}'"
+            )
+            return f"No observations yet for {observer}->{observed}. Message search results:\n\n{message_output}"
+        return f"No observations found for {observer}->{observed} for query '{tool_input['query']}', and no messages found."
+
+    mem = Representation.from_documents(documents)
+    mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
+    return f"Found {len(documents)} observations for {observer}->{observed} for query '{tool_input['query']}':\n\n{mem_str}"
+
+
+async def _handle_get_workspace_stats(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_workspace_stats tool."""
+    _ = tool_input
+    async with tracked_db("workspace_tool.get_workspace_stats") as db:
+        stats = await crud.get_workspace_stats(db, ctx.workspace_name)
+    lines = [
+        f"Peers: {stats.peer_count}",
+        f"Sessions: {stats.session_count}",
+        f"Messages: {stats.message_count}",
+    ]
+    if stats.oldest_message_at and stats.newest_message_at:
+        lines.append(
+            f"Date range: {stats.oldest_message_at:%Y-%m-%d} to {stats.newest_message_at:%Y-%m-%d}"
+        )
+    return "Workspace stats:\n" + "\n".join(lines)
+
+
+async def _handle_get_active_peers(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_active_peers tool."""
+    limit = min(_safe_int(tool_input.get("limit"), 20), 50)
+    sort_by = tool_input.get("sort_by", "recent_activity")
+    if sort_by not in ("recent_activity", "message_count"):
+        sort_by = "recent_activity"
+
+    async with tracked_db("workspace_tool.get_active_peers") as db:
+        peers = await crud.get_active_peers(
+            db, ctx.workspace_name, limit=limit, sort_by=sort_by
+        )
+    if not peers:
+        return "No peers found in this workspace."
+
+    lines: list[str] = []
+    for p in peers:
+        last_active = (
+            f", last active {p.last_message_at:%Y-%m-%d}" if p.last_message_at else ""
+        )
+        lines.append(f"- {p.name} ({p.message_count} messages{last_active})")
+    return f"Found {len(peers)} active peers (sorted by {sort_by}):\n" + "\n".join(
+        lines
+    )
+
+
+async def _handle_get_peer_card_by_name(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_peer_card tool with explicit observer/observed params."""
+    observer = tool_input.get("observer", "")
+    observed = tool_input.get("observed", "")
+    if not observer or not observed:
+        return "ERROR: 'observer' and 'observed' are required parameters"
+    async with tracked_db("workspace_tool.get_peer_card") as db:
+        peer_card = await crud.get_peer_card(
+            db,
+            workspace_name=ctx.workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+    if not peer_card:
+        return f"No peer card available for {observed} (observed by {observer})"
+    return f"Peer card for {observed} (observed by {observer}):\n" + "\n".join(
+        f"- {fact}" for fact in peer_card
+    )
+
+
+async def _handle_get_observation_context_workspace(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_observation_context tool for workspace context."""
+    return await _get_observation_context_impl(
+        ctx.workspace_name,
+        ctx.session_name,
+        tool_input,
+        operation_name="workspace_tool.get_observation_context",
+    )
+
+
+async def _handle_get_reasoning_chain_workspace(
+    ctx: WorkspaceToolContext, tool_input: dict[str, Any]
+) -> str:
+    """Handle get_reasoning_chain tool for workspace context (no observer/observed constraint on children)."""
+    return await _get_reasoning_chain_impl(
+        ctx.workspace_name,
+        tool_input,
+        include_attribution=True,
+        operation_name="workspace_tool.get_reasoning_chain",
+    )
+
+
+# Workspace tool handler dispatch table
+_WORKSPACE_TOOL_HANDLERS: dict[
+    str, Callable[[WorkspaceToolContext, dict[str, Any]], Any]
+] = {
+    "search_memory": _handle_search_memory_workspace,
+    "get_workspace_stats": _handle_get_workspace_stats,
+    "get_active_peers": _handle_get_active_peers,
+    "get_peer_card": _handle_get_peer_card_by_name,
+    "get_observation_context": _handle_get_observation_context_workspace,
+    "get_reasoning_chain": _handle_get_reasoning_chain_workspace,
+}
+
+
+async def create_workspace_tool_executor(
+    db: AsyncSession | None,
+    workspace_name: str,
+    session_name: str | None = None,
+    history_token_limit: int = 8192,
+    run_id: str | None = None,
+    agent_type: str | None = None,
+    parent_category: str | None = None,
+) -> Callable[[str, dict[str, Any]], Any]:
+    """
+    Create a tool executor for workspace-level operations.
+
+    Unlike create_tool_executor(), this does not require observer/observed
+    and uses workspace-wide handlers for search_memory, get_peer_card, etc.
+
+    Args:
+        db: Optional legacy database session. The returned executor does not
+            retain this session.
+        workspace_name: Workspace identifier
+        session_name: Optional session scope for message searches
+        history_token_limit: Maximum tokens for history retrieval
+        run_id: Optional run ID for telemetry
+        agent_type: Optional agent type for telemetry
+        parent_category: Optional parent category for CloudEvents
+
+    Returns:
+        An async callable that executes tools with the captured context
+    """
+    _ = db
+    shared_lock = asyncio.Lock()
+
+    ws_ctx = WorkspaceToolContext(
+        workspace_name=workspace_name,
+        session_name=session_name,
+        include_observation_ids=True,
+        history_token_limit=history_token_limit,
+        db_lock=shared_lock,
+        run_id=run_id,
+        agent_type=agent_type,
+        parent_category=parent_category,
+    )
+
+    # Build a ToolContext for fallthrough handlers (search_messages, grep_messages,
+    # get_messages_by_date_range, search_messages_temporal). These use only
+    # workspace_name/session_name; observer/observed are empty-string sentinels
+    # guarded by _WORKSPACE_SAFE_FALLTHROUGH_TOOLS.
+    peer_ctx = ToolContext(
+        workspace_name=workspace_name,
+        observer="",
+        observed="",
+        session_name=session_name,
+        current_messages=None,
+        include_observation_ids=True,
+        history_token_limit=history_token_limit,
+        db_lock=shared_lock,
+        run_id=run_id,
+        agent_type=agent_type,
+        parent_category=parent_category,
+    )
+
+    async def execute_tool(tool_name: str, tool_input: dict[str, Any]) -> str:
+        async def dispatch() -> str:
+            # Check workspace-specific handlers first
+            ws_handler = _WORKSPACE_TOOL_HANDLERS.get(tool_name)
+            if ws_handler:
+                return await ws_handler(ws_ctx, tool_input)
+
+            # Fall through to standard handlers (only those safe with empty observer/observed)
+            handler = _TOOL_HANDLERS.get(tool_name)
+            if handler:
+                if tool_name not in _WORKSPACE_SAFE_FALLTHROUGH_TOOLS:
+                    return f"Tool '{tool_name}' is not available in workspace context"
+                return await handler(peer_ctx, tool_input)
+
+            return f"Unknown tool: {tool_name}"
+
+        return await _execute_with_error_handling(
+            tool_name, tool_input, dispatch, log_prefix="workspace tool"
+        )
 
     return execute_tool
