@@ -67,13 +67,22 @@ class RepresentationManager:
             logger.debug("No observations to save")
             return new_documents
 
-        all_observations = representation.deductive + representation.explicit
+        all_observations = [
+            obs
+            for obs in representation.deductive + representation.explicit
+            if (
+                obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
+            ).strip()
+        ]
+        if not all_observations:
+            logger.debug("No non-empty observations to save")
+            return new_documents
 
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
 
         observation_texts = [
-            obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
+            (obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content).strip()
             for obs in all_observations
         ]
         try:
