@@ -295,7 +295,12 @@ for level, level_settings in settings.DIALECTIC.LEVELS.items():
 
 for provider_name, provider_value in SELECTED_PROVIDERS:
     if provider_value not in CLIENTS:
-        raise ValueError(f"Missing client for {provider_name}: {provider_value}")
+        logger.warning(
+            "Missing client for %s: %s. Requests using this provider will fail at runtime "
+            "unless corresponding API credentials are configured.",
+            provider_name,
+            provider_value,
+        )
 
 # Validate backup providers are initialized if configured
 BACKUP_PROVIDERS: list[tuple[str, SupportedProviders | None]] = [
@@ -310,10 +315,11 @@ for level, level_settings in settings.DIALECTIC.LEVELS.items():
 
 for component_name, backup_provider in BACKUP_PROVIDERS:
     if backup_provider is not None and backup_provider not in CLIENTS:
-        raise ValueError(
-            f"Backup provider for {component_name} is set to {backup_provider}, "
-            + "but this provider is not initialized. Please set the required API key/URL environment "
-            + "variables or remove the backup configuration."
+        logger.warning(
+            "Backup provider for %s is set to %s but that client is not initialized. "
+            "Fallback behavior will be unavailable until required API credentials are configured.",
+            component_name,
+            backup_provider,
         )
 
 
