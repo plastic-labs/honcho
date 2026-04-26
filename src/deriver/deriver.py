@@ -31,6 +31,34 @@ def _get_deriver_model_config() -> ConfiguredModelSettings:
     return settings.DERIVER.MODEL_CONFIG
 
 
+# Message metadata.type values that mark a message as not the observed peer's
+# authored prose. The deriver should still record these messages (for replay,
+# audit, and message-stream completeness) but must NOT extract peer-attributed
+# facts from them — they ride role: "user" per the Anthropic Messages API but
+# carry assistant-authored content (pasted diffs, tool_result blocks) or
+# explicit assistant tool actions performed on the user's behalf.
+#
+# The corresponding tags are set by the claude-honcho plugin
+# (plastic-labs/claude-honcho#34) and may be set by any client that wants its
+# tool-action / paste messages preserved without contributing to peer
+# representation.
+NON_PROSE_METADATA_TYPES: frozenset[str] = frozenset(
+    {
+        "user_paste_not_speech",
+        "tool_action",
+    }
+)
+
+
+def _is_extraction_eligible(msg: Message) -> bool:
+    """Return False if the message metadata.type marks it as not authored prose.
+
+    Returns True for messages without a recognized non-prose tag (the default).
+    """
+    metadata = msg.h_metadata or {}
+    return metadata.get("type") not in NON_PROSE_METADATA_TYPES
+
+
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
 async def process_representation_tasks_batch(
     messages: list[Message],
@@ -42,6 +70,13 @@ async def process_representation_tasks_batch(
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, save to multiple collections.
+
+    Messages tagged with metadata.type in NON_PROSE_METADATA_TYPES (pasted
+    code/diffs, tool actions) are excluded from the LLM-facing prompt so the
+    extractor cannot misattribute their content to the observed peer. The
+    messages themselves remain in the database; only their contribution to
+    peer representation is suppressed. Earliest/latest message tracking is
+    unaffected so progress accounting stays correct.
 
     Args:
         messages: List of messages to process (includes interleaving context).
@@ -58,6 +93,20 @@ async def process_representation_tasks_batch(
     messages.sort(key=lambda x: x.id)
     latest_message = messages[-1]
     earliest_message = messages[0]
+
+    # Filter out messages tagged as not authored prose. We keep the original
+    # `messages` list for progress/telemetry tracking but only feed eligible
+    # messages to the LLM-facing prompt.
+    eligible_messages = [m for m in messages if _is_extraction_eligible(m)]
+    if not eligible_messages:
+        logger.debug(
+            "All %d messages in batch tagged as non-prose; skipping representation extraction "
+            "(observed=%s, latest_message_id=%s)",
+            len(messages),
+            observed,
+            latest_message.id,
+        )
+        return
 
     # Get configuration if not provided
     # TODO: this appears to be a very rare edge case coming out of `get_queue_item_batch` in queue_manager.py,
@@ -91,17 +140,23 @@ async def process_representation_tasks_batch(
         "id",
     )
 
-    # Format messages with timestamps
+    # Format messages with timestamps. Use eligible_messages (non-prose tags
+    # filtered) so the LLM-facing prompt does not contain pasted code/diffs
+    # or assistant tool actions.
     formatted_messages = "\n".join(
         format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
-        for msg in messages
+        for msg in eligible_messages
     )
 
-    # Track token usage - count only tokens from messages being processed
+    # Track token usage - count only tokens from messages being processed.
+    # Use eligible_messages so we don't bill against tokens we elected to
+    # filter from the prompt.
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
     queue_item_message_ids_set = set(queue_item_message_ids)
     messages_tokens = sum(
-        msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
+        msg.token_count
+        for msg in eligible_messages
+        if msg.id in queue_item_message_ids_set
     )
     track_deriver_input_tokens(
         task_type=DeriverTaskTypes.INGESTION,
