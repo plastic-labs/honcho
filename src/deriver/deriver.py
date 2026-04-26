@@ -54,8 +54,13 @@ def _is_extraction_eligible(msg: Message) -> bool:
     """Return False if the message metadata.type marks it as not authored prose.
 
     Returns True for messages without a recognized non-prose tag (the default).
+    Type-guards against non-dict h_metadata: a JSONB column can technically
+    hold a scalar from a rogue write or a botched migration; we don't want a
+    stray string to crash the whole batch with an AttributeError.
     """
-    metadata = msg.h_metadata or {}
+    metadata = msg.h_metadata
+    if not isinstance(metadata, dict):
+        return True
     return metadata.get("type") not in NON_PROSE_METADATA_TYPES
 
 
@@ -94,15 +99,34 @@ async def process_representation_tasks_batch(
     latest_message = messages[-1]
     earliest_message = messages[0]
 
-    # Filter out messages tagged as not authored prose. We keep the original
-    # `messages` list for progress/telemetry tracking but only feed eligible
-    # messages to the LLM-facing prompt.
+    # Filter messages by extraction eligibility. We compute two related sets:
+    #
+    #   eligible_messages       — every message in the batch that is NOT
+    #                             tagged non-prose. Used for the LLM-facing
+    #                             prompt (we want to keep eligible context
+    #                             from any peer, not just the observed peer,
+    #                             so the LLM sees enough surrounding text).
+    #
+    #   eligible_source_messages — eligible messages that are ALSO target
+    #                              queue items for the observed peer. These
+    #                              are what the deriver is being asked to
+    #                              produce facts about. If this set is empty,
+    #                              every queue item we were told to process
+    #                              is non-prose and we should skip the LLM
+    #                              call entirely — even if other-peer context
+    #                              messages happen to be in the same batch.
+    queue_item_message_ids_set = set(queue_item_message_ids)
     eligible_messages = [m for m in messages if _is_extraction_eligible(m)]
-    if not eligible_messages:
+    eligible_source_messages = [
+        m
+        for m in eligible_messages
+        if m.peer_name == observed and m.id in queue_item_message_ids_set
+    ]
+    if not eligible_source_messages:
         logger.debug(
-            "All %d messages in batch tagged as non-prose; skipping representation extraction "
-            "(observed=%s, latest_message_id=%s)",
-            len(messages),
+            "All %d target queue items in batch tagged as non-prose; skipping "
+            "representation extraction (observed=%s, latest_message_id=%s)",
+            len(queue_item_message_ids_set),
             observed,
             latest_message.id,
         )
@@ -150,9 +174,9 @@ async def process_representation_tasks_batch(
 
     # Track token usage - count only tokens from messages being processed.
     # Use eligible_messages so we don't bill against tokens we elected to
-    # filter from the prompt.
+    # filter from the prompt. (queue_item_message_ids_set is already built
+    # above for the target-message gating.)
     prompt_tokens = estimate_minimal_deriver_prompt_tokens()
-    queue_item_message_ids_set = set(queue_item_message_ids)
     messages_tokens = sum(
         msg.token_count
         for msg in eligible_messages
@@ -214,14 +238,19 @@ async def process_representation_tasks_batch(
             component=DeriverComponents.OUTPUT_TOTAL.value,
         )
 
-    message_ids = [m.id for m in messages if m.peer_name == observed]
+    # Provenance: observations cite only eligible_source_messages — i.e.
+    # target queue items for the observed peer that survived the non-prose
+    # filter. This prevents tagged messages (pasted diffs, tool actions)
+    # from appearing as evidence for derived facts about the user.
+    message_ids = [m.id for m in eligible_source_messages]
+    latest_eligible = eligible_source_messages[-1]
 
     # Convert to Representation and save
     observations = Representation.from_prompt_representation(
         response.content,
         message_ids,
-        latest_message.session_name,
-        latest_message.created_at,
+        latest_eligible.session_name,
+        latest_eligible.created_at,
     )
 
     if observations.is_empty() or not message_ids:
@@ -233,10 +262,12 @@ async def process_representation_tasks_batch(
             latest_message.session_name,
         )
     else:
-        # Save to all observer collections
+        # Save to all observer collections. Use the latest_eligible source
+        # message for session/timestamp so saved provenance points to a
+        # message that actually contributed to the prompt.
         for observer in observers:
             representation_manager = RepresentationManager(
-                workspace_name=latest_message.workspace_name,
+                workspace_name=latest_eligible.workspace_name,
                 observer=observer,
                 observed=observed,
             )
@@ -245,8 +276,8 @@ async def process_representation_tasks_batch(
                 await representation_manager.save_representation(
                     observations,
                     message_ids,
-                    latest_message.session_name,
-                    latest_message.created_at,
+                    latest_eligible.session_name,
+                    latest_eligible.created_at,
                     message_level_configuration,
                 )
             except Exception as e:
