@@ -72,10 +72,17 @@ class RepresentationManager:
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
 
-        observation_texts = [
-            obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
+        # Filter empty strings — OpenAI embeddings API rejects them with 400
+        obs_text_pairs = [
+            (obs, obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content)
             for obs in all_observations
         ]
+        obs_text_pairs = [(obs, text) for obs, text in obs_text_pairs if text and text.strip()]
+        if not obs_text_pairs:
+            logger.debug("All observations have empty content; skipping embedding")
+            return new_documents
+        all_observations, observation_texts = map(list, zip(*obs_text_pairs))
+
         try:
             embeddings = await embedding_client.simple_batch_embed(observation_texts)
         except ValueError as e:
