@@ -13,9 +13,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U honcho -d honcho"]
-      interval: 10s
+      interval: 60s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
 volumes:
   honcho-postgres-data:
