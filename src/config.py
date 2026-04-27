@@ -1219,6 +1219,11 @@ class AppSettings(HonchoSettings):
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
     EMBED_MESSAGES: bool = True
+    MISTRAL_OCR_API_KEY: str | None = None
+    MISTRAL_OCR_MODEL: str = "mistral-ocr-latest"
+    MISTRAL_OCR_TIMEOUT_SECONDS: Annotated[float, Field(default=60.0, gt=0, le=300)] = (
+        60.0
+    )
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 

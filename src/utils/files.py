@@ -1,8 +1,11 @@
+import base64
 import datetime
 import logging
 from io import BytesIO
 from typing import Any, Protocol
 
+import httpx
+import pdfplumber
 from fastapi import UploadFile
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Integer, select
@@ -30,8 +33,69 @@ class PDFProcessor:
         return content_type == "application/pdf"
 
     async def extract_text(self, content: bytes) -> str:
-        import pdfplumber
+        if settings.MISTRAL_OCR_API_KEY:
+            return await self._extract_text_with_mistral_ocr(content)
+        return self._extract_text_with_pdfplumber(content)
 
+    async def _extract_text_with_mistral_ocr(self, content: bytes) -> str:
+        api_key = settings.MISTRAL_OCR_API_KEY
+        if not api_key:
+            return self._extract_text_with_pdfplumber(content)
+
+        encoded_pdf = base64.b64encode(content).decode("ascii")
+        payload = {
+            "model": settings.MISTRAL_OCR_MODEL,
+            "document": {
+                "type": "document_url",
+                "document_url": f"data:application/pdf;base64,{encoded_pdf}",
+            },
+            "include_image_base64": False,
+        }
+
+        try:
+            async with httpx.AsyncClient(
+                timeout=settings.MISTRAL_OCR_TIMEOUT_SECONDS
+            ) as client:
+                response = await client.post(
+                    "https://api.mistral.ai/v1/ocr",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                response.raise_for_status()
+                ocr_result = response.json()
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "Mistral OCR request failed; falling back to pdfplumber",
+                exc_info=exc,
+            )
+            return self._extract_text_with_pdfplumber(content)
+        except ValueError as exc:
+            logger.warning(
+                "Mistral OCR response was invalid; falling back to pdfplumber",
+                exc_info=exc,
+            )
+            return self._extract_text_with_pdfplumber(content)
+
+        pages = ocr_result.get("pages") if isinstance(ocr_result, dict) else None
+        if not isinstance(pages, list):
+            logger.warning(
+                "Mistral OCR response did not include pages; falling back to pdfplumber"
+            )
+            return self._extract_text_with_pdfplumber(content)
+
+        text_parts: list[str] = []
+        for page in pages:
+            if isinstance(page, dict):
+                markdown = page.get("markdown")
+                if isinstance(markdown, str) and markdown.strip():
+                    text_parts.append(markdown.strip())
+
+        return "\n\n".join(text_parts)
+
+    def _extract_text_with_pdfplumber(self, content: bytes) -> str:
         with pdfplumber.open(BytesIO(content)) as pdf_reader:
             text_parts: list[str] = []
             for page_num, page in enumerate(pdf_reader.pages):
