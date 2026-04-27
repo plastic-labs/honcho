@@ -17,6 +17,10 @@ from src.embedding_client import embedding_client
 from src.schemas import ResolvedConfiguration
 from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
+from src.utils.observation_validation import (
+    ObservationValidationResult,
+    validate_observation_candidate,
+)
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -68,13 +72,66 @@ class RepresentationManager:
             return new_documents
 
         all_observations = representation.deductive + representation.explicit
+        source_ids_to_validate = sorted(
+            {
+                source_id
+                for obs in all_observations
+                if isinstance(obs, DeductiveObservation)
+                for source_id in obs.source_ids
+            }
+        )
+        available_source_ids: set[str] | None = None
+        if source_ids_to_validate:
+            async with tracked_db("representation_manager.validate_sources") as db:
+                source_documents = await crud.fetch_documents_by_ids(
+                    db,
+                    self.workspace_name,
+                    self.observer,
+                    self.observed,
+                    source_ids_to_validate,
+                )
+            available_source_ids = {doc.id for doc in source_documents}
+
+        validated_observations: list[
+            tuple[ExplicitObservation | DeductiveObservation, ObservationValidationResult]
+        ] = []
+        for obs in all_observations:
+            if isinstance(obs, DeductiveObservation):
+                obs_content = obs.conclusion
+                obs_level = "deductive"
+                obs_source_ids = obs.source_ids
+            else:
+                obs_content = obs.content
+                obs_level = "explicit"
+                obs_source_ids = None
+
+            validation = validate_observation_candidate(
+                content=obs_content,
+                level=obs_level,
+                origin="minimal_deriver",
+                source_message_ids=message_ids,
+                source_ids=obs_source_ids,
+                available_source_ids=available_source_ids,
+            )
+            if validation.accepted:
+                validated_observations.append((obs, validation))
+            else:
+                logger.warning(
+                    "Dropping invalid %s observation before embedding: %s",
+                    obs_level,
+                    "; ".join(validation.errors),
+                )
+
+        if not validated_observations:
+            logger.debug("No valid observations to save")
+            return new_documents
 
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
 
         observation_texts = [
             obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
-            for obs in all_observations
+            for obs, _validation in validated_observations
         ]
         try:
             embeddings = await embedding_client.simple_batch_embed(observation_texts)
@@ -97,7 +154,7 @@ class RepresentationManager:
         async with tracked_db("representation_manager.save_representation") as db:
             new_documents = await self._save_representation_internal(
                 db,
-                all_observations,
+                validated_observations,
                 embeddings,
                 message_ids,
                 session_name,
@@ -118,7 +175,9 @@ class RepresentationManager:
     async def _save_representation_internal(
         self,
         db: AsyncSession,
-        all_observations: list[ExplicitObservation | DeductiveObservation],
+        all_observations: list[
+            tuple[ExplicitObservation | DeductiveObservation, ObservationValidationResult]
+        ],
         embeddings: list[list[float]],
         message_ids: list[int],
         session_name: str,
@@ -135,21 +194,25 @@ class RepresentationManager:
 
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
-        for obs, embedding in zip(all_observations, embeddings, strict=True):
+        for (obs, validation), embedding in zip(all_observations, embeddings, strict=True):
             # NOTE: will add additional levels of reasoning in the future
             if isinstance(obs, DeductiveObservation):
                 obs_level = "deductive"
                 obs_content = obs.conclusion
                 obs_premises = obs.premises
+                obs_source_ids = obs.source_ids
             else:
                 obs_level = "explicit"
                 obs_content = obs.content
                 obs_premises = None
+                obs_source_ids = None
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
                 message_ids=message_ids,
                 premises=obs_premises,
                 message_created_at=format_datetime_utc(message_created_at),
+                source_ids=obs_source_ids,
+                provenance=validation.provenance,
             )
 
             documents_to_create.append(

@@ -24,6 +24,10 @@ from src.telemetry.events import (
 )
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
+from src.utils.observation_validation import (
+    ObservationValidationResult,
+    validate_observation_candidate,
+)
 from src.utils.representation import Representation
 from src.utils.types import get_current_iteration
 
@@ -800,22 +804,62 @@ async def create_observations(
         logger.warning("create_observations called with empty list")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
-    # Phase 1: Ensure collection exists (short DB scope)
-    async with tracked_db("create_observations.collection") as db:
-        await crud.get_or_create_collection(
-            db,
-            workspace_name,
-            observer=observer,
-            observed=observed,
+    # Phase 1: Validate source document links (short DB scope only when needed)
+    source_ids_to_validate = sorted(
+        {
+            source_id
+            for obs in observations
+            for source_id in (obs.source_ids or [])
+        }
+    )
+    available_source_ids: set[str] | None = None
+    if source_ids_to_validate:
+        async with tracked_db("create_observations.sources") as db:
+            source_documents = await crud.fetch_documents_by_ids(
+                db=db,
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                document_ids=source_ids_to_validate,
+                filters=None,
+            )
+            available_source_ids = {doc.id for doc in source_documents}
+
+    validated_observations: list[tuple[schemas.ObservationInput, ObservationValidationResult]] = []
+    failed: list[ObservationFailure] = []
+    for obs in observations:
+        validation = validate_observation_candidate(
+            content=obs.content,
+            level=obs.level,
+            origin="agent_tool",
+            source_message_ids=message_ids,
+            source_ids=obs.source_ids,
+            available_source_ids=available_source_ids,
+        )
+        if validation.accepted:
+            validated_observations.append((obs, validation))
+        else:
+            failed.append(
+                ObservationFailure(
+                    content_preview=obs.content[:50],
+                    error="Validation failed: " + "; ".join(validation.errors),
+                )
+            )
+
+    if not validated_observations:
+        return ObservationsCreatedResult(
+            created_count=0,
+            created_levels=[],
+            failed=failed,
         )
 
     # Phase 2: Compute embeddings (no DB needed)
-    contents = [obs.content for obs in observations]
+    contents = [obs.content for obs, _validation in validated_observations]
     embeddings_by_index: dict[int, list[float]] | None = None
     try:
         embeddings = await embedding_client.simple_batch_embed(contents)
         embeddings_by_index = dict(
-            zip(range(len(observations)), embeddings, strict=True)
+            zip(range(len(validated_observations)), embeddings, strict=True)
         )
     except Exception as e:
         logger.warning(
@@ -825,8 +869,7 @@ async def create_observations(
 
     # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
-    failed: list[ObservationFailure] = []
-    for i, obs in enumerate(observations):
+    for i, (obs, validation) in enumerate(validated_observations):
         embedding: list[float]
         if embeddings_by_index is not None:
             embedding = embeddings_by_index[i]
@@ -862,6 +905,7 @@ async def create_observations(
             confidence=(obs.confidence or "medium")
             if obs.level == "inductive"
             else None,
+            provenance=validation.provenance,
         )
 
         doc = schemas.DocumentCreate(
@@ -880,6 +924,12 @@ async def create_observations(
     accepted: list[schemas.DocumentCreate] = []
     if documents:
         async with tracked_db("create_observations.save") as db:
+            await crud.get_or_create_collection(
+                db,
+                workspace_name,
+                observer=observer,
+                observed=observed,
+            )
             accepted = await crud.create_documents(
                 db,
                 documents=documents,

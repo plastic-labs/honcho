@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.schemas.api import MessageCreate
 from src.schemas.configuration import SessionPeerConfig
+from src.utils.observation_validation import ObservationProvenance
 from src.utils.types import DocumentLevel
 
 
@@ -56,6 +57,10 @@ class DocumentMetadata(BaseModel):
         default=None,
         description="Confidence level (high, medium, low) -- only applicable for inductive documents",
     )
+    provenance: ObservationProvenance | None = Field(
+        default=None,
+        description="Machine-readable origin and validation provenance for this observation",
+    )
 
 
 class DocumentCreate(DocumentBase):
@@ -98,8 +103,10 @@ class ObservationInput(BaseModel):
 
     @field_validator("content", mode="after")
     @classmethod
-    def sanitize_content(cls, v: str) -> str:
-        return v.replace("\x00", "")
+    def validate_content(cls, v: str) -> str:
+        if "\x00" in v:
+            raise ValueError("NUL bytes are not allowed in observation content")
+        return v
 
     @model_validator(mode="after")
     def validate_level_fields(self) -> Self:
