@@ -108,6 +108,44 @@ class TestProcessRepresentationFiltering:
 
         mock_llm_call.assert_not_called()
 
+    async def test_emits_minimal_completion_event_on_early_return(self):
+        """All-non-prose batches must still emit a RepresentationCompletedEvent
+        and increment metrics so the observability layer captures every
+        batch outcome uniformly. Otherwise dashboards/replay systems lose
+        all trace of these batches.
+        """
+        messages = [
+            _make_message(1, "[diff removed]", metadata={"type": "user_paste_not_speech"}),
+            _make_message(2, "[Tool] Edited foo.ts", metadata={"type": "tool_action"}),
+        ]
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        with patch(
+            "src.deriver.deriver.honcho_llm_call",
+            new_callable=AsyncMock,
+        ) as mock_llm_call, patch(
+            "src.deriver.deriver.emit",
+        ) as mock_emit:
+            await process_representation_tasks_batch(
+                messages=messages,
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1, 2],
+            )
+
+        mock_llm_call.assert_not_called()
+        # Exactly one completion event should have been emitted, with
+        # zero conclusions and zero token usage.
+        mock_emit.assert_called_once()
+        event = mock_emit.call_args[0][0]
+        assert event.explicit_conclusion_count == 0
+        assert event.input_tokens == 0
+        assert event.output_tokens == 0
+        assert event.message_count == 2
+        assert event.queue_items_processed == 2
+
     async def test_filters_non_prose_from_llm_prompt(self):
         """Non-prose messages are excluded from the LLM-facing prompt; prose messages remain."""
         messages = [

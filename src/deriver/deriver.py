@@ -130,6 +130,55 @@ async def process_representation_tasks_batch(
             observed,
             latest_message.id,
         )
+        # Emit a minimal completion event + metrics so the observability
+        # layer captures all batch outcomes uniformly. Downstream
+        # dashboards / replay systems otherwise lose all trace of
+        # all-non-prose batches.
+        skipped_duration = (time.perf_counter() - overall_start) * 1000
+        accumulate_metric(
+            f"minimal_deriver_{latest_message.id}_{observed}",
+            "starting_message_id",
+            earliest_message.id,
+            "id",
+        )
+        accumulate_metric(
+            f"minimal_deriver_{latest_message.id}_{observed}",
+            "ending_message_id",
+            latest_message.id,
+            "id",
+        )
+        accumulate_metric(
+            f"minimal_deriver_{latest_message.id}_{observed}",
+            "total_processing_time",
+            skipped_duration,
+            "ms",
+        )
+        accumulate_metric(
+            f"minimal_deriver_{latest_message.id}_{observed}",
+            "observation_count",
+            0,
+            "count",
+        )
+        log_performance_metrics(
+            "minimal_deriver", f"{latest_message.id}_{observed}"
+        )
+        emit(
+            RepresentationCompletedEvent(
+                workspace_name=latest_message.workspace_name,
+                session_name=latest_message.session_name,
+                observed=observed,
+                queue_items_processed=len(queue_item_message_ids),
+                earliest_message_id=earliest_message.public_id,
+                latest_message_id=latest_message.public_id,
+                message_count=len(messages),
+                explicit_conclusion_count=0,
+                context_preparation_ms=0.0,
+                llm_call_ms=0.0,
+                total_duration_ms=skipped_duration,
+                input_tokens=0,
+                output_tokens=0,
+            )
+        )
         return
 
     # Get configuration if not provided
