@@ -1,6 +1,7 @@
 # File upload tests for session endpoints
 import io
 import json
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -9,9 +10,12 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src import models, schemas
 from src.config import settings
+from src.dependencies import get_db
+from src.main import app
 from src.models import Peer, Workspace
+from src.routers import messages as messages_router
 
 
 async def _create_test_session(
@@ -159,6 +163,65 @@ async def test_create_messages_with_empty_json_file(
     assert data[0]["content"] == ""
     assert data[0]["peer_id"] == test_peer.name
     assert data[0]["session_id"] == session_name
+
+
+@pytest.mark.asyncio
+async def test_file_upload_extracts_before_opening_db_session(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """File extraction can perform remote OCR, so DB work must start after it."""
+    test_workspace, test_peer = sample_data
+    test_session = await _create_test_session(db_session, test_workspace)
+    events: list[str] = []
+
+    async def fake_process_file_uploads_for_messages(*_args: Any, **_kwargs: Any):
+        events.append("extract")
+        return [
+            {
+                "message_create": schemas.MessageCreate(
+                    content="extracted text",
+                    peer_id=test_peer.name,
+                ),
+                "file_metadata": {
+                    "file_id": "test-file",
+                    "filename": "test.txt",
+                    "chunk_index": 0,
+                    "total_chunks": 1,
+                    "original_file_size": 13,
+                    "content_type": "text/plain",
+                    "chunk_character_range": [0, 13],
+                },
+            }
+        ]
+
+    async def override_get_db():
+        events.append("db_open")
+        yield db_session
+
+    @asynccontextmanager
+    async def fake_tracked_db(_: str | None = None):
+        events.append("db_open")
+        yield db_session
+
+    monkeypatch.setattr(
+        messages_router,
+        "process_file_uploads_for_messages",
+        fake_process_file_uploads_for_messages,
+    )
+    monkeypatch.setattr(messages_router, "tracked_db", fake_tracked_db, raising=False)
+    monkeypatch.setitem(app.dependency_overrides, get_db, override_get_db)
+
+    response = client.post(
+        _get_upload_url(test_workspace.name, test_session.name),
+        files={"file": ("test.txt", io.BytesIO(b"test content"), "text/plain")},
+        data={"peer_id": test_peer.name},
+    )
+
+    assert response.status_code == 201
+    assert events == ["extract", "db_open"]
 
 
 @pytest.mark.asyncio

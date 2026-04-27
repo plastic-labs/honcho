@@ -18,7 +18,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import db
+from src.dependencies import db, tracked_db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.security import require_auth
@@ -141,7 +141,6 @@ async def create_messages_with_file(
     session_id: str = Path(...),
     form_data: schemas.MessageUploadCreate = Depends(parse_upload_form),
     file: UploadFile = File(...),
-    db: AsyncSession = db,
 ):
     """Create messages from uploaded files. Files are converted to text and split into multiple messages."""
 
@@ -160,22 +159,23 @@ async def create_messages_with_file(
         created_at=form_data.created_at,
     )
 
-    # Create messages
-    message_creates = [item["message_create"] for item in all_message_data]
-    created_messages = await crud.create_messages(
-        db,
-        messages=message_creates,
-        workspace_name=workspace_id,
-        session_name=session_id,
-    )
+    async with tracked_db("messages.upload") as db:
+        # Create messages
+        message_creates = [item["message_create"] for item in all_message_data]
+        created_messages = await crud.create_messages(
+            db,
+            messages=message_creates,
+            workspace_name=workspace_id,
+            session_name=session_id,
+        )
 
-    # Update internal_metadata for file-related messages
-    for i, message in enumerate(created_messages):
-        file_metadata = all_message_data[i]["file_metadata"]
-        message.internal_metadata.update(file_metadata)
-        flag_modified(message, "internal_metadata")
+        # Update internal_metadata for file-related messages
+        for i, message in enumerate(created_messages):
+            file_metadata = all_message_data[i]["file_metadata"]
+            message.internal_metadata.update(file_metadata)
+            flag_modified(message, "internal_metadata")
 
-    await db.commit()
+        await db.commit()
 
     # Enqueue for processing (same as regular messages)
     payloads = [
