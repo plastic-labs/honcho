@@ -18,6 +18,15 @@ async def _fake_tracked_db(_name: str):
     yield object()
 
 
+def _saved_observations(mock_save: AsyncMock):
+    call = mock_save.await_args
+    return (
+        call.kwargs.get("all_observations")
+        if "all_observations" in call.kwargs
+        else call.args[1]
+    )
+
+
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio
     async def test_save_representation_filters_blank_observations_before_embedding(self):
@@ -67,7 +76,7 @@ class TestRepresentationManagerSave:
 
         assert saved == 1
         mock_embed.assert_awaited_once_with(["useful observation"])
-        saved_observations = mock_save.await_args.args[1]
+        saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
         assert saved_observations[0].content == "useful observation"
 
@@ -123,7 +132,7 @@ class TestRepresentationManagerSave:
 
         assert saved == 1
         mock_embed.assert_awaited_once_with(["inferred conclusion"])
-        saved_observations = mock_save.await_args.args[1]
+        saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
         assert isinstance(saved_observations[0], DeductiveObservation)
         assert saved_observations[0].conclusion == "inferred conclusion"
