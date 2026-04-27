@@ -241,14 +241,23 @@ class OpenAIBackend:
         params["stream_options"] = {"include_usage": True}
         if isinstance(response_format, type):
             # parse() supports BaseModel types but streaming create() does not —
-            # convert to a json_schema dict so the streaming path works.
-            params["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_format.__name__,
-                    "schema": response_format.model_json_schema(),
-                },
-            }
+            # convert to a json_object dict so the streaming path works.
+            # json_schema is ignored by many OpenAI-compatible proxies; json_object
+            # is near-universally supported. Schema validation is handled manually
+            # by the repair logic downstream.
+            params["response_format"] = {"type": "json_object"}
+            # Inject schema into the last user message so the model knows the
+            # expected output format — mirrors what the Anthropic path does.
+            schema_json = json.dumps(response_format.model_json_schema(), indent=2)
+            msgs = params.get("messages", [])
+            if msgs:
+                last_msg = msgs[-1]
+                if isinstance(last_msg.get("content"), str):
+                    last_msg = dict(last_msg)
+                    last_msg["content"] += (
+                        f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                    )
+                    params["messages"] = list(msgs[:-1]) + [last_msg]
         elif response_format is not None:
             params["response_format"] = response_format
         elif extra_params and extra_params.get("json_mode"):
@@ -378,13 +387,24 @@ class OpenAIBackend:
         response_format: type[BaseModel],
     ) -> Any:
         structured_params = dict(params)
-        structured_params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": response_format.__name__,
-                "schema": response_format.model_json_schema(),
-            },
-        }
+        # Use json_object instead of json_schema: most OpenAI-compatible
+        # endpoints (proxies, aggregators, vLLM without guided decoding)
+        # silently ignore json_schema and return empty or free-form text.
+        # json_object is near-universally supported; schema validation is
+        # handled manually by the repair + fallback logic in structured_output.py.
+        structured_params["response_format"] = {"type": "json_object"}
+        # Inject schema into the last user message so the model knows the
+        # expected output format — mirrors what the Anthropic path does.
+        schema_json = json.dumps(response_format.model_json_schema(), indent=2)
+        msgs = structured_params.get("messages", [])
+        if msgs:
+            last_msg = msgs[-1]
+            if isinstance(last_msg.get("content"), str):
+                last_msg = dict(last_msg)
+                last_msg["content"] += (
+                    f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+                )
+                structured_params["messages"] = list(msgs[:-1]) + [last_msg]
         return await self._client.chat.completions.create(**structured_params)
 
     @staticmethod
