@@ -121,7 +121,7 @@ class AgentToolConclusionsDeletedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "agent.tool.conclusions.deleted"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "agent"
 
     # Run identification
@@ -141,6 +141,10 @@ class AgentToolConclusionsDeletedEvent(BaseEvent):
 
     # What was deleted
     conclusion_count: int = Field(..., description="Number of conclusions deleted")
+    levels: list[str] = Field(
+        default_factory=list,
+        description="Level of each deleted conclusion (e.g., ['explicit', 'deductive', 'deductive'])",
+    )
 
     def get_resource_id(self) -> str:
         """Resource ID includes run_id and iteration for uniqueness."""
