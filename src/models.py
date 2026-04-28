@@ -5,6 +5,13 @@ from typing import Any, final
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from pgvector.sqlalchemy import Vector
+
+# Resolve embedding dimensions from config; fallback to 1536 for backward compat.
+try:
+    from .config import settings as _settings
+    _EMBEDDING_DIMS: int = _settings.VECTOR_STORE.DIMENSIONS  # type: ignore[union-attr]
+except Exception:
+    _EMBEDDING_DIMS = 1536
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -278,7 +285,7 @@ class MessageEmbedding(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(Vector(_EMBEDDING_DIMS), nullable=True)
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -386,7 +393,7 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(Vector(_EMBEDDING_DIMS), nullable=True)
     source_ids: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True, server_default=text("NULL")
     )

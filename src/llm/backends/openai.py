@@ -251,15 +251,23 @@ class OpenAIBackend:
             _schema = _json.dumps(response_format.model_json_schema(), indent=2)
             _msgs = params.get("messages", [])
             if _msgs:
-                _last = dict(_msgs[-1])
+                # Find the last user message (not just _msgs[-1] which could
+                # be assistant/tool role in multi-turn conversations).
+                _last_user_idx = next(
+                    (i for i in range(len(_msgs) - 1, -1, -1)
+                     if _msgs[i].get("role") == "user"),
+                    len(_msgs) - 1,
+                )
+                _last = dict(_msgs[_last_user_idx])
                 if isinstance(_last.get("content"), str):
                     _last["content"] += (
-                        "
-
-Respond with valid JSON matching this schema:
-" + _schema
+                        "\n\nRespond with valid JSON matching this schema:\n"
+                        + _schema
                     )
-                    _msgs = list(_msgs[:-1]) + [_last]
+                    _msgs = list(_msgs[:_last_user_idx]) + [_last] + (
+                        list(_msgs[_last_user_idx + 1:])
+                        if _last_user_idx + 1 < len(_msgs) else []
+                    )
                     params["messages"] = _msgs
             params["response_format"] = {"type": "json_object"}
         elif response_format is not None:
@@ -397,15 +405,23 @@ Respond with valid JSON matching this schema:
         _schema = _json.dumps(response_format.model_json_schema(), indent=2)
         _msgs = structured_params.get("messages", [])
         if _msgs:
-            _last = dict(_msgs[-1])
+            # Find the last user message (not just _msgs[-1] which could
+            # be assistant/tool role in multi-turn conversations).
+            _last_user_idx = next(
+                (i for i in range(len(_msgs) - 1, -1, -1)
+                 if _msgs[i].get("role") == "user"),
+                len(_msgs) - 1,
+            )
+            _last = dict(_msgs[_last_user_idx])
             if isinstance(_last.get("content"), str):
                 _last["content"] += (
-                    "
-
-Respond with valid JSON matching this schema:
-" + _schema
+                    "\n\nRespond with valid JSON matching this schema:\n"
+                    + _schema
                 )
-                _msgs = list(_msgs[:-1]) + [_last]
+                _msgs = list(_msgs[:_last_user_idx]) + [_last] + (
+                    list(_msgs[_last_user_idx + 1:])
+                    if _last_user_idx + 1 < len(_msgs) else []
+                )
                 structured_params["messages"] = _msgs
         structured_params["response_format"] = {"type": "json_object"}
         return await self._client.chat.completions.create(**structured_params)

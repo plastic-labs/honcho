@@ -1,5 +1,6 @@
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from hashlib import md5
 from logging import getLogger
 from typing import Any
 
@@ -237,7 +238,57 @@ async def create_messages(
             .limit(1)
         )
         or 0
-    )
+    ) or 0
+
+    # Content-hash deduplication: prevent duplicate messages when gateways
+    # restart and re-send previously synced messages.
+    if messages:
+        _earliest = min(
+            (m.created_at for m in messages if m.created_at),
+            default=datetime.now(timezone.utc),
+        )
+        if not isinstance(_earliest, datetime):
+            _earliest = datetime.now(timezone.utc)
+        _lookback = _earliest - timedelta(hours=1)
+
+        _existing_hashes: set[str] = set()
+        _existing_rows = await db.execute(
+            select(models.Message.peer_name, models.Message.content).where(
+                models.Message.workspace_name == workspace_name,
+                models.Message.session_name == session_name,
+                models.Message.created_at >= _lookback,
+            )
+        )
+        for _row in _existing_rows.scalars().all():
+            # Composite key: peer_name + content prevents false positives
+            # when different peers say the same thing (e.g. "ok", "thanks")
+            _composite = f"{_row[0]}|{_row[1]}" if isinstance(_row, tuple) else str(_row)
+            _existing_hashes.add(md5(_composite.encode()).hexdigest())
+
+        _filtered = []
+        for _msg in messages:
+            _composite = f"{_msg.peer_name}|{_msg.content}"
+            _h = md5(_composite.encode()).hexdigest()
+            if _h in _existing_hashes:
+                logger.info(
+                    "Skipping duplicate message in %s/%s (hash=%s…)",
+                    workspace_name, session_name, _h[:8],
+                )
+                continue
+            _filtered.append(_msg)
+
+        if len(_filtered) < len(messages):
+            logger.info(
+                "Dedup filtered %d duplicates from %d incoming messages for %s/%s",
+                len(messages) - len(_filtered), len(messages),
+                workspace_name, session_name,
+            )
+        messages = _filtered
+
+    if not messages:
+        # Release advisory lock before early return (lock taken by caller)
+        await db.commit()
+        return []
 
     # Create list of message objects (this will trigger the before_insert event)
     message_objects: list[models.Message] = []
