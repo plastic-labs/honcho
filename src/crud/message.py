@@ -197,7 +197,7 @@ async def create_messages(
     messages: list[schemas.MessageCreate],
     workspace_name: str,
     session_name: str,
-) -> list[models.Message]:
+) -> list[models.Message | None]:
     """
     Bulk create messages for a session while maintaining order.
 
@@ -208,7 +208,10 @@ async def create_messages(
         session_name: Name of the session to create messages in
 
     Returns:
-        List of created message objects
+        List of created message objects with the SAME length as the input
+        ``messages`` list.  Entries that were filtered out by content-hash
+        deduplication are returned as ``None`` so that callers using
+        ``zip(created, original, strict=True)`` do not raise ``ValueError``.
     """
     # Get or create session with peers in messages list
     peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
@@ -242,6 +245,12 @@ async def create_messages(
 
     # Content-hash deduplication: prevent duplicate messages when gateways
     # restart and re-send previously synced messages.
+    #
+    # We track which positions in the original input list survive dedup via
+    # ``_keep_mask``.  This mask is used at the end of the function to build
+    # a cardinality-preserving result list (same length as input) so that
+    # callers using ``zip(created, original, strict=True)`` don't crash.
+    _keep_mask: list[bool] = [True] * len(messages)
     if messages:
         _earliest = min(
             (m.created_at for m in messages if m.created_at),
@@ -266,8 +275,8 @@ async def create_messages(
             _composite = f"{_peer}|{_content}"
             _existing_hashes.add(md5(_composite.encode()).hexdigest())
 
-        _filtered = []
-        for _msg in messages:
+        _dup_count = 0
+        for _i, _msg in enumerate(messages):
             _composite = f"{_msg.peer_name}|{_msg.content}"
             _h = md5(_composite.encode()).hexdigest()
             if _h in _existing_hashes:
@@ -275,23 +284,22 @@ async def create_messages(
                     "Skipping duplicate message in %s/%s (hash=%s…)",
                     workspace_name, session_name, _h[:8],
                 )
-                continue
-            _filtered.append(_msg)
+                _keep_mask[_i] = False
+                _dup_count += 1
 
-        if len(_filtered) < len(messages):
+        if _dup_count:
             logger.info(
                 "Dedup filtered %d duplicates from %d incoming messages for %s/%s",
-                len(messages) - len(_filtered), len(messages),
+                _dup_count, len(messages),
                 workspace_name, session_name,
             )
-        messages = _filtered
+        messages = [m for m, keep in zip(messages, _keep_mask) if keep]
 
     # NOTE: We intentionally do NOT short-return here even if messages is
-    # empty after dedup filtering.  Callers (e.g. messages.py) use
-    # zip(created_messages, incoming, strict=True) which requires matching
-    # cardinality.  Falling through with an empty list produces zero
-    # message_objects, add_all([]) is a no-op, and the existing commit at
-    # the end of this function releases any advisory lock taken by callers.
+    # empty after dedup filtering.  Falling through with an empty list
+    # produces zero message_objects, add_all([]) is a no-op, and the
+    # existing commit at the end of this function releases any advisory
+    # lock taken by callers.
 
     # Create list of message objects (this will trigger the before_insert event)
     message_objects: list[models.Message] = []
@@ -461,7 +469,23 @@ async def create_messages(
             session_name,
         )
 
-    return message_objects
+    # Build cardinality-preserving result: same length as the original input,
+    # with None placeholders for deduped entries.  This satisfies the
+    # zip(created_messages, original_input, strict=True) contract used by
+    # callers (e.g. src/routers/messages.py).
+    if all(_keep_mask):
+        # No dedup occurred — message_objects is already 1:1 with input.
+        return message_objects
+
+    result: list[models.Message | None] = []
+    _obj_idx = 0
+    for keep in _keep_mask:
+        if keep:
+            result.append(message_objects[_obj_idx])
+            _obj_idx += 1
+        else:
+            result.append(None)
+    return result
 
 
 async def get_messages(
