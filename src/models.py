@@ -10,7 +10,7 @@ from pgvector.sqlalchemy import Vector
 try:
     from .config import settings as _settings
     _EMBEDDING_DIMS: int = _settings.VECTOR_STORE.DIMENSIONS  # type: ignore[union-attr]
-except Exception:
+except (ImportError, AttributeError, ValueError):
     _EMBEDDING_DIMS = 1536
 from sqlalchemy import (
     BigInteger,
