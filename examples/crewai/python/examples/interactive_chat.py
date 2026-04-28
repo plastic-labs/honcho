@@ -6,11 +6,9 @@ CrewAI for agent orchestration, OpenAI for the AI model, and Honcho for memory
 management via the honcho_crewai package.
 """
 
-from typing import Optional
+from crewai import Agent, Crew, Memory, Process, Task
 from dotenv import load_dotenv
-from crewai import Agent, Task, Crew, Process
-from crewai.memory.external.external_memory import ExternalMemory
-from honcho_crewai import HonchoStorage
+from honcho_crewai import HonchoMemoryStorage
 
 load_dotenv()
 
@@ -18,9 +16,9 @@ load_dotenv()
 def run_conversation_turn(
     user_id: str,
     user_input: str,
-    session_id: Optional[str] = None,
-    storage: Optional[HonchoStorage] = None
-) -> tuple[str, HonchoStorage]:
+    session_id: str | None = None,
+    storage: HonchoMemoryStorage | None = None,
+) -> tuple[str, HonchoMemoryStorage]:
     """
     Run a single conversation turn with the CrewAI agent.
 
@@ -28,7 +26,7 @@ def run_conversation_turn(
         user_id: Unique identifier for the user
         user_input: User's message
         session_id: Optional session ID for conversation continuity
-        storage: Optional existing HonchoStorage instance
+        storage: Optional existing HonchoMemoryStorage instance
 
     Returns:
         Tuple of (agent_response, storage_instance)
@@ -37,13 +35,17 @@ def run_conversation_turn(
     if storage is None:
         if not session_id:
             session_id = f"session_{user_id}"
-        storage = HonchoStorage(user_id=user_id, session_id=session_id)
+        storage = HonchoMemoryStorage(peer_id=user_id, session_id=session_id)
 
-    # Create ExternalMemory wrapper for automatic context retrieval
-    external_memory = ExternalMemory(storage=storage)
+    memory = Memory(storage=storage)
 
     # Save user input to memory
-    external_memory.save(user_input, metadata={"agent": "user"})
+    memory.remember(
+        user_input,
+        scope=f"/users/{user_id}/conversation",
+        categories=["conversation"],
+        metadata={"role": "user"},
+    )
 
     # Create an agent with memory
     agent = Agent(
@@ -54,23 +56,23 @@ def run_conversation_turn(
             "You use context from previous interactions to provide personalized and relevant responses."
         ),
         verbose=False,
-        allow_delegation=False
+        allow_delegation=False,
     )
 
     # Create task for the agent
     task = Task(
         description=f"Respond to the user's message: {user_input}",
         expected_output="A helpful and contextually relevant response that considers conversation history",
-        agent=agent
+        agent=agent,
     )
 
-    # Create crew with external memory - enables automatic context retrieval
+    # Create crew with unified memory - enables automatic context retrieval
     crew = Crew(
         agents=[agent],
         tasks=[task],
         process=Process.sequential,
-        external_memory=external_memory,
-        verbose=False
+        memory=memory,
+        verbose=False,
     )
 
     # Execute - CrewAI automatically retrieves relevant context from Honcho
@@ -78,7 +80,12 @@ def run_conversation_turn(
 
     # Save assistant response back to memory
     response_text = str(result.raw)
-    external_memory.save(response_text, metadata={"agent": "assistant"})
+    memory.remember(
+        response_text,
+        scope=f"/users/{user_id}/conversation",
+        categories=["conversation"],
+        metadata={"role": "assistant"},
+    )
 
     return response_text, storage
 
@@ -93,7 +100,7 @@ def main():
 
     while True:
         user_input = input("You: ")
-        if user_input.lower() in ['quit', 'exit']:
+        if user_input.lower() in ["quit", "exit"]:
             print("Goodbye!")
             break
 
@@ -104,7 +111,7 @@ def main():
             response, storage = run_conversation_turn(
                 user_id=user_id,
                 user_input=user_input,
-                storage=storage
+                storage=storage,
             )
             print(f"Assistant: {response}\n")
         except Exception as e:
