@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 MAX_PEER_CARD_FACTS = 40
 
 
+def _normalized_observation_input(
+    obs: schemas.ObservationInput,
+) -> schemas.ObservationInput:
+    """Return an observation input with content normalized for persistence/embedding."""
+    return obs.model_copy(update={"content": obs.content.strip()})
+
+
 def _base_observation_properties() -> dict[str, Any]:
     return {
         "content": {
@@ -800,6 +807,13 @@ async def create_observations(
         logger.warning("create_observations called with empty list")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
+    normalized_observations = [
+        _normalized_observation_input(obs) for obs in observations if obs.content.strip()
+    ]
+    if not normalized_observations:
+        logger.info("No non-empty observations to create")
+        return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
+
     # Phase 1: Ensure collection exists (short DB scope)
     async with tracked_db("create_observations.collection") as db:
         await crud.get_or_create_collection(
@@ -810,12 +824,12 @@ async def create_observations(
         )
 
     # Phase 2: Compute embeddings (no DB needed)
-    contents = [obs.content for obs in observations]
+    contents = [obs.content for obs in normalized_observations]
     embeddings_by_index: dict[int, list[float]] | None = None
     try:
         embeddings = await embedding_client.simple_batch_embed(contents)
         embeddings_by_index = dict(
-            zip(range(len(observations)), embeddings, strict=True)
+            zip(range(len(normalized_observations)), embeddings, strict=True)
         )
     except Exception as e:
         logger.warning(
@@ -826,7 +840,7 @@ async def create_observations(
     # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
     failed: list[ObservationFailure] = []
-    for i, obs in enumerate(observations):
+    for i, obs in enumerate(normalized_observations):
         embedding: list[float]
         if embeddings_by_index is not None:
             embedding = embeddings_by_index[i]
