@@ -259,15 +259,26 @@ class OpenAIBackend:
                     len(_msgs) - 1,
                 )
                 _last = dict(_msgs[_last_user_idx])
-                if isinstance(_last.get("content"), str):
-                    _last["content"] += (
+                _content = _last.get("content")
+                # Handle both plain-string and multimodal list content.
+                # Multimodal: [{"type":"text","text":"..."}, ...]
+                if isinstance(_content, str):
+                    _last["content"] = _content + (
                         "\n\nRespond with valid JSON matching this schema:\n"
                         + _schema
                     )
-                    _msgs = list(_msgs[:_last_user_idx]) + [_last] + (
-                        list(_msgs[_last_user_idx + 1:])
-                        if _last_user_idx + 1 < len(_msgs) else []
-                    )
+                    _msgs[_last_user_idx] = _last
+                    params["messages"] = _msgs
+                elif isinstance(_content, list):
+                    # Find last text part in multimodal content array
+                    for _part in reversed(_content):
+                        if isinstance(_part, dict) and _part.get("type") == "text":
+                            _part["text"] = _part.get("text", "") + (
+                                "\n\nRespond with valid JSON matching this schema:\n"
+                                + _schema
+                            )
+                            break
+                    _msgs[_last_user_idx] = _last
                     params["messages"] = _msgs
             params["response_format"] = {"type": "json_object"}
         elif response_format is not None:
@@ -413,15 +424,25 @@ class OpenAIBackend:
                 len(_msgs) - 1,
             )
             _last = dict(_msgs[_last_user_idx])
-            if isinstance(_last.get("content"), str):
-                _last["content"] += (
+            _content = _last.get("content")
+            # Handle both plain-string and multimodal list content.
+            if isinstance(_content, str):
+                _last["content"] = _content + (
                     "\n\nRespond with valid JSON matching this schema:\n"
                     + _schema
                 )
-                _msgs = list(_msgs[:_last_user_idx]) + [_last] + (
-                    list(_msgs[_last_user_idx + 1:])
-                    if _last_user_idx + 1 < len(_msgs) else []
-                )
+                _msgs[_last_user_idx] = _last
+                structured_params["messages"] = _msgs
+            elif isinstance(_content, list):
+                # Find last text part in multimodal content array
+                for _part in reversed(_content):
+                    if isinstance(_part, dict) and _part.get("type") == "text":
+                        _part["text"] = _part.get("text", "") + (
+                            "\n\nRespond with valid JSON matching this schema:\n"
+                            + _schema
+                        )
+                        break
+                _msgs[_last_user_idx] = _last
                 structured_params["messages"] = _msgs
         structured_params["response_format"] = {"type": "json_object"}
         return await self._client.chat.completions.create(**structured_params)
