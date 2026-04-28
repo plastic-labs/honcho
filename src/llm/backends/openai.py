@@ -256,40 +256,48 @@ class OpenAIBackend:
             if _msgs:
                 # Find the last user message (not just _msgs[-1] which could
                 # be assistant/tool role in multi-turn conversations).
-                _last_user_idx = next(
+                _last_user_idx: int | None = next(
                     (i for i in range(len(_msgs) - 1, -1, -1)
                      if _msgs[i].get("role") == "user"),
-                    len(_msgs) - 1,
+                    None,
                 )
-                _last = dict(_msgs[_last_user_idx])
-                _content = _last.get("content")
                 _schema_prompt = (
                     "\n\nRespond with valid JSON matching this schema:\n"
                     + _schema
                 )
-                # Handle both plain-string and multimodal list content.
-                if isinstance(_content, str):
-                    _last["content"] = _content + _schema_prompt
-                elif isinstance(_content, list):
-                    # Deep-copy content parts to prevent mutation leak
-                    _copied: list[dict[str, Any]] = [
-                        dict(p) if isinstance(p, dict) else p
-                        for p in _content
-                    ]
-                    _last["content"] = _copied
-                    # Find last text part; if none, append a new one.
-                    _injected = False
-                    for _part in reversed(_copied):
-                        if isinstance(_part, dict) and _part.get("type") == "text":
-                            _part["text"] = _part.get("text", "") + _schema_prompt
-                            _injected = True
-                            break
-                    if not _injected:
-                        _copied.append({
-                            "type": "text",
-                            "text": _schema_prompt.lstrip("\n"),
-                        })
-                _msgs[_last_user_idx] = _last
+                if _last_user_idx is not None:
+                    _last = dict(_msgs[_last_user_idx])
+                    _content = _last.get("content")
+                    # Handle both plain-string and multimodal list content.
+                    if isinstance(_content, str):
+                        _last["content"] = _content + _schema_prompt
+                    elif isinstance(_content, list):
+                        # Deep-copy content parts to prevent mutation leak
+                        _copied: list[dict[str, Any]] = [
+                            dict(p) if isinstance(p, dict) else p
+                            for p in _content
+                        ]
+                        _last["content"] = _copied
+                        # Find last text part; if none, append a new one.
+                        _injected = False
+                        for _part in reversed(_copied):
+                            if isinstance(_part, dict) and _part.get("type") == "text":
+                                _part["text"] = _part.get("text", "") + _schema_prompt
+                                _injected = True
+                                break
+                        if not _injected:
+                            _copied.append({
+                                "type": "text",
+                                "text": _schema_prompt.lstrip("\n"),
+                            })
+                    _msgs[_last_user_idx] = _last
+                else:
+                    # No user message in conversation (only system/assistant/tool).
+                    # Append a fresh user message with the schema instructions.
+                    _msgs.append({
+                        "role": "user",
+                        "content": _schema_prompt.lstrip("\n"),
+                    })
                 params["messages"] = _msgs
             params["response_format"] = {"type": "json_object"}
         elif response_format is not None:
@@ -431,40 +439,47 @@ class OpenAIBackend:
         if _msgs:
             # Find the last user message (not just _msgs[-1] which could
             # be assistant/tool role in multi-turn conversations).
-            _last_user_idx = next(
+            _last_user_idx: int | None = next(
                 (i for i in range(len(_msgs) - 1, -1, -1)
                  if _msgs[i].get("role") == "user"),
-                len(_msgs) - 1,
+                None,
             )
-            _last = dict(_msgs[_last_user_idx])
-            _content = _last.get("content")
             _schema_prompt = (
                 "\n\nRespond with valid JSON matching this schema:\n"
                 + _schema
             )
-            # Handle both plain-string and multimodal list content.
-            if isinstance(_content, str):
-                _last["content"] = _content + _schema_prompt
-            elif isinstance(_content, list):
-                # Deep-copy content parts to prevent mutation leak
-                _copied: list[dict[str, Any]] = [
-                    dict(p) if isinstance(p, dict) else p
-                    for p in _content
-                ]
-                _last["content"] = _copied
-                # Find last text part; if none, append a new one.
-                _injected = False
-                for _part in reversed(_copied):
-                    if isinstance(_part, dict) and _part.get("type") == "text":
-                        _part["text"] = _part.get("text", "") + _schema_prompt
-                        _injected = True
-                        break
-                if not _injected:
-                    _copied.append({
-                        "type": "text",
-                        "text": _schema_prompt.lstrip("\n"),
-                    })
-            _msgs[_last_user_idx] = _last
+            if _last_user_idx is not None:
+                _last = dict(_msgs[_last_user_idx])
+                _content = _last.get("content")
+                # Handle both plain-string and multimodal list content.
+                if isinstance(_content, str):
+                    _last["content"] = _content + _schema_prompt
+                elif isinstance(_content, list):
+                    # Deep-copy content parts to prevent mutation leak
+                    _copied: list[dict[str, Any]] = [
+                        dict(p) if isinstance(p, dict) else p
+                        for p in _content
+                    ]
+                    _last["content"] = _copied
+                    # Find last text part; if none, append a new one.
+                    _injected = False
+                    for _part in reversed(_copied):
+                        if isinstance(_part, dict) and _part.get("type") == "text":
+                            _part["text"] = _part.get("text", "") + _schema_prompt
+                            _injected = True
+                            break
+                    if not _injected:
+                        _copied.append({
+                            "type": "text",
+                            "text": _schema_prompt.lstrip("\n"),
+                        })
+                _msgs[_last_user_idx] = _last
+            else:
+                # No user message in conversation — append one.
+                _msgs.append({
+                    "role": "user",
+                    "content": _schema_prompt.lstrip("\n"),
+                })
             structured_params["messages"] = _msgs
         structured_params["response_format"] = {"type": "json_object"}
         return await self._client.chat.completions.create(**structured_params)
