@@ -249,7 +249,10 @@ class OpenAIBackend:
             import json as _json
 
             _schema = _json.dumps(response_format.model_json_schema(), indent=2)
-            _msgs = params.get("messages", [])
+            # Deep-copy messages to avoid mutating caller-owned state.
+            # Without this, schema text accumulates across retries as
+            # _part["text"] edits leak back into the original list.
+            _msgs = [dict(m) for m in params.get("messages", [])]
             if _msgs:
                 # Find the last user message (not just _msgs[-1] which could
                 # be assistant/tool role in multi-turn conversations).
@@ -260,26 +263,34 @@ class OpenAIBackend:
                 )
                 _last = dict(_msgs[_last_user_idx])
                 _content = _last.get("content")
+                _schema_prompt = (
+                    "\n\nRespond with valid JSON matching this schema:\n"
+                    + _schema
+                )
                 # Handle both plain-string and multimodal list content.
-                # Multimodal: [{"type":"text","text":"..."}, ...]
                 if isinstance(_content, str):
-                    _last["content"] = _content + (
-                        "\n\nRespond with valid JSON matching this schema:\n"
-                        + _schema
-                    )
-                    _msgs[_last_user_idx] = _last
-                    params["messages"] = _msgs
+                    _last["content"] = _content + _schema_prompt
                 elif isinstance(_content, list):
-                    # Find last text part in multimodal content array
-                    for _part in reversed(_content):
+                    # Deep-copy content parts to prevent mutation leak
+                    _copied: list[dict[str, Any]] = [
+                        dict(p) if isinstance(p, dict) else p
+                        for p in _content
+                    ]
+                    _last["content"] = _copied
+                    # Find last text part; if none, append a new one.
+                    _injected = False
+                    for _part in reversed(_copied):
                         if isinstance(_part, dict) and _part.get("type") == "text":
-                            _part["text"] = _part.get("text", "") + (
-                                "\n\nRespond with valid JSON matching this schema:\n"
-                                + _schema
-                            )
+                            _part["text"] = _part.get("text", "") + _schema_prompt
+                            _injected = True
                             break
-                    _msgs[_last_user_idx] = _last
-                    params["messages"] = _msgs
+                    if not _injected:
+                        _copied.append({
+                            "type": "text",
+                            "text": _schema_prompt.lstrip("\n"),
+                        })
+                _msgs[_last_user_idx] = _last
+                params["messages"] = _msgs
             params["response_format"] = {"type": "json_object"}
         elif response_format is not None:
             params["response_format"] = response_format
@@ -414,7 +425,9 @@ class OpenAIBackend:
         import json as _json
 
         _schema = _json.dumps(response_format.model_json_schema(), indent=2)
-        _msgs = structured_params.get("messages", [])
+        # Deep-copy messages to avoid mutating caller-owned state
+        # (see streaming path for details).
+        _msgs = [dict(m) for m in structured_params.get("messages", [])]
         if _msgs:
             # Find the last user message (not just _msgs[-1] which could
             # be assistant/tool role in multi-turn conversations).
@@ -425,25 +438,34 @@ class OpenAIBackend:
             )
             _last = dict(_msgs[_last_user_idx])
             _content = _last.get("content")
+            _schema_prompt = (
+                "\n\nRespond with valid JSON matching this schema:\n"
+                + _schema
+            )
             # Handle both plain-string and multimodal list content.
             if isinstance(_content, str):
-                _last["content"] = _content + (
-                    "\n\nRespond with valid JSON matching this schema:\n"
-                    + _schema
-                )
-                _msgs[_last_user_idx] = _last
-                structured_params["messages"] = _msgs
+                _last["content"] = _content + _schema_prompt
             elif isinstance(_content, list):
-                # Find last text part in multimodal content array
-                for _part in reversed(_content):
+                # Deep-copy content parts to prevent mutation leak
+                _copied: list[dict[str, Any]] = [
+                    dict(p) if isinstance(p, dict) else p
+                    for p in _content
+                ]
+                _last["content"] = _copied
+                # Find last text part; if none, append a new one.
+                _injected = False
+                for _part in reversed(_copied):
                     if isinstance(_part, dict) and _part.get("type") == "text":
-                        _part["text"] = _part.get("text", "") + (
-                            "\n\nRespond with valid JSON matching this schema:\n"
-                            + _schema
-                        )
+                        _part["text"] = _part.get("text", "") + _schema_prompt
+                        _injected = True
                         break
-                _msgs[_last_user_idx] = _last
-                structured_params["messages"] = _msgs
+                if not _injected:
+                    _copied.append({
+                        "type": "text",
+                        "text": _schema_prompt.lstrip("\n"),
+                    })
+            _msgs[_last_user_idx] = _last
+            structured_params["messages"] = _msgs
         structured_params["response_format"] = {"type": "json_object"}
         return await self._client.chat.completions.create(**structured_params)
 
