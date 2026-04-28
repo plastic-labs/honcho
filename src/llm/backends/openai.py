@@ -241,14 +241,35 @@ class OpenAIBackend:
         params["stream_options"] = {"include_usage": True}
         if isinstance(response_format, type):
             # parse() supports BaseModel types but streaming create() does not —
-            # convert to a json_schema dict so the streaming path works.
-            params["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_format.__name__,
-                    "schema": response_format.model_json_schema(),
-                },
-            }
+            # convert to a response_format dict so the streaming path works.
+            # Use json_object instead of json_schema: many OpenAI-compatible
+            # endpoints (vLLM, Ollama, ZAI) ignore json_schema and return empty
+            # content.  json_object is universally supported; schema is injected
+            # into the last user message so the model knows the expected shape.
+            import json as _json
+
+            _schema = _json.dumps(response_format.model_json_schema(), indent=2)
+            _msgs = params.get("messages", [])
+            if _msgs:
+                # Find the last user message (not just _msgs[-1] which could
+                # be assistant/tool role in multi-turn conversations).
+                _last_user_idx = next(
+                    (i for i in range(len(_msgs) - 1, -1, -1)
+                     if _msgs[i].get("role") == "user"),
+                    len(_msgs) - 1,
+                )
+                _last = dict(_msgs[_last_user_idx])
+                if isinstance(_last.get("content"), str):
+                    _last["content"] += (
+                        "\n\nRespond with valid JSON matching this schema:\n"
+                        + _schema
+                    )
+                    _msgs = list(_msgs[:_last_user_idx]) + [_last] + (
+                        list(_msgs[_last_user_idx + 1:])
+                        if _last_user_idx + 1 < len(_msgs) else []
+                    )
+                    params["messages"] = _msgs
+            params["response_format"] = {"type": "json_object"}
         elif response_format is not None:
             params["response_format"] = response_format
         elif extra_params and extra_params.get("json_mode"):
@@ -378,13 +399,31 @@ class OpenAIBackend:
         response_format: type[BaseModel],
     ) -> Any:
         structured_params = dict(params)
-        structured_params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": response_format.__name__,
-                "schema": response_format.model_json_schema(),
-            },
-        }
+        # Use json_object instead of json_schema (see streaming path for rationale).
+        import json as _json
+
+        _schema = _json.dumps(response_format.model_json_schema(), indent=2)
+        _msgs = structured_params.get("messages", [])
+        if _msgs:
+            # Find the last user message (not just _msgs[-1] which could
+            # be assistant/tool role in multi-turn conversations).
+            _last_user_idx = next(
+                (i for i in range(len(_msgs) - 1, -1, -1)
+                 if _msgs[i].get("role") == "user"),
+                len(_msgs) - 1,
+            )
+            _last = dict(_msgs[_last_user_idx])
+            if isinstance(_last.get("content"), str):
+                _last["content"] += (
+                    "\n\nRespond with valid JSON matching this schema:\n"
+                    + _schema
+                )
+                _msgs = list(_msgs[:_last_user_idx]) + [_last] + (
+                    list(_msgs[_last_user_idx + 1:])
+                    if _last_user_idx + 1 < len(_msgs) else []
+                )
+                structured_params["messages"] = _msgs
+        structured_params["response_format"] = {"type": "json_object"}
         return await self._client.chat.completions.create(**structured_params)
 
     @staticmethod

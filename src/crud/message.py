@@ -241,9 +241,7 @@ async def create_messages(
     ) or 0
 
     # Content-hash deduplication: prevent duplicate messages when gateways
-    # restart and re-send previously synced messages.  Uses MD5(content) as a
-    # lightweight fingerprint, checked against messages from the last hour in
-    # the same session/workspace.
+    # restart and re-send previously synced messages.
     if messages:
         _earliest = min(
             (m.created_at for m in messages if m.created_at),
@@ -255,18 +253,22 @@ async def create_messages(
 
         _existing_hashes: set[str] = set()
         _existing_rows = await db.execute(
-            select(models.Message.content).where(
+            select(models.Message.peer_name, models.Message.content).where(
                 models.Message.workspace_name == workspace_name,
                 models.Message.session_name == session_name,
                 models.Message.created_at >= _lookback,
             )
         )
         for _row in _existing_rows.scalars().all():
-            _existing_hashes.add(md5(_row.encode()).hexdigest())
+            # Composite key: peer_name + content prevents false positives
+            # when different peers say the same thing (e.g. "ok", "thanks")
+            _composite = f"{_row[0]}|{_row[1]}" if isinstance(_row, tuple) else str(_row)
+            _existing_hashes.add(md5(_composite.encode()).hexdigest())
 
         _filtered = []
         for _msg in messages:
-            _h = md5(_msg.content.encode()).hexdigest()
+            _composite = f"{_msg.peer_name}|{_msg.content}"
+            _h = md5(_composite.encode()).hexdigest()
             if _h in _existing_hashes:
                 logger.info(
                     "Skipping duplicate message in %s/%s (hash=%s…)",
@@ -277,16 +279,15 @@ async def create_messages(
 
         if len(_filtered) < len(messages):
             logger.info(
-                "Dedup filtered %d duplicates from %d incoming messages "
-                "for %s/%s",
-                len(messages) - len(_filtered),
-                len(messages),
-                workspace_name,
-                session_name,
+                "Dedup filtered %d duplicates from %d incoming messages for %s/%s",
+                len(messages) - len(_filtered), len(messages),
+                workspace_name, session_name,
             )
         messages = _filtered
 
     if not messages:
+        # Release advisory lock before early return (lock taken by caller)
+        await db.commit()
         return []
 
     # Create list of message objects (this will trigger the before_insert event)
