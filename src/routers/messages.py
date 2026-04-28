@@ -100,14 +100,17 @@ async def create_messages_for_session(
             session_name=session_id,
         )
 
-        # Prometheus metrics
+        # Prometheus metrics — count only actually created messages (skip deduped)
+        _created_count = sum(1 for m in created_messages if m is not None)
         if settings.METRICS.ENABLED:
             prometheus_metrics.record_messages_created(
-                count=len(created_messages),
+                count=_created_count,
                 workspace_name=workspace_id,
             )
 
-        # Enqueue for processing (existing logic)
+        # Enqueue for processing — skip deduped (None) entries.
+        # create_messages preserves input cardinality via None placeholders
+        # so zip(..., strict=True) works; we simply filter Nones here.
         payloads = [
             {
                 "workspace_name": workspace_id,
@@ -123,12 +126,14 @@ async def create_messages_for_session(
             for message, original in zip(
                 created_messages, messages.messages, strict=True
             )
+            if message is not None  # skip deduped entries
         ]
 
         # Enqueue all messages in one call
         background_tasks.add_task(enqueue, payloads)
 
-        return created_messages
+        # Filter out None placeholders for the API response
+        return [m for m in created_messages if m is not None]
     except ValueError as e:
         logger.warning(f"Failed to create messages for session {session_id}: {str(e)}")
         raise
@@ -170,7 +175,11 @@ async def create_messages_with_file(
     )
 
     # Update internal_metadata for file-related messages
+    # (skip None entries from dedup — file uploads generate unique
+    #  chunked content so this guard is purely defensive)
     for i, message in enumerate(created_messages):
+        if message is None:
+            continue
         file_metadata = all_message_data[i]["file_metadata"]
         message.internal_metadata.update(file_metadata)
         flag_modified(message, "internal_metadata")
