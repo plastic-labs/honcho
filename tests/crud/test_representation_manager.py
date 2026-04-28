@@ -113,6 +113,52 @@ class TestRepresentationManagerSoftDelete:
         assert doc_live.id in result_ids
         assert doc_deleted.id not in result_ids
 
+    @pytest.mark.asyncio
+    async def test_query_documents_most_derived_excludes_soft_deleted(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Soft-deleted documents must not appear in the most-derived query."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _, manager = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        # Create two documents with different times_derived
+        doc_live = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Live observation",
+            session_name=test_session.name,
+            times_derived=5,
+        )
+        doc_deleted = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Deleted high-derived observation",
+            session_name=test_session.name,
+            times_derived=100,
+        )
+        db_session.add_all([doc_live, doc_deleted])
+        await db_session.flush()
+
+        # Soft-delete the high-derived one
+        await db_session.execute(
+            update(models.Document)
+            .where(models.Document.id == doc_deleted.id)
+            .values(deleted_at=func.now())
+        )
+        await db_session.commit()
+
+        results = await manager._query_documents_most_derived(db_session, top_k=10)  # pyright: ignore[reportPrivateUsage]
+
+        result_ids = [doc.id for doc in results]
+        assert doc_live.id in result_ids
+        assert doc_deleted.id not in result_ids
+
 
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio
@@ -273,49 +319,3 @@ class TestRepresentationManagerSave:
         assert saved == 0
         mock_embed.assert_not_awaited()
         mock_save.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_query_documents_most_derived_excludes_soft_deleted(
-        self,
-        db_session: AsyncSession,
-        sample_data: tuple[models.Workspace, models.Peer],
-    ):
-        """Soft-deleted documents must not appear in the most-derived query."""
-        test_workspace, test_peer = sample_data
-        test_peer2, test_session, _, manager = await self._setup(
-            db_session, test_workspace, test_peer
-        )
-
-        # Create two documents with different times_derived
-        doc_live = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="Live observation",
-            session_name=test_session.name,
-            times_derived=5,
-        )
-        doc_deleted = models.Document(
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            content="Deleted high-derived observation",
-            session_name=test_session.name,
-            times_derived=100,
-        )
-        db_session.add_all([doc_live, doc_deleted])
-        await db_session.flush()
-
-        # Soft-delete the high-derived one
-        await db_session.execute(
-            update(models.Document)
-            .where(models.Document.id == doc_deleted.id)
-            .values(deleted_at=func.now())
-        )
-        await db_session.commit()
-
-        results = await manager._query_documents_most_derived(db_session, top_k=10)  # pyright: ignore[reportPrivateUsage]
-
-        result_ids = [doc.id for doc in results]
-        assert doc_live.id in result_ids
-        assert doc_deleted.id not in result_ids
