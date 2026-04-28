@@ -5,7 +5,6 @@ import { register as registerPeerTools } from "./tools/peers.js";
 import { register as registerSessionTools } from "./tools/sessions.js";
 import { register as registerConclusionTools } from "./tools/conclusions.js";
 import { register as registerSystemTools } from "./tools/system.js";
-import { register as registerAwsStatusTools } from "./tools/aws-status.js";
 
 export function createServer(ctx: ToolContext): McpServer {
   const server = new McpServer({
@@ -18,7 +17,6 @@ export function createServer(ctx: ToolContext): McpServer {
   registerSessionTools(server, ctx);
   registerConclusionTools(server, ctx);
   registerSystemTools(server, ctx);
-  registerAwsStatusTools(server, ctx);
 
   return server;
 }
