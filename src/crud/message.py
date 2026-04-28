@@ -259,10 +259,11 @@ async def create_messages(
                 models.Message.created_at >= _lookback,
             )
         )
-        for _row in _existing_rows.scalars().all():
-            # Composite key: peer_name + content prevents false positives
-            # when different peers say the same thing (e.g. "ok", "thanks")
-            _composite = f"{_row[0]}|{_row[1]}" if isinstance(_row, tuple) else str(_row)
+        # Use .all() NOT .scalars() — scalars() only returns the first
+        # selected column, which would silently drop `content` from our
+        # composite key and make every hash compare against peer_name only.
+        for _peer, _content in _existing_rows.all() or []:
+            _composite = f"{_peer}|{_content}"
             _existing_hashes.add(md5(_composite.encode()).hexdigest())
 
         _filtered = []
@@ -285,10 +286,12 @@ async def create_messages(
             )
         messages = _filtered
 
-    if not messages:
-        # Release advisory lock before early return (lock taken by caller)
-        await db.commit()
-        return []
+    # NOTE: We intentionally do NOT short-return here even if messages is
+    # empty after dedup filtering.  Callers (e.g. messages.py) use
+    # zip(created_messages, incoming, strict=True) which requires matching
+    # cardinality.  Falling through with an empty list produces zero
+    # message_objects, add_all([]) is a no-op, and the existing commit at
+    # the end of this function releases any advisory lock taken by callers.
 
     # Create list of message objects (this will trigger the before_insert event)
     message_objects: list[models.Message] = []
