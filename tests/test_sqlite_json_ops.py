@@ -11,7 +11,7 @@ Tests:
 
 from collections.abc import AsyncGenerator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -54,6 +54,9 @@ async def sqlite_engine():
     async with engine.begin() as conn:
         # SQLite doesn't need schema prefixes
         original_schema = Base.metadata.schema
+        original_table_schemas = {
+            name: t.schema for name, t in Base.metadata.tables.items()
+        }
         Base.metadata.schema = None
         for table in Base.metadata.tables.values():
             table.schema = None
@@ -67,6 +70,8 @@ async def sqlite_engine():
         await engine.dispose()
         # Restore original schema + URI
         Base.metadata.schema = original_schema
+        for name, table in Base.metadata.tables.items():
+            table.schema = original_table_schemas[name]
         settings.DB.CONNECTION_URI = original_uri
 
 

@@ -251,44 +251,47 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
-    _session_lock = await _acquire_session_lock(db, workspace_name, session_name)
-
-    # Get the last sequence number on a session - uses (workspace_name, session_name, seq_in_session) index
-    last_seq = (
-        await db.scalar(
-            select(models.Message.seq_in_session)
-            .where(
-                models.Message.workspace_name == workspace_name,
-                models.Message.session_name == session_name,
-            )
-            .order_by(models.Message.seq_in_session.desc())
-            .limit(1)
-        )
-        or 0
-    )
-
-    # Create list of message objects (this will trigger the before_insert event)
-    message_objects: list[models.Message] = []
-    for offset, message in enumerate(messages, start=1):
-        message_seq_in_session = last_seq + offset
-        message_obj = models.Message(
-            session_name=session_name,
-            peer_name=message.peer_name,
-            content=message.content,
-            h_metadata=message.metadata or {},
-            workspace_name=workspace_name,
-            public_id=generate_nanoid(),
-            token_count=len(message.encoded_message),
-            created_at=message.created_at,  # Use provided created_at if available
-            seq_in_session=message_seq_in_session,
-        )
-        message_objects.append(message_obj)
-
-    db.add_all(message_objects)
-
     # Commit here to release the advisory lock before generating embeddings.
-    # For SQLite, also release the asyncio.Lock acquired above.
+    # For SQLite, also release the asyncio.Lock acquired below.
+    # The try/finally starts before the acquire so the lock is always released
+    # even if an intermediate DB query or object construction raises.
+    _session_lock = None
     try:
+        _session_lock = await _acquire_session_lock(db, workspace_name, session_name)
+
+        # Get the last sequence number on a session - uses (workspace_name, session_name, seq_in_session) index
+        last_seq = (
+            await db.scalar(
+                select(models.Message.seq_in_session)
+                .where(
+                    models.Message.workspace_name == workspace_name,
+                    models.Message.session_name == session_name,
+                )
+                .order_by(models.Message.seq_in_session.desc())
+                .limit(1)
+            )
+            or 0
+        )
+
+        # Create list of message objects (this will trigger the before_insert event)
+        message_objects: list[models.Message] = []
+        for offset, message in enumerate(messages, start=1):
+            message_seq_in_session = last_seq + offset
+            message_obj = models.Message(
+                session_name=session_name,
+                peer_name=message.peer_name,
+                content=message.content,
+                h_metadata=message.metadata or {},
+                workspace_name=workspace_name,
+                public_id=generate_nanoid(),
+                token_count=len(message.encoded_message),
+                created_at=message.created_at,  # Use provided created_at if available
+                seq_in_session=message_seq_in_session,
+            )
+            message_objects.append(message_obj)
+
+        db.add_all(message_objects)
+
         await db.commit()
     finally:
         if _session_lock is not None:

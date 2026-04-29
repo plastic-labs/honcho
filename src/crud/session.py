@@ -11,7 +11,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
-from sqlalchemy.types import BigInteger, Boolean
+from sqlalchemy.types import BigInteger
 
 from src import models, schemas
 from src.cache.client import (
