@@ -6,12 +6,12 @@ from typing import cast as typing_cast
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from src.db_types import upsert_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
-from sqlalchemy.types import BigInteger, Boolean
+from sqlalchemy.types import BigInteger
 
 from src import models, schemas
 from src.cache.client import (
@@ -987,9 +987,7 @@ async def _get_or_add_peers_to_session(
             models.SessionPeer.peer_name.notin_(
                 peer_names.keys()
             ),  # Exclude peers being updated
-            models.SessionPeer.configuration["observe_others"].astext.cast(
-                Boolean
-            ),  # Only observers
+            models.SessionPeer.configuration["observe_others"].as_boolean(),  # Only observers
         )
         result = await db.execute(existing_observers_stmt)
         existing_observer_count = result.scalar() or 0
@@ -1000,7 +998,7 @@ async def _get_or_add_peers_to_session(
             raise ObserverException(session_name, total_observers)
 
     # Use upsert to handle both new peers and rejoining peers
-    stmt = pg_insert(models.SessionPeer).values(
+    stmt = upsert_insert(models.SessionPeer).values(
         [
             {
                 "session_name": session_name,
@@ -1135,9 +1133,7 @@ async def set_peer_config(
                 models.SessionPeer.left_at.is_(None),  # Only active peers
                 models.SessionPeer.peer_name
                 != peer_name,  # Exclude the peer being updated
-                models.SessionPeer.configuration["observe_others"].astext.cast(
-                    Boolean
-                ),  # Only observers
+                models.SessionPeer.configuration["observe_others"].as_boolean(),  # Only observers
             )
             result = await db.execute(existing_observers_stmt)
             observer_count = result.scalar() or 0

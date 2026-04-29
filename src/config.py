@@ -615,6 +615,14 @@ class DBSettings(HonchoSettings):
     SQL_DEBUG: bool = False
     TRACING: bool = False
 
+    @model_validator(mode="after")
+    def _sqlite_defaults(self) -> "DBSettings":
+        """Auto-configure pool and schema when using SQLite."""
+        if self.CONNECTION_URI.startswith("sqlite"):
+            object.__setattr__(self, "POOL_CLASS", "null")
+            object.__setattr__(self, "SCHEMA", "")
+        return self
+
 
 class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore
@@ -1283,3 +1291,8 @@ class AppSettings(HonchoSettings):
 
 # Create a single global instance of the settings
 settings: AppSettings = AppSettings()
+
+
+def is_sqlite() -> bool:
+    """Return True when the configured database is SQLite."""
+    return settings.DB.CONNECTION_URI.startswith("sqlite")
