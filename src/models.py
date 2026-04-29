@@ -24,7 +24,7 @@ from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing_extensions import override
 
-from src.db_types import JSONBCompat, VectorType, pg_check, pg_only_index
+from src.db_types import JSONBCompat, VectorType, empty_json_default, pg_check, pg_only_index
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
 from .db import Base
@@ -57,14 +57,14 @@ session_peers_table = Table(
         JSONBCompat,
         default=dict,
         nullable=False,
-        server_default=text("'{}'"),
+        server_default=empty_json_default(),
     ),
     Column(
         "internal_metadata",
         JSONBCompat,
         default=dict,
         nullable=False,
-        server_default=text("'{}'"),
+        server_default=empty_json_default(),
     ),
     Column(
         "joined_at",
@@ -99,13 +99,13 @@ class Workspace(Base):
         DateTime(timezone=True), server_default=func.now(), index=True
     )
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "internal_metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(
-        JSONBCompat, default=dict, server_default=text("'{}'")
+        JSONBCompat, default=dict, server_default=empty_json_default()
     )
 
     sessions = relationship(
@@ -129,10 +129,10 @@ class Peer(Base):
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, nullable=False)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "internal_metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
@@ -141,7 +141,7 @@ class Peer(Base):
         ForeignKey("workspaces.name"), nullable=False, index=True
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(
-        JSONBCompat, default=dict, server_default=text("'{}'")
+        JSONBCompat, default=dict, server_default=empty_json_default()
     )
 
     workspace = relationship("Workspace", back_populates="peers")
@@ -167,10 +167,10 @@ class Session(Base):
     name: Mapped[str] = mapped_column(TEXT)
     is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "internal_metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
@@ -179,7 +179,7 @@ class Session(Base):
         ForeignKey("workspaces.name"), nullable=False, index=True
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(
-        JSONBCompat, default=dict, server_default=text("'{}'")
+        JSONBCompat, default=dict, server_default=empty_json_default()
     )
 
     workspace = relationship("Workspace", back_populates="sessions")
@@ -215,10 +215,10 @@ class Message(Base):
     session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "internal_metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     seq_in_session: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -341,10 +341,10 @@ class Collection(Base):
         DateTime(timezone=True), server_default=func.now(), index=True
     )
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "internal_metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     documents = relationship(
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
@@ -379,7 +379,7 @@ class Document(Base):
     __tablename__: str = "documents"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "internal_metadata", JSONBCompat, default=dict, server_default=text("'{}'")
+        "internal_metadata", JSONBCompat, default=dict, server_default=empty_json_default()
     )
     content: Mapped[str] = mapped_column(TEXT)
     level: Mapped[DocumentLevel] = mapped_column(

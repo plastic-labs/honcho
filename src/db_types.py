@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import JSON, CheckConstraint, Index, Text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.expression import FunctionElement
 from sqlalchemy.types import TypeDecorator, TypeEngine
 
 if TYPE_CHECKING:
@@ -130,6 +132,32 @@ def pg_only_index(name: str, *args: Any, **kwargs: Any) -> Index | None:
     if is_sqlite():
         return None
     return Index(name, *args, **kwargs)
+
+
+class _EmptyJsonObject(FunctionElement):  # type: ignore[type-arg]
+    """Dialect-aware server default for JSONBCompat columns."""
+
+    inherit_cache = True
+
+
+@compiles(_EmptyJsonObject)  # type: ignore[misc]
+def _emit_empty_json(element: Any, compiler: Any, **kw: Any) -> str:
+    return "'{}'"
+
+
+@compiles(_EmptyJsonObject, "postgresql")  # type: ignore[misc]
+def _emit_empty_jsonb(element: Any, compiler: Any, **kw: Any) -> str:
+    return "'{}'::jsonb"
+
+
+def empty_json_default() -> _EmptyJsonObject:
+    """Return ``'{}'::jsonb`` on PostgreSQL and ``'{}'`` on SQLite.
+
+    Use as ``server_default=empty_json_default()`` on JSONBCompat columns so
+    that Alembic autogenerate sees the same string as existing migrations on
+    PostgreSQL while SQLite CREATE TABLE gets valid syntax.
+    """
+    return _EmptyJsonObject()
 
 
 def upsert_insert(model: Any) -> Any:
