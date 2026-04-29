@@ -54,13 +54,12 @@ async def sqlite_engine():
     }
 
     settings.DB.CONNECTION_URI = SQLITE_URL
-    Base.metadata.schema = None
-    for table in Base.metadata.tables.values():
-        table.schema = None
-
     engine = create_async_engine(SQLITE_URL, echo=False)
     try:
         async with engine.begin() as conn:
+            Base.metadata.schema = None
+            for table in Base.metadata.tables.values():
+                table.schema = None
             await conn.run_sync(Base.metadata.create_all)
         yield engine
     finally:
