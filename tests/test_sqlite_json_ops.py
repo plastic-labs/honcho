@@ -53,9 +53,9 @@ async def sqlite_engine():
         name: t.schema for name, t in Base.metadata.tables.items()
     }
 
-    settings.DB.CONNECTION_URI = SQLITE_URL
     engine = create_async_engine(SQLITE_URL, echo=False)
     try:
+        settings.DB.CONNECTION_URI = SQLITE_URL
         async with engine.begin() as conn:
             Base.metadata.schema = None
             for table in Base.metadata.tables.values():
