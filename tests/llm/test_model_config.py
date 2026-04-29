@@ -300,6 +300,9 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
     minimal_level = DialecticLevelSettings.model_validate(
         config_data["dialectic"]["levels"]["minimal"]
     )
+    low_level = DialecticLevelSettings.model_validate(
+        config_data["dialectic"]["levels"]["low"]
+    )
     max_level = DialecticLevelSettings.model_validate(
         config_data["dialectic"]["levels"]["max"]
     )
@@ -331,6 +334,8 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
     assert deriver_config.thinking_budget_tokens is None
     assert minimal_level.MODEL_CONFIG.model == "gpt-5.4-mini"
     assert minimal_level.MODEL_CONFIG.transport == "openai"
+    assert minimal_level.TOOL_CHOICE == "auto"
+    assert low_level.TOOL_CHOICE == "auto"
     assert max_level.MODEL_CONFIG.model == "gpt-5.4-mini"
     assert max_level.MODEL_CONFIG.transport == "openai"
     assert max_level.MODEL_CONFIG.thinking_budget_tokens is None
@@ -350,6 +355,8 @@ def test_env_template_uses_nested_model_config_keys() -> None:
     assert "EMBEDDING_VECTOR_DIMENSIONS" in env_template
     assert "DERIVER_MODEL_CONFIG__MODEL" in env_template
     assert "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL" in env_template
+    assert "DIALECTIC_LEVELS__minimal__TOOL_CHOICE=auto" in env_template
+    assert "DIALECTIC_LEVELS__low__TOOL_CHOICE=auto" in env_template
     assert "SUMMARY_MODEL_CONFIG__MODEL" in env_template
     assert "DREAM_DEDUCTION_MODEL_CONFIG__MODEL" in env_template
 
