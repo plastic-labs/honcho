@@ -26,6 +26,21 @@ from src.utils.representation import (
 logger = logging.getLogger(__name__)
 
 
+def _observation_text(obs: ExplicitObservation | DeductiveObservation) -> str:
+    """Return the canonical text payload for an explicit or deductive observation."""
+    return obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
+
+
+def _normalized_observation(
+    obs: ExplicitObservation | DeductiveObservation,
+) -> ExplicitObservation | DeductiveObservation:
+    """Return an observation with its persisted/embed text normalized."""
+    text = _observation_text(obs).strip()
+    if isinstance(obs, DeductiveObservation):
+        return obs.model_copy(update={"conclusion": text})
+    return obs.model_copy(update={"content": text})
+
+
 class RepresentationManager:
     """Unified manager for representation and document queries."""
 
@@ -67,15 +82,19 @@ class RepresentationManager:
             logger.debug("No observations to save")
             return new_documents
 
-        all_observations = representation.deductive + representation.explicit
+        all_observations = [
+            _normalized_observation(obs)
+            for obs in representation.deductive + representation.explicit
+            if _observation_text(obs).strip()
+        ]
+        if not all_observations:
+            logger.debug("No non-empty observations to save")
+            return new_documents
 
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
 
-        observation_texts = [
-            obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
-            for obs in all_observations
-        ]
+        observation_texts = [_observation_text(obs) for obs in all_observations]
         try:
             embeddings = await embedding_client.simple_batch_embed(observation_texts)
         except ValueError as e:

@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -376,6 +377,96 @@ class TestCreateObservations:
         assert "Embedding failed" in result.failed[0].error
         assert len(created_documents) == 1
         assert created_documents[0].content == "Embeds fine"
+
+    async def test_create_observations_filters_blank_content_before_embedding(
+        self,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Blank or whitespace-only observations are dropped before embedding/persistence."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        created_documents: list[Any] = []
+
+        async def fake_batch_embed(texts: list[str]) -> list[list[float]]:
+            assert texts == ["trimmed observation"]
+            return [[0.4, 0.5, 0.6]]
+
+        async def fake_create_documents(
+            _db: AsyncSession,
+            documents: list[Any],
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            deduplicate: bool = False,
+        ) -> list[Any]:
+            _ = (workspace_name, observer, observed, deduplicate)
+            created_documents.extend(documents)
+            return documents
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            fake_batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+        )
+
+        result = await create_observations(
+            observations=[
+                schemas.ObservationInput(content="   ", level="explicit"),
+                schemas.ObservationInput(content=" trimmed observation ", level="explicit"),
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert isinstance(result, ObservationsCreatedResult)
+        assert result.created_count == 1
+        assert len(result.failed) == 0
+        assert len(created_documents) == 1
+        assert created_documents[0].content == "trimmed observation"
+
+    async def test_create_observations_skips_all_blank_content(
+        self,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """All-blank observations short-circuit without embedding or persistence."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        batch_embed = AsyncMock()
+        create_documents = AsyncMock()
+
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", create_documents
+        )
+
+        result = await create_observations(
+            observations=[
+                schemas.ObservationInput(content=" ", level="explicit"),
+                schemas.ObservationInput(content="\n\t", level="explicit"),
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert isinstance(result, ObservationsCreatedResult)
+        assert result.created_count == 0
+        assert len(result.failed) == 0
+        batch_embed.assert_not_awaited()
+        create_documents.assert_not_awaited()
 
 
 @pytest.mark.asyncio
