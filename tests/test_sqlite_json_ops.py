@@ -46,29 +46,27 @@ SQLITE_URL = "sqlite+aiosqlite:///:memory:"
 @pytest_asyncio.fixture(scope="module")
 async def sqlite_engine():
     """Create an async SQLite engine with all tables."""
-    # Tell is_sqlite() to return True so the app takes SQLite code paths
+    # Save originals before any mutations so teardown always restores cleanly.
     original_uri = settings.DB.CONNECTION_URI
+    original_schema = Base.metadata.schema
+    original_table_schemas = {
+        name: t.schema for name, t in Base.metadata.tables.items()
+    }
+
     settings.DB.CONNECTION_URI = SQLITE_URL
+    Base.metadata.schema = None
+    for table in Base.metadata.tables.values():
+        table.schema = None
 
     engine = create_async_engine(SQLITE_URL, echo=False)
-    async with engine.begin() as conn:
-        # SQLite doesn't need schema prefixes
-        original_schema = Base.metadata.schema
-        original_table_schemas = {
-            name: t.schema for name, t in Base.metadata.tables.items()
-        }
-        Base.metadata.schema = None
-        for table in Base.metadata.tables.values():
-            table.schema = None
-        await conn.run_sync(Base.metadata.create_all)
-
     try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
         yield engine
     finally:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
         await engine.dispose()
-        # Restore original schema + URI
         Base.metadata.schema = original_schema
         for name, table in Base.metadata.tables.items():
             table.schema = original_table_schemas[name]
@@ -98,12 +96,12 @@ async def sqlite_session(sqlite_engine: AsyncEngine) -> AsyncGenerator[AsyncSess
 async def sqlite_cache():
     original_enabled = settings.CACHE.ENABLED
     original_url = settings.CACHE.URL
+    original_disable = ControlMixin._disable  # pyright: ignore[reportPrivateUsage]
+
     fake_redis = FakeAsyncRedis(decode_responses=True)
 
     def fake_from_url(*_a: Any, **_kw: Any):
         return fake_redis
-
-    original_disable = ControlMixin._disable  # pyright: ignore[reportPrivateUsage]
 
     @property  # type: ignore
     def patched_disable(self):  # pyright: ignore
@@ -114,13 +112,11 @@ async def sqlite_cache():
 
     redis_patch = patch("redis.asyncio.from_url", fake_from_url)
     redis_patch.start()
-    ControlMixin._disable = patched_disable  # pyright: ignore
-
-    settings.CACHE.ENABLED = True
-    settings.CACHE.URL = "redis://fake:6379/0"
-    cache.setup("redis://fake:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True)
-
     try:
+        ControlMixin._disable = patched_disable  # pyright: ignore
+        settings.CACHE.ENABLED = True
+        settings.CACHE.URL = "redis://fake:6379/0"
+        cache.setup("redis://fake:6379/0", pickle_type=PicklerType.SQLALCHEMY, enable=True)
         yield fake_redis
     finally:
         redis_patch.stop()
@@ -138,6 +134,8 @@ def sqlite_client(
     sqlite_session: AsyncSession,
     sqlite_cache: FakeAsyncRedis,  # noqa: ARG001
 ) -> TestClient:
+    previous_handler = app.exception_handlers.get(HonchoException)
+
     @app.exception_handler(HonchoException)
     async def _handler(_: Request, exc: HonchoException) -> JSONResponse:  # pyright: ignore
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
@@ -149,6 +147,10 @@ def sqlite_client(
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.pop(get_db, None)
+    if previous_handler is None:
+        app.exception_handlers.pop(HonchoException, None)
+    else:
+        app.exception_handlers[HonchoException] = previous_handler
 
 
 # ---------------------------------------------------------------------------
