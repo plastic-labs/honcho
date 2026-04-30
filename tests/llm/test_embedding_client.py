@@ -12,12 +12,11 @@ class FakeOpenAIEmbeddingsAPI:
         self.embedding: list[float] = embedding
         self.calls: list[dict[str, Any]] = []
 
-    async def create(self, *, model: str, input: str | list[str]) -> SimpleNamespace:
-        self.calls.append({"model": model, "input": input})
-        if isinstance(input, list):
-            data = [SimpleNamespace(embedding=self.embedding) for _ in input]
-        else:
-            data = [SimpleNamespace(embedding=self.embedding)]
+    async def create(self, **kwargs: Any) -> SimpleNamespace:
+        self.calls.append(dict(kwargs))
+        input_value: str | list[str] = kwargs["input"]
+        count = len(input_value) if isinstance(input_value, list) else 1
+        data = [SimpleNamespace(embedding=self.embedding) for _ in range(count)]
         return SimpleNamespace(data=data)
 
 
@@ -51,7 +50,42 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
 
     assert embedding == [0.1] * 8
     assert fake_embeddings.calls == [
-        {"model": "text-embedding-3-small", "input": ["hello world"]}
+        {
+            "model": "text-embedding-3-small",
+            "input": ["hello world"],
+            "dimensions": 8,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_omits_dimensions_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 1536)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-ada-002",
+            api_key="test-key",
+        ),
+        vector_dimensions=1536,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    await client.embed("hello world")
+
+    assert fake_embeddings.calls == [
+        {"model": "text-embedding-ada-002", "input": ["hello world"]}
     ]
 
 

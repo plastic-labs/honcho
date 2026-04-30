@@ -208,6 +208,7 @@ Embeddings use their own nested model config, separate from the main text-genera
 EMBEDDING_VECTOR_DIMENSIONS=1536
 EMBEDDING_MAX_INPUT_TOKENS=8192
 EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
+EMBEDDING_SEND_DIMENSIONS=true  # Forward `dimensions` on OpenAI requests
 
 # Embedding transport/model selection
 EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
@@ -218,8 +219,9 @@ EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 ```
 
-Current constraint:
+Current constraints:
 - `EMBEDDING_VECTOR_DIMENSIONS` can be changed for fully migrated external vector stores, but pgvector and dual-write mode still require `1536` until the schema migration lands.
+- `EMBEDDING_SEND_DIMENSIONS` controls whether the OpenAI transport forwards the `dimensions` parameter on `embeddings.create` (default `true`). Enables Matryoshka (MRL) truncation for MRL-capable models served via OpenAI or OpenAI-compatible backends. Set to `false` for providers that reject the field, notably `text-embedding-ada-002`.
 
 ### Feature-Specific Model Configuration
 
