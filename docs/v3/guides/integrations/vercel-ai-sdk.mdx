@@ -20,11 +20,7 @@ We'll wire Honcho into a Vercel AI SDK app so the model automatically receives c
 - **Honcho** stores messages and retrieves user context before each generation
 - **Your model provider** can be Anthropic, OpenAI, Google, etc.
 
-The key benefit: you don't manually manage conversation history across sessions. Honcho handles persistence and context injection — the model always has a rich picture of who it's talking to.
-
-<Note>
-Before proceeding, it helps to understand Honcho's core concepts (`Peers` and `Sessions`). Review the [Honcho Architecture](/v3/documentation/core-concepts/architecture) to familiarize yourself with these primitives.
-</Note>
+The key benefit: you don't manually manage conversation history across sessions. Honcho handles persistence and context injection — the model always has a rich picture of who it's talking to. (New to Honcho's primitives? See [peers and sessions](/v3/documentation/core-concepts/architecture).)
 
 ## Setup
 
@@ -48,16 +44,12 @@ bun add @honcho-ai/vercel-ai-sdk
 ```
 </CodeGroup>
 
-Set your API key and workspace ID:
+Get your API key at [app.honcho.dev](https://app.honcho.dev).
 
 ```bash
 HONCHO_API_KEY=your-api-key
 HONCHO_WORKSPACE_ID=your-workspace-id
 ```
-
-<Note>
-Get your API key and workspace ID at [app.honcho.dev](https://app.honcho.dev). For local development, pass `environment: "local"` to `createHoncho()`.
-</Note>
 
 ## Create a Provider Instance
 
@@ -107,10 +99,6 @@ const { text } = await generateText({
 
 Pass `userId` and `sessionId` per request — no session handles to construct. Both default to lazily generated IDs if omitted, which is fine for local scripts but not for multi-user server traffic.
 
-<Note>
-The first turn returns empty context — there's nothing stored yet. Every turn after that, the model receives the user's representation, derived conclusions, and session history automatically.
-</Note>
-
 ## Add Tools
 
 `honcho.tools()` gives the model six tools it can call mid-generation to query or update what it knows about the user:
@@ -127,13 +115,15 @@ The first turn returns empty context — there's nothing stored yet. Every turn 
 Pass the same `userId` and `sessionId` to `honcho.tools()` so tool calls bind to the same peers as the middleware:
 
 ```typescript
+import { generateText, stepCountIs } from 'ai';
+
 const { text } = await generateText({
   model,
   tools: honcho.tools({
     userId: 'user-abc',
     sessionId: 'session-123',
   }),
-  maxSteps: 3,
+  stopWhen: stepCountIs(3),
   prompt: 'Based on our conversations, what do I care about most?',
 });
 ```
@@ -144,7 +134,7 @@ Here's a full working example combining middleware and tools:
 
 ```typescript
 import { createHoncho } from '@honcho-ai/vercel-ai-sdk';
-import { wrapLanguageModel, generateText } from 'ai';
+import { wrapLanguageModel, generateText, stepCountIs } from 'ai';
 import { anthropic } from '@ai-sdk/anthropic';
 
 const honcho = createHoncho({
@@ -162,7 +152,7 @@ const model = wrapLanguageModel({
 const { text } = await generateText({
   model,
   tools: honcho.tools({ userId, sessionId }),
-  maxSteps: 3,
+  stopWhen: stepCountIs(3),
   prompt: 'What should we work on today?',
 });
 
@@ -211,7 +201,7 @@ honcho.middleware({
 })
 ```
 
-Honcho still injects the user's representation and peer card into the system prompt, and still persists messages after generation.
+Honcho still injects the user's representation and peer card into the system prompt, and still persists messages after generation. With `injectHistory: false` you must pass a `messages` array — without either `messages` or `prompt`, the Vercel AI SDK throws `Invalid prompt: prompt or messages must be defined`.
 
 ## Verifying the Integration
 
@@ -275,7 +265,7 @@ If the model calls the tool and returns a synthesized answer, the full tool pipe
 
 import 'dotenv/config';
 import { createHoncho } from '@honcho-ai/vercel-ai-sdk';
-import { wrapLanguageModel, generateText } from 'ai';
+import { wrapLanguageModel, generateText, stepCountIs } from 'ai';
 import { anthropic } from '@ai-sdk/anthropic';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
@@ -296,7 +286,7 @@ async function chat(prompt: string): Promise<string> {
   const { text } = await generateText({
     model,
     tools: honcho.tools({ userId, sessionId }),
-    maxSteps: 3,
+    stopWhen: stepCountIs(3),
     prompt,
   });
   return text;
@@ -327,7 +317,7 @@ main().catch((err) => {
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Package Source" icon="github" href="https://github.com/plastic-labs/vercel-ai-sdk-package">
+  <Card title="Github Repository" icon="github" href="https://github.com/plastic-labs/vercel-ai-sdk-package">
     Source, tests, and full API reference for @honcho-ai/vercel-ai-sdk.
   </Card>
 
