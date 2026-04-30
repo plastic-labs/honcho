@@ -230,6 +230,59 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
     assert call["tool_choice"] == "required"
 
 
+@pytest.mark.asyncio
+async def test_openai_backend_normalizes_any_tool_choice_to_required() -> None:
+    """OpenAI rejects tool_choice="any" (Anthropic/Gemini's spelling for the
+    same semantics OpenAI calls "required"). The backend must translate it
+    so callers can pass either spelling without provider-specific awareness.
+    """
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[
+            {
+                "name": "get_weather",
+                "description": "Lookup weather",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            }
+        ],
+        tool_choice="any",
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["tool_choice"] == "required"
+
+
 @pytest.mark.parametrize(
     "model",
     [
