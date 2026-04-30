@@ -10,6 +10,7 @@ from google.genai import types as genai_types
 from openai import AsyncOpenAI
 
 from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
+from .httpx_utils import get_httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +59,14 @@ class _EmbeddingClient:
         else:  # openai
             if not config.api_key:
                 raise ValueError("OpenAI API key is required")
-            self.client = AsyncOpenAI(
+            http_client = get_httpx_client()
+            client_kwargs: dict = dict(
                 api_key=config.api_key,
                 base_url=config.base_url,
             )
+            if http_client is not None:
+                client_kwargs["http_client"] = http_client
+            self.client = AsyncOpenAI(**client_kwargs)
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048  # OpenAI batch limit
 
