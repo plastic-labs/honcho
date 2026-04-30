@@ -1,9 +1,12 @@
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import models
 from src.models import Peer, Workspace
 
 
@@ -569,3 +572,59 @@ def test_delete_workspace_after_session_deletion(client: TestClient):
     # Now workspace deletion should succeed
     response = client.delete(f"/v3/workspaces/{workspace_name}")
     assert response.status_code == 202
+
+
+@pytest.mark.asyncio
+async def test_schedule_dream_invokes_enqueue_dream(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """POST /schedule_dream forwards observer/observed/dream_type to enqueue_dream.
+
+    After Loop 4, the manual schedule_dream route no longer touches the
+    baseline count — the orchestrator writes both guard fields atomically on
+    successful completion. The route's job shrinks to forwarding the dream
+    request.
+    """
+    workspace, peer = sample_data
+
+    collection = models.Collection(
+        observer=peer.name,
+        observed=peer.name,
+        workspace_name=workspace.name,
+        internal_metadata={},
+    )
+    db_session.add(collection)
+    await db_session.commit()
+
+    captured: dict[str, Any] = {}
+
+    async def fake_enqueue_dream(*args: Any, **kwargs: Any) -> None:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    with (
+        patch("src.routers.workspaces.settings.DREAM.ENABLED", True),
+        patch(
+            "src.routers.workspaces.enqueue_dream",
+            new=AsyncMock(side_effect=fake_enqueue_dream),
+        ),
+    ):
+        response = client.post(
+            f"/v3/workspaces/{workspace.name}/schedule_dream",
+            json={
+                "observer": peer.name,
+                "observed": peer.name,
+                "dream_type": "omni",
+            },
+        )
+
+    assert response.status_code == 204, response.text
+    assert "kwargs" in captured, "enqueue_dream was not called"
+    assert captured["kwargs"]["observer"] == peer.name
+    assert captured["kwargs"]["observed"] == peer.name
+    assert "document_count" not in captured["kwargs"], (
+        "Loop 4: enqueue_dream no longer accepts document_count; the baseline "
+        "is written atomically with last_dream_at in process_dream."
+    )

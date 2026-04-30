@@ -3,10 +3,9 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models, schemas
+from src import crud, schemas
 from src.config import settings
 from src.dependencies import db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
@@ -201,7 +200,6 @@ async def schedule_dream(
     request: schemas.ScheduleDreamRequest = Body(
         ..., description="Dream scheduling parameters"
     ),
-    db: AsyncSession = db,
 ):
     """
     Manually schedule a dream task for a specific collection.
@@ -224,21 +222,11 @@ async def schedule_dream(
     observed = request.observed if request.observed is not None else request.observer
     dream_type = request.dream_type
 
-    # Count documents in the collection
-    count_stmt = select(func.count(models.Document.id)).where(
-        models.Document.workspace_name == workspace_id,
-        models.Document.observer == observer,
-        models.Document.observed == observed,
-    )
-    document_count = int(await db.scalar(count_stmt) or 0)
-
-    # Enqueue the dream task for immediate processing
     await enqueue_dream(
         workspace_id,
         observer=observer,
         observed=observed,
         dream_type=dream_type,
-        document_count=document_count,
         session_name=request.session_id,
     )
 

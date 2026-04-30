@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 from typing import Any, Literal
 
 from sqlalchemy import exists, insert, select
@@ -436,27 +435,26 @@ async def enqueue_dream(
     observer: str,
     observed: str,
     dream_type: schemas.DreamType,
-    document_count: int,
     session_name: str | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
 
+    Does not touch collection.internal_metadata["dream"] — both guard fields
+    are written atomically in process_dream on successful completion.
+
     Deduplication: If a dream with the same work_unit_key is already in-progress
-    (has an ActiveQueueSession), the enqueue is skipped to prevent running
-    multiple dreams concurrently for the same collection.
+    (has an ActiveQueueSession) or pending in the queue, the enqueue is skipped.
 
     Args:
         workspace_name: Name of the workspace
         observer: Name of the observer peer
         observed: Name of the observed peer
         dream_type: Type of dream to execute
-        document_count: Current document count for metadata update
         session_name: Name of the session to scope the dream to if specified
     """
     async with tracked_db("dream_enqueue") as db_session:
         try:
-            # Create the dream queue record
             dream_record = create_dream_record(
                 workspace_name,
                 observer=observer,
@@ -467,11 +465,6 @@ async def enqueue_dream(
 
             work_unit_key = dream_record["work_unit_key"]
 
-            # Check if a dream with this work_unit_key is currently in progress
-            # (has an ActiveQueueSession, meaning a worker is processing it)
-            # We only block on in-progress dreams, not pending ones - if there's
-            # a pending dream, we don't need to add another one anyway since
-            # the queue processor will pick it up.
             in_progress_check = select(
                 exists(
                     select(models.ActiveQueueSession.id).where(
@@ -491,7 +484,6 @@ async def enqueue_dream(
                 )
                 return
 
-            # Check if there's already a pending dream with the same work_unit_key
             pending_check = select(
                 exists(
                     select(QueueItem.id).where(
@@ -512,25 +504,9 @@ async def enqueue_dream(
                 )
                 return
 
-            # Insert into queue
             stmt = insert(QueueItem).returning(QueueItem)
             await db_session.execute(stmt, [dream_record])
-
-            # Update collection metadata (CRUD handles cache invalidation)
-            now_iso = datetime.now(timezone.utc).isoformat()
-            await crud.update_collection_internal_metadata(
-                db_session,
-                workspace_name,
-                observer,
-                observed,
-                update_data={
-                    "dream": {
-                        "last_dream_document_count": document_count,
-                        "last_dream_at": now_iso,
-                    }
-                },
-            )
-            # update_collection_internal_metadata commits already
+            await db_session.commit()
 
             logger.info(
                 "Enqueued dream task for %s/%s/%s (type: %s)",

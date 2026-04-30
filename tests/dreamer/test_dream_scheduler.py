@@ -4,8 +4,14 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.dreamer.dream_scheduler import DreamScheduler, set_dream_scheduler
+from src import models
+from src.dreamer.dream_scheduler import (
+    DreamScheduler,
+    check_and_schedule_dream,
+    set_dream_scheduler,
+)
 from src.schemas import DreamType
 from src.utils.work_unit import construct_work_unit_key
 
@@ -279,136 +285,140 @@ class TestCancelDreamsForObserved:
             assert key_ws2 in dream_scheduler.pending_dreams
 
 
-class TestDocumentCountAtExecutionTime:
-    """Regression tests for Bug #2: Stale document count used in metadata update.
+class TestThresholdFilter:
+    """Regression tests for Finding 2: threshold must count only explicit-level docs.
 
-    Previously, the document count was captured when the dream was scheduled
-    (at check_and_schedule_dream time), then used 60 minutes later when the
-    dream actually executed. This caused incorrect metadata if documents were
-    added during the wait period.
-
-    Now, execute_dream queries the current document count at execution time.
+    Previously the threshold counted all documents in a collection, including
+    dreamer output (deductive/inductive/contradiction). This created a feedback
+    loop where each dream's output inflated the trigger for the next dream.
+    The fix filters the count to `level == "explicit"` only.
     """
 
-    @pytest.mark.asyncio
-    async def test_execute_dream_queries_document_count_at_execution(
-        self, dream_scheduler: DreamScheduler
-    ):
-        """execute_dream should query current document count, not use a stale value.
+    @pytest.fixture(autouse=True)
+    def _pin_dream_config(self):
+        """Pin DOCUMENT_THRESHOLD=50 and ENABLED_TYPES=['omni'] for this class.
 
-        This test verifies that execute_dream fetches the document count fresh
-        from the database at execution time rather than using a pre-captured value.
-
-        The key architectural change was:
-        - OLD: schedule_dream(document_count) -> _delayed_dream(document_count) -> execute_dream(document_count)
-        - NEW: schedule_dream() -> _delayed_dream() -> execute_dream() queries count internally
-
-        We verify this by mocking the database to return a specific count and
-        checking that enqueue_dream receives that count.
+        These tests assume the default thresholds; a developer's local env
+        (e.g. DREAM_DOCUMENT_THRESHOLD=5 for faster manual testing) would
+        otherwise invalidate the 30/60/10 fixtures below. Scoped to this
+        class only — do NOT widen; other tests may have different assumptions.
         """
-        from contextlib import asynccontextmanager
-        from unittest.mock import MagicMock
+        with (
+            patch("src.dreamer.dream_scheduler.settings.DREAM.DOCUMENT_THRESHOLD", 50),
+            patch("src.dreamer.dream_scheduler.settings.DREAM.ENABLED_TYPES", ["omni"]),
+        ):
+            yield
 
-        from src import models
-        from src.schemas import (
-            ResolvedConfiguration,
-            ResolvedDreamConfiguration,
-            ResolvedPeerCardConfiguration,
-            ResolvedReasoningConfiguration,
-            ResolvedSummaryConfiguration,
+    async def _make_collection(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> models.Collection:
+        """Helper: create a Collection in the test workspace with no dream metadata."""
+        workspace, peer = sample_data
+        collection = models.Collection(
+            observer=peer.name,
+            observed=peer.name,
+            workspace_name=workspace.name,
+            internal_metadata={},
+        )
+        db_session.add(collection)
+        await db_session.commit()
+        return collection
+
+    async def _insert_doc(
+        self,
+        db_session: AsyncSession,
+        collection: models.Collection,
+        level: str,
+    ) -> None:
+        """Helper: insert one Document at the given level."""
+        db_session.add(
+            models.Document(
+                content="test",
+                level=level,
+                workspace_name=collection.workspace_name,
+                observer=collection.observer,
+                observed=collection.observed,
+            )
         )
 
-        workspace_name = "test_workspace"
-        observer = "bob"
-        observed = "bob"
-        session_name = "test_session"
+    @pytest.mark.asyncio
+    async def test_mixed_levels_below_explicit_threshold(
+        self,
+        dream_scheduler: DreamScheduler,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """30 explicit + 40 deductive + 10 inductive → should NOT trigger.
 
-        # The document count that the database will return
-        CURRENT_DOC_COUNT = 42
+        Total doc count = 80 (would trigger under the buggy unfiltered count),
+        but explicit count = 30 < threshold 50, so the correct behavior is to
+        NOT schedule a dream. This is the core regression: the fix must reject
+        this scenario.
+        """
+        collection = await self._make_collection(db_session, sample_data)
+        for _ in range(30):
+            await self._insert_doc(db_session, collection, "explicit")
+        for _ in range(40):
+            await self._insert_doc(db_session, collection, "deductive")
+        for _ in range(10):
+            await self._insert_doc(db_session, collection, "inductive")
+        await db_session.commit()
 
-        # Track what document_count is passed to enqueue_dream
-        captured_document_count: int | None = None
+        with patch.object(dream_scheduler, "schedule_dream", new_callable=AsyncMock):
+            scheduled = await check_and_schedule_dream(db_session, collection)
 
-        async def capture_enqueue_dream(
-            _ws_name: str,
-            observer: str,  # pyright: ignore[reportUnusedParameter]
-            observed: str,  # pyright: ignore[reportUnusedParameter]
-            dream_type: Any,  # pyright: ignore[reportUnusedParameter]
-            document_count: int,
-            session_name: str,  # pyright: ignore[reportUnusedParameter]
-        ) -> None:
-            nonlocal captured_document_count
-            captured_document_count = document_count
+        assert scheduled is False, (
+            "Threshold should filter on explicit level only — dreamer output "
+            "(deductive/inductive) must not count toward the trigger."
+        )
 
-        # Create mock database session that returns our test data
-        mock_session = MagicMock()
-        mock_workspace = MagicMock(spec=models.Workspace)
-        mock_db_session = MagicMock(spec=models.Session)
+    @pytest.mark.asyncio
+    async def test_explicit_only_at_threshold(
+        self,
+        dream_scheduler: DreamScheduler,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """60 explicit + 0 derived → should trigger (60 ≥ threshold 50)."""
+        collection = await self._make_collection(db_session, sample_data)
+        for _ in range(60):
+            await self._insert_doc(db_session, collection, "explicit")
+        await db_session.commit()
 
-        # Mock scalar to return session_name for first call, document count for second
-        scalar_call_count = 0
+        with patch.object(
+            dream_scheduler, "schedule_dream", new_callable=AsyncMock
+        ) as mock_schedule:
+            scheduled = await check_and_schedule_dream(db_session, collection)
 
-        async def mock_scalar(_stmt: Any) -> str | int:
-            nonlocal scalar_call_count
-            scalar_call_count += 1
-            if scalar_call_count == 1:
-                return session_name  # First call gets session_name from documents
-            else:
-                return CURRENT_DOC_COUNT  # Second call gets document count
+        assert scheduled is True
+        assert mock_schedule.called, "schedule_dream should fire when threshold met"
 
-        mock_session.scalar = mock_scalar
+    @pytest.mark.asyncio
+    async def test_contradiction_excluded_from_count(
+        self,
+        dream_scheduler: DreamScheduler,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Contradiction-level docs are dreamer output — must not count.
 
-        @asynccontextmanager
-        async def mock_tracked_db(_: str | None = None):
-            yield mock_session
+        100 contradictions + 10 explicit → explicit=10 < threshold=50, no trigger.
+        Confirms the positive `== "explicit"` filter excludes contradiction by
+        construction (same as deductive/inductive).
+        """
+        collection = await self._make_collection(db_session, sample_data)
+        for _ in range(100):
+            await self._insert_doc(db_session, collection, "contradiction")
+        for _ in range(10):
+            await self._insert_doc(db_session, collection, "explicit")
+        await db_session.commit()
 
-        with (
-            patch(
-                "src.dreamer.dream_scheduler.tracked_db",
-                mock_tracked_db,
-            ),
-            patch(
-                "src.deriver.enqueue.enqueue_dream",
-                side_effect=capture_enqueue_dream,
-            ),
-            patch(
-                "src.crud.get_session",
-                return_value=mock_db_session,
-            ),
-            patch(
-                "src.crud.get_workspace",
-                return_value=mock_workspace,
-            ),
-            patch(
-                "src.utils.config_helpers.get_configuration",
-                return_value=ResolvedConfiguration(
-                    reasoning=ResolvedReasoningConfiguration(enabled=True),
-                    peer_card=ResolvedPeerCardConfiguration(use=True, create=True),
-                    summary=ResolvedSummaryConfiguration(
-                        enabled=True,
-                        messages_per_short_summary=10,
-                        messages_per_long_summary=20,
-                    ),
-                    dream=ResolvedDreamConfiguration(enabled=True),
-                ),
-            ),
-        ):
-            # Execute the dream
-            await dream_scheduler.execute_dream(
-                workspace_name,
-                DreamType.OMNI,
-                observer=observer,
-                observed=observed,
-            )
+        with patch.object(dream_scheduler, "schedule_dream", new_callable=AsyncMock):
+            scheduled = await check_and_schedule_dream(db_session, collection)
 
-            # Verify that execute_dream queried the document count (2 scalar calls)
-            assert (
-                scalar_call_count == 2
-            ), "Should have queried session_name and document count"
-
-            # Verify that enqueue_dream received the CURRENT document count (42),
-            # proving that execute_dream queries the count at execution time
-            assert captured_document_count == CURRENT_DOC_COUNT
+        assert scheduled is False
 
 
 class TestEnqueueCancelsDreamsCorrectly:

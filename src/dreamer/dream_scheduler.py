@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from logging import getLogger
 
 import sentry_sdk
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -160,13 +160,11 @@ class DreamScheduler:
         observer: str,
         observed: str,
     ) -> None:
-        """Execute the dream by enqueueing it and updating collection metadata."""
-        # Import here to avoid circular dependency
+        """Execute the dream by enqueueing it."""
         from src import crud
         from src.deriver.enqueue import enqueue_dream
         from src.utils.config_helpers import get_configuration
 
-        # Find the most recent session and get current document count
         async with tracked_db("dream_session_lookup") as db:
             stmt = (
                 select(models.Document.session_name)
@@ -174,6 +172,7 @@ class DreamScheduler:
                     models.Document.workspace_name == workspace_name,
                     models.Document.observer == observer,
                     models.Document.observed == observed,
+                    models.Document.level == "explicit",
                 )
                 .order_by(models.Document.created_at.desc())
                 .limit(1)
@@ -185,14 +184,6 @@ class DreamScheduler:
                     f"No documents found for {workspace_name}/{observer}/{observed}, skipping dream"
                 )
                 return
-
-            # Get current document count at execution time (not stale from scheduling)
-            count_stmt = select(func.count(models.Document.id)).where(
-                models.Document.workspace_name == workspace_name,
-                models.Document.observer == observer,
-                models.Document.observed == observed,
-            )
-            current_document_count = int(await db.scalar(count_stmt) or 0)
 
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
@@ -212,7 +203,6 @@ class DreamScheduler:
             observer=observer,
             observed=observed,
             dream_type=dream_type,
-            document_count=current_document_count,
             session_name=session_name,
         )
 
@@ -231,13 +221,18 @@ async def check_and_schedule_dream(
     collection: models.Collection,
 ) -> bool:
     """
-    Check if a collection has reached the document threshold and schedule a timer-based dream.
+    From the moment a dream is scheduled until it completes or fails, no second
+    dream may be enqueued for the same (workspace, observer, observed) — and the
+    baseline count advances only when consolidation actually happened.
+
+    Check if a collection has reached the explicit-observation threshold and schedule a timer-based dream.
 
     This function only schedules a timer-based dream if:
     1. Dreams are enabled
-    2. Document threshold is reached
+    2. Explicit-observation threshold is reached (dreamer output does not count)
     3. Minimum hours between dreams have passed
-    4. No dream is already scheduled for this collection
+    4. No dream is already pending in the queue for this collection (in-flight check)
+    5. No dream is already scheduled for this collection
 
     Args:
         db: Database session
@@ -249,21 +244,21 @@ async def check_and_schedule_dream(
     if not settings.DREAM.ENABLED:
         return False
 
-    # Get dream metadata from internal_metadata
     dream_metadata = collection.internal_metadata.get("dream", {})
     last_dream_document_count = dream_metadata.get("last_dream_document_count", 0)
     last_dream_at = dream_metadata.get("last_dream_at")
 
-    # Count current documents in the collection
+    # Count explicit-level docs only: dreamer output (deductive/inductive/
+    # contradiction) would inflate the threshold and create a feedback loop.
     count_stmt = select(func.count(models.Document.id)).where(
         models.Document.workspace_name == collection.workspace_name,
         models.Document.observer == collection.observer,
         models.Document.observed == collection.observed,
+        models.Document.level == "explicit",
     )
-    current_document_count = int(await db.scalar(count_stmt) or 0)
+    current_explicit_count = int(await db.scalar(count_stmt) or 0)
 
-    # Calculate documents added since last dream
-    documents_since_last_dream = current_document_count - last_dream_document_count
+    documents_since_last_dream = current_explicit_count - last_dream_document_count
 
     logger.debug(
         "Dream check",
@@ -271,16 +266,14 @@ async def check_and_schedule_dream(
             "workspace_name": collection.workspace_name,
             "observer": collection.observer,
             "observed": collection.observed,
-            "current_document_count": current_document_count,
+            "current_explicit_count": current_explicit_count,
             "last_dream_document_count": last_dream_document_count,
             "documents_since_last_dream": documents_since_last_dream,
             "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,
         },
     )
 
-    # Only schedule timer if document threshold is reached
     if documents_since_last_dream >= settings.DREAM.DOCUMENT_THRESHOLD:
-        # Check if we're within minimum hours between dreams
         if last_dream_at:
             try:
                 last_dream_time = datetime.fromisoformat(last_dream_at)
@@ -299,11 +292,43 @@ async def check_and_schedule_dream(
                     f"Invalid last_dream_at timestamp: {last_dream_at}, error: {e}"
                 )
 
+        # Queue is source of truth for in-flight dreams; mirrors
+        # uq_queue_dream_pending_work_unit_key.
+        enabled_dream_types = settings.DREAM.ENABLED_TYPES
+        pending_keys = [
+            construct_work_unit_key(
+                collection.workspace_name,
+                {
+                    "task_type": "dream",
+                    "observer": collection.observer,
+                    "observed": collection.observed,
+                    "dream_type": dream_type,
+                },
+            )
+            for dream_type in enabled_dream_types
+        ]
+        pending_exists = await db.scalar(
+            select(
+                exists(
+                    select(models.QueueItem.id).where(
+                        models.QueueItem.task_type == "dream",
+                        models.QueueItem.processed == False,  # noqa: E712
+                        models.QueueItem.work_unit_key.in_(pending_keys),
+                    )
+                )
+            )
+        )
+        if pending_exists:
+            logger.info(
+                "Skipping dream schedule for %s/%s: pending dream already in queue",
+                collection.observer,
+                collection.observed,
+            )
+            return False
+
         dream_scheduler = get_dream_scheduler()
         if dream_scheduler:
-            enabled_dream_types = settings.DREAM.ENABLED_TYPES
             for dream_type in enabled_dream_types:
-                # Include dream_type in key so each dream type can be tracked independently
                 dream_work_unit_key = construct_work_unit_key(
                     collection.workspace_name,
                     {
