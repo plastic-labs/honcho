@@ -22,4 +22,6 @@ def default_transport_api_key(transport: str) -> str | None:
         return settings.LLM.OPENAI_API_KEY
     if transport == "gemini":
         return settings.LLM.GEMINI_API_KEY
+    if transport == "azure_openai":
+        return settings.LLM.AZURE_OPENAI_API_KEY
     raise ValidationException(f"Unknown transport: {transport}")

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- Azure OpenAI transport (`transport = "azure_openai"`) with a new `overrides.api_version` field. Every model config (deriver, dialectic levels, summary, dream specialists, embedding, fallback) can now target a native Azure OpenAI resource or an Azure-compatible gateway. Uses `AsyncAzureOpenAI` with `azure_endpoint=` + `api_version=` so the SDK constructs the `/openai/deployments/{model}/...?api-version=` URLs Azure expects. Reuses `OpenAIBackend` because the two clients share the same completion/embedding surface.
 - New `src/llm/` package as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy
 - `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback
 - Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends

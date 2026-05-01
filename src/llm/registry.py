@@ -14,7 +14,7 @@ from typing import assert_never
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types as genai_types
-from openai import AsyncOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from src.config import ModelConfig, ModelTransport, settings
 from src.exceptions import ValidationException
@@ -64,6 +64,34 @@ def get_openai_override_client(
 ) -> AsyncOpenAI:
     """OpenAI client for a specific (base_url, api_key) pair. Cached by key."""
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+
+@lru_cache(maxsize=128)
+def get_azure_openai_override_client(
+    azure_endpoint: str | None,
+    api_key: str | None,
+    api_version: str | None,
+) -> AsyncAzureOpenAI:
+    """Azure OpenAI client for a specific (endpoint, key, api_version) triple.
+
+    Uses ``azure_endpoint=`` (not ``base_url=``) so the SDK constructs the
+    Azure-native ``{endpoint}/openai/deployments/{model}/chat/completions
+    ?api-version={v}`` URL — matches what Azure OpenAI and compatible
+    gateways expect.
+    """
+    if not azure_endpoint:
+        raise ValidationException(
+            "azure_openai transport requires a base_url (azure_endpoint)"
+        )
+    if not api_version:
+        raise ValidationException(
+            "azure_openai transport requires overrides.api_version"
+        )
+    return AsyncAzureOpenAI(
+        api_key=api_key,
+        azure_endpoint=azure_endpoint,
+        api_version=api_version,
+    )
 
 
 @lru_cache(maxsize=128)
@@ -131,6 +159,10 @@ def client_for_model_config(
         return get_openai_override_client(base_url, api_key)
     if provider == "gemini":
         return get_gemini_override_client(base_url, api_key)
+    if provider == "azure_openai":
+        return get_azure_openai_override_client(
+            base_url, api_key, model_config.api_version
+        )
     assert_never(provider)
 
 
@@ -138,13 +170,19 @@ def backend_for_provider(
     provider: ModelTransport,
     client: ProviderClient,
 ) -> ProviderBackend:
-    """Wrap a raw provider SDK client in the matching ProviderBackend adapter."""
+    """Wrap a raw provider SDK client in the matching ProviderBackend adapter.
+
+    ``azure_openai`` reuses ``OpenAIBackend`` because ``AsyncAzureOpenAI``
+    and ``AsyncOpenAI`` expose the same ``chat.completions`` surface.
+    """
     if provider == "anthropic":
         return AnthropicBackend(client)
     if provider == "openai":
         return OpenAIBackend(client)
     if provider == "gemini":
         return GeminiBackend(client)
+    if provider == "azure_openai":
+        return OpenAIBackend(client)
     assert_never(provider)
 
 
@@ -176,6 +214,7 @@ __all__ = [
     "client_for_model_config",
     "get_anthropic_client",
     "get_anthropic_override_client",
+    "get_azure_openai_override_client",
     "get_backend",
     "get_gemini_client",
     "get_gemini_override_client",

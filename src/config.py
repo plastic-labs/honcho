@@ -22,8 +22,8 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini"]
-EmbeddingTransport = Literal["openai", "gemini"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "azure_openai"]
+EmbeddingTransport = Literal["openai", "gemini", "azure_openai"]
 
 
 def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
@@ -62,6 +62,7 @@ class ModelOverrideSettings(BaseModel):
     api_key: str | None = None
     api_key_env: str | None = None
     base_url: str | None = None
+    api_version: str | None = None
 
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
@@ -89,7 +90,7 @@ def _normalize_model_transport(data: Any) -> Any:
     transport_value = update.get("transport")
     if isinstance(model_value, str) and "/" in model_value and transport_value is None:
         prefix, bare_model = model_value.split("/", 1)
-        if prefix in {"anthropic", "openai", "gemini"}:
+        if prefix in {"anthropic", "openai", "gemini", "azure_openai"}:
             update["transport"] = prefix
             update["model"] = bare_model
     return update
@@ -204,6 +205,7 @@ class ResolvedFallbackConfig(BaseModel):
 
     api_key: str | None = None
     base_url: str | None = None
+    api_version: str | None = None
 
     temperature: float | None = None
     top_p: float | None = None
@@ -239,6 +241,7 @@ class ModelConfig(BaseModel):
 
     api_key: str | None = None
     base_url: str | None = None
+    api_version: str | None = None
 
     temperature: float | None = None
     top_p: float | None = None
@@ -311,7 +314,7 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
             and transport_value is None
         ):
             prefix, bare_model = model_value.split("/", 1)
-            if prefix in {"openai", "gemini"}:
+            if prefix in {"openai", "gemini", "azure_openai"}:
                 update["transport"] = prefix
                 update["model"] = bare_model
         return update
@@ -330,6 +333,7 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    api_version: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -347,7 +351,7 @@ class EmbeddingModelConfig(BaseModel):
             and transport_value is None
         ):
             prefix, bare_model = model_value.split("/", 1)
-            if prefix in {"openai", "gemini"}:
+            if prefix in {"openai", "gemini", "azure_openai"}:
                 update["transport"] = prefix
                 update["model"] = bare_model
         return update
@@ -379,6 +383,7 @@ def _resolve_fallback_config(
             fallback.overrides.api_key_env,
         ),
         base_url=fallback.overrides.base_url,
+        api_version=fallback.overrides.api_version,
         temperature=fallback.temperature,
         top_p=fallback.top_p,
         top_k=fallback.top_k,
@@ -412,6 +417,7 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
             configured.overrides.api_key_env,
         ),
         base_url=configured.overrides.base_url,
+        api_version=configured.overrides.api_version,
         temperature=configured.temperature,
         top_p=configured.top_p,
         top_k=configured.top_k,
@@ -433,6 +439,8 @@ def _default_embedding_api_key(transport: EmbeddingTransport) -> str | None:
         return settings.LLM.OPENAI_API_KEY
     if transport == "gemini":
         return settings.LLM.GEMINI_API_KEY
+    if transport == "azure_openai":
+        return settings.LLM.AZURE_OPENAI_API_KEY
 
 
 def resolve_embedding_model_config(
@@ -452,6 +460,7 @@ def resolve_embedding_model_config(
         transport=configured.transport,
         api_key=api_key,
         base_url=configured.overrides.base_url,
+        api_version=configured.overrides.api_version,
     )
 
 
@@ -647,6 +656,7 @@ class LLMSettings(HonchoSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
+    AZURE_OPENAI_API_KEY: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
@@ -883,7 +893,13 @@ class DialecticSettings(HonchoSettings):
     @model_validator(mode="before")
     @classmethod
     def _merge_level_defaults(cls, data: Any) -> Any:
-        """Merge partial level overrides with built-in defaults."""
+        """Merge partial level overrides with built-in defaults.
+
+        Iterates over every built-in default level so partial overrides
+        (e.g. only setting ``DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT``)
+        don't drop the untouched levels — which would fail
+        ``_validate_all_levels_present``.
+        """
         if not isinstance(data, dict):
             return data
         typed_data = cast(dict[str, Any], data)
@@ -893,39 +909,46 @@ class DialecticSettings(HonchoSettings):
         if not isinstance(levels_raw, dict):
             return data  # pyright: ignore[reportUnknownVariableType]
         defaults = _default_dialectic_levels()
+        merged: dict[str, Any] = {}
+        for level_name, default_settings in defaults.items():
+            base: dict[str, Any] = default_settings.model_dump(by_alias=True)
+            override_val = levels_raw.get(level_name)
+            if not isinstance(override_val, dict):
+                merged[level_name] = base
+                continue
+            level_override: dict[str, Any] = dict(cast(dict[str, Any], override_val))
+            # Recursively merge nested MODEL_CONFIG / model_config too.
+            # model_dump() always produces the Python field name
+            # ("MODEL_CONFIG"), but TOML overrides arrive as lowercase
+            # ("model_config"). Check both casings in the override and
+            # resolve the base value from whichever casing is present.
+            for mc_key in ("MODEL_CONFIG", "model_config"):
+                if mc_key in level_override and isinstance(
+                    level_override[mc_key], dict
+                ):
+                    base_mc: dict[str, Any] = dict(
+                        base.get("MODEL_CONFIG") or base.get("model_config") or {}
+                    )
+                    override_mc = cast(dict[str, Any], level_override[mc_key])
+                    override_lower = {k.lower(): v for k, v in override_mc.items()}
+                    base_lower = {k.lower(): v for k, v in base_mc.items()}
+                    override_transport = override_lower.get("transport")
+                    base_transport = base_lower.get("transport")
+                    if (
+                        override_transport is not None
+                        and override_transport != base_transport
+                    ):
+                        for k in list(base_mc.keys()):
+                            if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
+                                del base_mc[k]
+                    level_override[mc_key] = {**base_mc, **override_mc}
+            merged[level_name] = {**base, **level_override}
+        # Preserve any unexpected custom level names the caller supplied.
         for level_name_key, level_override_val in levels_raw.items():
             level_name = str(level_name_key)
-            if not isinstance(level_override_val, dict):
-                continue
-            level_override = cast(dict[str, Any], level_override_val)
-            if level_name in defaults:
-                base: dict[str, Any] = defaults[level_name].model_dump(by_alias=True)
-                # Recursively merge nested MODEL_CONFIG / model_config too.
-                # model_dump() always produces the Python field name
-                # ("MODEL_CONFIG"), but TOML overrides arrive as lowercase
-                # ("model_config").  Check both casings in the override and
-                # resolve the base value from whichever casing is present.
-                for mc_key in ("MODEL_CONFIG", "model_config"):
-                    if mc_key in level_override and isinstance(
-                        level_override[mc_key], dict
-                    ):
-                        base_mc: dict[str, Any] = dict(
-                            base.get("MODEL_CONFIG") or base.get("model_config") or {}
-                        )
-                        override_mc = cast(dict[str, Any], level_override[mc_key])
-                        override_lower = {k.lower(): v for k, v in override_mc.items()}
-                        base_lower = {k.lower(): v for k, v in base_mc.items()}
-                        override_transport = override_lower.get("transport")
-                        base_transport = base_lower.get("transport")
-                        if (
-                            override_transport is not None
-                            and override_transport != base_transport
-                        ):
-                            for k in list(base_mc.keys()):
-                                if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
-                                    del base_mc[k]
-                        level_override[mc_key] = {**base_mc, **override_mc}
-                levels_raw[level_name] = {**base, **level_override}
+            if level_name not in merged:
+                merged[level_name] = level_override_val
+        typed_data["LEVELS"] = merged
         return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")

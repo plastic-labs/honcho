@@ -515,3 +515,169 @@ def test_dialectic_level_transport_override_drops_default_thinking_params(
     assert minimal_mc["model"] == "gpt-4.1-mini"
     assert "thinking_budget_tokens" not in minimal_mc
     assert "thinking_effort" not in minimal_mc
+
+
+def test_azure_openai_literal_accepted_on_model_configs() -> None:
+    from src.config import FallbackModelSettings
+
+    configured = ConfiguredModelSettings(
+        model="gpt-4o-mini-deployment",
+        transport="azure_openai",
+        overrides=ModelOverrideSettings(
+            api_key="az-key",
+            base_url="https://gateway.example/azure-openai",
+            api_version="2024-10-21",
+        ),
+        fallback=FallbackModelSettings(
+            model="gpt-4o-mini-deployment",
+            transport="azure_openai",
+            overrides=ModelOverrideSettings(
+                api_key="az-fb-key",
+                base_url="https://gateway.example/azure-openai",
+                api_version="2024-10-21",
+            ),
+        ),
+    )
+
+    assert configured.transport == "azure_openai"
+    assert configured.fallback is not None
+    assert configured.fallback.transport == "azure_openai"
+
+
+def test_resolve_model_config_propagates_api_version() -> None:
+    configured = ConfiguredModelSettings(
+        model="gpt-4o-mini-deployment",
+        transport="azure_openai",
+        overrides=ModelOverrideSettings(
+            api_key="az-key",
+            base_url="https://gateway.example/azure-openai",
+            api_version="2024-10-21",
+        ),
+    )
+
+    resolved = resolve_model_config(configured)
+
+    assert resolved.transport == "azure_openai"
+    assert resolved.api_key == "az-key"
+    assert resolved.base_url == "https://gateway.example/azure-openai"
+    assert resolved.api_version == "2024-10-21"
+
+
+def test_resolve_fallback_config_propagates_api_version() -> None:
+    from src.config import FallbackModelSettings
+
+    configured = ConfiguredModelSettings(
+        model="claude-haiku-4-5",
+        transport="anthropic",
+        fallback=FallbackModelSettings(
+            model="gpt-4o-mini-deployment",
+            transport="azure_openai",
+            overrides=ModelOverrideSettings(
+                api_key="az-fb-key",
+                base_url="https://gateway.example/azure-openai",
+                api_version="2024-10-21",
+            ),
+        ),
+    )
+
+    resolved = resolve_model_config(configured)
+
+    assert resolved.fallback is not None
+    assert resolved.fallback.transport == "azure_openai"
+    assert resolved.fallback.api_key == "az-fb-key"
+    assert resolved.fallback.base_url == "https://gateway.example/azure-openai"
+    assert resolved.fallback.api_version == "2024-10-21"
+
+
+def test_resolve_embedding_model_config_propagates_api_version() -> None:
+    configured = ConfiguredEmbeddingModelSettings(
+        transport="azure_openai",
+        model="text-embedding-3-small",
+        overrides=ModelOverrideSettings(
+            api_key="az-embed-key",
+            base_url="https://gateway.example/azure-openai",
+            api_version="2024-10-21",
+        ),
+    )
+
+    resolved = resolve_embedding_model_config(configured)
+
+    assert resolved.transport == "azure_openai"
+    assert resolved.api_key == "az-embed-key"
+    assert resolved.base_url == "https://gateway.example/azure-openai"
+    assert resolved.api_version == "2024-10-21"
+
+
+def test_env_vars_bind_azure_openai_api_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.config import DeriverSettings
+
+    _clear_deriver_env(monkeypatch)
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__TRANSPORT", "azure_openai")
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__MODEL", "gpt-4o-mini-deployment")
+    monkeypatch.setenv(
+        "DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL",
+        "https://gateway.example/azure-openai",
+    )
+    monkeypatch.setenv(
+        "DERIVER_MODEL_CONFIG__OVERRIDES__API_VERSION", "2024-10-21"
+    )
+
+    settings = DeriverSettings()
+    assert settings.MODEL_CONFIG.transport == "azure_openai"
+    assert settings.MODEL_CONFIG.overrides.api_version == "2024-10-21"
+    assert (
+        settings.MODEL_CONFIG.overrides.base_url
+        == "https://gateway.example/azure-openai"
+    )
+
+
+def test_partial_dialectic_level_override_keeps_other_levels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overriding a single reasoning level via env vars must not drop the
+    other four levels — otherwise _validate_all_levels_present fires.
+    Regression for the DIALECTIC_LEVELS crash-loop when a user supplied
+    only ``DIALECTIC_LEVELS__minimal__*`` overrides.
+    """
+    from src.config import DialecticSettings
+
+    # Strip any DIALECTIC_LEVELS__* vars inherited from a local .env so the
+    # test sees only the "minimal" override we set below.
+    for key in list(os.environ):
+        if key.startswith("DIALECTIC_LEVELS__"):
+            monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv(
+        "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT", "azure_openai"
+    )
+    monkeypatch.setenv(
+        "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL", "gpt-4o-mini"
+    )
+    monkeypatch.setenv(
+        "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__OVERRIDES__BASE_URL",
+        "https://gateway.example/azure-openai",
+    )
+    monkeypatch.setenv(
+        "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__OVERRIDES__API_VERSION",
+        "2024-10-21",
+    )
+
+    settings = DialecticSettings()
+
+    assert set(settings.LEVELS.keys()) == {
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "max",
+    }
+    assert settings.LEVELS["minimal"].MODEL_CONFIG.transport == "azure_openai"
+    assert settings.LEVELS["minimal"].MODEL_CONFIG.model == "gpt-4o-mini"
+    assert (
+        settings.LEVELS["minimal"].MODEL_CONFIG.overrides.base_url
+        == "https://gateway.example/azure-openai"
+    )
+    # Untouched levels keep their defaults.
+    assert settings.LEVELS["max"].MODEL_CONFIG.transport == "openai"

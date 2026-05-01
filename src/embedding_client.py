@@ -7,7 +7,7 @@ from typing import NamedTuple
 import tiktoken
 from google import genai
 from google.genai import types as genai_types
-from openai import AsyncOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI
 
 from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
 
@@ -47,7 +47,7 @@ class _EmbeddingClient:
                 if config.base_url
                 else None
             )
-            self.client: genai.Client | AsyncOpenAI = genai.Client(
+            self.client: genai.Client | AsyncOpenAI | AsyncAzureOpenAI = genai.Client(
                 api_key=config.api_key,
                 http_options=http_options,
             )
@@ -55,6 +55,20 @@ class _EmbeddingClient:
             self.max_embedding_tokens: int = min(max_input_tokens, 2048)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
+        elif self.transport == "azure_openai":
+            if not config.api_key:
+                raise ValueError("Azure OpenAI API key is required")
+            if not config.base_url:
+                raise ValueError("Azure OpenAI base_url (azure_endpoint) is required")
+            if not config.api_version:
+                raise ValueError("Azure OpenAI api_version is required")
+            self.client = AsyncAzureOpenAI(
+                api_key=config.api_key,
+                azure_endpoint=config.base_url,
+                api_version=config.api_version,
+            )
+            self.max_embedding_tokens = max_input_tokens
+            self.max_batch_size = 2048
         else:  # openai
             if not config.api_key:
                 raise ValueError("OpenAI API key is required")
@@ -426,6 +440,7 @@ class EmbeddingClient:
             runtime_config.model,
             runtime_config.api_key,
             runtime_config.base_url,
+            runtime_config.api_version,
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
