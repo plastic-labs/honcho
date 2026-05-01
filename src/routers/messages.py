@@ -23,6 +23,7 @@ from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.security import require_auth
 from src.telemetry import prometheus_metrics
+from src.telemetry.events import FileUploadedEvent, MessageCreatedEvent, emit
 from src.utils.files import process_file_uploads_for_messages
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,16 @@ async def create_messages_for_session(
                 count=len(created_messages),
                 workspace_name=workspace_id,
             )
+
+        emit(
+            MessageCreatedEvent(
+                workspace_name=workspace_id,
+                session_name=session_id,
+                message_count=len(created_messages),
+                total_tokens=sum(message.token_count for message in created_messages),
+                source="api",
+            )
+        )
 
         # Enqueue for processing (existing logic)
         payloads = [
@@ -205,6 +216,31 @@ async def create_messages_with_file(
             count=len(created_messages),
             workspace_name=workspace_id,
         )
+
+    file_metadata = all_message_data[0]["file_metadata"]
+    total_tokens = sum(message.token_count for message in created_messages)
+    emit(
+        FileUploadedEvent(
+            workspace_name=workspace_id,
+            session_name=session_id,
+            peer_name=form_data.peer_id,
+            file_id=str(file_metadata["file_id"]),
+            filename=file.filename,
+            content_type=file.content_type,
+            file_size_bytes=file.size,
+            message_count=len(created_messages),
+            total_tokens=total_tokens,
+        )
+    )
+    emit(
+        MessageCreatedEvent(
+            workspace_name=workspace_id,
+            session_name=session_id,
+            message_count=len(created_messages),
+            total_tokens=total_tokens,
+            source="file_upload",
+        )
+    )
 
     return created_messages
 

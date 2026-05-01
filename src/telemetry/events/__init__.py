@@ -24,6 +24,11 @@ Event Categories:
     - AgentToolPeerCardUpdatedEvent: Peer card updated by agent
     - AgentToolSummaryCreatedEvent: Summary created
 
+    api: User-facing API operations
+    - MessageCreatedEvent: Message batch created
+    - FileUploadedEvent: File converted into messages
+    - GetContextEvent: Context retrieved for a session or peer
+
     deletion: Resource removal
     - DeletionCompletedEvent: Resource deletion completed (with cascade counts)
 
@@ -60,6 +65,11 @@ from src.telemetry.events.agent import (
     AgentToolPeerCardUpdatedEvent,
     AgentToolSummaryCreatedEvent,
 )
+from src.telemetry.events.api import (
+    FileUploadedEvent,
+    GetContextEvent,
+    MessageCreatedEvent,
+)
 from src.telemetry.events.base import BaseEvent, generate_event_id
 from src.telemetry.events.deletion import DeletionCompletedEvent
 from src.telemetry.events.dialectic import DialecticCompletedEvent
@@ -93,6 +103,10 @@ __all__ = [
     "AgentToolConclusionsDeletedEvent",
     "AgentToolPeerCardUpdatedEvent",
     "AgentToolSummaryCreatedEvent",
+    # API events
+    "MessageCreatedEvent",
+    "FileUploadedEvent",
+    "GetContextEvent",
     # Reconciliation events
     "SyncVectorsCompletedEvent",
     "CleanupStaleItemsCompletedEvent",

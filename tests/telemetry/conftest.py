@@ -2,7 +2,7 @@
 """Fixtures for telemetry unit tests.
 
 This module provides:
-- Sample event fixtures for all 12 event types
+- Sample event fixtures for all telemetry event types
 - Mock settings fixtures for controlling telemetry configuration
 - Mock HTTP client fixtures for testing the emitter without network calls
 """
@@ -18,6 +18,11 @@ from src.telemetry.events.agent import (
     AgentToolConclusionsDeletedEvent,
     AgentToolPeerCardUpdatedEvent,
     AgentToolSummaryCreatedEvent,
+)
+from src.telemetry.events.api import (
+    FileUploadedEvent,
+    GetContextEvent,
+    MessageCreatedEvent,
 )
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.events.deletion import DeletionCompletedEvent
@@ -65,6 +70,55 @@ def sample_representation_event(
         total_duration_ms=1300.0,
         input_tokens=5000,
         output_tokens=500,
+    )
+
+
+@pytest.fixture
+def sample_message_created_event(fixed_timestamp: datetime) -> MessageCreatedEvent:
+    """Create a sample MessageCreatedEvent for testing."""
+    return MessageCreatedEvent(
+        timestamp=fixed_timestamp,
+        workspace_name="test_workspace",
+        session_name="test_session",
+        message_count=2,
+        total_tokens=250,
+    )
+
+
+@pytest.fixture
+def sample_file_uploaded_event(fixed_timestamp: datetime) -> FileUploadedEvent:
+    """Create a sample FileUploadedEvent for testing."""
+    return FileUploadedEvent(
+        timestamp=fixed_timestamp,
+        workspace_name="test_workspace",
+        session_name="test_session",
+        peer_name="user_peer",
+        file_id="file_123",
+        filename="notes.txt",
+        content_type="text/plain",
+        file_size_bytes=1024,
+        message_count=2,
+        total_tokens=250,
+    )
+
+
+@pytest.fixture
+def sample_get_context_event(fixed_timestamp: datetime) -> GetContextEvent:
+    """Create a sample GetContextEvent for testing."""
+    return GetContextEvent(
+        timestamp=fixed_timestamp,
+        workspace_name="test_workspace",
+        context_scope="session",
+        session_name="test_session",
+        tokens_requested=4000,
+        message_count=10,
+        has_summary=True,
+        has_representation=False,
+        has_peer_card=False,
+        search_query_provided=False,
+        include_summary=True,
+        peer_perspective_provided=False,
+        total_duration_ms=25.0,
     )
 
 
@@ -276,6 +330,9 @@ def sample_cleanup_event(fixed_timestamp: datetime) -> CleanupStaleItemsComplete
 @pytest.fixture
 def all_sample_events(
     sample_representation_event: RepresentationCompletedEvent,
+    sample_message_created_event: MessageCreatedEvent,
+    sample_file_uploaded_event: FileUploadedEvent,
+    sample_get_context_event: GetContextEvent,
     sample_dream_run_event: DreamRunEvent,
     sample_dream_specialist_event: DreamSpecialistEvent,
     sample_dialectic_event: DialecticCompletedEvent,
@@ -291,6 +348,9 @@ def all_sample_events(
     """Return all sample events as a list for parametrized tests."""
     return [
         sample_representation_event,
+        sample_message_created_event,
+        sample_file_uploaded_event,
+        sample_get_context_event,
         sample_dream_run_event,
         sample_dream_specialist_event,
         sample_dialectic_event,

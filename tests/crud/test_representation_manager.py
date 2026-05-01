@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,11 +9,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.crud.representation import RepresentationManager
+from src.schemas.configuration import (
+    ResolvedConfiguration,
+    ResolvedDreamConfiguration,
+    ResolvedPeerCardConfiguration,
+    ResolvedReasoningConfiguration,
+    ResolvedSummaryConfiguration,
+)
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
     Representation,
 )
+
+
+def _resolved_config(*, dream_enabled: bool = False) -> ResolvedConfiguration:
+    """Build a minimal ResolvedConfiguration for tests that only care about dream.enabled."""
+    return ResolvedConfiguration(
+        reasoning=ResolvedReasoningConfiguration(enabled=False),
+        peer_card=ResolvedPeerCardConfiguration(use=False, create=False),
+        summary=ResolvedSummaryConfiguration(
+            enabled=False,
+            messages_per_short_summary=20,
+            messages_per_long_summary=60,
+        ),
+        dream=ResolvedDreamConfiguration(enabled=dream_enabled),
+    )
 
 
 @asynccontextmanager
@@ -24,6 +44,7 @@ async def _fake_tracked_db(_name: str):
 
 def _saved_observations(mock_save: AsyncMock):
     call = mock_save.await_args
+    assert call is not None, "mock_save was never awaited"
     if "all_observations" in call.kwargs:
         return call.kwargs["all_observations"]
     if len(call.args) > 1:
@@ -162,7 +183,9 @@ class TestRepresentationManagerSoftDelete:
 
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio
-    async def test_save_representation_filters_blank_observations_before_embedding(self):
+    async def test_save_representation_filters_blank_observations_before_embedding(
+        self,
+    ):
         manager = RepresentationManager(
             "workspace",
             observer="observer",
@@ -202,9 +225,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(
-                    dream=SimpleNamespace(enabled=False)
-                ),
+                message_level_configuration=_resolved_config(),
             )
 
         assert saved == 1
@@ -258,9 +279,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(
-                    dream=SimpleNamespace(enabled=False)
-                ),
+                message_level_configuration=_resolved_config(),
             )
 
         assert saved == 1
@@ -311,9 +330,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(
-                    dream=SimpleNamespace(enabled=False)
-                ),
+                message_level_configuration=_resolved_config(),
             )
 
         assert saved == 0
