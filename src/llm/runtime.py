@@ -107,6 +107,7 @@ def select_model_config_for_attempt(
         fallback=None,
         api_key=fb.api_key,
         base_url=fb.base_url,
+        api_version=fb.api_version,
         temperature=fb.temperature,
         top_p=fb.top_p,
         top_k=fb.top_k,

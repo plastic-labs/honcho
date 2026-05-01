@@ -53,13 +53,18 @@ MAX_TOOL_OUTPUT_CHARS = 10000  # Max chars for tool output (~2500 tokens)
 MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 
 # API Keys for LLM providers (set the ones you need)
-# Supported transports: openai, anthropic, gemini
+# Supported transports: openai, anthropic, gemini, azure_openai
 # Base URLs are set per-module via model_config.overrides.base_url
 # Built-in text-generation defaults use openai / gpt-5.4-mini.
 # Embeddings default to openai / text-embedding-3-small.
+# For Azure OpenAI (native resource or Azure-compatible gateway), set
+# transport = "azure_openai" and supply overrides.base_url (= azure_endpoint)
+# and overrides.api_version on each module that routes through Azure. The
+# SDK builds /openai/deployments/{model}/... itself; model = deployment name.
 OPENAI_API_KEY = "your-api-key-here"
 # ANTHROPIC_API_KEY = "your-api-key"
 # GEMINI_API_KEY = "your-api-key"
+# AZURE_OPENAI_API_KEY = "your-api-key"
 
 # Embedding settings
 [embedding]
@@ -75,6 +80,15 @@ model = "text-embedding-3-small"
 # [embedding.model_config.overrides]
 # base_url = "https://embedding-proxy.internal.example/v1"
 # api_key_env = "EMBEDDING_CUSTOM_API_KEY"
+
+# Azure OpenAI embeddings example (api_version is required):
+# [embedding.model_config]
+# transport = "azure_openai"
+# model = "text-embedding-3-small"   # deployment name
+# [embedding.model_config.overrides]
+# base_url = "https://your-resource.openai.azure.com"
+# api_version = "2024-10-21"
+# api_key_env = "LLM_AZURE_OPENAI_API_KEY"
 
 # Deriver settings
 [deriver]
@@ -114,6 +128,15 @@ model = "gpt-5.4-mini"
 # api_key_env = "DERIVER_CUSTOM_BACKUP_API_KEY"
 # [deriver.model_config.overrides.provider_params]
 # verbosity = "low"
+
+# Azure OpenAI example (api_version is required; model = deployment name):
+# [deriver.model_config]
+# transport = "azure_openai"
+# model = "gpt-4o-mini"
+# [deriver.model_config.overrides]
+# base_url = "https://your-resource.openai.azure.com"
+# api_version = "2024-10-21"
+# api_key_env = "LLM_AZURE_OPENAI_API_KEY"
 
 # Peer card settings
 [peer_card]
