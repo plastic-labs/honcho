@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import AsyncIterator
+from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
@@ -15,6 +16,7 @@ from src.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
+from src.telemetry.events import GetContextEvent, emit
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -399,6 +401,7 @@ async def get_peer_context(
     """
     # If no target specified, get the peer's own context (self-observation)
     observed = target if target is not None else peer_id
+    context_started = perf_counter()
 
     try:
         # Get the working representation
@@ -421,12 +424,29 @@ async def get_peer_context(
             db, workspace_id, observer=peer_id, observed=observed
         )
 
-        return schemas.PeerContext(
+        response = schemas.PeerContext(
             peer_id=peer_id,
             target_id=observed,
             representation=representation.format_as_markdown(),
             peer_card=peer_card,
         )
+        emit(
+            GetContextEvent(
+                workspace_name=workspace_id,
+                context_scope="peer",
+                peer_name=peer_id,
+                target_name=observed,
+                has_representation=bool(response.representation),
+                has_peer_card=peer_card is not None,
+                search_query_provided=search_query is not None,
+                search_top_k=search_top_k,
+                search_max_distance=search_max_distance,
+                include_most_frequent=include_most_frequent,
+                max_conclusions=max_conclusions,
+                total_duration_ms=(perf_counter() - context_started) * 1000,
+            )
+        )
+        return response
     except ValueError as e:
         logger.warning(f"Failed to get context for peer {peer_id}: {str(e)}")
         raise ResourceNotFoundException("Peer not found") from e

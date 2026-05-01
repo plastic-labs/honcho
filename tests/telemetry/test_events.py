@@ -1,7 +1,7 @@
 # pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedParameter=false
 """Unit tests for telemetry event classes.
 
-Tests all 12 event types for:
+Tests all telemetry event types for:
 - Correct instantiation with required fields
 - event_type(), schema_version(), category() class methods
 - get_resource_id() returns expected format
@@ -20,6 +20,11 @@ from src.telemetry.events.agent import (
     AgentToolConclusionsDeletedEvent,
     AgentToolPeerCardUpdatedEvent,
     AgentToolSummaryCreatedEvent,
+)
+from src.telemetry.events.api import (
+    FileUploadedEvent,
+    GetContextEvent,
+    MessageCreatedEvent,
 )
 from src.telemetry.events.base import BaseEvent, generate_event_id
 from src.telemetry.events.deletion import DeletionCompletedEvent
@@ -179,6 +184,164 @@ class TestRepresentationCompletedEvent:
         assert data["workspace_name"] == "test_workspace"
         assert data["message_count"] == 10
         assert data["explicit_conclusion_count"] == 5
+
+
+# =============================================================================
+# Tests for MessageCreatedEvent
+# =============================================================================
+
+
+class TestMessageCreatedEvent:
+    """Tests for MessageCreatedEvent."""
+
+    def test_event_type(self):
+        """event_type() returns correct value."""
+        assert MessageCreatedEvent.event_type() == "message.created"
+
+    def test_schema_version(self):
+        """schema_version() returns correct value."""
+        assert MessageCreatedEvent.schema_version() == 1
+
+    def test_category(self):
+        """category() returns correct value."""
+        assert MessageCreatedEvent.category() == "api"
+
+    def test_get_resource_id(self, sample_message_created_event: MessageCreatedEvent):
+        """get_resource_id() returns workspace:session:source:count format."""
+        assert (
+            sample_message_created_event.get_resource_id()
+            == "test_workspace:test_session:api:2"
+        )
+
+    def test_source_defaults_to_api(self, fixed_timestamp: datetime):
+        """source defaults to api."""
+        event = MessageCreatedEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            session_name="test_session",
+            message_count=1,
+            total_tokens=100,
+        )
+        assert event.source == "api"
+
+
+# =============================================================================
+# Tests for FileUploadedEvent
+# =============================================================================
+
+
+class TestFileUploadedEvent:
+    """Tests for FileUploadedEvent."""
+
+    def test_event_type(self):
+        """event_type() returns correct value."""
+        assert FileUploadedEvent.event_type() == "file.uploaded"
+
+    def test_schema_version(self):
+        """schema_version() returns correct value."""
+        assert FileUploadedEvent.schema_version() == 1
+
+    def test_category(self):
+        """category() returns correct value."""
+        assert FileUploadedEvent.category() == "api"
+
+    def test_get_resource_id(self, sample_file_uploaded_event: FileUploadedEvent):
+        """get_resource_id() returns workspace:session:file format."""
+        assert (
+            sample_file_uploaded_event.get_resource_id()
+            == "test_workspace:test_session:file_123"
+        )
+
+    def test_optional_file_fields(self, fixed_timestamp: datetime):
+        """filename, content_type, and file_size_bytes are optional."""
+        event = FileUploadedEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            session_name="test_session",
+            peer_name="user_peer",
+            file_id="file_123",
+            message_count=1,
+            total_tokens=100,
+        )
+        assert event.filename is None
+        assert event.content_type is None
+        assert event.file_size_bytes is None
+
+
+# =============================================================================
+# Tests for GetContextEvent
+# =============================================================================
+
+
+class TestGetContextEvent:
+    """Tests for GetContextEvent."""
+
+    def test_event_type(self):
+        """event_type() returns correct value."""
+        assert GetContextEvent.event_type() == "context.retrieved"
+
+    def test_schema_version(self):
+        """schema_version() returns correct value."""
+        assert GetContextEvent.schema_version() == 1
+
+    def test_category(self):
+        """category() returns correct value."""
+        assert GetContextEvent.category() == "api"
+
+    def test_get_resource_id_session(self, sample_get_context_event: GetContextEvent):
+        """session context resource ID includes workspace and session."""
+        assert (
+            sample_get_context_event.get_resource_id()
+            == "test_workspace:session:test_session:none:none"
+        )
+
+    def test_get_resource_id_peer(self, fixed_timestamp: datetime):
+        """peer context resource ID includes observer and observed peers."""
+        event = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            context_scope="peer",
+            peer_name="observer",
+            target_name="observed",
+            total_duration_ms=10.0,
+        )
+        assert event.get_resource_id() == "test_workspace:peer:observer:observed"
+
+    def test_context_defaults(self, fixed_timestamp: datetime):
+        """Context booleans and counts have conservative defaults."""
+        event = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            context_scope="session",
+            session_name="test_session",
+            total_duration_ms=10.0,
+        )
+        assert event.message_count == 0
+        assert event.has_summary is False
+        assert event.has_representation is False
+        assert event.include_summary is None
+        assert event.tokens_requested is None
+        assert event.peer_perspective_provided is False
+
+    def test_session_context_can_record_raw_request_options(
+        self, fixed_timestamp: datetime
+    ):
+        """Raw request options can be recorded independently of resolved values."""
+        event = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            context_scope="session",
+            session_name="test_session",
+            peer_name="observer",
+            target_name="observed",
+            tokens_requested=8000,
+            include_summary=False,
+            peer_perspective_provided=True,
+            total_duration_ms=10.0,
+        )
+        assert event.tokens_requested == 8000
+        assert event.include_summary is False
+        assert event.peer_perspective_provided is True
 
 
 # =============================================================================
