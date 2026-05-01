@@ -29,14 +29,20 @@ def test_client_for_model_config_builds_azure_client(
         api_version="2024-10-21",
     )
 
-    client = registry.client_for_model_config("azure_openai", config)
+    try:
+        client = registry.client_for_model_config("azure_openai", config)
 
-    assert isinstance(client, FakeAsyncAzureOpenAI)
-    assert captured == {
-        "api_key": "az-test-key",
-        "azure_endpoint": "https://gateway.example/azure-openai",
-        "api_version": "2024-10-21",
-    }
+        assert isinstance(client, FakeAsyncAzureOpenAI)
+        assert captured == {
+            "api_key": "az-test-key",
+            "azure_endpoint": "https://gateway.example/azure-openai",
+            "api_version": "2024-10-21",
+        }
+    finally:
+        # Evict the FakeAsyncAzureOpenAI instance so later tests that hit
+        # the same (endpoint, key, version) cache key get the real class
+        # back (restored by monkeypatch teardown).
+        registry.get_azure_openai_override_client.cache_clear()
 
 
 def test_backend_for_provider_wraps_azure_client_in_openai_backend() -> None:

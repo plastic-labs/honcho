@@ -613,6 +613,7 @@ def test_env_vars_bind_azure_openai_api_version(
 ) -> None:
     from src.config import DeriverSettings
 
+    _clear_deriver_env(monkeypatch)
     monkeypatch.setenv("DERIVER_MODEL_CONFIG__TRANSPORT", "azure_openai")
     monkeypatch.setenv("DERIVER_MODEL_CONFIG__MODEL", "gpt-4o-mini-deployment")
     monkeypatch.setenv(
