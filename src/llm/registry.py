@@ -53,6 +53,19 @@ def get_openai_client() -> AsyncOpenAI:
 
 
 @lru_cache(maxsize=1)
+def get_azure_openai_client() -> AsyncAzureOpenAI:
+    """Default Azure OpenAI client from settings.LLM.AZURE_OPENAI_API_KEY.
+
+    Azure requires both an endpoint and api_version to make any call, so
+    this default-only client is only useful when a caller supplies those
+    explicitly; the override factory below is the common path.
+    """
+    return AsyncAzureOpenAI(
+        api_key=settings.LLM.AZURE_OPENAI_API_KEY,
+    )
+
+
+@lru_cache(maxsize=1)
 def get_gemini_client() -> genai.Client:
     """Default Gemini client built from settings.LLM.GEMINI_API_KEY."""
     http_options = (

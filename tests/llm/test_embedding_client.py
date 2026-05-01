@@ -2,7 +2,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from src.config import EmbeddingModelConfig
 from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
 
@@ -59,9 +58,7 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
     embedding = await client.embed("hello world")
 
     assert embedding == [0.1] * 8
-    assert fake_embeddings.calls == [
-        {"model": "text-embedding-3-small", "input": ["hello world"]}
-    ]
+    assert fake_embeddings.calls == [{"model": "text-embedding-3-small", "input": ["hello world"]}]
 
 
 @pytest.mark.asyncio
@@ -106,13 +103,11 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
             contents: str | list[str],
             config: dict[str, Any],
         ) -> SimpleNamespace:
-            calls.append(
-                {
-                    "model": model,
-                    "contents": contents,
-                    "config": config,
-                }
-            )
+            calls.append({
+                "model": model,
+                "contents": contents,
+                "config": config,
+            })
             return SimpleNamespace(
                 embeddings=[SimpleNamespace(values=[0.2] * 12)],
             )

@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-
 from src.config import (
     AppSettings,
     ConfiguredEmbeddingModelSettings,
@@ -61,13 +60,11 @@ def test_anthropic_thinking_budget_has_minimum() -> None:
 
 
 def test_reasoning_effort_alias_populates_generic_thinking_effort() -> None:
-    config = ModelConfig.model_validate(
-        {
-            "model": "gpt-5",
-            "transport": "openai",
-            "reasoning_effort": "minimal",
-        }
-    )
+    config = ModelConfig.model_validate({
+        "model": "gpt-5",
+        "transport": "openai",
+        "reasoning_effort": "minimal",
+    })
 
     assert config.thinking_effort == "minimal"
     assert config.reasoning_effort == "minimal"
@@ -194,20 +191,16 @@ def test_dialectic_level_settings_require_nested_model_config() -> None:
 
 def test_dialectic_level_settings_reject_legacy_flat_model_shape() -> None:
     with pytest.raises(ValueError, match="Field required"):
-        DialecticLevelSettings.model_validate(
-            {
-                "MODEL": "claude-haiku-4-5",
-                "THINKING_BUDGET_TOKENS": 1024,
-                "MAX_TOOL_ITERATIONS": 2,
-            }
-        )
+        DialecticLevelSettings.model_validate({
+            "MODEL": "claude-haiku-4-5",
+            "THINKING_BUDGET_TOKENS": 1024,
+            "MAX_TOOL_ITERATIONS": 2,
+        })
 
 
 def test_legacy_prefixed_model_strings_are_normalized() -> None:
     config = ModelConfig.model_validate({"model": "gemini/gemini-2.5-flash"})
-    configured = ConfiguredModelSettings.model_validate(
-        {"model": "anthropic/claude-haiku-4-5"}
-    )
+    configured = ConfiguredModelSettings.model_validate({"model": "anthropic/claude-haiku-4-5"})
 
     assert config.transport == "gemini"
     assert config.model == "gemini-2.5-flash"
@@ -265,16 +258,13 @@ def test_app_settings_explicit_vector_store_dimensions_warns_and_overrides() -> 
                 DIMENSIONS=1536,
             ),
         )
-    messages = [
-        str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)
-    ]
-    assert any(
-        "VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages
-    ), f"expected deprecation warning, got {messages!r}"
+    messages = [str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)]
+    assert any("VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages), (
+        f"expected deprecation warning, got {messages!r}"
+    )
     assert settings.EMBEDDING.VECTOR_DIMENSIONS == 2048
     assert settings.VECTOR_STORE.DIMENSIONS == 2048, (
-        "EMBEDDING.VECTOR_DIMENSIONS should always overwrite the operator-supplied "
-        "VECTOR_STORE.DIMENSIONS value"
+        "EMBEDDING.VECTOR_DIMENSIONS should always overwrite the operator-supplied VECTOR_STORE.DIMENSIONS value"
     )
 
 
@@ -312,36 +302,18 @@ def test_config_toml_example_uses_nested_model_config_sections() -> None:
     config_path = Path(__file__).resolve().parents[2] / "config.toml.example"
     config_data = load_toml_config(str(config_path))
 
-    deriver_config = ConfiguredModelSettings.model_validate(
-        config_data["deriver"]["model_config"]
-    )
-    minimal_level = DialecticLevelSettings.model_validate(
-        config_data["dialectic"]["levels"]["minimal"]
-    )
-    low_level = DialecticLevelSettings.model_validate(
-        config_data["dialectic"]["levels"]["low"]
-    )
-    max_level = DialecticLevelSettings.model_validate(
-        config_data["dialectic"]["levels"]["max"]
-    )
-    embedding_config = ConfiguredEmbeddingModelSettings.model_validate(
-        config_data["embedding"]["model_config"]
-    )
-    summary_config = ConfiguredModelSettings.model_validate(
-        config_data["summary"]["model_config"]
-    )
-    deduction_model_config = ConfiguredModelSettings.model_validate(
-        config_data["dream"]["deduction_model_config"]
-    )
-    induction_model_config = ConfiguredModelSettings.model_validate(
-        config_data["dream"]["induction_model_config"]
-    )
-    dream = DreamSettings.model_validate(
-        {
-            "DEDUCTION_MODEL_CONFIG": deduction_model_config,
-            "INDUCTION_MODEL_CONFIG": induction_model_config,
-        }
-    )
+    deriver_config = ConfiguredModelSettings.model_validate(config_data["deriver"]["model_config"])
+    minimal_level = DialecticLevelSettings.model_validate(config_data["dialectic"]["levels"]["minimal"])
+    low_level = DialecticLevelSettings.model_validate(config_data["dialectic"]["levels"]["low"])
+    max_level = DialecticLevelSettings.model_validate(config_data["dialectic"]["levels"]["max"])
+    embedding_config = ConfiguredEmbeddingModelSettings.model_validate(config_data["embedding"]["model_config"])
+    summary_config = ConfiguredModelSettings.model_validate(config_data["summary"]["model_config"])
+    deduction_model_config = ConfiguredModelSettings.model_validate(config_data["dream"]["deduction_model_config"])
+    induction_model_config = ConfiguredModelSettings.model_validate(config_data["dream"]["induction_model_config"])
+    dream = DreamSettings.model_validate({
+        "DEDUCTION_MODEL_CONFIG": deduction_model_config,
+        "INDUCTION_MODEL_CONFIG": induction_model_config,
+    })
 
     # config.toml.example ships the same minimal defaults the app uses:
     # transport=openai, model=gpt-5.4-mini across every text-generation
@@ -818,11 +790,5 @@ def test_dialectic_settings_backfills_missing_levels(
     assert settings.LEVELS["low"].MAX_OUTPUT_TOKENS == 2500
     # Backfilled levels come from _default_dialectic_levels()
     defaults = _default_dialectic_levels()
-    assert (
-        settings.LEVELS["minimal"].MAX_TOOL_ITERATIONS
-        == defaults["minimal"].MAX_TOOL_ITERATIONS
-    )
-    assert (
-        settings.LEVELS["max"].MAX_TOOL_ITERATIONS
-        == defaults["max"].MAX_TOOL_ITERATIONS
-    )
+    assert settings.LEVELS["minimal"].MAX_TOOL_ITERATIONS == defaults["minimal"].MAX_TOOL_ITERATIONS
+    assert settings.LEVELS["max"].MAX_TOOL_ITERATIONS == defaults["max"].MAX_TOOL_ITERATIONS
