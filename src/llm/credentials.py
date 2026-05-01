@@ -24,4 +24,6 @@ def default_transport_api_key(transport: str) -> str | None:
         return settings.LLM.GEMINI_API_KEY
     if transport == "lmstudio":
         return settings.LLM.LMSTUDIO_API_KEY
+    if transport == "nous":
+        return settings.LLM.NOUS_API_KEY
     raise ValidationException(f"Unknown transport: {transport}")

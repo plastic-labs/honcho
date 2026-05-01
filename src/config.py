@@ -22,7 +22,7 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini", "lmstudio"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "lmstudio", "nous"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 
@@ -656,6 +656,8 @@ class LLMSettings(HonchoSettings):
     GEMINI_API_KEY: str | None = None
     LMSTUDIO_API_KEY: str | None = None
     LMSTUDIO_BASE_URL: str | None = None
+    NOUS_API_KEY: str | None = None
+    NOUS_BASE_URL: str | None = "https://inference-api.nousresearch.com/v1"
 
     # Base URLs for LLM providers (for OpenAI-compatible proxies like
     # OpenRouter, vLLM, Together, Anyscale, self-hosted, etc.)
