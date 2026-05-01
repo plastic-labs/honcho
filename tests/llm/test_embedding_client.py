@@ -137,3 +137,66 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
             "config": {"output_dimensionality": 12},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_azure_openai_embedding_client_uses_azure_endpoint_and_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.3] * 8)
+    captured: dict[str, Any] = {}
+
+    class FakeAzureClient:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            azure_endpoint: str | None,
+            api_version: str | None,
+        ) -> None:
+            captured["api_key"] = api_key
+            captured["azure_endpoint"] = azure_endpoint
+            captured["api_version"] = api_version
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncAzureOpenAI", FakeAzureClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="azure_openai",
+            model="text-embedding-3-small",
+            api_key="az-test-key",
+            base_url="https://gateway.example/azure-openai",
+            api_version="2024-10-21",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+    )
+
+    embedding = await client.embed("hello world")
+
+    assert embedding == [0.3] * 8
+    assert captured == {
+        "api_key": "az-test-key",
+        "azure_endpoint": "https://gateway.example/azure-openai",
+        "api_version": "2024-10-21",
+    }
+    assert fake_embeddings.calls == [
+        {"model": "text-embedding-3-small", "input": ["hello world"]}
+    ]
+
+
+def test_azure_openai_embedding_client_requires_api_version() -> None:
+    with pytest.raises(ValueError, match="api_version is required"):
+        _EmbeddingClient(
+            EmbeddingModelConfig(
+                transport="azure_openai",
+                model="text-embedding-3-small",
+                api_key="az-test-key",
+                base_url="https://gateway.example/azure-openai",
+            ),
+            vector_dimensions=8,
+            max_input_tokens=8192,
+            max_tokens_per_request=300_000,
+        )
