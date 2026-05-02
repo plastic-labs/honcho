@@ -99,7 +99,7 @@ class _EmbeddingClient:
             return self._validate_embedding_dimensions(response.embeddings[0].values)
         else:  # openai
             response = await self.client.embeddings.create(
-                model=self.model, input=[query]
+                model=self.model, input=[query], dimensions=self.vector_dimensions
             )
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
@@ -138,6 +138,7 @@ class _EmbeddingClient:
                     response = await self.client.embeddings.create(
                         input=batch,
                         model=self.model,
+                        dimensions=self.vector_dimensions,
                     )
                     embeddings.extend(
                         [
@@ -290,7 +291,7 @@ class _EmbeddingClient:
                                 )
                 else:  # openai
                     response = await self.client.embeddings.create(
-                        model=self.model, input=[item.text for item in batch]
+                        model=self.model, input=[item.text for item in batch], dimensions=self.vector_dimensions
                     )
                     for item, embedding_data in zip(batch, response.data, strict=True):
                         result[item.text_id][item.chunk_index] = (
