@@ -74,7 +74,7 @@ class DocumentCreate(DocumentBase):
         description="The number of times that a semantic duplicate document to this one has been derived",
     )
     metadata: DocumentMetadata = Field()
-    embedding: list[float] = Field()
+    embedding: list[float] | None = Field(default=None)
     # Tree linkage field
     source_ids: list[str] | None = Field(
         default=None,

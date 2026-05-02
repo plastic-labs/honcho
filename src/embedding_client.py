@@ -146,6 +146,13 @@ class _EmbeddingClient:
                         ]
                     )
             except Exception as e:
+                # Check if it's a daily quota exhaustion error — fail fast instead of retrying
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    # Daily quota exhausted (e.g. Gemini free tier: 1000 req/day).
+                    # No point retrying — propagate immediately so the caller can
+                    # save documents without embeddings for later backfill.
+                    raise
                 # Check if it's a token limit error and re-raise as ValueError for consistency
                 if "token" in str(e).lower():
                     raise ValueError(
