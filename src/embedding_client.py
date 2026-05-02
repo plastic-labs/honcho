@@ -98,9 +98,10 @@ class _EmbeddingClient:
                 raise ValueError("No embedding returned from Gemini API")
             return self._validate_embedding_dimensions(response.embeddings[0].values)
         else:  # openai
-            response = await self.client.embeddings.create(
-                model=self.model, input=[query]
-            )
+            kwargs: dict = {"model": self.model, "input": [query]}
+            if self.vector_dimensions:
+                kwargs["dimensions"] = self.vector_dimensions
+            response = await self.client.embeddings.create(**kwargs)
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
     async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
@@ -135,10 +136,10 @@ class _EmbeddingClient:
                                     self._validate_embedding_dimensions(emb.values)
                                 )
                 else:  # openai
-                    response = await self.client.embeddings.create(
-                        input=batch,
-                        model=self.model,
-                    )
+                    kwargs: dict = {"input": batch, "model": self.model}
+                    if self.vector_dimensions:
+                        kwargs["dimensions"] = self.vector_dimensions
+                    response = await self.client.embeddings.create(**kwargs)
                     embeddings.extend(
                         [
                             self._validate_embedding_dimensions(data.embedding)
@@ -282,9 +283,10 @@ class _EmbeddingClient:
                                     )
                                 )
                 else:  # openai
-                    response = await self.client.embeddings.create(
-                        model=self.model, input=[item.text for item in batch]
-                    )
+                    kwargs: dict = {"model": self.model, "input": [item.text for item in batch]}
+                    if self.vector_dimensions:
+                        kwargs["dimensions"] = self.vector_dimensions
+                    response = await self.client.embeddings.create(**kwargs)
                     for item, embedding_data in zip(batch, response.data, strict=True):
                         result[item.text_id][item.chunk_index] = (
                             self._validate_embedding_dimensions(
