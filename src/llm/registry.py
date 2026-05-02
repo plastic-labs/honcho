@@ -174,8 +174,10 @@ def backend_for_provider(
     """Wrap a raw provider SDK client in the matching ProviderBackend adapter."""
     if provider == "anthropic":
         return AnthropicBackend(client)
-    if provider == "openai" or provider == "lmstudio" or provider == "nous":
+    if provider == "openai" or provider == "lmstudio":
         return OpenAIBackend(client)
+    if provider == "nous":
+        return OpenAIBackend(client, is_nous=True)
     if provider == "gemini":
         return GeminiBackend(client)
     assert_never(provider)
