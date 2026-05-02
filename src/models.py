@@ -1,4 +1,5 @@
 import datetime
+import os
 from logging import getLogger
 from typing import Any, final
 
@@ -278,7 +279,9 @@ class MessageEmbedding(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(
+        Vector(int(os.environ.get("VECTOR_STORE_DIMENSIONS", "768")))
+    , nullable=True)
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -386,7 +389,9 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(
+        Vector(int(os.environ.get("VECTOR_STORE_DIMENSIONS", "768")))
+    , nullable=True)
     source_ids: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True, server_default=text("NULL")
     )
