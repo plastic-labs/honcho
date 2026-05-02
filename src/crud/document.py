@@ -453,7 +453,8 @@ async def create_documents(
             # for each document, if deduplicate is True, perform a process
             # that checks against existing documents and either rejects this document
             # as a duplicate OR deletes an existing document that is a duplicate.
-            if deduplicate:
+            # Skip dedup when embedding is None (backfill by reconciler later)
+            if deduplicate and doc.embedding is not None:
                 is_duplicate = await is_rejected_duplicate(
                     db, doc, workspace_name, observer=observer, observed=observed
                 )
