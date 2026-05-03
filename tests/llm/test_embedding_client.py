@@ -3,7 +3,11 @@ from typing import Any
 
 import pytest
 
-from src.config import EmbeddingModelConfig
+from src.config import (
+    ConfiguredEmbeddingModelSettings,
+    EmbeddingModelConfig,
+    resolve_embedding_model_config,
+)
 from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
 
 
@@ -12,8 +16,10 @@ class FakeOpenAIEmbeddingsAPI:
         self.embedding: list[float] = embedding
         self.calls: list[dict[str, Any]] = []
 
-    async def create(self, *, model: str, input: str | list[str]) -> SimpleNamespace:
-        self.calls.append({"model": model, "input": input})
+    async def create(
+        self, *, model: str, input: str | list[str], **kwargs: Any
+    ) -> SimpleNamespace:
+        self.calls.append({"model": model, "input": input, **kwargs})
         if isinstance(input, list):
             data = [SimpleNamespace(embedding=self.embedding) for _ in input]
         else:
@@ -136,4 +142,173 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
             "contents": "hello world",
             "config": {"output_dimensionality": 12},
         }
+    ]
+
+
+def test_resolve_embedding_model_config_preserves_provider_params() -> None:
+    configured = ConfiguredEmbeddingModelSettings(
+        model="text-embedding-v4",
+        transport="openai",
+        overrides={
+            "base_url": "https://example.test/v1",
+            "api_key": "test-key",
+            "provider_params": {"dimensions": 1536},
+        },
+    )
+
+    resolved = resolve_embedding_model_config(configured)
+
+    assert resolved.model == "text-embedding-v4"
+    assert resolved.transport == "openai"
+    assert resolved.base_url == "https://example.test/v1"
+    assert resolved.api_key == "test-key"
+    assert resolved.provider_params == {"dimensions": 1536}
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_passes_provider_params_to_single_embed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding=[0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-v4",
+            api_key="test-key",
+            base_url="https://example.test/v1",
+            provider_params={"dimensions": 8},
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+    )
+
+    result = await client.embed("hello world")
+
+    assert result == [0.1] * 8
+    assert fake_embeddings.calls == [
+        {
+            "model": "text-embedding-v4",
+            "input": ["hello world"],
+            "dimensions": 8,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_passes_provider_params_to_simple_batch_embed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding=[0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-v4",
+            api_key="test-key",
+            base_url="https://example.test/v1",
+            provider_params={"dimensions": 8},
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+    )
+
+    result = await client.simple_batch_embed(["hello", "world"])
+
+    assert result == [[0.1] * 8, [0.1] * 8]
+    assert fake_embeddings.calls == [
+        {
+            "model": "text-embedding-v4",
+            "input": ["hello", "world"],
+            "dimensions": 8,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_passes_provider_params_to_chunked_batch_embed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding=[0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-v4",
+            api_key="test-key",
+            base_url="https://example.test/v1",
+            provider_params={"dimensions": 8},
+        ),
+        vector_dimensions=8,
+        max_input_tokens=1,  # Force chunking by setting very low token limit
+        max_tokens_per_request=300_000,
+    )
+
+    text = "hello world " * 100  # Long text to trigger chunking
+    result = await client.batch_embed({"doc-1": (text, client.encoding.encode(text))})
+
+    # With max_input_tokens=1, the text will be chunked into multiple pieces
+    # Each chunk gets embedded, so we expect multiple embedding vectors
+    assert "doc-1" in result
+    assert len(result["doc-1"]) > 1  # Should have multiple chunks
+    assert all(
+        emb == [0.1] * 8 for emb in result["doc-1"]
+    )  # Each chunk has same embedding
+
+    # Verify provider_params were passed in all chunk calls
+    assert len(fake_embeddings.calls) > 0
+    for call in fake_embeddings.calls:
+        assert call["model"] == "text-embedding-v4"
+        assert call["dimensions"] == 8
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_omits_provider_params_when_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding=[0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            base_url="https://example.test/v1",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+    )
+
+    result = await client.embed("hello world")
+
+    assert result == [0.1] * 8
+    assert fake_embeddings.calls == [
+        {"model": "text-embedding-3-small", "input": ["hello world"]}
     ]
