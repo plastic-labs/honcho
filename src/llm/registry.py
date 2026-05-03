@@ -38,6 +38,7 @@ def get_anthropic_client() -> AsyncAnthropic:
     """Default Anthropic client built from settings.LLM.ANTHROPIC_API_KEY."""
     return AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
+        base_url=settings.LLM.ANTHROPIC_BASE_URL,
         timeout=600.0,
     )
 
@@ -47,13 +48,19 @@ def get_openai_client() -> AsyncOpenAI:
     """Default OpenAI client built from settings.LLM.OPENAI_API_KEY."""
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
+        base_url=settings.LLM.OPENAI_BASE_URL,
     )
 
 
 @lru_cache(maxsize=1)
 def get_gemini_client() -> genai.Client:
     """Default Gemini client built from settings.LLM.GEMINI_API_KEY."""
-    return genai.Client(api_key=settings.LLM.GEMINI_API_KEY)
+    http_options = (
+        genai_types.HttpOptions(base_url=settings.LLM.GEMINI_BASE_URL)
+        if settings.LLM.GEMINI_BASE_URL
+        else None
+    )
+    return genai.Client(api_key=settings.LLM.GEMINI_API_KEY, http_options=http_options)
 
 
 # Bounded cache — in practice the (base_url, api_key) key space is small
@@ -91,17 +98,25 @@ CLIENTS: dict[ModelTransport, ProviderClient] = {}
 if settings.LLM.ANTHROPIC_API_KEY:
     CLIENTS["anthropic"] = AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
+        base_url=settings.LLM.ANTHROPIC_BASE_URL,
         timeout=600.0,
     )
 
 if settings.LLM.OPENAI_API_KEY:
     CLIENTS["openai"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
+        base_url=settings.LLM.OPENAI_BASE_URL,
     )
 
 if settings.LLM.GEMINI_API_KEY:
+    http_options = (
+        genai_types.HttpOptions(base_url=settings.LLM.GEMINI_BASE_URL)
+        if settings.LLM.GEMINI_BASE_URL
+        else None
+    )
     CLIENTS["gemini"] = genai.client.Client(
         api_key=settings.LLM.GEMINI_API_KEY,
+        http_options=http_options,
     )
 
 
