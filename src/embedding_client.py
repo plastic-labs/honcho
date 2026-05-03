@@ -2,7 +2,7 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import tiktoken
 from google import genai
@@ -38,6 +38,7 @@ class _EmbeddingClient:
         self.transport: str = config.transport
         self.model: str = config.model
         self.vector_dimensions: int = vector_dimensions
+        self.provider_params: dict[str, Any] = config.provider_params
 
         if self.transport == "gemini":
             if not config.api_key:
@@ -72,6 +73,14 @@ class _EmbeddingClient:
     def provider(self) -> str:
         return self.transport
 
+    def _openai_embedding_kwargs(self, input: str | list[str]) -> dict[str, Any]:
+        """Build kwargs for OpenAI embedding API calls with provider params."""
+        return {
+            "model": self.model,
+            "input": input,
+            **self.provider_params,
+        }
+
     def _validate_embedding_dimensions(self, embedding: list[float]) -> list[float]:
         if len(embedding) != self.vector_dimensions:
             raise ValueError(
@@ -99,7 +108,7 @@ class _EmbeddingClient:
             return self._validate_embedding_dimensions(response.embeddings[0].values)
         else:  # openai
             response = await self.client.embeddings.create(
-                model=self.model, input=[query]
+                **self._openai_embedding_kwargs([query])
             )
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
@@ -136,8 +145,7 @@ class _EmbeddingClient:
                                 )
                 else:  # openai
                     response = await self.client.embeddings.create(
-                        input=batch,
-                        model=self.model,
+                        **self._openai_embedding_kwargs(batch)
                     )
                     embeddings.extend(
                         [
@@ -283,7 +291,7 @@ class _EmbeddingClient:
                                 )
                 else:  # openai
                     response = await self.client.embeddings.create(
-                        model=self.model, input=[item.text for item in batch]
+                        **self._openai_embedding_kwargs([item.text for item in batch])
                     )
                     for item, embedding_data in zip(batch, response.data, strict=True):
                         result[item.text_id][item.chunk_index] = (
