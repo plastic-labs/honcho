@@ -434,6 +434,9 @@ class EmbeddingClient:
             runtime_config.model,
             runtime_config.api_key,
             runtime_config.base_url,
+            tuple(
+                sorted(runtime_config.provider_params.items())
+            ),  # Include provider_params in cache key
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,

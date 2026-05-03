@@ -260,21 +260,26 @@ async def test_openai_embedding_client_passes_provider_params_to_chunked_batch_e
             provider_params={"dimensions": 8},
         ),
         vector_dimensions=8,
-        max_input_tokens=8192,
+        max_input_tokens=1,  # Force chunking by setting very low token limit
         max_tokens_per_request=300_000,
     )
 
-    text = "hello world"
+    text = "hello world " * 100  # Long text to trigger chunking
     result = await client.batch_embed({"doc-1": (text, client.encoding.encode(text))})
 
-    assert result == {"doc-1": [[0.1] * 8]}
-    assert fake_embeddings.calls == [
-        {
-            "model": "text-embedding-v4",
-            "input": ["hello world"],
-            "dimensions": 8,
-        }
-    ]
+    # With max_input_tokens=1, the text will be chunked into multiple pieces
+    # Each chunk gets embedded, so we expect multiple embedding vectors
+    assert "doc-1" in result
+    assert len(result["doc-1"]) > 1  # Should have multiple chunks
+    assert all(
+        emb == [0.1] * 8 for emb in result["doc-1"]
+    )  # Each chunk has same embedding
+
+    # Verify provider_params were passed in all chunk calls
+    assert len(fake_embeddings.calls) > 0
+    for call in fake_embeddings.calls:
+        assert call["model"] == "text-embedding-v4"
+        assert call["dimensions"] == 8
 
 
 @pytest.mark.asyncio
