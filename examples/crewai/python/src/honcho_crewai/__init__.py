@@ -6,15 +6,18 @@ enabling AI agents to maintain persistent memory across conversations.
 
 Example:
     ```python
-    from honcho_crewai import HonchoStorage, HonchoSearchTool, HonchoGetContextTool, HonchoDialecticTool
-    from crewai.memory.external.external_memory import ExternalMemory
-    from crewai import Agent, Task, Crew
+    from honcho_crewai import HonchoMemoryStorage, HonchoSearchTool, HonchoGetContextTool, HonchoDialecticTool
+    from crewai import Agent, Task, Crew, Memory
     from honcho import Honcho
 
-    # Initialize Honcho client and storage
+    # Initialize Honcho client and CrewAI memory
     honcho = Honcho()
-    storage = HonchoStorage(user_id="user123", honcho_client=honcho)
-    external_memory = ExternalMemory(storage=storage)
+    storage = HonchoMemoryStorage(
+        peer_id="user123",
+        session_id="session123",
+        honcho_client=honcho,
+    )
+    memory = Memory(storage=storage)
 
     # Create tools for agents
     search_tool = HonchoSearchTool(honcho=honcho, session_id=storage.session_id)
@@ -36,28 +39,29 @@ Example:
         agent=agent,
     )
 
-    # Create crew with external memory
+    # Create crew with unified memory
     crew = Crew(
         agents=[agent],
         tasks=[task],
-        external_memory=external_memory
+        memory=memory
     )
     ```
 """
 
 from honcho_crewai.exceptions import HonchoDependencyError
-from honcho_crewai.storage import HonchoStorage
+from honcho_crewai.storage import HonchoMemoryStorage, HonchoStorage
 from honcho_crewai.tools import (
     HonchoDialecticTool,
     HonchoGetContextTool,
     HonchoSearchTool,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "HonchoDependencyError",
     "HonchoDialecticTool",
     "HonchoGetContextTool",
+    "HonchoMemoryStorage",
     "HonchoSearchTool",
     "HonchoStorage",
 ]
