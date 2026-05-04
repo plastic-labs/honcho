@@ -265,25 +265,15 @@ If the model references TypeScript and concise answers without being told again 
 
 ### 4. Cross-session recall
 
-Start a new session (new `sessionId`). Ask:
-
-```text
-Based on what we've talked about, what do you know about me?
-```
-
-If the model recalls preferences from previous sessions without them being in the current conversation, cross-session memory is working. Honcho processed the prior turns between sessions and updated the user's representation.
-
-<Note>
-The deriver waits until 1024 tokens are accumulated before batch processing - short conversations won't trigger cross-session recall!
-</Note>
-
-### 5. Test tool calling directly
+Start a new session (new `sessionId`) with the same `userId`. Ask:
 
 ```text
 Call your honcho_search tool with the query 'TypeScript' and quote the exact verbatim message that contained TypeScript. Do not paraphrase.
 ```
 
-If the model returns the exact prior message word-for-word, the tool pipeline is functional. To confirm which tool fired, inspect `result.steps[i].toolCalls`:
+If the search returns a message from the prior session word-for-word, peer-scoped retrieval is crossing session boundaries. `honcho_search` queries the user's messages across all their sessions and doesn't depend on the deriver, so it works regardless of how short the prior session was.
+
+To confirm the tool actually fired, inspect `result.steps[i].toolCalls`:
 
 ```typescript
 const toolFires = result.steps?.flatMap((step, i) =>
