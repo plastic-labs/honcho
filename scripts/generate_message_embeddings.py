@@ -21,7 +21,6 @@ import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, project_root)
 
-import tiktoken  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
@@ -90,20 +89,16 @@ async def create_embeddings_for_messages(
     if not messages:
         return 0
 
-    # Initialize tiktoken encoding (same as used in MessageCreate schema)
-    encoding = tiktoken.get_encoding("o200k_base")
-
-    # Prepare data for batch embedding with proper token encoding
     id_resource_dict = {
-        message.public_id: (
-            message.content,
-            encoding.encode(message.content),  # Properly encode the content
-        )
+        message.public_id: message.content
         for message in messages
+        if message.content and message.content.strip()
     }
 
     # Generate embeddings
-    embedding_dict = await embedding_client.batch_embed(id_resource_dict)
+    embedding_dict = (
+        await embedding_client.batch_embed(id_resource_dict) if id_resource_dict else {}
+    )
 
     # Create MessageEmbedding objects
     embedding_objects: list[models.MessageEmbedding] = []

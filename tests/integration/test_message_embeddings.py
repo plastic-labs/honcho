@@ -78,6 +78,68 @@ async def test_message_embedding_created_when_setting_enabled(
 
 
 @pytest.mark.asyncio
+async def test_blank_messages_are_not_sent_for_embedding(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+    mock_openai_embeddings: dict[str, Any],
+):
+    """Blank messages should be persisted but excluded from embedding batches."""
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", True)
+
+    test_workspace, test_peer = sample_data
+
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    blank_content = "   "
+    nonblank_content = "This message should be embedded"
+    messages = [
+        MessageCreate(
+            content=blank_content,
+            peer_id=test_peer.name,
+            metadata={"test": "blank_embedding"},
+        ),
+        MessageCreate(
+            content=nonblank_content,
+            peer_id=test_peer.name,
+            metadata={"test": "blank_embedding"},
+        ),
+    ]
+
+    created_messages = await create_messages(
+        db=db_session,
+        messages=messages,
+        workspace_name=test_workspace.name,
+        session_name=test_session.name,
+    )
+
+    assert [message.content for message in created_messages] == [
+        blank_content,
+        nonblank_content,
+    ]
+
+    mock_openai_embeddings["batch_embed"].assert_awaited_once()
+    batch_arg = mock_openai_embeddings["batch_embed"].await_args.args[0]
+    assert batch_arg == {created_messages[1].public_id: nonblank_content}
+
+    stmt = select(models.MessageEmbedding).where(
+        models.MessageEmbedding.message_id.in_(
+            [message.public_id for message in created_messages]
+        )
+    )
+    result = await db_session.execute(stmt)
+    embedding_records = list(result.scalars().all())
+
+    assert len(embedding_records) == 1
+    assert embedding_records[0].message_id == created_messages[1].public_id
+    assert embedding_records[0].content == nonblank_content
+
+
+@pytest.mark.asyncio
 async def test_message_embedding_not_created_when_setting_disabled(
     db_session: AsyncSession,
     sample_data: tuple[Workspace, Peer],
@@ -492,7 +554,7 @@ async def test_message_chunking_creates_multiple_embeddings(
     test_message_content = "This is a very long message that should be chunked into multiple pieces because it exceeds the token limit that we set for testing purposes. This message contains many words and should definitely be split into multiple chunks."
 
     def mock_batch_embed_chunked(
-        id_resource_dict: dict[str, tuple[str, list[int]]],
+        id_resource_dict: dict[str, str],
     ) -> dict[str, list[list[float]]]:
         return {
             text_id: [[0.1] * 1536, [0.2] * 1536, [0.3] * 1536]  # 3 chunks per message

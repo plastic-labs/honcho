@@ -262,18 +262,16 @@ async def create_messages(
     await db.commit()
     try:
         if settings.EMBED_MESSAGES:
-            encoded_message_lookup = {
-                msg.public_id: orig_msg.encoded_message
-                for msg, orig_msg in zip(message_objects, messages, strict=True)
-            }
             id_resource_dict = {
-                message.public_id: (
-                    message.content,
-                    encoded_message_lookup[message.public_id],
-                )
+                message.public_id: message.content
                 for message in message_objects
+                if message.content and message.content.strip()
             }
-            embedding_dict = await embedding_client.batch_embed(id_resource_dict)
+            embedding_dict = (
+                await embedding_client.batch_embed(id_resource_dict)
+                if id_resource_dict
+                else {}
+            )
 
             external_vector_store = get_external_vector_store()
 

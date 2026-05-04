@@ -65,7 +65,10 @@ class _EmbeddingClient:
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048  # OpenAI batch limit
 
-        self.encoding: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
+        try:
+            self.encoding: tiktoken.Encoding = tiktoken.encoding_for_model(self.model)
+        except KeyError:
+            self.encoding = tiktoken.get_encoding("cl100k_base")
         self.max_embedding_tokens_per_request: int = max_tokens_per_request
 
     @property
@@ -156,13 +159,13 @@ class _EmbeddingClient:
         return embeddings
 
     async def batch_embed(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[list[float]]]:
         """
         Embed multiple texts, chunking long ones and batching API calls.
 
         Args:
-            id_resource_dict: Maps text IDs to (text, encoded_tokens) tuples
+            id_resource_dict: Maps text IDs to text content
 
         Returns:
             Maps text IDs to lists of embedding vectors (one per chunk)
@@ -185,27 +188,29 @@ class _EmbeddingClient:
         return self._accumulate_embeddings(batch_results)
 
     def _prepare_chunks(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[tuple[str, int]]]:
         """
         Chunk texts that exceed token limits.
 
         Args:
-            id_resource_dict: Maps text IDs to (text, encoded_tokens) tuples
+            id_resource_dict: Maps text IDs to text content. We tokenize with
+                the embedding client's own encoding so token IDs match the
+                decoder vocabulary used by the target embedding API.
 
         Returns:
             Maps text IDs to lists of (chunk_text, token_count) tuples
         """
-        return {
-            text_id: (
-                _chunk_text_with_tokens(
-                    text, encoded_tokens, self.max_embedding_tokens, self.encoding
+        out: dict[str, list[tuple[str, int]]] = {}
+        for text_id, text in id_resource_dict.items():
+            tokens = self.encoding.encode(text)
+            if len(tokens) > self.max_embedding_tokens:
+                out[text_id] = _chunk_text_with_tokens(
+                    text, tokens, self.max_embedding_tokens, self.encoding
                 )
-                if len(encoded_tokens) > self.max_embedding_tokens
-                else [(text, len(encoded_tokens))]
-            )
-            for text_id, (text, encoded_tokens) in id_resource_dict.items()
-        }
+            else:
+                out[text_id] = [(text, len(tokens))]
+        return out
 
     def _create_batches(
         self, text_chunks: dict[str, list[tuple[str, int]]]
@@ -440,7 +445,7 @@ class EmbeddingClient:
         return await self._get_client().simple_batch_embed(texts)
 
     async def batch_embed(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[list[float]]]:
         """Embed multiple texts, chunking long ones and batching API calls."""
         return await self._get_client().batch_embed(id_resource_dict)
