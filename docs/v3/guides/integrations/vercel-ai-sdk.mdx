@@ -273,13 +273,27 @@ Based on what we've talked about, what do you know about me?
 
 If the model recalls preferences from previous sessions without them being in the current conversation, cross-session memory is working. Honcho processed the prior turns between sessions and updated the user's representation.
 
+<Note>
+The deriver waits until 1024 tokens are accumulated before batch processing - short conversations won't trigger cross-session recall!
+</Note>
+
 ### 5. Test tool calling directly
 
 ```text
-Use your honcho_chat tool to tell me what patterns you've noticed about me.
+Call your honcho_search tool with the query 'TypeScript' and quote the exact verbatim message that contained TypeScript. Do not paraphrase.
 ```
 
-If the model calls the tool and returns a synthesized answer, the full tool pipeline is functional. To confirm which tool fired, inspect `result.toolCalls` — tool names like `honcho_chat` appear there, not in `result.text`.
+If the model returns the exact prior message word-for-word, the tool pipeline is functional. To confirm which tool fired, inspect `result.steps[i].toolCalls`:
+
+```typescript
+const toolFires = result.steps?.flatMap((step, i) =>
+  (step.toolCalls ?? []).map((tc) => ({ step: i, tool: tc.toolName, input: tc.input }))
+) ?? [];
+console.log(toolFires);
+// [{ step: 0, tool: "honcho_search", input: { query: "TypeScript", limit: 10 } }]
+```
+
+When the model takes more than one turn (call a tool, see the result, then answer), the top-level `result.toolCalls` is empty — check inside each `step`.
 
 ## Full Script
 
