@@ -24,6 +24,7 @@ async def _fake_tracked_db(_name: str):
 
 def _saved_observations(mock_save: AsyncMock):
     call = mock_save.await_args
+    assert call is not None, "mock was not awaited"
     if "all_observations" in call.kwargs:
         return call.kwargs["all_observations"]
     if len(call.args) > 1:
@@ -162,7 +163,9 @@ class TestRepresentationManagerSoftDelete:
 
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio
-    async def test_save_representation_filters_blank_observations_before_embedding(self):
+    async def test_save_representation_filters_blank_observations_before_embedding(
+        self,
+    ):
         manager = RepresentationManager(
             "workspace",
             observer="observer",
@@ -202,7 +205,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(
+                message_level_configuration=SimpleNamespace(  # pyright: ignore[reportArgumentType]
                     dream=SimpleNamespace(enabled=False)
                 ),
             )
@@ -258,7 +261,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(
+                message_level_configuration=SimpleNamespace(  # pyright: ignore[reportArgumentType]
                     dream=SimpleNamespace(enabled=False)
                 ),
             )
@@ -311,7 +314,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(
+                message_level_configuration=SimpleNamespace(  # pyright: ignore[reportArgumentType]
                     dream=SimpleNamespace(enabled=False)
                 ),
             )

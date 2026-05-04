@@ -104,6 +104,7 @@
                 "pages": [
                   "v3/guides/integrations/claude-code",
                   "v3/guides/integrations/opencode",
+                  "v3/guides/integrations/vercel-ai-sdk",
                   "v3/guides/integrations/crewai",
                   "v3/guides/integrations/langgraph",
                   "v3/guides/integrations/mcp",
