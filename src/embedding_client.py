@@ -68,7 +68,7 @@ class _EmbeddingClient:
         try:
             self.encoding: tiktoken.Encoding = tiktoken.encoding_for_model(self.model)
         except KeyError:
-            self.encoding = tiktoken.get_encoding("o200k_base")
+            self.encoding = tiktoken.get_encoding("cl100k_base")
         self.max_embedding_tokens_per_request: int = max_tokens_per_request
 
     @property
