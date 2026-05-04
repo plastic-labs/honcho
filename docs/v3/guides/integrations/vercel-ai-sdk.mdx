@@ -14,7 +14,7 @@ The full package source and examples are available on [GitHub](https://github.co
 
 ## What We're Building
 
-We'll wire Honcho into a Vercel AI SDK app so the model automatically receives context from past conversations and can query what it knows about the user mid-generation. Here's how the pieces fit together:
+We'll wire Honcho into a Vercel AI SDK app so the model receives context from past conversations and can query what it knows about the user mid-generation. Here's how the pieces fit together:
 
 - **Vercel AI SDK** handles model calls and streaming
 - **Honcho** stores messages and retrieves user context before each generation
@@ -71,7 +71,7 @@ const honcho = createHoncho({
 
 ## Add Middleware
 
-`honcho.middleware()` is compatible with `wrapLanguageModel`. Two things happen automatically on each call:
+`honcho.middleware()` is compatible with `wrapLanguageModel`. Two things happen on each call:
 
 1. **Before generation** — Honcho fetches the user's representation, peer card, session summary, and recent messages and injects them into the system prompt
 2. **After generation** — the user message and assistant response are stored back in Honcho with correct peer attribution
@@ -130,7 +130,9 @@ const { text } = await generateText({
 
 ## Complete Example
 
-Here's a full working example combining middleware and tools:
+Here's a full working example combining middleware and tools.
+
+Want a runnable end-to-end version? See the [Full Script](#full-script).
 
 ```typescript
 import { createHoncho } from '@honcho-ai/vercel-ai-sdk';
@@ -205,11 +207,47 @@ Honcho still injects the user's representation and peer card into the system pro
 
 ## Verifying the Integration
 
-### 1. First turn
+### 1. Isolate Honcho's Contribution
+
+Let's confirm the memory is actually coming from Honcho and not your app's existing conversation history.
+
+Two ways to check: 1) through a developer method 2) through the UI.
+
+**Token delta (developer check).** On a session with a few prior turns, run the same prompt twice — once with `injectHistory: false` and once without.
+
+Compare `result.usage.inputTokens`:
+
+```typescript
+const baseline = await generateText({
+  model: wrapLanguageModel({
+    model: anthropic('claude-sonnet-4-6'),
+    middleware: honcho.middleware({ userId, sessionId, injectHistory: false }),
+  }),
+  prompt: 'What do you know about my preferences?',
+});
+
+const injected = await generateText({
+  model: wrapLanguageModel({
+    model: anthropic('claude-sonnet-4-6'),
+    middleware: honcho.middleware({ userId, sessionId }),
+  }),
+  prompt: 'What do you know about my preferences?',
+});
+
+console.log(injected.usage.inputTokens - baseline.usage.inputTokens);
+```
+
+A positive delta is Honcho's representation, peer card, and session summary being injected into the system prompt. Expect ~0 on a fresh peer — the deriver runs asynchronously after messages persist, so injected context only populates after a few prior turns.
+
+**Dashboard (UI check).** Open [app.honcho.dev/explore](https://app.honcho.dev/explore), select your workspace, and confirm your peer and session appear under the Peers and Sessions tables.
+
+With Honcho's contribution isolated, the rest of this section shows what the integration feels like in practice.
+
+### 2. First turn
 
 Send any message. The model responds normally — nothing is stored yet. Context injection returns empty on the first turn.
 
-### 2. Build memory across turns
+### 3. Build memory across turns
 
 Have a multi-turn conversation and share something about yourself:
 
@@ -225,7 +263,7 @@ What do you know about my preferences?
 
 If the model references TypeScript and concise answers without being told again in this session, memory is working.
 
-### 3. Cross-session recall
+### 4. Cross-session recall
 
 Start a new session (new `sessionId`). Ask:
 
@@ -235,13 +273,13 @@ Based on what we've talked about, what do you know about me?
 
 If the model recalls preferences from previous sessions without them being in the current conversation, cross-session memory is working. Honcho processed the prior turns between sessions and updated the user's representation.
 
-### 4. Test tool calling directly
+### 5. Test tool calling directly
 
 ```text
 Use your honcho_chat tool to tell me what patterns you've noticed about me.
 ```
 
-If the model calls the tool and returns a synthesized answer, the full tool pipeline is functional.
+If the model calls the tool and returns a synthesized answer, the full tool pipeline is functional. To confirm which tool fired, inspect `result.toolCalls` — tool names like `honcho_chat` appear there, not in `result.text`.
 
 ## Full Script
 
