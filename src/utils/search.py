@@ -32,6 +32,35 @@ def _uses_pgvector_message_search() -> bool:
     )
 
 
+def _build_fts_ranked_query(
+    stmt: Select[Any],
+    tsquery: Any,
+    escaped_query: str,
+    content_column: Any,
+    created_at_column: Any,
+) -> Select[Any]:
+    """Build FTS query with ranking using ts_rank for pgvector search."""
+    fts_condition = func.to_tsvector("english", content_column).op("@@")(
+        tsquery
+    )
+    combined_condition = or_(
+        fts_condition,
+        content_column.ilike(
+            f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
+        ),
+    )
+    return stmt.where(combined_condition).order_by(
+        func.coalesce(
+            func.ts_rank(
+                func.to_tsvector("english", content_column),
+                tsquery,
+            ),
+            0,
+        ),
+        created_at_column.desc(),
+    )
+
+
 def reciprocal_rank_fusion(*ranked_lists: list[T], k: int = 60, limit: int) -> list[T]:
     """
     Combine multiple ranked lists using Reciprocal Rank Fusion (RRF).
@@ -433,53 +462,30 @@ async def _fulltext_search(
     Returns:
         list of messages ordered by text search relevance
     """
-    # Check if query contains special characters that FTS might not handle well.
-    # When websearch is enabled, " and - are valid syntax (exact phrases, negation)
-    # so they should not trigger the ILIKE-only fallback.
-    _non_fts_chars = r'[~`!@#$%^&*()_+=\[\]{};\':\\|,.<>/?]'
-    if not settings.RETRIEVAL.FULLTEXT_USE_WEBSEARCH:
-        _non_fts_chars = r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]'
-    has_special_chars = bool(re.search(_non_fts_chars, query))
-
     # Escape ILIKE pattern characters to treat user input literally
     escaped_query = escape_ilike_pattern(query)
 
-    if has_special_chars:
-        # For queries with special characters, use exact string matching (ILIKE)
-        search_condition = models.Message.content.ilike(
-            f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
-        )
-        fulltext_query = stmt.where(search_condition).order_by(
-            models.Message.created_at.desc()
+    if settings.RETRIEVAL.FULLTEXT_USE_WEBSEARCH:
+        # websearch_to_tsquery handles special chars, quoted phrases, and boolean operators
+        tsquery = _tsquery_func(query)
+        fulltext_query = _build_fts_ranked_query(
+            stmt, tsquery, escaped_query, models.Message.content, models.Message.created_at
         )
     else:
-        # For natural language queries, use full text search with ranking.
-        # websearch_to_tsquery supports quoted exact phrases and boolean operators
-        # when FULLTEXT_USE_WEBSEARCH is enabled.
-        tsquery = _tsquery_func(query)
-        fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
-            tsquery
-        )
-
-        # Combine FTS with ILIKE as fallback for better coverage
-        combined_condition = or_(
-            fts_condition,
-            models.Message.content.ilike(
+        # Check for special chars that plainto_tsquery can't handle
+        if bool(re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)):
+            # Use ILIKE for queries with chars plainto_tsquery can't handle
+            search_condition = models.Message.content.ilike(
                 f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
-            ),
-        )
-
-        fulltext_query = stmt.where(combined_condition).order_by(
-            # Order by FTS relevance first, then by creation time
-            func.coalesce(
-                func.ts_rank(
-                    func.to_tsvector("english", models.Message.content),
-                    tsquery,
-                ),
-                0,
-            ).desc(),
-            models.Message.created_at.desc(),
-        )
+            )
+            fulltext_query = stmt.where(search_condition).order_by(
+                models.Message.created_at.desc()
+            )
+        else:
+            tsquery = _tsquery_func(query)
+            fulltext_query = _build_fts_ranked_query(
+                stmt, tsquery, escaped_query, models.Message.content, models.Message.created_at
+            )
 
     fulltext_query = fulltext_query.limit(limit)
 
@@ -510,8 +516,15 @@ async def search(
         list of messages that match the search query, ordered by RRF relevance or individual search relevance
 
     Raises:
-        ValidationException: If query exceeds maximum token limit for embeddings
+        ValidationException: If query exceeds maximum token limit for embeddings, or hybrid search is used with non-pgvector vector store
     """
+    # Hybrid search requires pgvector vector store
+    if not _uses_pgvector_message_search():
+        raise ValidationException(
+            "Hybrid retrieval is only supported with pgvector (VECTOR_STORE_TYPE=pgvector)."
+            " Set RETRIEVAL_HYBRID_ENABLED=false or switch to pgvector."
+        )
+
     # Base query conditions
     stmt = select(models.Message)
 
@@ -695,42 +708,27 @@ async def _fulltext_search_documents(
     if filters:
         stmt = apply_filter(stmt, models.Document, filters)
 
-    # Check for special characters that FTS might not handle well.
-    # When websearch is enabled, " and - are valid syntax (exact phrases, negation)
-    # so they should not trigger the ILIKE-only fallback.
-    _non_fts_chars = r'[~`!@#$%^&*()_+=\[\]{};\':\\|,.<>/?]'
-    if not settings.RETRIEVAL.FULLTEXT_USE_WEBSEARCH:
-        _non_fts_chars = r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]'
-    has_special_chars = bool(re.search(_non_fts_chars, query))
-
-    if has_special_chars:
-        search_condition = models.Document.content.ilike(
-            f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
-        )
-        fulltext_query = stmt.where(search_condition).order_by(
-            models.Document.created_at.desc()
+    if settings.RETRIEVAL.FULLTEXT_USE_WEBSEARCH:
+        # websearch_to_tsquery handles special chars, quoted phrases, and boolean operators
+        tsquery = _tsquery_func(query)
+        fulltext_query = _build_fts_ranked_query(
+            stmt, tsquery, escaped_query, models.Document.content, models.Document.created_at
         )
     else:
-        tsquery = _tsquery_func(query)
-        fts_condition = func.to_tsvector("english", models.Document.content).op("@@")(
-            tsquery
-        )
-        combined_condition = or_(
-            fts_condition,
-            models.Document.content.ilike(
+        # Check for special chars that plainto_tsquery can't handle
+        if bool(re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)):
+            # Use ILIKE for queries with chars plainto_tsquery can't handle
+            search_condition = models.Document.content.ilike(
                 f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
-            ),
-        )
-        fulltext_query = stmt.where(combined_condition).order_by(
-            func.coalesce(
-                func.ts_rank(
-                    func.to_tsvector("english", models.Document.content),
-                    tsquery,
-                ),
-                0,
-            ).desc(),
-            models.Document.created_at.desc(),
-        )
+            )
+            fulltext_query = stmt.where(search_condition).order_by(
+                models.Document.created_at.desc()
+            )
+        else:
+            tsquery = _tsquery_func(query)
+            fulltext_query = _build_fts_ranked_query(
+                stmt, tsquery, escaped_query, models.Document.content, models.Document.created_at
+            )
 
     fulltext_query = fulltext_query.limit(limit)
     result = await db.execute(fulltext_query)

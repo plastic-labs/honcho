@@ -36,8 +36,8 @@ docker compose up -d database redis
 ### Configure `.env` (OpenRouter-first)
 
 ```bash
-# Database — use localhost when running FastAPI/deriver directly on the host
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+# Database — use your ParadeDB host when running separately, or localhost if colocated
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@<your-paradedb-host>:5432/postgres
 # Schema isolation when sharing ParadeDB with other applications
 DB_SCHEMA=honcho
 

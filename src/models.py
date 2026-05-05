@@ -506,6 +506,12 @@ class Document(Base):
             "sync_state",
             "last_sync_at",
         ),
+        # Full text search index on content column
+        Index(
+            "ix_documents_content_gin",
+            text("to_tsvector('english', content)"),
+            postgresql_using="gin",
+        ),
     )
 
 
