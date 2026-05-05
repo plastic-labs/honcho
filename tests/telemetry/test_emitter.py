@@ -44,6 +44,7 @@ def create_test_event(message_id: str = "msg_001") -> RepresentationCompletedEve
         llm_call_ms=100.0,
         total_duration_ms=110.0,
         input_tokens=100,
+        total_input_tokens=150,
         output_tokens=50,
     )
 

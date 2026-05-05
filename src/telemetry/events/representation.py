@@ -22,7 +22,7 @@ class RepresentationCompletedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "representation.completed"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "representation"
 
     # Workspace context
@@ -57,7 +57,13 @@ class RepresentationCompletedEvent(BaseEvent):
     total_duration_ms: float = Field(..., description="Total processing time")
 
     # Token usage
-    input_tokens: int = Field(..., description="Input tokens used")
+    input_tokens: int = Field(
+        ..., description="Token count of new messages in the processed batch"
+    )
+    total_input_tokens: int = Field(
+        ...,
+        description="Total tokens sent to the LLM",
+    )
     output_tokens: int = Field(..., description="Output tokens generated")
 
     def get_resource_id(self) -> str:

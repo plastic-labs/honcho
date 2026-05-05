@@ -121,6 +121,7 @@ class TestBaseEvent:
             llm_call_ms=100.0,
             total_duration_ms=110.0,
             input_tokens=100,
+            total_input_tokens=150,
             output_tokens=50,
         )
 
@@ -149,7 +150,7 @@ class TestRepresentationCompletedEvent:
 
     def test_schema_version(self):
         """schema_version() returns correct value."""
-        assert RepresentationCompletedEvent.schema_version() == 1
+        assert RepresentationCompletedEvent.schema_version() == 2
 
     def test_category(self):
         """category() returns correct value."""
