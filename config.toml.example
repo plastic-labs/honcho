@@ -89,6 +89,7 @@ model = "text-embedding-3-small"
 # base_url = "https://your-resource.openai.azure.com"
 # api_version = "2024-10-21"
 # api_key_env = "LLM_AZURE_OPENAI_API_KEY"
+# use_entra_id = true  # Use Azure AD DefaultAzureCredential instead of API key
 
 # Deriver settings
 [deriver]
@@ -137,6 +138,7 @@ model = "gpt-5.4-mini"
 # base_url = "https://your-resource.openai.azure.com"
 # api_version = "2024-10-21"
 # api_key_env = "LLM_AZURE_OPENAI_API_KEY"
+# use_entra_id = true  # Use Azure AD DefaultAzureCredential instead of API key
 
 # Peer card settings
 [peer_card]

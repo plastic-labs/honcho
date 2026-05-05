@@ -620,9 +620,7 @@ def test_env_vars_bind_azure_openai_api_version(
         "DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL",
         "https://gateway.example/azure-openai",
     )
-    monkeypatch.setenv(
-        "DERIVER_MODEL_CONFIG__OVERRIDES__API_VERSION", "2024-10-21"
-    )
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__OVERRIDES__API_VERSION", "2024-10-21")
 
     settings = DeriverSettings()
     assert settings.MODEL_CONFIG.transport == "azure_openai"
@@ -652,9 +650,7 @@ def test_partial_dialectic_level_override_keeps_other_levels(
     monkeypatch.setenv(
         "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT", "azure_openai"
     )
-    monkeypatch.setenv(
-        "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL", "gpt-4o-mini"
-    )
+    monkeypatch.setenv("DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL", "gpt-4o-mini")
     monkeypatch.setenv(
         "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__OVERRIDES__BASE_URL",
         "https://gateway.example/azure-openai",
@@ -681,3 +677,87 @@ def test_partial_dialectic_level_override_keeps_other_levels(
     )
     # Untouched levels keep their defaults.
     assert settings.LEVELS["max"].MODEL_CONFIG.transport == "openai"
+
+
+def test_resolve_model_config_propagates_use_entra_id() -> None:
+    configured = ConfiguredModelSettings(
+        model="gpt-4o-mini-deployment",
+        transport="azure_openai",
+        overrides=ModelOverrideSettings(
+            base_url="https://gateway.example/azure-openai",
+            api_version="2024-10-21",
+            use_entra_id=True,
+        ),
+    )
+
+    resolved = resolve_model_config(configured)
+
+    assert resolved.transport == "azure_openai"
+    assert resolved.use_entra_id is True
+    assert resolved.base_url == "https://gateway.example/azure-openai"
+    assert resolved.api_version == "2024-10-21"
+
+
+def test_resolve_fallback_config_propagates_use_entra_id() -> None:
+    from src.config import FallbackModelSettings
+
+    configured = ConfiguredModelSettings(
+        model="claude-haiku-4-5",
+        transport="anthropic",
+        fallback=FallbackModelSettings(
+            model="gpt-4o-mini-deployment",
+            transport="azure_openai",
+            overrides=ModelOverrideSettings(
+                base_url="https://gateway.example/azure-openai",
+                api_version="2024-10-21",
+                use_entra_id=True,
+            ),
+        ),
+    )
+
+    resolved = resolve_model_config(configured)
+
+    assert resolved.fallback is not None
+    assert resolved.fallback.transport == "azure_openai"
+    assert resolved.fallback.use_entra_id is True
+    assert resolved.fallback.base_url == "https://gateway.example/azure-openai"
+    assert resolved.fallback.api_version == "2024-10-21"
+
+
+def test_env_vars_bind_use_entra_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.config import DeriverSettings
+
+    _clear_deriver_env(monkeypatch)
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__TRANSPORT", "azure_openai")
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__MODEL", "gpt-4o-mini-deployment")
+    monkeypatch.setenv(
+        "DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL",
+        "https://gateway.example/azure-openai",
+    )
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__OVERRIDES__API_VERSION", "2024-10-21")
+    monkeypatch.setenv("DERIVER_MODEL_CONFIG__OVERRIDES__USE_ENTRA_ID", "true")
+
+    settings = DeriverSettings()
+    assert settings.MODEL_CONFIG.transport == "azure_openai"
+    assert settings.MODEL_CONFIG.overrides.use_entra_id is True
+
+
+def test_resolve_embedding_model_config_propagates_use_entra_id() -> None:
+    configured = ConfiguredEmbeddingModelSettings(
+        transport="azure_openai",
+        model="text-embedding-3-small",
+        overrides=ModelOverrideSettings(
+            base_url="https://gateway.example/azure-openai",
+            api_version="2024-10-21",
+            use_entra_id=True,
+        ),
+    )
+
+    resolved = resolve_embedding_model_config(configured)
+
+    assert resolved.transport == "azure_openai"
+    assert resolved.use_entra_id is True
+    assert resolved.base_url == "https://gateway.example/azure-openai"
+    assert resolved.api_version == "2024-10-21"

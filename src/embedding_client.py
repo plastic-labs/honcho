@@ -56,17 +56,39 @@ class _EmbeddingClient:
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
         elif self.transport == "azure_openai":
-            if not config.api_key:
-                raise ValueError("Azure OpenAI API key is required")
+            if not config.use_entra_id and not config.api_key:
+                raise ValueError("Azure OpenAI API key is required (or set use_entra_id)")
             if not config.base_url:
                 raise ValueError("Azure OpenAI base_url (azure_endpoint) is required")
             if not config.api_version:
                 raise ValueError("Azure OpenAI api_version is required")
-            self.client = AsyncAzureOpenAI(
-                api_key=config.api_key,
-                azure_endpoint=config.base_url,
-                api_version=config.api_version,
-            )
+            if config.use_entra_id:
+                try:
+                    from azure.identity import (  # pyright: ignore[reportMissingImports]
+                        DefaultAzureCredential,
+                        get_bearer_token_provider,
+                    )
+                except ImportError as exc:
+                    raise ValueError(
+                        "azure_openai use_entra_id requires the azure extra."
+                        " Install with: pip install 'honcho[azure]'"
+                    ) from exc
+
+                credential = DefaultAzureCredential()
+                token_provider = get_bearer_token_provider(
+                    credential, "https://cognitiveservices.azure.com/.default"
+                )
+                self.client = AsyncAzureOpenAI(
+                    azure_ad_token_provider=token_provider,
+                    azure_endpoint=config.base_url,
+                    api_version=config.api_version,
+                )
+            else:
+                self.client = AsyncAzureOpenAI(
+                    api_key=config.api_key,
+                    azure_endpoint=config.base_url,
+                    api_version=config.api_version,
+                )
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048
         else:  # openai
@@ -441,6 +463,7 @@ class EmbeddingClient:
             runtime_config.api_key,
             runtime_config.base_url,
             runtime_config.api_version,
+            runtime_config.use_entra_id,
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,

@@ -71,6 +71,7 @@ def get_azure_openai_override_client(
     azure_endpoint: str | None,
     api_key: str | None,
     api_version: str | None,
+    use_entra_id: bool = False,
 ) -> AsyncAzureOpenAI:
     """Azure OpenAI client for a specific (endpoint, key, api_version) triple.
 
@@ -78,6 +79,9 @@ def get_azure_openai_override_client(
     Azure-native ``{endpoint}/openai/deployments/{model}/chat/completions
     ?api-version={v}`` URL — matches what Azure OpenAI and compatible
     gateways expect.
+
+    When *use_entra_id* is True, authenticates via Azure AD
+    ``DefaultAzureCredential`` instead of an API key.
     """
     if not azure_endpoint:
         raise ValidationException(
@@ -86,6 +90,27 @@ def get_azure_openai_override_client(
     if not api_version:
         raise ValidationException(
             "azure_openai transport requires overrides.api_version"
+        )
+    if use_entra_id:
+        try:
+            from azure.identity import (  # pyright: ignore[reportMissingImports]
+                DefaultAzureCredential,
+                get_bearer_token_provider,
+            )
+        except ImportError as exc:
+            raise ValidationException(
+                "azure_openai use_entra_id requires the azure extra."
+                " Install with: pip install 'honcho[azure]'"
+            ) from exc
+
+        credential = DefaultAzureCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        return AsyncAzureOpenAI(
+            azure_ad_token_provider=token_provider,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
         )
     return AsyncAzureOpenAI(
         api_key=api_key,
@@ -143,14 +168,18 @@ def client_for_model_config(
     CLIENTS (the test-mockable seam). Otherwise route through the cached
     override factories.
     """
-    if model_config.api_key is None and model_config.base_url is None:
+    if (
+        model_config.api_key is None
+        and model_config.base_url is None
+        and not model_config.use_entra_id
+    ):
         existing_client = CLIENTS.get(provider)
         if existing_client is not None:
             return existing_client
 
     api_key = model_config.api_key or default_transport_api_key(provider)
     base_url = model_config.base_url
-    if not api_key:
+    if not api_key and not model_config.use_entra_id:
         raise ValidationException(f"Missing API key for {provider} model config")
 
     if provider == "anthropic":
@@ -161,7 +190,7 @@ def client_for_model_config(
         return get_gemini_override_client(base_url, api_key)
     if provider == "azure_openai":
         return get_azure_openai_override_client(
-            base_url, api_key, model_config.api_version
+            base_url, api_key, model_config.api_version, model_config.use_entra_id
         )
     assert_never(provider)
 

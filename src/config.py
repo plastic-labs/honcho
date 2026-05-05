@@ -63,6 +63,7 @@ class ModelOverrideSettings(BaseModel):
     api_key_env: str | None = None
     base_url: str | None = None
     api_version: str | None = None
+    use_entra_id: bool = False  # Use Azure AD token auth instead of API key
 
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
@@ -206,6 +207,7 @@ class ResolvedFallbackConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     api_version: str | None = None
+    use_entra_id: bool = False
 
     temperature: float | None = None
     top_p: float | None = None
@@ -242,6 +244,7 @@ class ModelConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     api_version: str | None = None
+    use_entra_id: bool = False
 
     temperature: float | None = None
     top_p: float | None = None
@@ -334,6 +337,7 @@ class EmbeddingModelConfig(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     api_version: str | None = None
+    use_entra_id: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -384,6 +388,7 @@ def _resolve_fallback_config(
         ),
         base_url=fallback.overrides.base_url,
         api_version=fallback.overrides.api_version,
+        use_entra_id=fallback.overrides.use_entra_id,
         temperature=fallback.temperature,
         top_p=fallback.top_p,
         top_k=fallback.top_k,
@@ -418,6 +423,7 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
         ),
         base_url=configured.overrides.base_url,
         api_version=configured.overrides.api_version,
+        use_entra_id=configured.overrides.use_entra_id,
         temperature=configured.temperature,
         top_p=configured.top_p,
         top_k=configured.top_k,
@@ -461,6 +467,7 @@ def resolve_embedding_model_config(
         api_key=api_key,
         base_url=configured.overrides.base_url,
         api_version=configured.overrides.api_version,
+        use_entra_id=configured.overrides.use_entra_id,
     )
 
 
