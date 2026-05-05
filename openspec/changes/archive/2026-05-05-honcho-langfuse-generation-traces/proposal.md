@@ -30,4 +30,4 @@ None.
 - `src/llm/runtime.py` — `update_current_generation`.
 - `tests/utils/test_clients.py` — expectations for `update_current_generation`.
 
-Out of scope for this change: enriching traces with **`usage_details`** / **`model_parameters`** (follow-up change).
+Update: enriching traces with **`usage_details`** (input/output tokens) was implemented as part of this change to support custom models (like LMStudio).

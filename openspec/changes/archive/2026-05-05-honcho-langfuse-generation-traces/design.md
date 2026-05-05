@@ -13,10 +13,10 @@ Exploration traceback: `explorations/2026-05-05-langfuse-generation-observations
 - Ensure **`honcho_llm_call`** creates a **generation** observation when Langfuse is configured.
 - Set **`model`** on that generation to the effective model ID from **`plan_attempt`** (primary or fallback per retry attempt).
 - Preserve **`provider`** and **`namespace`** in **metadata** for filtering and debugging.
+- Emit token usage into Langfuse via **`usage_details`** explicitly for custom models (e.g. LMStudio) that Langfuse cannot calculate automatically.
 
 **Non-Goals:**
 
-- Emit token usage / cost into Langfuse via **`usage_details`** (deferred).
 - Change non-LLM **`@conditional_observe`** call sites unless they explicitly need generation semantics later.
 
 ## Decisions
@@ -36,6 +36,10 @@ After planning each attempt, **`update_current_langfuse_observation`** updates t
 **3. Extend `conditional_observe` with `as_type`**
 
 Other modules can reuse the same decorator with explicit types without importing Langfuse **`observe`** directly everywhere.
+
+**4. Explicitly Report `usage_details`**
+
+Extract `input_tokens` and `output_tokens` from `HonchoLLMCallResponse` and report them to the current Langfuse generation so that custom models get accurate usage tracking.
 
 ## Risks / Trade-offs
 
