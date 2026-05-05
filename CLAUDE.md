@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Branch Strategy
 
-- **`main`** is the deployment branch — all production deployments come from `main`.
-- **`feat/<name>`** branches carry new features and fixes. Merge into `main` via PR.
-- Never commit directly to `main`. Always create a `feat/` branch and open a PR.
+- **`main`** is the integration branch — pull upstream changes here, then merge into feature branches.
+- **`stable`** is the staging branch — feature branches merge here via PR for testing.
+- **`prod`** is the deployment branch — all production deployments come from `prod`.
+- **Workflow**: `feat/<name>` → PR into `stable` → test → merge `stable` into `prod`.
+- Never commit directly to `stable` or `prod`. Always create a `feat/` branch and open a PR.
 - Rebase or merge `main` into feature branches before opening PRs to avoid stale diffs.
 
 ### Database: Share ParadeDB, Don't Spin Up New
