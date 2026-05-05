@@ -22,6 +22,7 @@ from src.exceptions import ValidationException
 from .backend import ProviderBackend
 from .backends.anthropic import AnthropicBackend
 from .backends.gemini import GeminiBackend
+from .backends.litellm import LiteLLMBackend
 from .backends.openai import OpenAIBackend
 from .credentials import default_transport_api_key
 from .history_adapters import (
@@ -131,6 +132,8 @@ def client_for_model_config(
         return get_openai_override_client(base_url, api_key)
     if provider == "gemini":
         return get_gemini_override_client(base_url, api_key)
+    if provider == "litellm":
+        return None  # LiteLLMBackend manages its own credentials
     assert_never(provider)
 
 
@@ -145,6 +148,8 @@ def backend_for_provider(
         return OpenAIBackend(client)
     if provider == "gemini":
         return GeminiBackend(client)
+    if provider == "litellm":
+        return LiteLLMBackend()
     assert_never(provider)
 
 
@@ -154,11 +159,11 @@ def history_adapter_for_provider(provider: ModelTransport) -> HistoryAdapter:
         return AnthropicHistoryAdapter()
     if provider == "gemini":
         return GeminiHistoryAdapter()
-    return OpenAIHistoryAdapter()
+    return OpenAIHistoryAdapter()  # litellm uses OpenAI message format
 
 
 def get_backend(config: ModelConfig) -> ProviderBackend:
-    """High-level one-shot backend factory: ModelConfig → ProviderBackend.
+    """High-level one-shot backend factory: ModelConfig -> ProviderBackend.
 
     Delegates client resolution to ``client_for_model_config``, which owns
     the CLIENTS fast-path and the missing-API-key validation. Both the
@@ -166,6 +171,8 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
     (via this function) now construct clients through the same helper, so
     validation behavior stays consistent.
     """
+    if config.transport == "litellm":
+        return LiteLLMBackend(api_key=config.api_key, api_base=config.base_url)
     client = client_for_model_config(config.transport, config)
     return backend_for_provider(config.transport, client)
 
