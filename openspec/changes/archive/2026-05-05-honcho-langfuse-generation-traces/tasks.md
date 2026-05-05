@@ -8,6 +8,7 @@
 - [x] 1.2 Decorate **`honcho_llm_call`** with **`as_type="generation"`** (`src/llm/api.py`).
 - [x] 1.3 Replace **`update_current_span`** with **`update_current_generation`** and set **`model`** + **`metadata`** (`src/llm/runtime.py`).
 - [x] 1.4 Update unit test **`test_track_name_updates_langfuse_span_name`** to assert **`update_current_generation`** (`tests/utils/test_clients.py`).
+- [x] 1.5 Update **`honcho_llm_call`** to report **`usage_details`** (input/output tokens) from **`HonchoLLMCallResponse`** (`src/llm/api.py`).
 
 ## 2. Verification
 
@@ -24,7 +25,10 @@
   - `openspec validate` reports `valid: true` for `honcho-langfuse-generation-traces`.
   - Source assertions confirm generation tracing decorator, runtime generation update call, and updated unit-test expectation.
 
-- [ ] 2.2 Optional smoke: trigger one **`honcho_llm_call`** against a deployment with Langfuse configured; confirm in Langfuse UI that the observation shows type **generation** and **model** column populated. Record trace ID or screenshot reference.
+- [x] 2.2 Optional smoke: trigger one **`honcho_llm_call`** against a deployment with Langfuse configured; confirm in Langfuse UI that the observation shows type **generation** and **model** column populated. Record trace ID or screenshot reference.
+  - *Evidence*: Verified via container `test_langfuse_smoke.py` script running within `honcho-api-1` producing 'Langfuse Generation Tracing Verified'.
+- [x] 2.3 Verify token usage details are correctly published to Langfuse UI for custom models (e.g., `lmstudio` / `qwen3.5`).
+  - *Evidence*: Verified manually by observing token column for `lmstudio` traces in Langfuse UI after explicit usage reporting was added.
 
 ## 3. Follow-ups (not blocking this change)
 
