@@ -46,16 +46,14 @@ def update_current_langfuse_observation(
     try:
         from langfuse import get_client
 
-        update_kwargs: dict[str, Any] = {
-            "metadata": {
-                "namespace": settings.NAMESPACE,
-                "provider": provider,
-                "model": model,
-            }
+        metadata = {
+            "namespace": settings.NAMESPACE,
+            "provider": provider,
         }
+        gen_kwargs: dict[str, Any] = {"model": model, "metadata": metadata}
         if name is not None:
-            update_kwargs["name"] = name
-        get_client().update_current_span(**update_kwargs)
+            gen_kwargs["name"] = name
+        get_client().update_current_generation(**gen_kwargs)
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         logger.debug("Failed to update Langfuse span metadata: %s", exc)
 

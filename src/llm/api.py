@@ -138,7 +138,7 @@ async def honcho_llm_call(
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
-@conditional_observe(name="LLM Call")
+@conditional_observe(name="LLM Call", as_type="generation")
 async def honcho_llm_call(
     *,
     model_config: ModelConfig | ConfiguredModelSettings,

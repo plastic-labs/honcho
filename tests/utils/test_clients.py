@@ -939,12 +939,12 @@ class TestMainLLMCallFunction:
             )
 
             assert response.content == "Named response"
-            mock_langfuse_client.update_current_span.assert_called_once_with(
+            mock_langfuse_client.update_current_generation.assert_called_once_with(
                 name="Dialectic Agent",
+                model="claude-4-sonnet",
                 metadata={
                     "namespace": settings.NAMESPACE,
                     "provider": "anthropic",
-                    "model": "claude-4-sonnet",
                 },
             )
 
