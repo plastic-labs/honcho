@@ -7,7 +7,7 @@ and a conditional observe decorator that only applies when Langfuse is configure
 import datetime
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import ParamSpec, TypeVar, overload
+from typing import Any, ParamSpec, TypeVar, overload
 
 from fastapi import Request
 from langfuse import observe
@@ -42,7 +42,8 @@ def conditional_observe(
 @overload
 def conditional_observe(
     *,
-    name: str,
+    name: str | None = None,
+    as_type: str | None = None,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
 
@@ -50,6 +51,7 @@ def conditional_observe(
     func: Callable[P, R] | None = None,
     *,
     name: str | None = None,
+    as_type: str | None = None,
 ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Conditionally apply the @observe decorator only when LANGFUSE_PUBLIC_KEY is present.
@@ -61,6 +63,8 @@ def conditional_observe(
     Args:
         func: The function to potentially decorate (when used as @conditional_observe)
         name: Optional name for the observation (when used as @conditional_observe(name="..."))
+        as_type: Langfuse observation type (for example ``generation`` for LLM calls so the
+            Langfuse UI can attribute model and usage).
 
     Returns:
         The decorated function if Langfuse is configured, otherwise the original function
@@ -69,7 +73,10 @@ def conditional_observe(
     def decorator(f: Callable[P, R]) -> Callable[P, R]:
         if settings.LANGFUSE_PUBLIC_KEY:
             observe_name = name if name is not None else f.__name__
-            return observe(name=observe_name)(f)
+            observe_kw: dict[str, Any] = {"name": observe_name}
+            if as_type is not None:
+                observe_kw["as_type"] = as_type
+            return observe(**observe_kw)(f)
         else:
             return f
 
