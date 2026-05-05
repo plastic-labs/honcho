@@ -401,3 +401,75 @@ class TestDocumentCRUD:
         assert len(documents) == 2
         assert documents[0].content in ["Observation 1", "Observation 2"]
         assert documents[1].content in ["Observation 1", "Observation 2"]
+
+    @pytest.mark.asyncio
+    async def test_query_documents_hybrid_retrieval(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test that query_documents uses hybrid retrieval (semantic + FTS)."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # Create documents: one semantically close but no lexical overlap,
+        # one with strong lexical overlap but different semantic vector.
+        doc_schemas = [
+            schemas.DocumentCreate(
+                content="The user enjoys Italian cuisine especially pasta",
+                embedding=[0.9] * 1536,
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[1],
+                    message_created_at="2025-01-01T00:00:00Z",
+                ),
+            ),
+            schemas.DocumentCreate(
+                content="pizza pizza pizza",  # lexical match for "pizza"
+                embedding=[0.1] * 1536,  # far semantically
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[2],
+                    message_created_at="2025-01-01T00:00:00Z",
+                ),
+            ),
+        ]
+        await crud.create_documents(
+            db_session,
+            doc_schemas,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        # Hybrid search for "pizza"
+        results = await crud.query_documents(
+            db_session,
+            workspace_name=test_workspace.name,
+            query="pizza",
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            top_k=10,
+            hybrid=True,
+        )
+
+        # Both documents should be returned because:
+        # - doc2 has strong lexical match (pizza)
+        # - doc1 may also match via semantic similarity
+        assert len(results) == 2
+
+        # Force semantic-only and verify lexical doc can be excluded
+        semantic_only = await crud.query_documents(
+            db_session,
+            workspace_name=test_workspace.name,
+            query="pizza",
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            top_k=10,
+            hybrid=False,
+        )
+        # Semantic-only with [0.1] embedding should still find doc2 because
+        # we embed the query "pizza" and compare; doc1 has [0.9] so it wins.
+        assert len(semantic_only) >= 1

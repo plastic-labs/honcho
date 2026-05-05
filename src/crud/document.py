@@ -323,9 +323,10 @@ async def query_documents(
     max_distance: float | None = None,
     top_k: int = 5,
     embedding: list[float] | None = None,
+    hybrid: bool | None = None,
 ) -> Sequence[models.Document]:
     """
-    Query documents using semantic similarity.
+    Query documents using semantic similarity, optionally with hybrid retrieval.
 
     When *db* is provided the caller owns the session lifetime.  When *db* is
     ``None`` the function opens (and closes) its own short-lived session so that
@@ -341,10 +342,16 @@ async def query_documents(
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
         embedding: Optional pre-computed embedding for the query (avoids extra API call if possible)
+        hybrid: Whether to use hybrid retrieval (semantic + full-text). None uses the
+            global ``RETRIEVAL.HYBRID_ENABLED`` setting.
 
     Returns:
         Sequence of matching documents
     """
+    use_hybrid = (
+        settings.RETRIEVAL.HYBRID_ENABLED if hybrid is None else hybrid
+    )
+
     # Use provided embedding or generate one
     if embedding is None:
         try:
@@ -357,6 +364,38 @@ async def query_documents(
 
     if _uses_pgvector():
         # pgvector path — pure DB, open a short session if none provided
+        if use_hybrid:
+            from src.utils.search import search_documents_hybrid
+
+            if db is not None:
+                docs = await search_documents_hybrid(
+                    db,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    query=query,
+                    embedding=embedding,
+                    filters=filters,
+                    top_k=top_k,
+                    max_distance=max_distance,
+                )
+                return docs
+            async with tracked_db("queryDocuments.hybrid") as managed_db:
+                docs = await search_documents_hybrid(
+                    managed_db,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    query=query,
+                    embedding=embedding,
+                    filters=filters,
+                    top_k=top_k,
+                    max_distance=max_distance,
+                )
+                for doc in docs:
+                    managed_db.expunge(doc)
+                return docs
+
         if db is not None:
             return await _query_documents_pgvector(
                 db,
@@ -368,7 +407,7 @@ async def query_documents(
                 max_distance,
                 top_k,
             )
-        async with tracked_db("query_documents.pgvector") as managed_db:
+        async with tracked_db("queryDocuments.pgvector") as managed_db:
             docs = await _query_documents_pgvector(
                 managed_db,
                 workspace_name,
@@ -406,7 +445,7 @@ async def query_documents(
             document_ids=document_ids,
             filters=filters,
         )
-    async with tracked_db("query_documents.fetch") as managed_db:
+    async with tracked_db("queryDocuments.fetch") as managed_db:
         docs = await fetch_documents_by_ids(
             db=managed_db,
             workspace_name=workspace_name,
@@ -982,6 +1021,8 @@ async def is_rejected_duplicate(
     deletes the existing document and returns False.
     """
     # Step 1: Find potential duplicates using cosine similarity
+    # Force semantic-only search for deduplication — hybrid could outrank
+    # near-duplicates with unrelated lexical matches.
     similar_docs = await query_documents(
         db=db,
         workspace_name=workspace_name,
@@ -991,6 +1032,7 @@ async def is_rejected_duplicate(
         max_distance=0.05,
         top_k=1,
         embedding=doc.embedding,
+        hybrid=False,
     )
 
     if not similar_docs:

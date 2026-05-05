@@ -6,7 +6,8 @@ of each item's rank in each list, then summing these reciprocal ranks.
 """
 
 import re
-from typing import Any, TypeVar
+from collections.abc import Sequence
+from typing import Any, Protocol, TypeVar, cast
 
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,6 +72,178 @@ def reciprocal_rank_fusion(*ranked_lists: list[T], k: int = 60, limit: int) -> l
     result = [item for item, _ in sorted_items]
 
     return result[:limit]
+
+
+# =============================================================================
+# Post-fusion quality utilities: MMR, lexical rerank, score thresholds
+# =============================================================================
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two vectors (pure Python)."""
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+class _HasId(Protocol):
+    """Protocol for objects with an ``id`` attribute."""
+
+    id: str
+
+
+def maximal_marginal_relevance(
+    documents: Sequence[_HasId],
+    query_embedding: list[float],
+    document_embeddings: dict[str, list[float]],
+    lambda_param: float,
+    top_k: int,
+) -> list[_HasId]:
+    """
+    Re-rank items using Maximal Marginal Relevance (MMR).
+
+    MMR balances relevance to the query with diversity among selected results:
+        MMR_score = lambda * rel(d, q) - (1 - lambda) * max_sim(d, selected)
+
+    Args:
+        documents: Candidate items (already ranked by relevance). Each item must
+            have an ``id`` attribute that maps into *document_embeddings*.
+        query_embedding: Embedding of the search query.
+        document_embeddings: Mapping from item ID to embedding vector.
+        lambda_param: Trade-off between relevance and diversity
+            (0.0 = max diversity, 1.0 = max relevance).
+        top_k: Number of items to return.
+
+    Returns:
+        Re-ranked list of items with MMR applied.
+    """
+    if not documents or lambda_param >= 1.0:
+        return list(documents)[:top_k]
+
+    selected: list[_HasId] = []
+    remaining = list(documents)
+
+    while remaining and len(selected) < top_k:
+        best_doc: _HasId | None = None
+        best_score = -float("inf")
+
+        for doc in remaining:
+            doc_emb = document_embeddings.get(doc.id)
+            if doc_emb is None:
+                continue
+            rel = _cosine_similarity(query_embedding, doc_emb)
+            max_sim = 0.0
+            for sel in selected:
+                sel_emb = document_embeddings.get(sel.id)
+                if sel_emb is not None:
+                    sim = _cosine_similarity(doc_emb, sel_emb)
+                    if sim > max_sim:
+                        max_sim = sim
+            score = lambda_param * rel - (1.0 - lambda_param) * max_sim
+            if score > best_score:
+                best_score = score
+                best_doc = doc
+
+        if best_doc is None:
+            break
+        selected.append(best_doc)
+        remaining.remove(best_doc)
+
+    # Append any remaining documents if MMR couldn't fill the quota
+    for doc in documents:
+        if doc not in selected:
+            selected.append(doc)
+            if len(selected) >= top_k:
+                break
+
+    return selected[:top_k]
+
+
+def _normalize_query_terms(query: str) -> list[str]:
+    """Extract normalized query terms for lexical reranking."""
+    return [t.lower() for t in re.findall(r"\b\w+\b", query) if len(t) > 2]
+
+
+def lexical_rerank(
+    items: list[T],
+    query: str,
+) -> list[T]:
+    """
+    Lightweight lexical reranker using token overlap.
+
+    Scores each item by the number of query terms its content contains,
+    with a configurable boost for exact substring matches.
+
+    Args:
+        items: Candidate items (must have a ``content`` attribute).
+        query: Original search query.
+
+    Returns:
+        Items reordered by lexical overlap score.
+    """
+    terms = _normalize_query_terms(query)
+    if not terms:
+        return items
+
+    scored: list[tuple[T, float]] = []
+    query_lower = query.lower()
+    for item in items:
+        content = getattr(item, "content", "")
+        content_lower = content.lower()
+        score = sum(1.0 for term in terms if term in content_lower)
+        if query_lower in content_lower:
+            score += len(terms) * settings.RETRIEVAL.EXACT_MATCH_BOOST
+        scored.append((item, score))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [item for item, _ in scored]
+
+
+def _apply_score_threshold(
+    ranked_items: list[T],
+    *source_lists: list[T],
+    threshold: float,
+    k: int = 60,
+) -> list[T]:
+    """
+    Filter RRF-ranked items by a minimum composite score.
+
+    Args:
+        ranked_items: Items already ordered by RRF.
+        *source_lists: The original ranked lists fed into RRF.
+        threshold: Minimum RRF score required to keep an item.
+        k: RRF constant used during fusion.
+
+    Returns:
+        Items with RRF score >= threshold.
+    """
+    if threshold <= 0.0 or not source_lists:
+        return ranked_items
+
+    # Recompute RRF scores
+    rrf_scores: dict[T, float] = {}
+    for ranked_list in source_lists:
+        for rank, item in enumerate(ranked_list, 1):
+            if item in ranked_items:
+                rrf_scores[item] = rrf_scores.get(item, 0.0) + 1.0 / (k + rank)
+
+    filtered = [item for item in ranked_items if rrf_scores.get(item, 0.0) >= threshold]
+    return filtered
+
+
+# =============================================================================
+# Fulltext helpers
+# =============================================================================
+
+
+def _tsquery_func(query: str):
+    """Return the appropriate PostgreSQL tsquery function based on settings."""
+    if settings.RETRIEVAL.FULLTEXT_USE_WEBSEARCH:
+        return func.websearch_to_tsquery("english", query)
+    return func.plainto_tsquery("english", query)
 
 
 async def query_external_vector_message_ids(
@@ -277,9 +450,12 @@ async def _fulltext_search(
             models.Message.created_at.desc()
         )
     else:
-        # For natural language queries, use full text search with ranking
+        # For natural language queries, use full text search with ranking.
+        # websearch_to_tsquery supports quoted exact phrases and boolean operators
+        # when FULLTEXT_USE_WEBSEARCH is enabled.
+        tsquery = _tsquery_func(query)
         fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
-            func.plainto_tsquery("english", query)
+            tsquery
         )
 
         # Combine FTS with ILIKE as fallback for better coverage
@@ -295,7 +471,7 @@ async def _fulltext_search(
             func.coalesce(
                 func.ts_rank(
                     func.to_tsvector("english", models.Message.content),
-                    func.plainto_tsquery("english", query),
+                    tsquery,
                 ),
                 0,
             ).desc(),
@@ -435,7 +611,23 @@ async def search(
         search_results.append(fulltext_results)
 
         if len(search_results) > 1:
-            return reciprocal_rank_fusion(*search_results, limit=limit)
+            fused = reciprocal_rank_fusion(
+                *search_results,
+                k=settings.RETRIEVAL.RRF_K,
+                limit=limit,
+            )
+            if settings.RETRIEVAL.SCORE_THRESHOLD is not None:
+                fused = _apply_score_threshold(
+                    fused,
+                    *search_results,
+                    threshold=settings.RETRIEVAL.SCORE_THRESHOLD,
+                    k=settings.RETRIEVAL.RRF_K,
+                )
+            if settings.RETRIEVAL.RERANK_ENABLED and fused:
+                fused = lexical_rerank(
+                    fused[: settings.RETRIEVAL.RERANK_TOP_K], query
+                ) + fused[settings.RETRIEVAL.RERANK_TOP_K :]
+            return fused
         if len(search_results) == 1:
             return search_results[0][:limit]
         return []
@@ -445,3 +637,193 @@ async def search(
         for message in combined_results:
             managed_db.expunge(message)
         return combined_results
+
+
+# =============================================================================
+# Document hybrid search
+# =============================================================================
+
+
+async def _fulltext_search_documents(
+    db: AsyncSession,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    query: str,
+    filters: dict[str, Any] | None,
+    limit: int,
+) -> list[models.Document]:
+    """
+    Perform full-text search over documents using PostgreSQL FTS + ILIKE fallback.
+
+    Args:
+        db: Database session.
+        workspace_name: Workspace to search in.
+        observer: Observing peer.
+        observed: Observed peer.
+        query: Search query text.
+        filters: Optional additional filters.
+        limit: Maximum results to return.
+
+    Returns:
+        Documents ordered by text search relevance.
+    """
+    escaped_query = escape_ilike_pattern(query)
+
+    # Base conditions scoped to the collection
+    stmt = (
+        select(models.Document)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.observer == observer)
+        .where(models.Document.observed == observed)
+        .where(models.Document.deleted_at.is_(None))
+    )
+
+    if filters:
+        stmt = apply_filter(stmt, models.Document, filters)
+
+    # Check for special characters that FTS might not handle well
+    has_special_chars = bool(
+        re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
+    )
+
+    if has_special_chars:
+        search_condition = models.Document.content.ilike(
+            f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
+        )
+        fulltext_query = stmt.where(search_condition).order_by(
+            models.Document.created_at.desc()
+        )
+    else:
+        tsquery = _tsquery_func(query)
+        fts_condition = func.to_tsvector("english", models.Document.content).op("@@")(
+            tsquery
+        )
+        combined_condition = or_(
+            fts_condition,
+            models.Document.content.ilike(
+                f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
+            ),
+        )
+        fulltext_query = stmt.where(combined_condition).order_by(
+            func.coalesce(
+                func.ts_rank(
+                    func.to_tsvector("english", models.Document.content),
+                    tsquery,
+                ),
+                0,
+            ).desc(),
+            models.Document.created_at.desc(),
+        )
+
+    fulltext_query = fulltext_query.limit(limit)
+    result = await db.execute(fulltext_query)
+    return list(result.scalars().all())
+
+
+async def search_documents_hybrid(
+    db: AsyncSession,
+    workspace_name: str,
+    observer: str,
+    observed: str,
+    query: str,
+    embedding: list[float],
+    filters: dict[str, Any] | None,
+    top_k: int,
+    max_distance: float | None = None,
+) -> list[models.Document]:
+    """
+    Hybrid document search combining semantic similarity and full-text search.
+
+    Results are fused with Reciprocal Rank Fusion (RRF), then optionally
+    re-ranked with MMR and lexical overlap boosting.
+
+    Args:
+        db: Database session.
+        workspace_name: Workspace to search in.
+        observer: Observing peer.
+        observed: Observed peer.
+        query: Search query text.
+        embedding: Pre-computed query embedding.
+        filters: Optional additional filters.
+        top_k: Number of results to return.
+        max_distance: Optional cosine distance cutoff for semantic search.
+
+    Returns:
+        Ranked list of matching documents.
+    """
+    from src.crud.document import _query_documents_pgvector
+
+    # Semantic search (oversample to leave headroom for fusion)
+    semantic_results = await _query_documents_pgvector(
+        db,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        embedding=embedding,
+        filters=filters,
+        max_distance=max_distance,
+        top_k=top_k * 2,
+    )
+
+    # Full-text search
+    fulltext_results = await _fulltext_search_documents(
+        db,
+        workspace_name=workspace_name,
+        observer=observer,
+        observed=observed,
+        query=query,
+        filters=filters,
+        limit=top_k * 2,
+    )
+
+    # RRF fusion
+    fused = reciprocal_rank_fusion(
+        semantic_results,
+        fulltext_results,
+        k=settings.RETRIEVAL.RRF_K,
+        limit=top_k,
+    )
+
+    # Score threshold filter
+    if settings.RETRIEVAL.SCORE_THRESHOLD is not None:
+        fused = _apply_score_threshold(
+            fused,
+            semantic_results,
+            fulltext_results,
+            threshold=settings.RETRIEVAL.SCORE_THRESHOLD,
+            k=settings.RETRIEVAL.RRF_K,
+        )
+
+    # Lightweight lexical rerank (only on top results for speed)
+    if settings.RETRIEVAL.RERANK_ENABLED and fused:
+        fused = lexical_rerank(
+            fused[: settings.RETRIEVAL.RERANK_TOP_K], query
+        ) + fused[settings.RETRIEVAL.RERANK_TOP_K :]
+
+    # MMR diversity re-ranking (requires document embeddings)
+    if settings.RETRIEVAL.MMR_ENABLED and fused:
+        # Fetch embeddings for the fused subset from the DB
+        fused_ids = [doc.id for doc in fused]
+        if fused_ids:
+            emb_stmt = (
+                select(models.Document.id, models.Document.embedding)
+                .where(models.Document.id.in_(fused_ids))
+                .where(models.Document.embedding.isnot(None))
+            )
+            emb_result = await db.execute(emb_stmt)
+            document_embeddings = {
+                row.id: list(row.embedding) for row in emb_result.all()
+            }
+            fused = cast(
+                list[models.Document],
+                maximal_marginal_relevance(
+                    fused,
+                    query_embedding=embedding,
+                    document_embeddings=document_embeddings,
+                    lambda_param=settings.RETRIEVAL.MMR_LAMBDA,
+                    top_k=top_k,
+                ),
+            )
+
+    return fused[:top_k]

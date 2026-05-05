@@ -1203,6 +1203,40 @@ class VectorStoreSettings(HonchoSettings):
         return self
 
 
+class RetrievalSettings(HonchoSettings):
+    """Settings for hybrid retrieval, reranking, and result diversity."""
+
+    model_config = SettingsConfigDict(env_prefix="RETRIEVAL_", extra="ignore")  # pyright: ignore
+
+    # Enable hybrid retrieval (lexical + semantic) for document and message search
+    HYBRID_ENABLED: bool = True
+
+    # RRF constant (lower values give more weight to top-ranked items)
+    RRF_K: int = 60
+
+    # Minimum RRF score for a result to be included (None = no threshold)
+    SCORE_THRESHOLD: float | None = None
+
+    # Enable Maximal Marginal Relevance (MMR) for result diversification
+    MMR_ENABLED: bool = False
+
+    # MMR trade-off between relevance and diversity (0.0 = max diversity, 1.0 = max relevance)
+    MMR_LAMBDA: Annotated[float, Field(default=0.5, ge=0.0, le=1.0)] = 0.5
+
+    # Enable lightweight lexical reranking after fusion
+    RERANK_ENABLED: bool = False
+
+    # Number of top results to rerank (fewer = faster)
+    RERANK_TOP_K: Annotated[int, Field(default=20, gt=0)] = 20
+
+    # Boost multiplier for exact substring matches during lexical reranking
+    EXACT_MATCH_BOOST: Annotated[float, Field(default=2.0, gt=0)] = 2.0
+
+    # Use websearch_to_tsquery instead of plainto_tsquery for PostgreSQL FTS
+    # Supports quoted exact phrases and boolean operators
+    FULLTEXT_USE_WEBSEARCH: bool = True
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -1246,6 +1280,7 @@ class AppSettings(HonchoSettings):
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
+    RETRIEVAL: RetrievalSettings = Field(default_factory=RetrievalSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
