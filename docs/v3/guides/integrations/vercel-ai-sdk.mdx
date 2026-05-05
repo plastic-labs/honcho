@@ -51,6 +51,28 @@ HONCHO_API_KEY=your-api-key
 HONCHO_WORKSPACE_ID=your-workspace-id
 ```
 
+## Use the Skill
+
+The package ships a Skill that can walk an agent through wiring Honcho into your Vercel AI SDK app automatically — it greps for your `generateText` / `streamText` call sites, asks where `userId` / `sessionId` come from, and applies the integration in place.
+
+```bash
+npx skills add plastic-labs/vercel-ai-sdk
+```
+
+Then invoke `/honcho-vercel-ai-sdk`.
+
+<Accordion title="Alternative: manual symlink from npm package">
+If you've already installed `@honcho-ai/vercel-ai-sdk` via npm, you can symlink the skill directly. Example shown is for Claude Code:
+
+```bash
+mkdir -p ~/.claude/skills/honcho-vercel-ai-sdk
+ln -sf "$(pwd)/node_modules/@honcho-ai/vercel-ai-sdk/skills/honcho-vercel-ai-sdk/SKILL.md" \
+       ~/.claude/skills/honcho-vercel-ai-sdk/SKILL.md
+```
+
+Restart the session, then invoke `/honcho-vercel-ai-sdk`.
+</Accordion>
+
 ## Create a Provider Instance
 
 `createHoncho()` is the entry point. It reads your API key and workspace from environment variables and returns a provider object with `middleware()`, `tools()`, and `send()`.
