@@ -22,6 +22,17 @@ help you build data moats to out-compete incumbents.
 
 > Honcho has defined the Pareto Frontier of Agent Memory. Watch the [video](https://x.com/honchodotdev/status/2002090546521911703?s=20), check out our [evals page](https://evals.honcho.dev/), and read the [blog post](https://blog.plasticlabs.ai/research/Benchmarking-Honcho) for more detail.
 
+## Fork Notes (Athena)
+
+This repository is maintained as an Athena-oriented fork of Honcho.
+
+- Fork intent: `FORK_INTENT.md`
+- Long-lived divergence and merge policy: `FORK_DELTA.md`
+- Operator deployment runbook: `DEPLOYMENT.md`
+
+Planning scratch files in `.kilo/plans/` are intentionally not part of the canonical
+project documentation.
+
 ## TL;DR - Getting Started
 
 With Honcho you can easily setup your application's workflow, save your

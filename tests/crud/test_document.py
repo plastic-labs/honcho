@@ -444,7 +444,9 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
         )
 
-        # Hybrid search for "pizza"
+        # Hybrid search for "pizza" — the lexically matching doc ("pizza pizza pizza")
+        # should rank above the semantically-matching doc ("italian cuisine pasta") due
+        # to FTS boosting via RRF, even though it has a weaker cosine-distance embedding.
         results = await crud.query_documents(
             db_session,
             workspace_name=test_workspace.name,
@@ -455,12 +457,13 @@ class TestDocumentCRUD:
             hybrid=True,
         )
 
-        # Both documents should be returned because:
-        # - doc2 has strong lexical match (pizza)
-        # - doc1 may also match via semantic similarity
         assert len(results) == 2
+        # The top-ranked result should be the one with "pizza" in its content
+        # (the lexical match boosted by FTS), not the Italian cuisine doc
+        assert "pizza" in str(results[0].content).lower()
 
-        # Force semantic-only and verify lexical doc can be excluded
+        # Force semantic-only; the top-ranked doc should reverse since FTS
+        # boosting is absent and cosine distance dominates
         semantic_only = await crud.query_documents(
             db_session,
             workspace_name=test_workspace.name,
@@ -470,6 +473,7 @@ class TestDocumentCRUD:
             top_k=10,
             hybrid=False,
         )
-        # Semantic-only with [0.1] embedding should still find doc2 because
-        # we embed the query "pizza" and compare; doc1 has [0.9] so it wins.
+        # With no hybrid, cosine distance to the "pizza" embedding dictates order.
+        # Both docs are returned, but the one with higher cosine similarity to the
+        # query embedding (doc1 at [0.9] vs doc2 at [0.1]) should rank higher.
         assert len(semantic_only) >= 1

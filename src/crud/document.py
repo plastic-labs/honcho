@@ -352,6 +352,12 @@ async def query_documents(
         settings.RETRIEVAL.HYBRID_ENABLED if hybrid is None else hybrid
     )
 
+    if use_hybrid and not _uses_pgvector():
+        raise ValidationException(
+            "Hybrid retrieval is only supported with pgvector (VECTOR_STORE_TYPE=pgvector)."
+            " Set hybrid=False or switch to pgvector."
+        )
+
     # Use provided embedding or generate one
     if embedding is None:
         try:

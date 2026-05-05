@@ -1211,8 +1211,9 @@ class RetrievalSettings(HonchoSettings):
     # Enable hybrid retrieval (lexical + semantic) for document and message search
     HYBRID_ENABLED: bool = True
 
-    # RRF constant (lower values give more weight to top-ranked items)
-    RRF_K: int = 60
+    # RRF constant (lower values give more weight to top-ranked items).
+    # Must be positive to avoid division by zero in 1/(k+rank).
+    RRF_K: Annotated[int, Field(default=60, gt=0)] = 60
 
     # Minimum RRF score for a result to be included (None = no threshold)
     SCORE_THRESHOLD: float | None = None

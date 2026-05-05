@@ -23,7 +23,7 @@ This is the simplest operating model for a solo developer.
 ```bash
 git clone https://github.com/TheophilusChinomona/honcho.git
 cd honcho
-git checkout feat/hybrid-retrieval
+git checkout stable
 ```
 
 ### Start infra
@@ -36,8 +36,10 @@ docker compose up -d database redis
 ### Configure `.env` (OpenRouter-first)
 
 ```bash
-# Database
-DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+# Database — use localhost when running FastAPI/deriver directly on the host
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+# Schema isolation when sharing ParadeDB with other applications
+DB_SCHEMA=honcho
 
 # Keep auth off for private/internal deployments where Athena talks over trusted network
 AUTH_USE_AUTH=false

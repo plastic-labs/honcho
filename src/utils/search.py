@@ -433,10 +433,13 @@ async def _fulltext_search(
     Returns:
         list of messages ordered by text search relevance
     """
-    # Check if query contains special characters that FTS might not handle well
-    has_special_chars = bool(
-        re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
-    )
+    # Check if query contains special characters that FTS might not handle well.
+    # When websearch is enabled, " and - are valid syntax (exact phrases, negation)
+    # so they should not trigger the ILIKE-only fallback.
+    _non_fts_chars = r'[~`!@#$%^&*()_+=\[\]{};\':\\|,.<>/?]'
+    if not settings.RETRIEVAL.FULLTEXT_USE_WEBSEARCH:
+        _non_fts_chars = r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]'
+    has_special_chars = bool(re.search(_non_fts_chars, query))
 
     # Escape ILIKE pattern characters to treat user input literally
     escaped_query = escape_ilike_pattern(query)
@@ -692,10 +695,13 @@ async def _fulltext_search_documents(
     if filters:
         stmt = apply_filter(stmt, models.Document, filters)
 
-    # Check for special characters that FTS might not handle well
-    has_special_chars = bool(
-        re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
-    )
+    # Check for special characters that FTS might not handle well.
+    # When websearch is enabled, " and - are valid syntax (exact phrases, negation)
+    # so they should not trigger the ILIKE-only fallback.
+    _non_fts_chars = r'[~`!@#$%^&*()_+=\[\]{};\':\\|,.<>/?]'
+    if not settings.RETRIEVAL.FULLTEXT_USE_WEBSEARCH:
+        _non_fts_chars = r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]'
+    has_special_chars = bool(re.search(_non_fts_chars, query))
 
     if has_special_chars:
         search_condition = models.Document.content.ilike(
