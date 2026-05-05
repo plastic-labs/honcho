@@ -652,6 +652,8 @@ async def _fulltext_search_documents(
     query: str,
     filters: dict[str, Any] | None,
     limit: int,
+    embedding: list[float] | None = None,
+    max_distance: float | None = None,
 ) -> list[models.Document]:
     """
     Perform full-text search over documents using PostgreSQL FTS + ILIKE fallback.
@@ -664,6 +666,9 @@ async def _fulltext_search_documents(
         query: Search query text.
         filters: Optional additional filters.
         limit: Maximum results to return.
+        embedding: Query embedding for optional distance filtering.
+        max_distance: Optional cosine distance cutoff. When set, only documents
+            whose embedding is within this distance are returned.
 
     Returns:
         Documents ordered by text search relevance.
@@ -678,6 +683,11 @@ async def _fulltext_search_documents(
         .where(models.Document.observed == observed)
         .where(models.Document.deleted_at.is_(None))
     )
+
+    if max_distance is not None and embedding is not None:
+        stmt = stmt.where(
+            models.Document.embedding.cosine_distance(embedding) <= max_distance
+        )
 
     if filters:
         stmt = apply_filter(stmt, models.Document, filters)
@@ -775,6 +785,8 @@ async def search_documents_hybrid(
         query=query,
         filters=filters,
         limit=top_k * 2,
+        embedding=embedding,
+        max_distance=max_distance,
     )
 
     # RRF fusion
