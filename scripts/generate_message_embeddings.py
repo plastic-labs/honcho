@@ -21,7 +21,7 @@ import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, project_root)
 
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from src import models  # noqa: E402
@@ -55,6 +55,7 @@ async def get_messages_without_embeddings(
             models.Message.public_id == models.MessageEmbedding.message_id,
         )
         .where(models.MessageEmbedding.message_id.is_(None))  # No embedding exists
+        .where(func.length(func.trim(models.Message.content)) > 0)
         .order_by(models.Message.id)
     )
 
