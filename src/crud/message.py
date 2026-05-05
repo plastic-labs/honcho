@@ -141,7 +141,6 @@ async def _build_merged_snippets(
         session_matches.setdefault(msg.session_name, []).append(msg)
 
     # Build merged ranges per session, then issue a single batched query
-    # across all sessions to avoid an N+1 over distinct sessions.
     session_ranges: dict[str, list[tuple[int, int, list[models.Message]]]] = {}
     for sess_name, matches in session_matches.items():
         matches.sort(key=lambda m: m.seq_in_session)
@@ -163,8 +162,7 @@ async def _build_merged_snippets(
 
         session_ranges[sess_name] = merged_ranges
 
-    # One OR-of-ANDs predicate covers every (session, range) pair so we
-    # hit the DB once regardless of how many sessions matched.
+    # One OR-of-ANDs predicate covers every (session, range) pair
     session_predicates = [
         and_(
             models.Message.session_name == sess_name,
@@ -193,7 +191,9 @@ async def _build_merged_snippets(
     for msg in context_result.scalars().all():
         by_session.setdefault(msg.session_name, []).append(msg)
 
-    snippets: list[tuple[list[models.Message], list[models.Message]]] = []
+    snippets: list[
+        tuple[list[models.Message], list[models.Message]]
+    ] = []  # list of tuples, each containing query matches and context messages
     for sess_name, merged_ranges in session_ranges.items():
         all_context_messages = by_session.get(sess_name, [])
         for start_seq, end_seq, range_matches in merged_ranges:
