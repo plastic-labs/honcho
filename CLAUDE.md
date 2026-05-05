@@ -2,6 +2,47 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Deployment Conventions
+
+### Branch Strategy
+
+- **`main`** is the deployment branch — all production deployments come from `main`.
+- **`feat/<name>`** branches carry new features and fixes. Merge into `main` via PR.
+- Never commit directly to `main`. Always create a `feat/` branch and open a PR.
+- Rebase or merge `main` into feature branches before opening PRs to avoid stale diffs.
+
+### Database: Share ParadeDB, Don't Spin Up New
+
+- This project shares a single self-hosted **ParadeDB** PostgreSQL instance.
+- Always set `DB_SCHEMA=honcho` to isolate Honcho tables from other applications.
+- ParadeDB includes `pgvector` — no separate extension installs needed.
+- Connection pattern: `DB_CONNECTION_URI=postgresql+psycopg://user:pass@host:5432/db` + `DB_SCHEMA=honcho`
+- Never configure a separate PostgreSQL just for Honcho unless resource contention proves it necessary.
+
+### LLM Routing: OpenRouter-First
+
+- Honcho server-side LLM always uses **OpenRouter** via OpenAI-compatible transport.
+- Pattern for every model config:
+  - `TRANSPORT=openai`
+  - `OVERRIDES__BASE_URL=https://openrouter.ai/api/v1`
+  - `OVERRIDES__API_KEY_ENV=OPENROUTER_API_KEY`
+- Never configure direct OpenAI, Anthropic, or Gemini endpoints unless explicitly asked to switch.
+
+### External Service Model
+
+- Honcho is deployed **independently** as a separate service, never bundled into Athena's Docker Compose.
+- Athena points at Honcho via `baseUrl` in `honcho.json`.
+- Keep auth off (`AUTH_USE_AUTH=false`) for private/trusted-network deployments.
+- Reference: `DEPLOYMENT.md` for the full deployment and Athena connection flow.
+
+### Hybrid Retrieval Always On
+
+- In production configs, always enable:
+  - `RETRIEVAL_HYBRID_ENABLED=true`
+  - `RETRIEVAL_RERANK_ENABLED=true`
+  - `RETRIEVAL_FULLTEXT_USE_WEBSEARCH=true`
+  - `VECTOR_STORE_TYPE=pgvector`
+
 # Honcho Overview
 
 ## What is Honcho?
