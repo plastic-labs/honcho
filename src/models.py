@@ -91,12 +91,50 @@ session_peers_table = Table(
 
 
 @final
+class Tenant(Base):
+    """Multi-tenant isolation boundary.
+
+    Every workspace belongs to exactly one tenant. Tenants have their own
+    admin JWT secret so tenant operators can manage their own workspaces
+    without cross-tenant visibility."""
+
+    __tablename__: str = "tenants"
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+    name: Mapped[str] = mapped_column(TEXT, unique=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    h_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    configuration: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+    admin_jwt_secret: Mapped[str | None] = mapped_column(
+        TEXT, nullable=True
+    )
+
+    workspaces = relationship(
+        "Workspace", back_populates="tenant", cascade="all, delete, delete-orphan"
+    )
+
+    __table_args__ = (
+        CheckConstraint("length(id) = 21", name="tenant_id_length"),
+        CheckConstraint("length(name) <= 512", name="tenant_name_length"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="tenant_id_format"),
+    )
+
+
+@final
 class Workspace(Base):
     __tablename__: str = "workspaces"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, unique=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    tenant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("tenants.id"), nullable=True, index=True
     )
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
@@ -111,6 +149,7 @@ class Workspace(Base):
     sessions = relationship(
         "Session", back_populates="workspace", cascade="all, delete, delete-orphan"
     )
+    tenant = relationship("Tenant", back_populates="workspaces")
     peers = relationship(
         "Peer", back_populates="workspace", cascade="all, delete, delete-orphan"
     )

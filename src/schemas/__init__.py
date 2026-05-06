@@ -47,6 +47,10 @@ from src.schemas.api import (
     WebhookEndpoint,
     WebhookEndpointBase,
     WebhookEndpointCreate,
+    # Tenant schemas
+    Tenant,
+    TenantCreate,
+    # Workspace schemas
     Workspace,
     WorkspaceBase,
     WorkspaceCreate,
@@ -143,6 +147,8 @@ __all__ = [
     "WebhookEndpoint",
     "WebhookEndpointBase",
     "WebhookEndpointCreate",
+    "Tenant",
+    "TenantCreate",
     "Workspace",
     "WorkspaceBase",
     "WorkspaceCreate",

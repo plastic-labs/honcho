@@ -25,6 +25,7 @@ from src.routers import (
     messages,
     peers,
     sessions,
+    tenants,
     webhooks,
     workspaces,
 )
@@ -185,6 +186,7 @@ app.add_middleware(
 add_pagination(app)
 
 app.include_router(workspaces.router, prefix="/v3")
+app.include_router(tenants.router, prefix="/v3")
 app.include_router(peers.router, prefix="/v3")
 app.include_router(sessions.router, prefix="/v3")
 app.include_router(messages.router, prefix="/v3")
