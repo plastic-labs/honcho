@@ -1,54 +1,36 @@
-# https://pythonspeed.com/articles/base-image-python-docker-images/
-# https://testdriven.io/blog/docker-best-practices/
-FROM python:3.13-slim-bookworm
+# Honcho API Server
+# Requires Python 3.10+, uses uv for dependency management
 
-COPY --from=ghcr.io/astral-sh/uv:0.9.24 /uv /bin/uv
+FROM python:3.11-slim
 
-# Set Working directory
 WORKDIR /app
 
-# Enable bytecode compilation
-ENV UV_COMPILE_BYTECODE=1
+# Install system dependencies for psycopg2 and build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy from the cache instead of linking since it's a mounted volume
-ENV UV_LINK_MODE=copy
+# Install uv (fast Python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
 
-# Python optimizations
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Copy dependency files first for layer caching
+COPY pyproject.toml uv.lock ./
 
-# Install the project's dependencies using the lockfile and settings
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-install-project --no-group dev
+# Install dependencies
+RUN uv sync --frozen --no-dev
 
-# Copy only requirements to cache them in docker layer
-COPY uv.lock pyproject.toml /app/
+# Copy application source
+COPY src/ ./src/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
 
-# Sync the project
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-group dev
-
-# Place executables in the environment at the front of the path
-ENV PATH="/app/.venv/bin:$PATH"
-ENV HOME=/app
-ENV UV_CACHE_DIR=/tmp/uv-cache
-
-# Create non-root user and set ownership
-RUN addgroup --system app && adduser --system --group app && mkdir -p /tmp/uv-cache && chown -R app:app /app /tmp/uv-cache
-
-COPY --chown=app:app src/ /app/src/
-COPY --chown=app:app migrations/ /app/migrations/
-COPY --chown=app:app scripts/ /app/scripts/
-COPY --chown=app:app docker/ /app/docker/
-COPY --chown=app:app alembic.ini /app/alembic.ini
-# Copy config files - this will copy config.toml if it exists, and config.toml.example
-COPY --chown=app:app config.toml* /app/
-
-# Switch to non-root user
-USER app
+# Run database migrations on startup, then start the server
+COPY scripts/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
-CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
+ENTRYPOINT ["/app/entrypoint.sh"]

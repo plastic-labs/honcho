@@ -50,6 +50,7 @@ class JWTParams(BaseModel):
     `t`: a string timestamp of when the JWT was created
     `exp`: a string timestamp of when the JWT expires (optional)
     `ad`: a boolean flag indicating if the JWT is an admin JWT
+    `tid`: (string) tenant id
     `w`: (string) workspace name
     `p`: (string) peer name
     `s`: (string) session name
@@ -58,6 +59,7 @@ class JWTParams(BaseModel):
     t: str = Field(default_factory=utc_now_iso)
     exp: str | None = None
     ad: bool | None = None
+    tid: str | None = None
     w: str | None = None
     p: str | None = None
     s: str | None = None
@@ -101,6 +103,8 @@ def verify_jwt(token: str) -> JWTParams:
                     raise AuthenticationException("JWT expired")
         if "ad" in decoded:
             params.ad = decoded["ad"]
+        if "tid" in decoded:
+            params.tid = decoded["tid"]
         if "w" in decoded:
             params.w = decoded["w"]
         if "p" in decoded:
