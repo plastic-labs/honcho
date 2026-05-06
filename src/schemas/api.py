@@ -86,6 +86,32 @@ def _validate_metadata(v: Any) -> Any:
 _SanitizedMetadata = Annotated[dict[str, Any], BeforeValidator(_validate_metadata)]
 
 # ---------------------------------------------------------------------------
+# Tenant schemas
+# ---------------------------------------------------------------------------
+
+
+class TenantCreate(BaseModel):
+    name: Annotated[
+        str,
+        Field(min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
+    ]
+    metadata: _SanitizedMetadata = {}
+
+
+class Tenant(BaseModel):
+    id: str
+    name: str
+    h_metadata: dict[str, Any] = Field(
+        default_factory=dict, serialization_alias="metadata"
+    )
+    created_at: datetime.datetime
+
+    model_config = ConfigDict(
+        from_attributes=True, populate_by_name=True
+    )
+
+
+# ---------------------------------------------------------------------------
 # Workspace schemas
 # ---------------------------------------------------------------------------
 
@@ -100,6 +126,7 @@ class WorkspaceCreate(WorkspaceBase):
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: _SanitizedMetadata = {}
+    tenant_id: str | None = None
     configuration: WorkspaceConfiguration = Field(
         default_factory=WorkspaceConfiguration
     )
@@ -118,6 +145,7 @@ class WorkspaceUpdate(WorkspaceBase):
 
 class Workspace(WorkspaceBase):
     name: str = Field(serialization_alias="id")
+    tenant_id: str | None = None
     h_metadata: dict[str, Any] = Field(
         default_factory=dict, serialization_alias="metadata"
     )

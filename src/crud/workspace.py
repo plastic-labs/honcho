@@ -117,6 +117,7 @@ async def get_or_create_workspace(
         name=workspace.name,
         h_metadata=workspace.metadata,
         configuration=workspace.configuration.model_dump(exclude_none=True),
+        tenant_id=workspace.tenant_id,
     )
     try:
         async with db.begin_nested():
