@@ -352,8 +352,18 @@ def simple_bracket_repair(json_str: str) -> str:
     return repaired
 
 
-def validate_and_repair_json(json_str: str) -> str:
-    """Main function with comprehensive repair strategies"""
+def validate_and_repair_json(json_str: Any) -> str:
+    """Main function with comprehensive repair strategies.
+
+    Accepts a string (the normal case) or a dict/list, since some providers
+    (e.g. Cloudflare Workers AI on the /compat route for llama-4-scout)
+    return chat.completions content as an already-parsed object instead of
+    a JSON-encoded string. JSON-encode non-string input first so the rest
+    of the repair pipeline (which assumes string operations like .strip())
+    keeps working.
+    """
+    if not isinstance(json_str, str):
+        json_str = json.dumps(json_str)
     json_str = json_str.strip()
 
     # Try parsing with repair library
