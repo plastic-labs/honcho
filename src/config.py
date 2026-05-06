@@ -926,6 +926,10 @@ class DialecticSettings(HonchoSettings):
                                     del base_mc[k]
                         level_override[mc_key] = {**base_mc, **override_mc}
                 levels_raw[level_name] = {**base, **level_override}
+        # Backfill any reasoning levels the operator didn't explicitly set with the default values.
+        for default_level_name, default_level in defaults.items():
+            if default_level_name not in levels_raw:
+                levels_raw[default_level_name] = default_level.model_dump(by_alias=True)
         return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")
