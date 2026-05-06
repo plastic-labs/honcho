@@ -1,14 +1,38 @@
-fly.toml
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Environment
 .env
-.env.template
-*.md
-docs/**
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Tests
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docs
+README.md
+CLAUDE.md
+
+# Misc
+node_modules/
 .DS_Store
-supabase/**
-LICENSE
-__pycache__
-docker-compose.yml.example
-.github/**
-.vscode/**
-data/**
-.venv
