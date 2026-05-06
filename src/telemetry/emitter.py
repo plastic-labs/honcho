@@ -176,7 +176,7 @@ class TelemetryEmitter:
             "source": source,
             "type": event.event_type(),
             "time": event.timestamp.isoformat(),
-            "dataschema": f"https://honcho.dev/schemas/{event.event_type()}/v{event.schema_version()}",
+            "dataschema": f"https://schemas.honcho.dev/{event.event_type()}/v{event.schema_version()}",
         }
 
         # Create CloudEvent
