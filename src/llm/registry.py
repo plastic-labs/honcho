@@ -109,7 +109,7 @@ if settings.LLM.GEMINI_API_KEY:
 def client_for_model_config(
     provider: ModelTransport,
     model_config: ModelConfig,
-) -> ProviderClient:
+) -> ProviderClient | None:
     """Resolve the provider client for a ModelConfig.
 
     Fast path: no overrides → reuse the module-level default client from
@@ -139,7 +139,7 @@ def client_for_model_config(
 
 def backend_for_provider(
     provider: ModelTransport,
-    client: ProviderClient,
+    client: ProviderClient | None,
 ) -> ProviderBackend:
     """Wrap a raw provider SDK client in the matching ProviderBackend adapter."""
     if provider == "anthropic":

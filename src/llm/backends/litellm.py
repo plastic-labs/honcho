@@ -15,6 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,17 @@ class LiteLLMBackend:
             kwargs["api_base"] = self._api_base
         return kwargs
 
+    @staticmethod
+    def _import_litellm() -> Any:
+        try:
+            import litellm
+        except ModuleNotFoundError as exc:
+            raise ValidationException(
+                "LiteLLM transport requires optional dependency 'litellm'. "
+                "Install with: pip install honcho[litellm]"
+            ) from exc
+        return litellm
+
     async def complete(
         self,
         *,
@@ -51,7 +63,7 @@ class LiteLLMBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        import litellm
+        litellm = self._import_litellm()
 
         params = self._build_params(
             model=model,
@@ -85,7 +97,7 @@ class LiteLLMBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        import litellm
+        litellm = self._import_litellm()
 
         params = self._build_params(
             model=model,
