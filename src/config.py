@@ -1211,6 +1211,8 @@ class AppSettings(HonchoSettings):
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
+    BASE_URL: str = "http://localhost:8000"  # Public-facing URL for OpenAPI docs / CORS
+    CONTACT_EMAIL: str = ""  # Contact email shown in OpenAPI docs
     SESSION_OBSERVERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
     GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (

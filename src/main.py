@@ -148,7 +148,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     servers=[
-        {"url": "https://api.honcho.dev", "description": "Production SaaS Platform"},
+        {"url": settings.BASE_URL, "description": "Honcho API Server"},
         {"url": "http://localhost:8000", "description": "Local Development Server"},
     ],
     title="Honcho API",
@@ -156,9 +156,9 @@ app = FastAPI(
     description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
     version="3.0.6",
     contact={
-        "name": "Plastic Labs",
-        "url": "https://honcho.dev",
-        "email": "hello@plasticlabs.ai",
+        "name": "Honcho",
+        "url": settings.BASE_URL,
+        "email": settings.CONTACT_EMAIL or "hello@honcho.dev",
     },
     license_info={
         "name": "GNU Affero General Public License v3.0",
@@ -170,7 +170,7 @@ app = FastAPI(
 origins = [
     "http://localhost",
     "http://127.0.0.1:8000",
-    "https://api.honcho.dev",
+    settings.BASE_URL,
 ]
 
 app.add_middleware(

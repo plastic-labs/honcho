@@ -3,7 +3,7 @@ name = "honcho"
 version = "3.0.6"
 description = "Honcho Server"
 authors = [
-  {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
+  {name = "Honcho Contributors"},
 ]
 readme = "README.md"
 requires-python = ">=3.10"
