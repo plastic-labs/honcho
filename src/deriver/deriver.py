@@ -135,7 +135,8 @@ async def process_representation_tasks_batch(
         max_tokens=max_tokens,
         track_name="Minimal Deriver",
         response_model=PromptRepresentation,
-        json_mode=True,
+        json_mode=False,  # Changed from True: rely on prompt instructions instead of
+        # response_format to avoid empty content from non-OpenAI providers
         max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
         enable_retry=True,
         retry_attempts=3,

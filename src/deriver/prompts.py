@@ -45,6 +45,13 @@ EXAMPLES:
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
 - EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
 
+OUTPUT FORMAT:
+Return ONLY valid JSON. Do not wrap the response in markdown code fences or add any prose before or after the JSON.
+The JSON must match exactly this shape, with no extra fields:
+{{"explicit":[{{"content":"your self-contained observation here"}}]}}
+If there are no explicit facts about {peer_id}, return exactly:
+{{"explicit":[]}}
+
 Messages to analyze:
 <messages>
 {messages}
