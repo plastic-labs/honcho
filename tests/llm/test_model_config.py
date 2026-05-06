@@ -517,14 +517,23 @@ def test_dialectic_level_transport_override_drops_default_thinking_params(
     assert "thinking_effort" not in minimal_mc
 
 
-def test_dialectic_settings_backfills_missing_levels() -> None:
+def test_dialectic_settings_backfills_missing_levels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Operators only need to override the levels they care about.
 
     Env-var overrides replace the LEVELS dict wholesale (bypassing the
     default_factory), so without a backfill the unmentioned levels would be
     dropped and _validate_all_levels_present would fail.
     """
-    from src.config import DialecticSettings
+    from src.config import (
+        DialecticSettings,
+        _default_dialectic_levels,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    for key in list(os.environ):
+        if key.startswith("DIALECTIC_LEVELS"):
+            monkeypatch.delenv(key)
 
     settings = DialecticSettings(
         LEVELS={  # pyright: ignore[reportArgumentType]
@@ -544,5 +553,12 @@ def test_dialectic_settings_backfills_missing_levels() -> None:
     assert settings.LEVELS["low"].MODEL_CONFIG.model == "claude-haiku-4-5-20251001"
     assert settings.LEVELS["low"].MAX_OUTPUT_TOKENS == 2500
     # Backfilled levels come from _default_dialectic_levels()
-    assert settings.LEVELS["minimal"].MAX_TOOL_ITERATIONS == 1
-    assert settings.LEVELS["max"].MAX_TOOL_ITERATIONS == 10
+    defaults = _default_dialectic_levels()
+    assert (
+        settings.LEVELS["minimal"].MAX_TOOL_ITERATIONS
+        == defaults["minimal"].MAX_TOOL_ITERATIONS
+    )
+    assert (
+        settings.LEVELS["max"].MAX_TOOL_ITERATIONS
+        == defaults["max"].MAX_TOOL_ITERATIONS
+    )
