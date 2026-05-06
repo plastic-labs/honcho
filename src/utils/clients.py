@@ -1876,6 +1876,7 @@ async def honcho_llm_call_inner(
             openai_params: dict[str, Any] = {
                 "model": params["model"],
                 "messages": processed_messages,
+                "stream": False,
             }
 
             if temperature is not None and "gpt-5" not in model:
@@ -1990,8 +1991,10 @@ async def honcho_llm_call_inner(
                 )
             elif response_model:
                 openai_params["response_format"] = response_model
+                # parse() doesn't accept 'stream' parameter, pop it before calling
+                parse_params = {k: v for k, v in openai_params.items() if k != "stream"}
                 response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
-                    **openai_params
+                    **parse_params
                 )
                 # Extract the parsed object for structured output
                 parsed_content = response.choices[0].message.parsed
