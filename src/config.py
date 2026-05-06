@@ -130,6 +130,14 @@ class FallbackModelSettings(BaseModel):
     )
     thinking_budget_tokens: int | None = None
 
+    @field_validator("thinking_budget_tokens", mode="before")
+    @classmethod
+    def _coerce_thinking_budget_from_str(cls, v: Any) -> Any:
+        """Coerce string env var values to int for thinking_budget_tokens."""
+        if isinstance(v, str) and v.isdigit():
+            return int(v)
+        return v
+
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
@@ -172,6 +180,14 @@ class ConfiguredModelSettings(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+
+    @field_validator("thinking_budget_tokens", mode="before")
+    @classmethod
+    def _coerce_thinking_budget_from_str(cls, v: Any) -> Any:
+        """Coerce string env var values to int for thinking_budget_tokens."""
+        if isinstance(v, str) and v.isdigit():
+            return int(v)
+        return v
 
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
@@ -217,6 +233,15 @@ class ResolvedFallbackConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+
+    @field_validator("thinking_budget_tokens", mode="before")
+    @classmethod
+    def _coerce_thinking_budget_from_str(cls, v: Any) -> Any:
+        """Coerce string env var values to int for thinking_budget_tokens."""
+        if isinstance(v, str) and v.isdigit():
+            return int(v)
+        return v
+
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -252,6 +277,15 @@ class ModelConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+
+    @field_validator("thinking_budget_tokens", mode="before")
+    @classmethod
+    def _coerce_thinking_budget_from_str(cls, v: Any) -> Any:
+        """Coerce string env var values to int for thinking_budget_tokens."""
+        if isinstance(v, str) and v.isdigit():
+            return int(v)
+        return v
+
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
