@@ -393,8 +393,9 @@ async def test_search_messages_external_lookup_happens_before_tracked_db(
         *,
         after_date: datetime | None = None,
         before_date: datetime | None = None,
+        peer_name: str | None = None,
     ) -> list[models.Message]:
-        _ = (workspace_name, message_ids, after_date, before_date)
+        _ = (workspace_name, message_ids, after_date, before_date, peer_name)
         assert db is fake_db
         call_order.append("fetch")
         return [message]
@@ -495,8 +496,9 @@ async def test_search_messages_temporal_external_lookup_happens_before_tracked_d
         *,
         after_date: datetime | None = None,
         before_date: datetime | None = None,
+        peer_name: str | None = None,
     ) -> list[models.Message]:
-        _ = (workspace_name, message_ids)
+        _ = (workspace_name, message_ids, peer_name)
         assert db is fake_db
         assert after_date is not None
         assert before_date is not None

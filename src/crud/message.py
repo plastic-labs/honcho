@@ -722,6 +722,7 @@ async def _fetch_messages_by_ids(
     *,
     after_date: datetime | None = None,
     before_date: datetime | None = None,
+    peer_name: str | None = None,
 ) -> list[models.Message]:
     """Fetch messages by ID, preserving the supplied ordering."""
     fetch_stmt = (
@@ -733,6 +734,8 @@ async def _fetch_messages_by_ids(
         fetch_stmt = fetch_stmt.where(models.Message.created_at >= after_date)
     if before_date:
         fetch_stmt = fetch_stmt.where(models.Message.created_at <= before_date)
+    if peer_name:
+        fetch_stmt = fetch_stmt.where(models.Message.peer_name == peer_name)
 
     result = await db.execute(fetch_stmt)
     messages_by_id = {msg.public_id: msg for msg in result.scalars().all()}
@@ -751,6 +754,7 @@ async def _search_messages_pgvector(
     before_date: datetime | None = None,
     limit: int = 10,
     context_window: int = 2,
+    peer_name: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Run semantic message search against pgvector-backed embeddings."""
     # pgvector path: cosine distance in SQL
@@ -781,6 +785,8 @@ async def _search_messages_pgvector(
         match_stmt = match_stmt.where(models.Message.created_at >= after_date)
     if before_date:
         match_stmt = match_stmt.where(models.Message.created_at <= before_date)
+    if peer_name:
+        match_stmt = match_stmt.where(models.Message.peer_name == peer_name)
 
     result = await db.execute(match_stmt)
     matched_messages = _deduplicate_messages(result.scalars().all(), limit)
@@ -801,11 +807,15 @@ async def _semantic_search_messages(
     after_date: datetime | None = None,
     before_date: datetime | None = None,
     observer: str | None = None,
+    peer_name: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Run semantic message search with optional temporal filters.
 
     When observer is provided and session_name is None, results are
     scoped to sessions the observer has any membership record in.
+
+    When peer_name is provided, matched messages are restricted to those
+    authored by that peer. Context messages around the matches are unaffected.
     """
     # Pre-fetch peer session scope if needed (short-lived DB session)
     allowed_session_names: list[str] | None = None
@@ -838,6 +848,7 @@ async def _semantic_search_messages(
                     message_ids,
                     after_date=after_date,
                     before_date=before_date,
+                    peer_name=peer_name,
                 )
             )[:limit]
             snippets = await _build_merged_snippets(
@@ -857,6 +868,7 @@ async def _semantic_search_messages(
             before_date=before_date,
             limit=limit,
             context_window=context_window,
+            peer_name=peer_name,
         )
         _expunge_snippets(db, snippets)
         return snippets
@@ -870,6 +882,7 @@ async def search_messages(
     context_window: int = 2,
     embedding: list[float] | None = None,
     observer: str | None = None,
+    peer_name: str | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity and return conversation snippets.
@@ -886,6 +899,11 @@ async def search_messages(
         embedding: Optional pre-computed embedding
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        peer_name: When provided, restrict matched messages to those authored
+            by this peer. Context (surrounding messages) is unaffected so the
+            conversation flow remains readable. Used by agent tools to scope
+            results to the observed peer's own statements (prevents bio info
+            from one peer leaking into another peer's representation).
 
     Returns:
         List of tuples: (matched_messages, context_messages)
@@ -903,6 +921,7 @@ async def search_messages(
         context_window=context_window,
         operation_name="message.search_messages",
         observer=observer,
+        peer_name=peer_name,
     )
 
 

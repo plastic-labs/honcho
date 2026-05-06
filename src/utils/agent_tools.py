@@ -1558,6 +1558,7 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
         context_window=2,
         embedding=query_embedding,
         observer=ctx.observer,
+        peer_name=ctx.observed,
     )
     if not snippets:
         return f"No messages found for query '{query}'"

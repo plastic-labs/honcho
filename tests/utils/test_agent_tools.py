@@ -756,6 +756,54 @@ class TestSearchMessages:
         # Should return some result (may be empty if semantic search doesn't match)
         assert isinstance(result, str)
 
+    async def test_filters_by_observed_peer_author(
+        self,
+        make_tool_context: Callable[..., ToolContext],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """search_messages must scope by ctx.observed (peer author).
+
+        Bug: the handler passes `observer` and `session_name` to
+        `crud.search_messages` but does not pass `peer_name` (or equivalent
+        author filter). When the dreamer's deduction specialist runs for
+        observed=assistant, it asks for "bio facts about assistant" but the
+        un-scoped search returns user-authored messages too — leading to user
+        bio info leaking into the assistant's representation/peer card.
+
+        Invariant: the kwargs passed to `crud.search_messages` must include a
+        peer-author filter equal to `ctx.observed`. This test fails until the
+        handler is updated to pass it (and `crud.search_messages` accepts and
+        applies it at the storage layer).
+        """
+        ctx = make_tool_context()
+        captured_kwargs: dict[str, Any] = {}
+
+        async def fake_search_messages(
+            **kwargs: Any,
+        ) -> list[tuple[list[models.Message], list[models.Message]]]:
+            captured_kwargs.update(kwargs)
+            return []
+
+        async def fake_embed(query: str) -> list[float]:
+            _ = query
+            return [0.1, 0.2, 0.3]
+
+        monkeypatch.setattr("src.utils.agent_tools.embedding_client.embed", fake_embed)
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.search_messages", fake_search_messages
+        )
+
+        await _handle_search_messages(ctx, {"query": "anything"})
+
+        assert "peer_name" in captured_kwargs, (
+            "search_messages was called without a peer_name filter; "
+            "results would include messages from other peers in the session"
+        )
+        assert captured_kwargs["peer_name"] == ctx.observed, (
+            f"peer_name filter must be ctx.observed={ctx.observed!r}, "
+            f"got {captured_kwargs.get('peer_name')!r}"
+        )
+
 
 @pytest.mark.asyncio
 class TestGrepMessages:
