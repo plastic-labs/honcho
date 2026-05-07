@@ -258,7 +258,9 @@ async def check_and_schedule_dream(
     )
     current_explicit_count = int(await db.scalar(count_stmt) or 0)
 
-    documents_since_last_dream = current_explicit_count - last_dream_document_count
+    documents_since_last_dream = max(
+        0, current_explicit_count - last_dream_document_count
+    )
 
     logger.debug(
         "Dream check",

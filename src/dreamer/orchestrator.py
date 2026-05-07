@@ -353,6 +353,11 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                             update_data={"dream": dream_meta},
                         )
 
+            case _:
+                raise NotImplementedError(
+                    f"Unhandled dream type: {payload.dream_type}"
+                )
+
     except Exception as e:
         logger.error(
             f"Error processing dream task {payload.dream_type} for {payload.observer}/{payload.observed}: {str(e)}",

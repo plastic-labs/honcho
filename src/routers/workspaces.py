@@ -200,6 +200,7 @@ async def schedule_dream(
     request: schemas.ScheduleDreamRequest = Body(
         ..., description="Dream scheduling parameters"
     ),
+    db: AsyncSession = db,
 ):
     """
     Manually schedule a dream task for a specific collection.
@@ -221,6 +222,9 @@ async def schedule_dream(
     observer = request.observer
     observed = request.observed if request.observed is not None else request.observer
     dream_type = request.dream_type
+
+    # Validate the collection exists — raises ResourceNotFoundException (→ 404) if not
+    await crud.get_collection(db, workspace_id, observer=observer, observed=observed)
 
     await enqueue_dream(
         workspace_id,

@@ -512,6 +512,14 @@ class Document(Base):
             text("to_tsvector('english', content)"),
             postgresql_using="gin",
         ),
+        # Composite index for explicit-document COUNT queries in dream scheduler/orchestrator
+        Index(
+            "ix_documents_collection_level",
+            "workspace_name",
+            "observer",
+            "observed",
+            "level",
+        ),
     )
 
 

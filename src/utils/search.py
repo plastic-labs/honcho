@@ -24,6 +24,9 @@ from src.vector_store import get_external_vector_store
 
 T = TypeVar("T")
 
+# Characters that break plainto_tsquery — route to ILIKE fallback when present.
+_PLAINTO_TSQUERY_UNSAFE_CHARS = re.compile(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]')
+
 
 def _uses_pgvector_message_search() -> bool:
     """Return True when semantic message search can stay entirely in Postgres."""
@@ -473,7 +476,7 @@ async def _fulltext_search(
         )
     else:
         # Check for special chars that plainto_tsquery can't handle
-        if bool(re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)):
+        if _PLAINTO_TSQUERY_UNSAFE_CHARS.search(query):
             # Use ILIKE for queries with chars plainto_tsquery can't handle
             search_condition = models.Message.content.ilike(
                 f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
@@ -518,8 +521,8 @@ async def search(
     Raises:
         ValidationException: If query exceeds maximum token limit for embeddings, or hybrid search is used with non-pgvector vector store
     """
-    # Hybrid search requires pgvector vector store
-    if not _uses_pgvector_message_search():
+    # Hybrid message search requires pgvector — only gate when hybrid is actually enabled
+    if settings.RETRIEVAL.HYBRID_ENABLED and not _uses_pgvector_message_search():
         raise ValidationException(
             "Hybrid retrieval is only supported with pgvector (VECTOR_STORE_TYPE=pgvector)."
             " Set RETRIEVAL_HYBRID_ENABLED=false or switch to pgvector."
@@ -716,7 +719,7 @@ async def _fulltext_search_documents(
         )
     else:
         # Check for special chars that plainto_tsquery can't handle
-        if bool(re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)):
+        if _PLAINTO_TSQUERY_UNSAFE_CHARS.search(query):
             # Use ILIKE for queries with chars plainto_tsquery can't handle
             search_condition = models.Document.content.ilike(
                 f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR
