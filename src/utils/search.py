@@ -56,7 +56,7 @@ def _build_fts_ranked_query(
                 tsquery,
             ),
             0,
-        ),
+        ).desc(),
         created_at_column.desc(),
     )
 
