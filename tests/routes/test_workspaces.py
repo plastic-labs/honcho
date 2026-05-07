@@ -7,6 +7,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.exceptions import ResourceNotFoundException
 from src.models import Peer, Workspace
 
 
@@ -628,3 +629,36 @@ async def test_schedule_dream_invokes_enqueue_dream(
         "Loop 4: enqueue_dream no longer accepts document_count; the baseline "
         "is written atomically with last_dream_at in process_dream."
     )
+
+
+def test_schedule_dream_returns_404_for_missing_collection(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    """schedule_dream validates the collection exists before enqueuing.
+
+    If the observer/observed pair has no collection, crud.get_collection raises
+    ResourceNotFoundException which the global handler converts to 404.
+    """
+    workspace, peer = sample_data
+
+    with (
+        patch("src.routers.workspaces.settings.DREAM.ENABLED", True),
+        patch(
+            "src.routers.workspaces.crud.get_collection",
+            new=AsyncMock(
+                side_effect=ResourceNotFoundException("Collection not found")
+            ),
+        ),
+    ):
+        response = client.post(
+            f"/v3/workspaces/{workspace.name}/schedule_dream",
+            json={
+                "observer": peer.name,
+                "observed": "nonexistent_peer",
+                "dream_type": "omni",
+            },
+        )
+
+    assert response.status_code == 404, response.text
+    assert "not found" in response.json()["detail"].lower()

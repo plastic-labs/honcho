@@ -78,6 +78,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
+    # Pure unit tests for FTS query routing — mock the DB session, no PostgreSQL needed.
+    "tests/utils/test_search_fts_routing.py",
 )
 
 _LIVE_LLM_MARKER = "live_llm"
