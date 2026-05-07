@@ -713,6 +713,17 @@ class DeriverSettings(HonchoSettings):
     ] = 1.0
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
+    # Hard upper bound on a single work-unit pass through process_work_unit.
+    # If the inner LLM call hangs (e.g. CF Gateway streaming a Gemini response
+    # that never terminates), asyncio.wait_for raises TimeoutError, the
+    # `async with self.semaphore` block exits, and the slot is released so
+    # other workers can claim other work units. Without this bound the worker
+    # pool deadlocks: all N slots held by hung tasks, semaphore permanently
+    # locked, polling loop never reaches cleanup_stale_work_units.
+    WORK_UNIT_TIMEOUT_SECONDS: Annotated[
+        int, Field(default=600, gt=0, le=7200)
+    ] = 600
+
     # Retention window (seconds) for keeping errored items in the queue
     QUEUE_ERROR_RETENTION_SECONDS: Annotated[
         int, Field(default=30 * 24 * 3600, gt=0)
