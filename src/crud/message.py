@@ -140,13 +140,12 @@ async def _build_merged_snippets(
     for msg in matched_messages:
         session_matches.setdefault(msg.session_name, []).append(msg)
 
-    snippets: list[tuple[list[models.Message], list[models.Message]]] = []
-
+    # Build merged ranges per session, then issue a single batched query
+    session_ranges: dict[str, list[tuple[int, int, list[models.Message]]]] = {}
     for sess_name, matches in session_matches.items():
         matches.sort(key=lambda m: m.seq_in_session)
 
         merged_ranges: list[tuple[int, int, list[models.Message]]] = []
-
         for match in matches:
             start = match.seq_in_session - context_window
             end = match.seq_in_session + context_window
@@ -161,25 +160,42 @@ async def _build_merged_snippets(
             else:
                 merged_ranges.append((start, end, [match]))
 
-        # Batch all ranges into a single query using OR conditions.
-        # NOTE: If callers ever pass a very high limit (many disjoint ranges),
-        # consider chunking to avoid oversized SQL / planner issues.
-        range_conditions = [
-            models.Message.seq_in_session.between(start_seq, end_seq)
-            for start_seq, end_seq, _ in merged_ranges
-        ]
-        context_stmt = (
-            select(models.Message)
-            .where(models.Message.workspace_name == workspace_name)
-            .where(models.Message.session_name == sess_name)
-            .where(or_(*range_conditions))
-            .order_by(models.Message.seq_in_session.asc())
+        session_ranges[sess_name] = merged_ranges
+
+    # One OR-of-ANDs predicate covers every (session, range) pair
+    session_predicates = [
+        and_(
+            models.Message.session_name == sess_name,
+            or_(
+                *(
+                    models.Message.seq_in_session.between(start_seq, end_seq)
+                    for start_seq, end_seq, _ in merged_ranges
+                )
+            ),
         )
+        for sess_name, merged_ranges in session_ranges.items()
+    ]
 
-        context_result = await db.execute(context_stmt)
-        all_context_messages = list(context_result.scalars().all())
+    context_stmt = (
+        select(models.Message)
+        .where(models.Message.workspace_name == workspace_name)
+        .where(or_(*session_predicates))
+        .order_by(
+            models.Message.session_name.asc(),
+            models.Message.seq_in_session.asc(),
+        )
+    )
 
-        # Partition results back into their respective ranges
+    context_result = await db.execute(context_stmt)
+    by_session: dict[str, list[models.Message]] = {}
+    for msg in context_result.scalars().all():
+        by_session.setdefault(msg.session_name, []).append(msg)
+
+    snippets: list[
+        tuple[list[models.Message], list[models.Message]]
+    ] = []  # list of tuples, each containing query matches and context messages
+    for sess_name, merged_ranges in session_ranges.items():
+        all_context_messages = by_session.get(sess_name, [])
         for start_seq, end_seq, range_matches in merged_ranges:
             context_messages = [
                 msg

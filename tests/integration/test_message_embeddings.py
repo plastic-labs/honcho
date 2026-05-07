@@ -17,9 +17,48 @@ from src import models
 from src.config import settings
 from src.crud import create_messages
 from src.crud import message as message_crud
-from src.models import Peer, Workspace
+from src.models import Message, Peer, Workspace
 from src.schemas import MessageCreate
 from src.utils.search import search
+
+
+class _FakeScalarResult:
+    def __init__(self, rows: list[models.Message]):
+        self._rows: list[Message] = rows
+
+    def all(self) -> list[models.Message]:
+        return self._rows
+
+
+class _FakeResult:
+    def __init__(self, rows: list[models.Message]):
+        self._rows: list[Message] = rows
+
+    def scalars(self) -> _FakeScalarResult:
+        return _FakeScalarResult(self._rows)
+
+
+class _CountingDb:
+    def __init__(self, rows: list[models.Message]):
+        self._rows: list[Message] = rows
+        self.execute_count: int = 0
+
+    async def execute(self, _stmt: Any) -> _FakeResult:
+        self.execute_count += 1
+        return _FakeResult(self._rows)
+
+
+def _message(session_name: str, seq_in_session: int) -> models.Message:
+    return models.Message(
+        workspace_name="workspace",
+        session_name=session_name,
+        peer_name="peer",
+        content=f"{session_name}:{seq_in_session}",
+        public_id=generate_nanoid(),
+        seq_in_session=seq_in_session,
+        token_count=1,
+        created_at=datetime.now(timezone.utc),
+    )
 
 
 @pytest.mark.asyncio
@@ -258,6 +297,46 @@ async def test_semantic_search_when_embeddings_enabled(
     assert len(search_results) > 0
     found_message_ids = [msg.public_id for msg in search_results]
     assert created_message.public_id in found_message_ids
+
+
+@pytest.mark.asyncio
+async def test_build_merged_snippets_batches_context_query_across_sessions():
+    """Context expansion should not issue one DB query per matched session."""
+    matched_messages = [
+        _message("session_a", 10),
+        _message("session_b", 20),
+        _message("session_c", 30),
+    ]
+    context_messages = [
+        _message("session_a", 9),
+        _message("session_a", 10),
+        _message("session_a", 11),
+        _message("session_a", 99),
+        _message("session_b", 19),
+        _message("session_b", 20),
+        _message("session_b", 21),
+        _message("session_c", 29),
+        _message("session_c", 30),
+        _message("session_c", 31),
+    ]
+    db = _CountingDb(context_messages)
+
+    snippets = await message_crud._build_merged_snippets(  # pyright: ignore[reportPrivateUsage]
+        db,  # pyright: ignore[reportArgumentType]
+        workspace_name="workspace",
+        matched_messages=matched_messages,
+        context_window=1,
+    )
+
+    assert db.execute_count == 1
+    assert [len(matches) for matches, _ in snippets] == [1, 1, 1]
+    assert [
+        [msg.content for msg in context_messages] for _, context_messages in snippets
+    ] == [
+        ["session_a:9", "session_a:10", "session_a:11"],
+        ["session_b:19", "session_b:20", "session_b:21"],
+        ["session_c:29", "session_c:30", "session_c:31"],
+    ]
 
 
 @pytest.mark.asyncio
