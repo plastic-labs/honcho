@@ -1,5 +1,12 @@
 name: Static Analysis
-on: [push]
+on:
+  push:
+    branches:
+      - stable
+      - prod
+  pull_request:
+    branches:
+      - stable
 
 permissions:
   contents: read
