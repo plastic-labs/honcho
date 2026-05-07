@@ -1,6 +1,6 @@
-# Agent Coordination — honcho-langfuse-generation-traces
+# Agent Coordination — honcho-mcp
 
-> **Date**: 2026-05-05 | **Lead**: Leader (Antigravity)
+> **Date**: 2026-05-07 | **Lead**: [Leader] (Antigravity)
 > **Team**: Pending Assignment
 >
 > **Project**: `honcho` | **Path**: `/home/ubuntu/workspaces/oss/honcho`
@@ -13,11 +13,11 @@
 
 | Item            | Detail                      |
 | :-------------- | :-------------------------- |
-| **Objective**   | Implement langfuse generation traces |
-| **Scope**       | honcho-langfuse-generation-traces |
-| **Blockers**    | None |
-| **Code Status** | Ready for Verify/Archive phase |
-| **Services**    | None |
+| **Objective**   | honcho-mcp implementation   |
+| **Scope**       | To be explored / defined    |
+| **Blockers**    | None                        |
+| **Code Status** | Pre-Proposal (Explore)      |
+| **Services**    | None                        |
 
 ---
 
@@ -25,23 +25,24 @@
 
 | Item           | Detail                                          |
 | :------------- | :---------------------------------------------- |
-| **Change**     | honcho-langfuse-generation-traces               |
-| **Phase**      | Verify / Archive                                |
-| **Proposal**   | ✅ Complete                                     |
-| **Specs**      | ✅ Complete                                     |
-| **Design**     | ✅ Complete                                     |
-| **Tasks**      | ✅ Complete                                     |
+| **Change**     | None active (Requires `/opsx-new` or `/opsx-explore`) |
+| **Phase**      | Explore                                         |
+| **Proposal**   | ⬜ Pending                                      |
+| **Specs**      | ⬜ Pending                                      |
+| **Design**     | ⬜ Pending                                      |
+| **Tasks**      | ⬜ Pending                                      |
 | **Compliance** | ⬜ Pending                                      |
 
 ---
 
 ## 🏗️ Execution Phases
 
-```
-Phase 0: SETUP (Leader)                    ✅ DONE
-Phase 1: Verify Code & Compliance (QA)     ✅ DONE
-Phase 2: Review Code (Reviewer)            ⬜ NOT STARTED
-Phase 3: Archive Change (Leader)           ⬜ NOT STARTED
+```text
+Phase 0: SETUP ([Leader])                     ✅ DONE
+Phase 1: EXPLORE & PROPOSE (Designer)         ⬜ NOT STARTED
+Phase 2: APPLY (Coder)                        ⬜ NOT STARTED
+Phase 3: VERIFY & COMPLIANCE (QA/Reviewer)    ⬜ NOT STARTED
+Phase 4: ARCHIVE ([Leader])                   ⬜ NOT STARTED
 ```
 
 **Status legend**: ⬜ Not Started | 🔄 In Progress | ✅ Done | 🟡 Blocked | ❌ Failed
@@ -50,11 +51,11 @@ Phase 3: Archive Change (Leader)           ⬜ NOT STARTED
 
 ## 📋 Action Items
 
-|  #  | Action             | Owner   |     Status     |
-| :-: | :----------------- | :------ | :------------: |
-|  1  | Define agent roles | Leader  | 🔄 In Progress |
-|  2  | Run Verify Checks  | QA      | ✅ Done        |
-|  3  | Approve Archive    | Human   | ⬜ Not Started |
+|  #  | Action                                  | Owner      |     Status     |
+| :-: | :-------------------------------------- | :--------- | :------------: |
+|  1  | Define agent roles                      | [Leader]   | 🔄 In Progress |
+|  2  | Run `/opsx-explore` or `/opsx-new`      | [Leader]   | ⬜ Not Started |
+|  3  | Create Proposal & Specs                 | Designer   | ⬜ Not Started |
 
 ---
 
@@ -74,7 +75,7 @@ Phase 3: Archive Change (Leader)           ⬜ NOT STARTED
 
 | Agent       | Phase | Role / Mode |   Status   | Current Action             | Project |
 | :---------- | :---- | :---------- | :--------: | :------------------------- | :------ |
-| **Leader**  | 0     | Lead        | 🔄 ACTIVE  | Formatting agent_share.md  | honcho  |
+| **[Leader]**| 0     | Lead        | 🔄 ACTIVE  | Formatting agent_share.md  | honcho  |
 | **TBD**     | -     | -           | ⬜ WAITING | Waiting for assignment     | honcho  |
 
 ---
@@ -125,8 +126,5 @@ Phase 3: Archive Change (Leader)           ⬜ NOT STARTED
 > **Format**: `[AGENT_ID] HH:MM: message`
 > **Rule**: Append-only. Never edit or delete entries from other agents.
 
-- **[Leader] 14:00**: Shared file created. Tasks assigned. Agents, please read and begin.
-- **[Leader] 14:12**: 🔍 QA/DEVOPS: Logic code verified. Built honcho API docker image locally (`docker compose up -d --build api`). Executed Smoke Test (Task 2.2) via inner container script. Tracing verified to generate properly. Phase 1 marked DONE.
-- **[Leader] 14:55**: 🔍 QA/DEVOPS: Found issue with missing `lmstudio` models in Langfuse UI due to background containers (`deriver`, `mcp`) not being restarted during the initial test. Addressed missing token usage by explicitly reporting `usage_details` to Langfuse inside `honcho_llm_call`. Rebuilt all images and verified the fix. Artifacts `proposal.md`, `design.md`, and `tasks.md` updated. Ready for archive.
-- **[Leader] 15:07**: 💾 Work saved. Memory archived. Journal updated.
+- **[Leader] 10:10**: Shared file created for `honcho-mcp`. Needs OpenSpec change creation.
 <!-- AGENTS: Append your updates below this line -->
