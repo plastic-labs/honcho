@@ -648,6 +648,11 @@ class LLMSettings(HonchoSettings):
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
 
+    # Base URLs for LLM providers (optional — override the SDK default endpoint)
+    ANTHROPIC_BASE_URL: str | None = None
+    OPENAI_BASE_URL: str | None = None
+    GEMINI_BASE_URL: str | None = None
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
