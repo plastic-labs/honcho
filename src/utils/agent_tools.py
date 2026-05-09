@@ -1468,6 +1468,13 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
             "ERROR: Query exceeds maximum token limit of "
             + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
         )
+    except Exception as e:
+        logger.warning("Embedding unavailable for search_memory: %s", e)
+        return (
+            "Semantic search is unavailable (embedding model not configured). "
+            "Use grep_messages for exact text search or get_messages_by_date_range "
+            "for date-based retrieval instead."
+        )
 
     documents = await crud.query_documents(
         db=None,
@@ -1549,7 +1556,15 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
     limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call (same pattern as _handle_search_memory).
-    query_embedding = await embedding_client.embed(query)
+    try:
+        query_embedding = await embedding_client.embed(query)
+    except Exception as e:
+        logger.warning("Embedding unavailable for search_messages: %s", e)
+        return (
+            "Semantic message search is unavailable (embedding model not configured). "
+            "Use grep_messages for exact text search or get_messages_by_date_range "
+            "for date-based retrieval instead."
+        )
     snippets = await crud.search_messages(
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
@@ -1703,7 +1718,15 @@ async def _handle_search_messages_temporal(
 
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call.
-    query_embedding = await embedding_client.embed(query)
+    try:
+        query_embedding = await embedding_client.embed(query)
+    except Exception as e:
+        logger.warning("Embedding unavailable for search_messages_temporal: %s", e)
+        return (
+            "Temporal semantic search is unavailable (embedding model not configured). "
+            "Use grep_messages for exact text search or get_messages_by_date_range "
+            "for date-based retrieval instead."
+        )
     snippets = await crud.search_messages_temporal(
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
