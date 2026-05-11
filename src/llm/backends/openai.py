@@ -311,14 +311,27 @@ class OpenAIBackend:
             if tool_choice is not None:
                 params["tool_choice"] = tool_choice
         if extra_params:
-            for key in (
+            # Recognised top-level params we already consume above.
+            _recognised: set[str] = {
                 "top_p",
                 "frequency_penalty",
                 "presence_penalty",
                 "seed",
-            ):
+                "verbosity",
+                "json_mode",
+            }
+            for key in ("top_p", "frequency_penalty", "presence_penalty", "seed"):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            # Pass anything else through as OpenAI SDK extra_body so
+            # provider-specific fields (e.g. DeepSeek's ``thinking``,
+            # vLLM/SGLang knobs) reach the wire without backend changes.
+            passthrough = {
+                k: v for k, v in extra_params.items() if k not in _recognised
+            }
+            if passthrough:
+                existing = params.get("extra_body") or {}
+                params["extra_body"] = {**existing, **passthrough}
         return params
 
     def _normalize_response(
