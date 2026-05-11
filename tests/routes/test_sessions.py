@@ -403,6 +403,99 @@ def test_get_sessions_sort_by_last_message_at_asc(
     assert returned_ids[:3] == session_ids
 
 
+def test_get_sessions_sort_by_last_message_at_nulls_last_desc(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that messageless sessions sort last when sorting by last_message_at (desc)"""
+    test_workspace, test_peer = sample_data
+
+    # Create 3 sessions: 2 with messages, 1 without
+    sid_with_msg_1 = str(generate_nanoid())
+    sid_with_msg_2 = str(generate_nanoid())
+    sid_no_msg = str(generate_nanoid())
+    for sid in [sid_with_msg_1, sid_with_msg_2, sid_no_msg]:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={"id": sid, "peer_names": {test_peer.name: {}}},
+        )
+        assert response.status_code in [200, 201]
+
+    # Add messages with different timestamps to two sessions
+    for i, sid in enumerate([sid_with_msg_1, sid_with_msg_2]):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{sid}/messages",
+            json={
+                "messages": [
+                    {
+                        "content": f"msg-{i}",
+                        "peer_id": test_peer.name,
+                        "created_at": f"2026-01-01T00:00:{i + 10:02d}Z",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"sort_by": "last_message_at", "sort_order": "desc"},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    returned_ids = [item["id"] for item in items]
+
+    # Descending: newest message first, no-message session last
+    assert returned_ids[0] == sid_with_msg_2
+    assert returned_ids[1] == sid_with_msg_1
+    assert returned_ids[2] == sid_no_msg
+
+
+def test_get_sessions_sort_by_last_message_at_nulls_last_asc(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that messageless sessions sort last when sorting by last_message_at (asc)"""
+    test_workspace, test_peer = sample_data
+
+    # Create 3 sessions: 2 with messages, 1 without
+    sid_with_msg_1 = str(generate_nanoid())
+    sid_with_msg_2 = str(generate_nanoid())
+    sid_no_msg = str(generate_nanoid())
+    for sid in [sid_with_msg_1, sid_with_msg_2, sid_no_msg]:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={"id": sid, "peer_names": {test_peer.name: {}}},
+        )
+        assert response.status_code in [200, 201]
+
+    for i, sid in enumerate([sid_with_msg_1, sid_with_msg_2]):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{sid}/messages",
+            json={
+                "messages": [
+                    {
+                        "content": f"msg-{i}",
+                        "peer_id": test_peer.name,
+                        "created_at": f"2026-01-01T00:00:{i + 10:02d}Z",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"sort_by": "last_message_at", "sort_order": "asc"},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    returned_ids = [item["id"] for item in items]
+
+    # Ascending: oldest message first, no-message session last (NULLS LAST)
+    assert returned_ids[0] == sid_with_msg_1
+    assert returned_ids[1] == sid_with_msg_2
+    assert returned_ids[2] == sid_no_msg
+
+
 def test_update_delete_metadata(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

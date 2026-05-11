@@ -139,9 +139,10 @@ async def get_sessions(
             .correlate(models.Session)
             .scalar_subquery()
         )
-        stmt = stmt.order_by(
-            last_msg_subq.desc() if sort_order == "desc" else last_msg_subq.asc()
-        )
+        if sort_order == "desc":
+            stmt = stmt.order_by(last_msg_subq.desc().nulls_last())
+        else:
+            stmt = stmt.order_by(last_msg_subq.asc().nulls_last())
     else:
         stmt = stmt.order_by(models.Session.created_at)
 

@@ -254,6 +254,153 @@ class TestSessionCRUD:
         assert returned_ids.index(sid_a) < returned_ids.index(sid_b)
 
     @pytest.mark.asyncio
+    async def test_get_sessions_sort_by_last_message_at_nulls_last_asc(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test last_message_at sort puts sessions with no messages last (asc)"""
+        test_workspace, test_peer = sample_data
+
+        base_time = datetime.datetime.now(datetime.timezone.utc)
+
+        # Session A has a message, session B does not
+        sid_a = str(generate_nanoid())
+        sid_b = str(generate_nanoid())
+        for sid in [sid_a, sid_b]:
+            session = models.Session(
+                name=sid,
+                workspace_name=test_workspace.name,
+                created_at=base_time,
+            )
+            db_session.add(session)
+        await db_session.flush()
+
+        msg = models.Message(
+            content="hello",
+            session_name=sid_a,
+            peer_name=test_peer.name,
+            workspace_name=test_workspace.name,
+            seq_in_session=1,
+            created_at=base_time + datetime.timedelta(seconds=5),
+        )
+        db_session.add(msg)
+        await db_session.flush()
+
+        stmt = await crud.get_sessions(
+            workspace_name=test_workspace.name,
+            sort_by="last_message_at",
+            sort_order="asc",
+        )
+        result = await db_session.execute(stmt)
+        sessions = result.scalars().all()
+        returned_ids = [s.name for s in sessions]
+
+        # Session with a message should come before the one without (NULLS LAST)
+        assert returned_ids.index(sid_a) < returned_ids.index(sid_b)
+
+    @pytest.mark.asyncio
+    async def test_get_sessions_sort_by_last_message_at_mixed_nulls_desc(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test that messageless sessions sort last among sessions with messages (desc)"""
+        test_workspace, test_peer = sample_data
+
+        base_time = datetime.datetime.now(datetime.timezone.utc)
+
+        # Create 3 sessions: 2 with messages, 1 without
+        sid_with_msg_1 = str(generate_nanoid())
+        sid_with_msg_2 = str(generate_nanoid())
+        sid_no_msg = str(generate_nanoid())
+        for sid in [sid_with_msg_1, sid_with_msg_2, sid_no_msg]:
+            session = models.Session(
+                name=sid,
+                workspace_name=test_workspace.name,
+                created_at=base_time,
+            )
+            db_session.add(session)
+        await db_session.flush()
+
+        # Give the two sessions messages with different timestamps
+        for i, sid in enumerate([sid_with_msg_1, sid_with_msg_2]):
+            msg = models.Message(
+                content=f"msg-{i}",
+                session_name=sid,
+                peer_name=test_peer.name,
+                workspace_name=test_workspace.name,
+                seq_in_session=1,
+                created_at=base_time + datetime.timedelta(seconds=i + 10),
+            )
+            db_session.add(msg)
+        await db_session.flush()
+
+        stmt = await crud.get_sessions(
+            workspace_name=test_workspace.name,
+            sort_by="last_message_at",
+            sort_order="desc",
+        )
+        result = await db_session.execute(stmt)
+        sessions = result.scalars().all()
+        returned_ids = [s.name for s in sessions]
+
+        # Descending: newest message first, no-message session last
+        assert returned_ids[0] == sid_with_msg_2
+        assert returned_ids[1] == sid_with_msg_1
+        assert returned_ids[2] == sid_no_msg
+
+    @pytest.mark.asyncio
+    async def test_get_sessions_sort_by_last_message_at_mixed_nulls_asc(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test that messageless sessions sort last among sessions with messages (asc)"""
+        test_workspace, test_peer = sample_data
+
+        base_time = datetime.datetime.now(datetime.timezone.utc)
+
+        # Create 3 sessions: 2 with messages, 1 without
+        sid_with_msg_1 = str(generate_nanoid())
+        sid_with_msg_2 = str(generate_nanoid())
+        sid_no_msg = str(generate_nanoid())
+        for sid in [sid_with_msg_1, sid_with_msg_2, sid_no_msg]:
+            session = models.Session(
+                name=sid,
+                workspace_name=test_workspace.name,
+                created_at=base_time,
+            )
+            db_session.add(session)
+        await db_session.flush()
+
+        for i, sid in enumerate([sid_with_msg_1, sid_with_msg_2]):
+            msg = models.Message(
+                content=f"msg-{i}",
+                session_name=sid,
+                peer_name=test_peer.name,
+                workspace_name=test_workspace.name,
+                seq_in_session=1,
+                created_at=base_time + datetime.timedelta(seconds=i + 10),
+            )
+            db_session.add(msg)
+        await db_session.flush()
+
+        stmt = await crud.get_sessions(
+            workspace_name=test_workspace.name,
+            sort_by="last_message_at",
+            sort_order="asc",
+        )
+        result = await db_session.execute(stmt)
+        sessions = result.scalars().all()
+        returned_ids = [s.name for s in sessions]
+
+        # Ascending: oldest message first, no-message session last (NULLS LAST)
+        assert returned_ids[0] == sid_with_msg_1
+        assert returned_ids[1] == sid_with_msg_2
+        assert returned_ids[2] == sid_no_msg
+
+    @pytest.mark.asyncio
     async def test_get_session_peer_configuration(
         self,
         db_session: AsyncSession,
