@@ -131,6 +131,17 @@ async def get_sessions(
     if sort_by == "created_at":
         col = models.Session.created_at
         stmt = stmt.order_by(col.desc() if sort_order == "desc" else col.asc())
+    elif sort_by == "last_message_at":
+        last_msg_subq = (
+            select(func.max(models.Message.created_at))
+            .where(models.Message.session_name == models.Session.name)
+            .where(models.Message.workspace_name == models.Session.workspace_name)
+            .correlate(models.Session)
+            .scalar_subquery()
+        )
+        stmt = stmt.order_by(
+            last_msg_subq.desc() if sort_order == "desc" else last_msg_subq.asc()
+        )
     else:
         stmt = stmt.order_by(models.Session.created_at)
 

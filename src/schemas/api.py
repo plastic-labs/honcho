@@ -333,7 +333,7 @@ class SessionCreate(SessionBase):
 
 class SessionGet(SessionBase):
     filters: dict[str, Any] | None = None
-    sort_by: Literal["created_at"] | None = None
+    sort_by: Literal["created_at", "last_message_at"] | None = None
     sort_order: Literal["asc", "desc"] | None = None
 
 
