@@ -5,15 +5,11 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
-from openai import BadRequestError, LengthFinishReasonError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
-from src.llm.structured_output import (
-    repair_response_model_json,
-    validate_structured_output,
-)
+from src.llm.structured_output import repair_response_model_json
 
 logger = logging.getLogger(__name__)
 
@@ -146,55 +142,25 @@ class OpenAIBackend:
         )
 
         if isinstance(response_format, type):
-            params["response_format"] = response_format
-            try:
-                response = await self._client.chat.completions.parse(**params)
-            except LengthFinishReasonError as exc:
-                truncated = exc.completion
-                raw_content = truncated.choices[0].message.content or ""
-                content = repair_response_model_json(
-                    raw_content,
-                    response_format,
-                    model,
-                )
-                return self._normalize_response(
-                    truncated,
-                    content_override=content,
-                )
-            except (BadRequestError, json.JSONDecodeError, ValidationError):
-                fallback_response = await self._create_structured_response(
-                    params=params,
-                    response_format=response_format,
-                )
-                content = self._parse_or_repair_structured_content(
-                    fallback_response,
-                    response_format,
-                    model,
-                )
-                return self._normalize_response(
-                    fallback_response,
-                    content_override=content,
-                )
-            parsed = response.choices[0].message.parsed
-            raw_content = response.choices[0].message.content or ""
-            if parsed is None and raw_content:
-                content = repair_response_model_json(
-                    raw_content,
-                    response_format,
-                    model,
-                )
-                return self._normalize_response(response, content_override=content)
-            if parsed is None:
-                refusal = getattr(response.choices[0].message, "refusal", None)
-                if refusal:
-                    return self._normalize_response(
-                        response,
-                        content_override=refusal,
-                    )
-                raise ValidationException("No parsed content in structured response")
+            # Default to JSON-mode + schema-as-instruction for portability —
+            # OpenAI's newer Structured Outputs (`json_schema`) is great when
+            # available but unsupported on DeepSeek, several Bailian /
+            # dashscope models, and many vLLM deployments. `json_object`
+            # plus the schema injected as a system instruction is universally
+            # supported; `repair_response_model_json` handles minor shape
+            # drift downstream.
+            fallback_response = await self._create_structured_response(
+                params=params,
+                response_format=response_format,
+            )
+            content = self._parse_or_repair_structured_content(
+                fallback_response,
+                response_format,
+                model,
+            )
             return self._normalize_response(
-                response,
-                content_override=validate_structured_output(parsed, response_format),
+                fallback_response,
+                content_override=content,
             )
         if response_format is not None:
             params["response_format"] = response_format
@@ -240,15 +206,26 @@ class OpenAIBackend:
         params["stream"] = True
         params["stream_options"] = {"include_usage": True}
         if isinstance(response_format, type):
-            # parse() supports BaseModel types but streaming create() does not —
-            # convert to a json_schema dict so the streaming path works.
-            params["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_format.__name__,
-                    "schema": response_format.model_json_schema(),
-                },
-            }
+            # Streaming path: same portability concern as the non-streaming
+            # complete(). Use json_object + schema-as-instruction so DeepSeek
+            # et al. don't 400 on json_schema.
+            params["response_format"] = {"type": "json_object"}
+            schema = response_format.model_json_schema()
+            schema_instruction = (
+                f"Return ONLY a JSON object that satisfies this JSON schema "
+                f"(named '{response_format.__name__}'). Do not include any "
+                f"text outside the JSON object.\n\n```json\n"
+                f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n```"
+            )
+            msgs = list(params.get("messages") or [])
+            if msgs and msgs[0].get("role") == "system":
+                msgs[0] = {
+                    **msgs[0],
+                    "content": f"{msgs[0].get('content', '')}\n\n{schema_instruction}",
+                }
+            else:
+                msgs.insert(0, {"role": "system", "content": schema_instruction})
+            params["messages"] = msgs
         elif response_format is not None:
             params["response_format"] = response_format
         elif extra_params and extra_params.get("json_mode"):
@@ -390,14 +367,37 @@ class OpenAIBackend:
         params: dict[str, Any],
         response_format: type[BaseModel],
     ) -> Any:
+        """Structured-output call that works across OpenAI-compatible providers.
+
+        Uses the universally-supported ``{"type": "json_object"}`` response
+        format and injects the target Pydantic schema as a system-message
+        instruction so the model knows the shape to produce. Providers that
+        only implement OpenAI's older JSON mode (DeepSeek, several Aliyun /
+        Bailian models, vLLM, …) accept this; those that also speak the
+        newer ``json_schema`` Structured Outputs API accept it too. The
+        ``repair_response_model_json`` machinery upstack already handles
+        malformed JSON, so the looser schema enforcement is acceptable in
+        exchange for portability.
+        """
         structured_params = dict(params)
-        structured_params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": response_format.__name__,
-                "schema": response_format.model_json_schema(),
-            },
-        }
+        structured_params["response_format"] = {"type": "json_object"}
+
+        schema = response_format.model_json_schema()
+        schema_instruction = (
+            f"Return ONLY a JSON object that satisfies this JSON schema "
+            f"(named '{response_format.__name__}'). Do not include any text "
+            f"outside the JSON object.\n\n```json\n"
+            f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n```"
+        )
+        messages = list(structured_params.get("messages") or [])
+        if messages and messages[0].get("role") == "system":
+            messages[0] = {
+                **messages[0],
+                "content": f"{messages[0].get('content', '')}\n\n{schema_instruction}",
+            }
+        else:
+            messages.insert(0, {"role": "system", "content": schema_instruction})
+        structured_params["messages"] = messages
         return await self._client.chat.completions.create(**structured_params)
 
     @staticmethod
