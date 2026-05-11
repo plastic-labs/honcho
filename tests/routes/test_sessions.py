@@ -223,6 +223,92 @@ def test_get_sessions_with_empty_filter(
     assert isinstance(data["items"], list)
 
 
+def test_get_sessions_sort_by_created_at_desc(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session listing with sort_by=created_at and sort_order=desc"""
+    test_workspace, test_peer = sample_data
+
+    # Create three sessions with distinct names so we can identify ordering
+    session_ids = []
+    for _ in range(3):
+        sid = str(generate_nanoid())
+        session_ids.append(sid)
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={"id": sid, "peer_names": {test_peer.name: {}}},
+        )
+        assert response.status_code in [200, 201]
+
+    # List with descending sort — newest (last created) should come first
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"sort_by": "created_at", "sort_order": "desc"},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    returned_ids = [item["id"] for item in items]
+
+    # Our three sessions should appear in reverse creation order
+    assert returned_ids[:3] == session_ids[::-1]
+
+
+def test_get_sessions_sort_by_created_at_asc(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session listing with sort_by=created_at and sort_order=asc"""
+    test_workspace, test_peer = sample_data
+
+    session_ids = []
+    for _ in range(3):
+        sid = str(generate_nanoid())
+        session_ids.append(sid)
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={"id": sid, "peer_names": {test_peer.name: {}}},
+        )
+        assert response.status_code in [200, 201]
+
+    # List with ascending sort — oldest (first created) should come first
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"sort_by": "created_at", "sort_order": "asc"},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    returned_ids = [item["id"] for item in items]
+
+    assert returned_ids[:3] == session_ids
+
+
+def test_get_sessions_default_sort_is_asc(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test that the default sort order (no sort params) is created_at ascending"""
+    test_workspace, test_peer = sample_data
+
+    session_ids = []
+    for _ in range(3):
+        sid = str(generate_nanoid())
+        session_ids.append(sid)
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={"id": sid, "peer_names": {test_peer.name: {}}},
+        )
+        assert response.status_code in [200, 201]
+
+    # List with no sort params — should default to ascending
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    returned_ids = [item["id"] for item in items]
+
+    assert returned_ids[:3] == session_ids
+
+
 def test_update_delete_metadata(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

@@ -10,6 +10,97 @@ class TestSessionCRUD:
     """Test suite for session CRUD operations"""
 
     @pytest.mark.asyncio
+    async def test_get_sessions_sort_by_created_at_desc(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test get_sessions returns sessions in descending created_at order"""
+        test_workspace, test_peer = sample_data
+
+        # Create three sessions in order
+        session_ids = []
+        for _ in range(3):
+            sid = str(generate_nanoid())
+            session_ids.append(sid)
+            session = models.Session(
+                name=sid, workspace_name=test_workspace.name
+            )
+            db_session.add(session)
+        await db_session.flush()
+
+        # Query with descending sort
+        stmt = await crud.get_sessions(
+            workspace_name=test_workspace.name,
+            sort_by="created_at",
+            sort_order="desc",
+        )
+        result = await db_session.execute(stmt)
+        sessions = result.scalars().all()
+        returned_ids = [s.name for s in sessions]
+
+        # Our three sessions should appear in reverse creation order
+        assert returned_ids[:3] == session_ids[::-1]
+
+    @pytest.mark.asyncio
+    async def test_get_sessions_sort_by_created_at_asc(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test get_sessions returns sessions in ascending created_at order"""
+        test_workspace, test_peer = sample_data
+
+        session_ids = []
+        for _ in range(3):
+            sid = str(generate_nanoid())
+            session_ids.append(sid)
+            session = models.Session(
+                name=sid, workspace_name=test_workspace.name
+            )
+            db_session.add(session)
+        await db_session.flush()
+
+        # Query with ascending sort
+        stmt = await crud.get_sessions(
+            workspace_name=test_workspace.name,
+            sort_by="created_at",
+            sort_order="asc",
+        )
+        result = await db_session.execute(stmt)
+        sessions = result.scalars().all()
+        returned_ids = [s.name for s in sessions]
+
+        assert returned_ids[:3] == session_ids
+
+    @pytest.mark.asyncio
+    async def test_get_sessions_default_sort_is_asc(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test that get_sessions defaults to ascending created_at order"""
+        test_workspace, test_peer = sample_data
+
+        session_ids = []
+        for _ in range(3):
+            sid = str(generate_nanoid())
+            session_ids.append(sid)
+            session = models.Session(
+                name=sid, workspace_name=test_workspace.name
+            )
+            db_session.add(session)
+        await db_session.flush()
+
+        # Query with no sort params
+        stmt = await crud.get_sessions(workspace_name=test_workspace.name)
+        result = await db_session.execute(stmt)
+        sessions = result.scalars().all()
+        returned_ids = [s.name for s in sessions]
+
+        assert returned_ids[:3] == session_ids
+
+    @pytest.mark.asyncio
     async def test_get_session_peer_configuration(
         self,
         db_session: AsyncSession,
