@@ -315,6 +315,94 @@ def test_get_sessions_default_sort_is_asc(
     assert returned_ids[:3] == session_ids
 
 
+def test_get_sessions_sort_by_last_message_at_desc(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session listing sorted by most recent message, descending"""
+    test_workspace, test_peer = sample_data
+
+    # Create three sessions
+    session_ids = []
+    for _ in range(3):
+        sid = str(generate_nanoid())
+        session_ids.append(sid)
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={"id": sid, "peer_names": {test_peer.name: {}}},
+        )
+        assert response.status_code in [200, 201]
+
+    # Add a message to each session with explicit timestamps (oldest → newest)
+    for i, sid in enumerate(session_ids):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{sid}/messages",
+            json={
+                "messages": [
+                    {
+                        "content": f"msg-{i}",
+                        "peer_id": test_peer.name,
+                        "created_at": f"2026-01-01T00:00:{i:02d}Z",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201
+
+    # List with descending sort by last_message_at
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"sort_by": "last_message_at", "sort_order": "desc"},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    returned_ids = [item["id"] for item in items]
+
+    # Session 2 (newest message) should come first
+    assert returned_ids[:3] == session_ids[::-1]
+
+
+def test_get_sessions_sort_by_last_message_at_asc(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session listing sorted by most recent message, ascending"""
+    test_workspace, test_peer = sample_data
+
+    session_ids = []
+    for _ in range(3):
+        sid = str(generate_nanoid())
+        session_ids.append(sid)
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={"id": sid, "peer_names": {test_peer.name: {}}},
+        )
+        assert response.status_code in [200, 201]
+
+    for i, sid in enumerate(session_ids):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{sid}/messages",
+            json={
+                "messages": [
+                    {
+                        "content": f"msg-{i}",
+                        "peer_id": test_peer.name,
+                        "created_at": f"2026-01-01T00:00:{i:02d}Z",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"sort_by": "last_message_at", "sort_order": "asc"},
+    )
+    assert response.status_code == 200
+    items = response.json()["items"]
+    returned_ids = [item["id"] for item in items]
+
+    assert returned_ids[:3] == session_ids
+
+
 def test_update_delete_metadata(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
