@@ -114,6 +114,8 @@ def count_observers_in_config(
 async def get_sessions(
     workspace_name: str,
     filters: dict[str, Any] | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
 ) -> Select[tuple[models.Session]]:
     """
     Get all active sessions in a workspace.
@@ -126,7 +128,13 @@ async def get_sessions(
 
     stmt = apply_filter(stmt, models.Session, filters)
 
-    return stmt.order_by(models.Session.created_at)
+    if sort_by == "created_at":
+        col = models.Session.created_at
+        stmt = stmt.order_by(col.desc() if sort_order == "desc" else col.asc())
+    else:
+        stmt = stmt.order_by(models.Session.created_at)
+
+    return stmt
 
 
 async def get_or_create_session(

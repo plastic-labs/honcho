@@ -6,7 +6,7 @@ API contract.
 
 import datetime
 import ipaddress
-from typing import Annotated, Any, Self, cast
+from typing import Annotated, Any, Literal, Self, cast
 from urllib.parse import urlparse
 
 import tiktoken
@@ -333,6 +333,8 @@ class SessionCreate(SessionBase):
 
 class SessionGet(SessionBase):
     filters: dict[str, Any] | None = None
+    sort_by: Literal["created_at"] | None = None
+    sort_order: Literal["asc", "desc"] | None = None
 
 
 class SessionUpdate(SessionBase):
