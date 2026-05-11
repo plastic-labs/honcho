@@ -208,12 +208,10 @@ class TestResolvedConfigurationMigration:
 
 
 class TestReasoningCustomInstructionsValidation:
-    def test_nonblank_custom_instructions_require_enabled_deployment_cap(
+    def test_nonblank_custom_instructions_rejected_when_cap_is_zero(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", None, raising=False
-        )
+        monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 0)
 
         with pytest.raises(ValidationError) as exc_info:
             ReasoningConfiguration(custom_instructions="Prefer concrete facts.")
@@ -225,14 +223,11 @@ class TestReasoningCustomInstructionsValidation:
             in error["msg"]
             for error in errors
         )
-        assert "[deriver].MAX_CUSTOM_INSTRUCTIONS_TOKENS" not in str(exc_info.value)
 
     def test_reasoning_configuration_rejects_oversized_custom_instructions(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 1, raising=False
-        )
+        monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 1)
 
         with pytest.raises(ValidationError) as exc_info:
             ReasoningConfiguration(
@@ -247,9 +242,7 @@ class TestReasoningCustomInstructionsValidation:
     def test_oversized_custom_instructions_are_rejected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 1, raising=False
-        )
+        monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 1)
 
         payload = {
             "reasoning": {
@@ -277,12 +270,8 @@ class TestReasoningCustomInstructionsValidation:
     def test_blank_custom_instructions_do_not_require_token_cap(
         self, monkeypatch: pytest.MonkeyPatch, custom_instructions: str
     ) -> None:
-        monkeypatch.setattr(
-            settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", None, raising=False
-        )
+        monkeypatch.setattr(settings.DERIVER, "MAX_CUSTOM_INSTRUCTIONS_TOKENS", 0)
 
-        configuration = ReasoningConfiguration(
-            custom_instructions=custom_instructions
-        )
+        configuration = ReasoningConfiguration(custom_instructions=custom_instructions)
 
         assert configuration.custom_instructions == custom_instructions

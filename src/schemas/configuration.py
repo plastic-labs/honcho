@@ -26,7 +26,7 @@ class ReasoningConfiguration(BaseModel):
     )
     custom_instructions: str | None = Field(
         default=None,
-        description="Optional custom instructions for the reasoning system on this workspace/session/message. Non-blank values require an explicit deriver custom-instruction token cap and are rejected if they exceed it.",
+        description="Optional custom instructions for the reasoning system on this workspace/session/message. Rejected if they exceed the deriver custom-instruction token cap.",
     )
 
     @field_validator("custom_instructions")
@@ -92,7 +92,7 @@ def _validate_custom_instructions_budget(
         return custom_instructions
 
     max_tokens = settings.DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS
-    if max_tokens is None:
+    if max_tokens <= 0:
         raise ValueError("custom_instructions are not enabled for this deployment")
 
     if estimate_tokens(custom_instructions) > max_tokens:
