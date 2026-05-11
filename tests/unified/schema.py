@@ -63,6 +63,71 @@ class AddMessagesAction(TestStep):
     messages: list[MessageItem]
 
 
+class AddMessagesFromFixtureAction(TestStep):
+    """Load messages from a pre-extracted fixture JSON file.
+
+    Fixtures live at tests/unified/test_cases/data/<fixture_path>. Use this
+    when test inputs come from an external dataset (e.g., a sampled subset of
+    a HuggingFace dataset) rather than being authored inline. Keeps test JSONs
+    readable and avoids embedding large message corpora in test files.
+
+    The fixture JSON must have shape:
+        {"sessions": [{"messages": [{"role": "user|assistant", "content": "...", ...}, ...]}, ...]}
+    """
+
+    step_type: Literal["add_messages_from_fixture"] = "add_messages_from_fixture"
+    session_id: str
+    fixture_path: str = Field(
+        ..., description="Filename within tests/unified/test_cases/data/"
+    )
+    fixture_session_index: int = Field(
+        ..., description="Index into fixture['sessions'] selecting which session to load"
+    )
+    user_peer_id: str = Field(
+        ..., description="Honcho peer ID to attribute fixture role='user' messages to"
+    )
+    assistant_peer_id: str | None = Field(
+        None,
+        description="Honcho peer ID for fixture role='assistant' messages. If omitted, assistant messages are skipped.",
+    )
+    limit: int | None = Field(
+        None, description="Cap on number of conversational turns to ingest"
+    )
+
+
+# --- Artifact Actions ---
+
+
+class SaveArtifactAction(TestStep):
+    """Save a query result to a JSON file under the test run's artifact dir.
+
+    Mirrors QueryAction's targets but performs no assertion; instead, the raw
+    result is serialized and written to
+    `<artifacts_root>/<test_name>_<timestamp>/<filename>`. Use this to capture
+    observation lists, peer cards, or session contexts for offline analysis
+    without coupling the analysis to a pass/fail gate.
+
+    Filenames must be flat (no slashes, no leading dot) and should end in .json.
+    """
+
+    step_type: Literal["save_artifact"] = "save_artifact"
+    description: str | None = None
+    target: Literal["get_representation", "get_peer_card", "get_context"]
+    filename: str = Field(
+        ...,
+        description="Output filename within the per-test artifact dir; should end in .json",
+    )
+
+    session_id: str | None = None
+    observer_peer_id: str | None = None
+    observed_peer_id: str | None = None
+    # for get_context
+    summary: bool = False
+    max_tokens: int | None = None
+    # for representation search (matches QueryAction.input semantics for get_representation)
+    search_query: str | None = None
+
+
 # --- Wait Actions ---
 
 
@@ -164,6 +229,16 @@ class QueryAction(TestStep):
 class TestDefinition(BaseModel):
     description: str | None = None
     workspace_config: WorkspaceConfiguration | None = None
+    continue_on_failure: bool = Field(
+        False,
+        description=(
+            "If true, assertion failures (TestExecutionError) don't abort the "
+            "test — all steps run, and the test fails iff any assertion failed. "
+            "Infrastructure errors still abort. Useful for tests that aggregate "
+            "per-session results across many similar steps (e.g., naturalistic "
+            "tests with N independent scenarios)."
+        ),
+    )
     steps: list[
         Annotated[
             SetWorkspaceConfigAction
@@ -171,6 +246,8 @@ class TestDefinition(BaseModel):
             | CreateSessionAction
             | AddMessageAction
             | AddMessagesAction
+            | AddMessagesFromFixtureAction
+            | SaveArtifactAction
             | WaitAction
             | ScheduleDreamAction
             | QueryAction,
