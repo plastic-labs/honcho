@@ -117,8 +117,19 @@ async def get_sessions(
     sort_by: str | None = None,
     sort_order: str | None = None,
 ) -> Select[tuple[models.Session]]:
-    """
-    Get all active sessions in a workspace.
+    """Get all active sessions in a workspace.
+
+    Args:
+        workspace_name: Name of the workspace to query.
+        filters: Optional dictionary of filter conditions to apply.
+        sort_by: Field to sort by. Accepts ``"created_at"`` or
+            ``"last_message_at"``. Defaults to ``None`` (sorts by
+            ``created_at`` ascending).
+        sort_order: Sort direction. Accepts ``"asc"`` or ``"desc"``.
+            Defaults to ``None`` (ascending order).
+
+    Returns:
+        SQLAlchemy Select statement for querying Session objects.
     """
     stmt = (
         select(models.Session)
