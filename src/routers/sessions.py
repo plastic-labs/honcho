@@ -251,10 +251,7 @@ async def get_sessions(
     sort_order = None
 
     if options:
-        if hasattr(options, "filters") and options.filters:
-            filter_param = options.filters
-            if filter_param == {}:  # Explicitly check for empty dict
-                filter_param = None
+        filter_param = options.filters or None
         sort_by = options.sort_by
         sort_order = options.sort_order
 
