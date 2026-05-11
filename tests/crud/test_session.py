@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,15 +18,18 @@ class TestSessionCRUD:
         sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test get_sessions returns sessions in descending created_at order"""
-        test_workspace, test_peer = sample_data
+        test_workspace, _ = sample_data
 
-        # Create three sessions in order
+        # Create three sessions with explicit monotonic timestamps
+        base_time = datetime.datetime.now(datetime.timezone.utc)
         session_ids = []
-        for _ in range(3):
+        for i in range(3):
             sid = str(generate_nanoid())
             session_ids.append(sid)
             session = models.Session(
-                name=sid, workspace_name=test_workspace.name
+                name=sid,
+                workspace_name=test_workspace.name,
+                created_at=base_time + datetime.timedelta(seconds=i),
             )
             db_session.add(session)
         await db_session.flush()
@@ -49,14 +54,17 @@ class TestSessionCRUD:
         sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test get_sessions returns sessions in ascending created_at order"""
-        test_workspace, test_peer = sample_data
+        test_workspace, _ = sample_data
 
+        base_time = datetime.datetime.now(datetime.timezone.utc)
         session_ids = []
-        for _ in range(3):
+        for i in range(3):
             sid = str(generate_nanoid())
             session_ids.append(sid)
             session = models.Session(
-                name=sid, workspace_name=test_workspace.name
+                name=sid,
+                workspace_name=test_workspace.name,
+                created_at=base_time + datetime.timedelta(seconds=i),
             )
             db_session.add(session)
         await db_session.flush()
@@ -80,14 +88,17 @@ class TestSessionCRUD:
         sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test that get_sessions defaults to ascending created_at order"""
-        test_workspace, test_peer = sample_data
+        test_workspace, _ = sample_data
 
+        base_time = datetime.datetime.now(datetime.timezone.utc)
         session_ids = []
-        for _ in range(3):
+        for i in range(3):
             sid = str(generate_nanoid())
             session_ids.append(sid)
             session = models.Session(
-                name=sid, workspace_name=test_workspace.name
+                name=sid,
+                workspace_name=test_workspace.name,
+                created_at=base_time + datetime.timedelta(seconds=i),
             )
             db_session.add(session)
         await db_session.flush()

@@ -228,8 +228,9 @@ def test_get_sessions_sort_by_created_at_desc(
 ):
     """Test session listing with sort_by=created_at and sort_order=desc"""
     test_workspace, test_peer = sample_data
+    import time
 
-    # Create three sessions with distinct names so we can identify ordering
+    # Create three sessions with delays to ensure distinct timestamps
     session_ids = []
     for _ in range(3):
         sid = str(generate_nanoid())
@@ -239,6 +240,7 @@ def test_get_sessions_sort_by_created_at_desc(
             json={"id": sid, "peer_names": {test_peer.name: {}}},
         )
         assert response.status_code in [200, 201]
+        time.sleep(0.05)
 
     # List with descending sort — newest (last created) should come first
     response = client.post(
@@ -258,6 +260,7 @@ def test_get_sessions_sort_by_created_at_asc(
 ):
     """Test session listing with sort_by=created_at and sort_order=asc"""
     test_workspace, test_peer = sample_data
+    import time
 
     session_ids = []
     for _ in range(3):
@@ -268,6 +271,7 @@ def test_get_sessions_sort_by_created_at_asc(
             json={"id": sid, "peer_names": {test_peer.name: {}}},
         )
         assert response.status_code in [200, 201]
+        time.sleep(0.05)
 
     # List with ascending sort — oldest (first created) should come first
     response = client.post(
@@ -286,6 +290,7 @@ def test_get_sessions_default_sort_is_asc(
 ):
     """Test that the default sort order (no sort params) is created_at ascending"""
     test_workspace, test_peer = sample_data
+    import time
 
     session_ids = []
     for _ in range(3):
@@ -296,6 +301,7 @@ def test_get_sessions_default_sort_is_asc(
             json={"id": sid, "peer_names": {test_peer.name: {}}},
         )
         assert response.status_code in [200, 201]
+        time.sleep(0.05)
 
     # List with no sort params — should default to ascending
     response = client.post(
