@@ -201,6 +201,8 @@ class OpenAIBackend:
 
         if extra_params and extra_params.get("json_mode"):
             params["response_format"] = {"type": "json_object"}
+            messages = self._ensure_json_keyword(messages)
+            params["messages"] = messages
 
         response = await self._client.chat.completions.create(**params)
         return self._normalize_response(response)
@@ -253,6 +255,8 @@ class OpenAIBackend:
             params["response_format"] = response_format
         elif extra_params and extra_params.get("json_mode"):
             params["response_format"] = {"type": "json_object"}
+            messages = self._ensure_json_keyword(messages)
+            params["messages"] = messages
 
         response_stream = await self._client.chat.completions.create(**params)
         finish_reason: str | None = None
@@ -320,6 +324,39 @@ class OpenAIBackend:
                 if key in extra_params:
                     params[key] = extra_params[key]
         return params
+
+    @staticmethod
+    def _ensure_json_keyword(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Insert a JSON keyword hint if messages lack 'json' for strict providers.
+
+        Alibaba/Qwen strictly enforce the OpenAI spec requirement that the
+        word 'json' must appear in messages when using
+        response_format=json_object, rejecting calls that don't include it.
+        Other providers are lenient, so we always inject the keyword when
+        json_mode is active -- it's harmless and prevents provider-specific
+        400s.
+        """
+        # Fast path: if any message already contains the word json, no-op
+        for msg in messages:
+            content = msg.get("content")
+            if content and isinstance(content, str) and "json" in content.lower():
+                return messages
+
+        # Append a lightweight instruction to the last system message, or add
+        # a new system message if none exists.
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "system":
+                messages = list(messages)
+                existing = messages[i].get("content", "")
+                suffix = "\n\nRespond in valid JSON format."
+                messages[i]["content"] = existing + suffix if existing else suffix
+                return messages
+
+        return [{"role": "system", "content": "Respond in valid JSON format."}] + list(
+            messages
+        )
 
     def _normalize_response(
         self,
