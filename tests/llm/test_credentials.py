@@ -1,7 +1,7 @@
 import pytest
 
 from src.config import ModelConfig, settings
-from src.llm.credentials import resolve_credentials
+from src.llm.credentials import default_transport_api_key, resolve_credentials
 
 
 def test_transport_credentials_use_global_settings(
@@ -48,3 +48,9 @@ def test_openai_transport_credentials_fall_back_to_global_defaults(
         "api_key": "openai-test-key",
         "api_base": None,
     }
+
+
+def test_azure_openai_default_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings.LLM, "AZURE_OPENAI_API_KEY", "azure-test-key")
+
+    assert default_transport_api_key("azure_openai") == "azure-test-key"
