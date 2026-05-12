@@ -128,14 +128,16 @@ Honcho runs as two cooperating processes that share a Postgres database and Redi
 
 Honcho uses several specialized LLM agents. They share tool definitions and the LLM client abstraction in `src/utils/agent_tools.py` + `src/llm/`.
 
+> **Terminology:** what users see as **conclusions** (the public API surface and the term we use in documentation) is called **observations** in code symbols — `create_observations`, `delete_observations`, `get_observation_context`, etc. Doc prose below uses "conclusions"; references to actual code symbols stay as "observations."
+
 #### 1. Deriver (`src/deriver/`)
 
 **Role**: Memory formation through content ingestion.
 
-The Deriver processes batches of incoming messages and extracts observations about peers. The current architecture is "minimal deriver" — a **single LLM call** per batch using structured output, not an agentic tool loop. This trades flexibility for cost and predictability.
+The Deriver processes batches of incoming messages and extracts conclusions about peers. The current architecture is "minimal deriver" — a **single LLM call** per batch using structured output, not an agentic tool loop. This trades flexibility for cost and predictability.
 
 - **Trigger**: Messages enqueued by `src/deriver/enqueue.py` on message create; consumed by `src/deriver/queue_manager.py` → `consumer.process_item()` → `deriver.process_representation_tasks_batch()`.
-- **Output**: Explicit observations (direct facts) and deductive observations (inferences) saved to `(observer, observed)` collections.
+- **Output**: Explicit conclusions (direct facts) and deductive conclusions (inferences) saved to `(observer, observed)` collections.
 - **Entry point**: `src/deriver/__main__.py` → `queue_manager.main()`.
 - **Prompts**: `src/deriver/prompts.py` (`minimal_deriver_prompt`).
 
@@ -155,14 +157,14 @@ The Dialectic answers questions about peers by strategically gathering context f
 
 **Role**: Consolidation and self-improvement of memory.
 
-The Dreamer is an orchestrated multi-specialist system that runs during scheduled "dreams" to consolidate observations and build reasoning trees.
+The Dreamer is an orchestrated multi-specialist system that runs during scheduled "dreams" to consolidate conclusions and build reasoning trees.
 
 - **Trigger**: Scheduled via `DreamScheduler` (`src/dreamer/dream_scheduler.py`) or explicit dream task on the queue.
-- **Strategy**: Surprisal-based prioritization (`src/dreamer/surprisal.py`) selects which observations to expand. The orchestrator (`orchestrator.run_dream`) runs two specialist phases:
-  1. **DeductionSpecialist** (`specialists.py`) — produces deductive observations from explicit observations. Tools: `get_recent_observations`, `search_memory`, `search_messages`, `create_observations_deductive`, `delete_observations`, `update_peer_card`.
-  2. **InductionSpecialist** — produces inductive observations from explicit + deductive observations. Tools: same discovery set + `create_observations_inductive`, `update_peer_card`.
-- **Reasoning trees** (`src/dreamer/trees/`, migration `f1a2b3c4d5e6_add_reasoning_tree_columns`): observations link to premises/conclusions, enabling `get_reasoning_chain` traversal at recall time.
-- **Output**: Deductive/inductive observations, consolidated redundancies, updated peer cards.
+- **Strategy**: Surprisal-based prioritization (`src/dreamer/surprisal.py`) selects which conclusions to expand. The orchestrator (`orchestrator.run_dream`) runs two specialist phases:
+  1. **DeductionSpecialist** (`specialists.py`) — produces deductive conclusions from explicit conclusions. Tools: `get_recent_observations`, `search_memory`, `search_messages`, `create_observations_deductive`, `delete_observations`, `update_peer_card`.
+  2. **InductionSpecialist** — produces inductive conclusions from explicit + deductive conclusions. Tools: same discovery set + `create_observations_inductive`, `update_peer_card`.
+- **Reasoning trees** (`src/dreamer/trees/`, migration `f1a2b3c4d5e6_add_reasoning_tree_columns`): each conclusion links to its premises and downstream conclusions, enabling `get_reasoning_chain` traversal at recall time.
+- **Output**: Deductive/inductive conclusions, consolidated redundancies, updated peer cards.
 - **Entry point**: `src/dreamer/orchestrator.py` → `run_dream()` / `process_dream()`.
 
 #### 4. Summarizer (`src/utils/summarizer.py`)
@@ -217,7 +219,7 @@ src/
 │   ├── orchestrator.py   # run_dream() / process_dream()
 │   ├── specialists.py    # DeductionSpecialist + InductionSpecialist
 │   ├── dream_scheduler.py
-│   ├── surprisal.py      # Surprisal-based observation prioritization
+│   ├── surprisal.py      # Surprisal-based conclusion prioritization
 │   └── trees/            # Reasoning-tree primitives
 ├── reconciler/          # In-process scheduler hosted by the deriver worker
 │   ├── scheduler.py      # ReconcilerScheduler (started from queue_manager.py)
