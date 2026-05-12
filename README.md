@@ -17,7 +17,28 @@
 
 Store messages and events, let Honcho reason in the background, then query peer representations, session context, search results, or natural-language insights from any model or framework. Use it managed at [api.honcho.dev](https://api.honcho.dev) or self-host the FastAPI server yourself.
 
+Using Honcho as your memory system will earn your agents higher retention, more trust, and help you build data moats to out-compete incumbents.
+
 > Honcho has defined the Pareto Frontier of Agent Memory. Watch the [video](https://x.com/honchodotdev/status/2002090546521911703?s=20), check out our [evals page](https://evals.honcho.dev/), and read the [blog post](https://blog.plasticlabs.ai/research/Benchmarking-Honcho) for more detail.
+
+## Contents
+
+- [Start Here](#start-here)
+- [The Honcho Loop](#the-honcho-loop)
+- [Quickstart](#quickstart)
+- [What Honcho Gives You](#what-honcho-gives-you)
+- [Integrations](#integrations)
+- [Core Concepts](#core-concepts)
+- [Benchmarks & Evals](#benchmarks--evals)
+- [Self-hosting](#self-hosting)
+- [Configuration](#configuration)
+- [Architecture](#architecture)
+- [SDKs](#sdks)
+- [Learn More](#learn-more)
+- [Contributing](#contributing)
+- [License](#license)
+
+The Honcho project is split between several repositories, with this one hosting the core service logic — implemented as a FastAPI server. Client SDKs for Python and TypeScript live in the [`sdks/`](./sdks) directory.
 
 ## Start Here
 
@@ -38,7 +59,7 @@ Concretely: workspaces hold peers, peers participate in sessions, messages live 
 
 ## Quickstart
 
-Get an API key at [app.honcho.dev](https://app.honcho.dev) (managed service, $100 free credits) or [self-host](#self-hosting) and run against `http://localhost:8000`.
+Get an API key at [app.honcho.dev](https://app.honcho.dev) — when you sign up you'll be prompted to join an organization, which gets its own dedicated Honcho instance and $100 free credits. Or [self-host](#self-hosting) and run against `http://localhost:8000`.
 
 ### Python
 
@@ -190,7 +211,14 @@ The same `claude mcp add` form (or its client-specific equivalent) works in any 
 
 ## Core Concepts
 
-Honcho organises everything around **peers** — humans and AI agents alike are first-class entities. Peers exchange messages within sessions; Honcho reasons over those messages to build a representation of each peer that you can query.
+Honcho organises everything around **peers** — humans and AI agents alike are first-class entities. The peer model enables:
+
+- Multi-participant sessions with mixed human and AI agents
+- Configurable observation settings (which peers observe which others)
+- Flexible identity management for all participants
+- Support for complex multi-agent interactions
+
+Peers exchange messages within sessions; Honcho reasons over those messages to build a representation of each peer that you can query.
 
 - **Workspace** (formerly App): top-level container; isolates data between use cases.
 - **Peer** (formerly User): any participant — human user or AI agent.
@@ -479,7 +507,7 @@ Then modify the values as needed. The TOML file is organized into sections:
 - `[llm]` - LLM provider API keys and general settings
 - `[deriver]` - Background worker settings and representation configuration
 - `[peer_card]` - Peer card generation settings
-- `[dialectic]` - Dialectic API configuration with per-level reasoning settings
+- `[dialectic]` - Chat Endpoint configuration with per-level reasoning settings
 - `[summary]` - Session summarization settings
 - `[dream]` - Dream processing configuration (including specialist models and surprisal settings)
 - `[webhook]` - Webhook configuration
@@ -530,6 +558,13 @@ The application will use the production connection URI while keeping the pool si
 ## Architecture
 
 Honcho splits into two services: **Storage** (workspaces, peers, sessions, messages, internal collections) and **Insights** (reasoning, conclusions, representations, summaries, the chat endpoint). Storage is synchronous via the API; Insights is asynchronous via a background queue consumed by the deriver worker process.
+
+**Key features:**
+
+- **Rich Reasoning System** — multiple implementation methods that extract conclusions from interactions and build comprehensive representations of peers
+- **Chat Endpoint** — reasoning-informed responses that integrate conclusions with current context
+- **Background Processing** — asynchronous processing pipeline for expensive operations like representation updates and session summarization
+- **Multi-Provider Support** — configurable LLM providers for different use cases
 
 <details>
 <summary>Storage primitives in detail</summary>
@@ -658,6 +693,11 @@ For low-latency use cases, Honcho provides access to a `representation` endpoint
 SDKs are versioned independently of the server. Current SDK versions track each other; the server badge above reflects the deployed server version.
 
 See the [SDK Reference](https://docs.honcho.dev/v3/documentation/reference/sdk) for full API surface, the [API Reference](https://docs.honcho.dev/v3/api-reference/introduction) for the raw HTTP API, and per-SDK example folders for runnable demos.
+
+## Learn More
+
+- [Developer documentation](https://docs.honcho.dev/) — full API surface, guides, integrations.
+- [Plastic Labs blog](https://blog.plasticlabs.ai/) — design philosophy and history of the project.
 
 ## Contributing
 
