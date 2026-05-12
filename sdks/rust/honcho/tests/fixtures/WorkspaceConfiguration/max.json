@@ -1,0 +1,18 @@
+{
+  "reasoning": {
+    "enabled": true,
+    "custom_instructions": "Extra context"
+  },
+  "peer_card": {
+    "use": true,
+    "create": false
+  },
+  "summary": {
+    "enabled": true,
+    "messages_per_short_summary": 20,
+    "messages_per_long_summary": 40
+  },
+  "dream": {
+    "enabled": true
+  }
+}

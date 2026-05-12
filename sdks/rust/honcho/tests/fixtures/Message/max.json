@@ -1,0 +1,16 @@
+{
+  "id": "msg_02",
+  "content": "This is a longer message with details about the conversation and context that spans multiple sentences for testing.",
+  "peer_id": "peer_abc123",
+  "session_id": "sess_xyz789",
+  "metadata": {
+    "key": "value",
+    "nested": {
+      "inner": true
+    },
+    "count": 42
+  },
+  "created_at": "2025-06-15T12:30:45.123456Z",
+  "workspace_id": "ws_prod_001",
+  "token_count": 127
+}

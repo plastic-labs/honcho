@@ -1,0 +1,24 @@
+{
+  "id": "my-workspace",
+  "metadata": {
+    "env": "staging"
+  },
+  "configuration": {
+    "reasoning": {
+      "enabled": true,
+      "custom_instructions": "Be thorough"
+    },
+    "peer_card": {
+      "use": true,
+      "create": true
+    },
+    "summary": {
+      "enabled": true,
+      "messages_per_short_summary": 15,
+      "messages_per_long_summary": 30
+    },
+    "dream": {
+      "enabled": true
+    }
+  }
+}

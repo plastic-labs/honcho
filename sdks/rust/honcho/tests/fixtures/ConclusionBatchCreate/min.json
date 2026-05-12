@@ -1,0 +1,9 @@
+{
+  "conclusions": [
+    {
+      "content": "User likes Python",
+      "observer_id": "peer_a",
+      "observed_id": "peer_b"
+    }
+  ]
+}

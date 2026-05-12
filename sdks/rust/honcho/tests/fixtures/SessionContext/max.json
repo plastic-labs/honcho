@@ -1,0 +1,24 @@
+{
+  "id": "sess_1",
+  "messages": [
+    {
+      "id": "msg_1",
+      "content": "Hello",
+      "peer_id": "peer_a",
+      "session_id": "sess_1",
+      "metadata": {},
+      "created_at": "2025-01-01T00:00:00Z",
+      "workspace_id": "ws_1",
+      "token_count": 5
+    }
+  ],
+  "summary": {
+    "content": "A greeting was exchanged.",
+    "message_id": "msg_1",
+    "summary_type": "short",
+    "created_at": "2025-01-01T00:01:00Z",
+    "token_count": 10
+  },
+  "peer_representation": "The peer is friendly.",
+  "peer_card": ["friendly", "punctual"]
+}

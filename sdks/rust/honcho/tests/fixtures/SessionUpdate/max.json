@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "updated": true
+  },
+  "configuration": {
+    "reasoning": {
+      "enabled": false
+    },
+    "summary": {
+      "enabled": false
+    }
+  }
+}

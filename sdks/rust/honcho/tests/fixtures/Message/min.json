@@ -1,0 +1,10 @@
+{
+  "id": "msg_01",
+  "content": "hi",
+  "peer_id": "peer_01",
+  "session_id": "sess_01",
+  "metadata": {},
+  "created_at": "2025-01-01T00:00:00Z",
+  "workspace_id": "ws_01",
+  "token_count": 0
+}

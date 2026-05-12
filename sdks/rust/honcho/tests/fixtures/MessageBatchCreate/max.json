@@ -1,0 +1,24 @@
+{
+  "messages": [
+    {
+      "content": "Hello from Alice",
+      "peer_id": "peer_alice",
+      "metadata": {
+        "role": "user"
+      }
+    },
+    {
+      "content": "Hello from Bob",
+      "peer_id": "peer_bob",
+      "metadata": {
+        "role": "assistant"
+      },
+      "configuration": {
+        "reasoning": {
+          "enabled": true
+        }
+      },
+      "created_at": "2025-06-01T08:00:00Z"
+    }
+  ]
+}

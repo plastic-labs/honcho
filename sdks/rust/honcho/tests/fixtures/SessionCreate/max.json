@@ -1,0 +1,33 @@
+{
+  "id": "my-session-42",
+  "metadata": {
+    "env": "test"
+  },
+  "peers": {
+    "peer_a": {
+      "observe_me": true,
+      "observe_others": false
+    },
+    "peer_b": {
+      "observe_me": false,
+      "observe_others": true
+    }
+  },
+  "configuration": {
+    "reasoning": {
+      "enabled": true
+    },
+    "peer_card": {
+      "use": true,
+      "create": false
+    },
+    "summary": {
+      "enabled": true,
+      "messages_per_short_summary": 15,
+      "messages_per_long_summary": 30
+    },
+    "dream": {
+      "enabled": false
+    }
+  }
+}

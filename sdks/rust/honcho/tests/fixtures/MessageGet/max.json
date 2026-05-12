@@ -1,0 +1,6 @@
+{
+  "filters": {
+    "peer_id": "peer_01",
+    "metadata.source": "api"
+  }
+}

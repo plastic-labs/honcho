@@ -1,0 +1,18 @@
+{
+  "reasoning": {
+    "enabled": true,
+    "custom_instructions": "Be concise"
+  },
+  "peer_card": {
+    "use": true,
+    "create": true
+  },
+  "summary": {
+    "enabled": true,
+    "messages_per_short_summary": 20,
+    "messages_per_long_summary": 60
+  },
+  "dream": {
+    "enabled": true
+  }
+}

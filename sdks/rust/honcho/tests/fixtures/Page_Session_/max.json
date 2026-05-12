@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "id": "sess_a",
+      "is_active": true,
+      "workspace_id": "ws_1",
+      "metadata": {},
+      "configuration": {},
+      "created_at": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": "sess_b",
+      "is_active": false,
+      "workspace_id": "ws_1",
+      "metadata": {},
+      "configuration": {},
+      "created_at": "2025-06-15T12:00:00Z"
+    }
+  ],
+  "total": 2,
+  "page": 1,
+  "size": 10,
+  "pages": 1
+}

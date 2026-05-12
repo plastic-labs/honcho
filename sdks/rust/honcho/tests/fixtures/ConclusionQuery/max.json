@@ -1,0 +1,8 @@
+{
+  "query": "programming language preferences and experience",
+  "top_k": 5,
+  "distance": 0.75,
+  "filters": {
+    "session_id": "sess_abc"
+  }
+}

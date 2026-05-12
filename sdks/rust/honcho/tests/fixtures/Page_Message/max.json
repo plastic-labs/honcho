@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "id": "msg_01",
+      "content": "first message",
+      "peer_id": "peer_a",
+      "session_id": "sess_01",
+      "metadata": {"key": "val"},
+      "created_at": "2025-01-01T00:00:00Z",
+      "workspace_id": "ws_01",
+      "token_count": 5
+    },
+    {
+      "id": "msg_02",
+      "content": "second message",
+      "peer_id": "peer_b",
+      "session_id": "sess_01",
+      "metadata": {},
+      "created_at": "2025-01-01T00:01:00Z",
+      "workspace_id": "ws_01",
+      "token_count": 3
+    }
+  ],
+  "total": 42,
+  "page": 2,
+  "size": 10,
+  "pages": 5
+}

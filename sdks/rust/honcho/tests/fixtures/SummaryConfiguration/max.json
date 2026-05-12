@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "messages_per_short_summary": 15,
+  "messages_per_long_summary": 30
+}

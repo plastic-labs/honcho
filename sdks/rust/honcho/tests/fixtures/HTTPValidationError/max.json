@@ -1,0 +1,18 @@
+{
+  "detail": [
+    {
+      "loc": ["body", "name"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    },
+    {
+      "loc": ["body", "metadata", 0, "key"],
+      "msg": "string is too long (max 255 characters)",
+      "type": "value_error.any_str.max_length",
+      "input": "a_very_long_string_that_exceeds_the_maximum_allowed_length_for_this_field",
+      "ctx": {
+        "max_length": 255
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "total_work_units": 42,
+  "completed_work_units": 30,
+  "in_progress_work_units": 3,
+  "pending_work_units": 9,
+  "sessions": {
+    "sess_1": {
+      "session_id": "sess_1",
+      "total_work_units": 10,
+      "completed_work_units": 8,
+      "in_progress_work_units": 1,
+      "pending_work_units": 1
+    },
+    "sess_2": {
+      "total_work_units": 32,
+      "completed_work_units": 22,
+      "in_progress_work_units": 2,
+      "pending_work_units": 8
+    }
+  }
+}

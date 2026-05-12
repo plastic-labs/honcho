@@ -1,0 +1,6 @@
+{
+  "peer_id": "observer-1",
+  "target_id": "target-1",
+  "representation": "Alice is a senior engineer who prefers async communication.",
+  "peer_card": ["Alice is detail-oriented", "Prefers concise communication"]
+}

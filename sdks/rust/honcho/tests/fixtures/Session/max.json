@@ -1,0 +1,20 @@
+{
+  "id": "sess_xyz",
+  "is_active": false,
+  "workspace_id": "ws_99",
+  "metadata": {
+    "env": "production",
+    "tags": ["alpha", "beta"]
+  },
+  "configuration": {
+    "reasoning": {
+      "enabled": true
+    },
+    "summary": {
+      "enabled": true,
+      "messages_per_short_summary": 20,
+      "messages_per_long_summary": 40
+    }
+  },
+  "created_at": "2025-06-15T12:30:45Z"
+}

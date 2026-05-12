@@ -1,0 +1,9 @@
+{
+  "session_id": "sess-abc",
+  "target": "other-peer",
+  "search_query": "communication preferences",
+  "search_top_k": 10,
+  "search_max_distance": 0.5,
+  "include_most_frequent": true,
+  "max_conclusions": 25
+}

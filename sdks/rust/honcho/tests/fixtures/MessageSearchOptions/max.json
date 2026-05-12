@@ -1,0 +1,8 @@
+{
+  "query": "find messages about project deadlines",
+  "filters": {
+    "peer_id": "peer_01",
+    "metadata.urgent": true
+  },
+  "limit": 50
+}

@@ -1,0 +1,13 @@
+{
+  "id": "ws_abc123",
+  "metadata": {
+    "env": "production",
+    "team": "core"
+  },
+  "configuration": {
+    "reasoning": {
+      "enabled": true
+    }
+  },
+  "created_at": "2025-01-15T10:30:00Z"
+}

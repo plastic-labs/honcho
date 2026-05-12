@@ -1,0 +1,15 @@
+{
+  "content": "A message with all optional fields populated including metadata and configuration.",
+  "peer_id": "peer_abc",
+  "metadata": {
+    "source": "api",
+    "priority": 1
+  },
+  "configuration": {
+    "reasoning": {
+      "enabled": true,
+      "custom_instructions": "Focus on technical details"
+    }
+  },
+  "created_at": "2025-03-20T10:00:00Z"
+}

@@ -1,0 +1,7 @@
+{
+  "query": "Summarize the user's recent interests and goals",
+  "session_id": "sess_42",
+  "target": "peer_b",
+  "stream": true,
+  "reasoning_level": "high"
+}

@@ -1,0 +1,6 @@
+{
+  "reasoning": {
+    "enabled": true,
+    "custom_instructions": "Analyze sentiment carefully"
+  }
+}

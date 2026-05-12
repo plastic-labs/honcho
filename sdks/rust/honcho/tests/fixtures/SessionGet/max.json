@@ -1,0 +1,6 @@
+{
+  "filters": {
+    "is_active": true,
+    "tag": "production"
+  }
+}
