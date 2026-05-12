@@ -8,8 +8,7 @@ actual state instead of operator-asserted state.
 
 For external stores (turbopuffer, lancedb) the check is best-effort: namespaces
 are per-workspace and lazy-created, so this validator can only sample existing
-ones. Full enumeration is available via `uv run python -m
-src.scripts.configure_embeddings --report` (Phase 3).
+ones. Full enumeration is available via `uv run python scripts/configure_embeddings.py --report`.
 """
 
 from __future__ import annotations
@@ -139,7 +138,7 @@ def _assert_pgvector_dims_match(
             raise StartupValidationError(
                 f"{schema}.{table}.embedding has no declared vector dimension"
                 + " (unbounded typmod). Run"
-                + " `uv run python -m src.scripts.configure_embeddings`."
+                + " `uv run python scripts/configure_embeddings.py`."
             )
         # pgvector stores the declared dim directly in atttypmod (no VARHDRSZ).
         actual = atttypmod
@@ -147,7 +146,7 @@ def _assert_pgvector_dims_match(
             raise StartupValidationError(
                 f"{schema}.{table}.embedding dim ({actual}) does not match"
                 + f" EMBEDDING_VECTOR_DIMENSIONS ({target_dim}). Run"
-                + " `uv run python -m src.scripts.configure_embeddings`"
+                + " `uv run python scripts/configure_embeddings.py`"
                 + " or fix EMBEDDING_VECTOR_DIMENSIONS."
             )
 
@@ -191,7 +190,7 @@ async def _sample_external_namespaces(engine: AsyncEngine, *, target_dim: int) -
         raise StartupValidationError(
             f"Existing external-store namespaces have dim != {target_dim}:"
             + f" {formatted}. Run"
-            + " `uv run python -m src.scripts.configure_embeddings --report`."
+            + " `uv run python scripts/configure_embeddings.py --report`."
         )
 
 

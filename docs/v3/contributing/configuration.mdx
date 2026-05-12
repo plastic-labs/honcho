@@ -218,8 +218,48 @@ EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 ```
 
-Current constraint:
-- `EMBEDDING_VECTOR_DIMENSIONS` can be changed for fully migrated external vector stores, but pgvector and dual-write mode still require `1536` until the schema migration lands.
+Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
+
+- `auto` (default): forwards `dimensions=` when you have explicitly set `EMBEDDING_VECTOR_DIMENSIONS` to a non-default value, and the configured model is not on the known-rejecting list (currently `text-embedding-ada-002`). Deployments that stay on the default keep their existing behavior.
+- `always`: always forward. Use for OpenAI-compatible self-hosted providers that require it, and for same-as-default truncation (e.g. `text-embedding-3-large` truncated to 1536 — `auto` would skip the parameter because 1536 is the default).
+- `never`: never forward. Explicit opt-out for providers that reject the parameter.
+
+#### Bootstrapping non-default dimensions
+
+`EMBEDDING_VECTOR_DIMENSIONS` is treated as immutable for the life of a deployment. The pgvector schema is dim-pinned by Alembic at `1536` by default; if you want a different dim, you must ALTER the empty columns once at bootstrap time.
+
+Install order for a non-default dim:
+
+```bash
+# 1. Apply migrations (creates default vector(1536) schema)
+alembic upgrade head
+
+# 2. Set the dim you want
+export EMBEDDING_VECTOR_DIMENSIONS=768
+
+# 3. ALTER the empty columns to the target dim
+uv run python scripts/configure_embeddings.py --dry-run   # preview
+uv run python scripts/configure_embeddings.py --yes       # apply
+
+# 4. Start API and deriver — both run the startup validator and refuse
+# to serve traffic if the schema and EMBEDDING_VECTOR_DIMENSIONS disagree.
+```
+
+Existing deployments at 1536 with `text-embedding-3-small` need no action — step 3 detects matching dims and skips.
+
+The script refuses to ALTER tables that already contain non-null embeddings. To switch dim or model on a populated deployment, stand up a new deployment at the new configuration and migrate data out of band; there is no in-place re-embedding affordance.
+
+External vector stores (Turbopuffer, LanceDB) do not need bootstrap setup. Namespaces are per-workspace and lazy-created on first write at whatever dim the embedding client returns. Use `--report` to inventory the existing namespaces against the configured dim:
+
+```bash
+uv run python scripts/configure_embeddings.py --report
+```
+
+The startup validator at `src/startup/embedding_validator.py` enforces the dim invariant at boot for both the API (`src/main.py` lifespan) and the deriver (`src/deriver/__main__.py`). A mismatch crashes the process with an actionable error before any HTTP route is served or any queue task is processed.
+
+`VECTOR_STORE_DIMENSIONS` is **deprecated**. `EMBEDDING_VECTOR_DIMENSIONS` is the single source of truth; setting `VECTOR_STORE_DIMENSIONS` explicitly emits a startup warning and is otherwise ignored. The field will be removed in a future release; drop it from your `.env` to silence the warning.
+
+The `VECTOR_STORE_MIGRATED` flag still exists and still controls dual-write / cutover semantics for legacy tenants moving between storage backends (pgvector ↔ turbopuffer ↔ lancedb). It is unrelated to dimension configuration after this release.
 
 ### Feature-Specific Model Configuration
 
