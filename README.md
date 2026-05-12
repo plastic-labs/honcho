@@ -199,7 +199,7 @@ Honcho organises everything around **peers** — humans and AI agents alike are 
 
 What you query out of Honcho:
 
-- **Conclusions** — observations Honcho has extracted about a peer (deductive and inductive). Exposed via the [conclusions API](https://docs.honcho.dev/v3/api-reference/introduction).
+- **Conclusions** — what Honcho has extracted about a peer (deductive and inductive). Exposed via the [conclusions API](https://docs.honcho.dev/v3/api-reference/introduction).
 - **Representations** — static, low-latency snapshots of what Honcho knows about a peer (optionally session-scoped).
 - **Peer Cards** — compact identity summaries.
 - **Session context / summaries** — prompt-ready bundles for long-running conversations.
