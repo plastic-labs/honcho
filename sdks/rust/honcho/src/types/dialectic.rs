@@ -34,10 +34,9 @@ fn is_default_bool(val: &bool) -> bool {
 /// Maps `DialecticOptions` from the `OpenAPI` spec.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]
 #[non_exhaustive]
-#[builder(derive(Debug))]
+#[builder(derive(Debug), on(String, into))]
 pub struct DialecticOptions {
     /// Dialectic API prompt (1–10,000 chars).
-    #[builder(into)]
     pub query: String,
     /// ID of the session to scope the representation to.
     #[serde(skip_serializing_if = "Option::is_none")]

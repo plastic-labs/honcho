@@ -55,6 +55,10 @@ impl HttpClient {
         HttpClientParams::builder()
     }
 
+    pub(crate) fn base_url_hint(&self) -> String {
+        self.inner.base_url.to_string()
+    }
+
     pub fn from_params(params: HttpClientParams) -> Result<Self> {
         let mut base_url = Url::parse(&params.base_url)
             .map_err(|e| HonchoError::Configuration(format!("invalid base_url: {e}")))?;

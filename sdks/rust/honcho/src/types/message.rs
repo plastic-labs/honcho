@@ -11,6 +11,7 @@ pub use super::dream::ReasoningConfiguration;
 ///
 /// Represents a single message created by a peer within a session.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct Message {
     /// Unique message identifier.
     pub id: String,
@@ -76,6 +77,7 @@ pub struct MessageGet {
 ///
 /// All fields optional; message-level config overrides session and workspace config.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[non_exhaustive]
 pub struct MessageConfiguration {
     /// Reasoning configuration for this message.
     pub reasoning: Option<ReasoningConfiguration>,

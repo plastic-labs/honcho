@@ -24,7 +24,17 @@
     clippy::multiple_crate_versions
 )]
 
+/// High-level Honcho client.
+pub mod client;
 pub mod error;
 pub mod http;
+/// Peer wrapper type.
+pub mod peer;
+/// Session wrapper type.
+pub mod session;
 /// Shared types for the Honcho SDK.
 pub mod types;
+
+pub use client::Honcho;
+pub use peer::Peer;
+pub use session::Session;

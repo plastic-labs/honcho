@@ -145,18 +145,18 @@ fn message_search_options_default_limit() {
 fn message_page_empty() {
     let val = load_fixture("Page_Message", "min");
     let page: MessagePage = serde_json::from_value(val).unwrap();
-    assert!(page.items.is_empty());
-    assert_eq!(page.total, 0);
-    assert_eq!(page.pages, 0);
+    assert!(page.items().is_empty());
+    assert_eq!(page.total(), 0);
+    assert_eq!(page.pages(), 0);
 }
 
 #[test]
 fn message_page_with_items() {
     let val = load_fixture("Page_Message", "max");
     let page: MessagePage = serde_json::from_value(val).unwrap();
-    assert_eq!(page.items.len(), 2);
-    assert_eq!(page.total, 42);
-    assert_eq!(page.page, 2);
-    assert_eq!(page.size, 10);
-    assert_eq!(page.pages, 5);
+    assert_eq!(page.items().len(), 2);
+    assert_eq!(page.total(), 42);
+    assert_eq!(page.page(), 2);
+    assert_eq!(page.size(), 10);
+    assert_eq!(page.pages(), 5);
 }

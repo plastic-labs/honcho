@@ -61,6 +61,14 @@ pub enum HonchoError {
         /// Suggested wait time from Retry-After header.
         retry_after: Option<Duration>,
     },
+    /// 4xx Client Error (unmapped status codes like 405, 408, 413, etc.)
+    #[error("Honcho API error: HTTP {status} {message}")]
+    Client {
+        /// HTTP status code.
+        status: u16,
+        /// Error message.
+        message: String,
+    },
     /// 5xx Server Error
     #[error("Honcho API error: HTTP {status} {message}")]
     Server {
@@ -99,6 +107,9 @@ pub enum HonchoError {
     /// Configuration error.
     #[error("Configuration error: {0}")]
     Configuration(String),
+    /// Validation error (e.g. duplicate inputs, invalid arguments).
+    #[error("Validation error: {0}")]
+    Validation(String),
 }
 
 impl HonchoError {
@@ -115,6 +126,7 @@ impl HonchoError {
             Self::Conflict { .. } => "conflict",
             Self::UnprocessableEntity { .. } => "unprocessable_entity",
             Self::RateLimit { .. } => "rate_limit_exceeded",
+            Self::Client { .. } => "client_error",
             Self::Server { .. } => "server_error",
             Self::Timeout { .. } => "timeout",
             Self::Connection { .. } => "connection_error",
@@ -122,6 +134,7 @@ impl HonchoError {
             Self::Decode { .. } => "decode_error",
             Self::Io(_) => "io_error",
             Self::Configuration(_) => "configuration_error",
+            Self::Validation(_) => "validation_error",
         }
     }
 }
@@ -214,6 +227,7 @@ pub fn from_response(
             }
         }
         s if s >= 500 => HonchoError::Server { status: s, message },
+        s if (400..500).contains(&s) => HonchoError::Client { status: s, message },
         _ => HonchoError::Server {
             status: status.as_u16(),
             message,

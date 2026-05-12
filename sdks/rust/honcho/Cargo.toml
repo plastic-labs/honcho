@@ -43,6 +43,7 @@ static_assertions = "1"
 jsonschema = "0.18"
 paste = "1"
 tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread"] }
+temp-env = "0.3"
 
 [package.metadata.docs.rs]
 all-features = true

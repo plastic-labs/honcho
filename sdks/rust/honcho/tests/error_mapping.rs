@@ -59,6 +59,29 @@ fn server_5xx_maps_to_server_with_status(#[case] status: u16) {
     assert_eq!(err.code(), "server_error");
 }
 
+#[rstest]
+#[case(405)]
+#[case(408)]
+#[case(413)]
+#[case(418)]
+fn unmapped_4xx_maps_to_client_with_status(#[case] status: u16) {
+    let status = reqwest::StatusCode::from_u16(status).unwrap();
+    let headers = HeaderMap::new();
+    let body = bytes::Bytes::from("client error");
+    let now = Utc::now();
+
+    let err = from_response(status, &headers, &body, now);
+
+    assert!(matches!(
+        err,
+        HonchoError::Client {
+            status: s,
+            ..
+        } if s == status.as_u16()
+    ));
+    assert_eq!(err.code(), "client_error");
+}
+
 #[test]
 fn rate_limit_429_parses_retry_after_seconds() {
     let status = reqwest::StatusCode::TOO_MANY_REQUESTS;
@@ -221,6 +244,13 @@ fn error_code_is_stable_string() {
             "server_error",
             HonchoError::Server {
                 status: 500,
+                message: String::new(),
+            },
+        ),
+        (
+            "client_error",
+            HonchoError::Client {
+                status: 405,
                 message: String::new(),
             },
         ),

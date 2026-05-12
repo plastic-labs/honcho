@@ -117,7 +117,6 @@ pub struct SummaryConfiguration {
 }
 
 /// Per-peer observation settings within a session.
-#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionPeerConfig {
     /// Whether Honcho will use reasoning to form a representation of this peer.
@@ -189,3 +188,114 @@ pub struct Summary {
 
 /// A paginated list of sessions.
 pub type SessionPage = super::pagination::Page<Session>;
+
+impl SessionContext {
+    /// Convert the context to OpenAI-compatible message format.
+    ///
+    /// System messages (`peer_representation`, `peer_card`, summary) are prepended.
+    /// Assistant messages get `role: "assistant"`, all others get `role: "user"`.
+    /// Each message also includes a `"name"` field set to the peer ID.
+    #[must_use]
+    pub fn to_openai(&self, assistant: &str) -> Vec<serde_json::Value> {
+        let mut result: Vec<serde_json::Value> = Vec::new();
+
+        if let Some(ref rep) = self.peer_representation {
+            result.push(serde_json::json!({
+                "role": "system",
+                "content": format!("<peer_representation>{rep}</peer_representation>"),
+            }));
+        }
+
+        if let Some(ref card) = self.peer_card {
+            result.push(serde_json::json!({
+                "role": "system",
+                "content": format!("<peer_card>{}</peer_card>", serde_json::to_string(card).unwrap_or_default()),
+            }));
+        }
+
+        if let Some(ref summary) = self.summary {
+            result.push(serde_json::json!({
+                "role": "system",
+                "content": format!("<summary>{}</summary>", summary.content),
+            }));
+        }
+
+        for message in &self.messages {
+            if message.peer_id == assistant {
+                result.push(serde_json::json!({
+                    "role": "assistant",
+                    "name": message.peer_id,
+                    "content": message.content,
+                }));
+            } else {
+                result.push(serde_json::json!({
+                    "role": "user",
+                    "name": message.peer_id,
+                    "content": message.content,
+                }));
+            }
+        }
+
+        result
+    }
+
+    /// Convert the context to Anthropic-compatible message format.
+    ///
+    /// System-like messages (`peer_representation`, `peer_card`, summary) use `role: "user"`
+    /// since Anthropic uses a separate `system` parameter.
+    /// Assistant messages get `role: "assistant"`, others get `role: "user"` with
+    /// `PEER_ID: CONTENT` format.
+    #[must_use]
+    pub fn to_anthropic(&self, assistant: &str) -> Vec<serde_json::Value> {
+        let mut result: Vec<serde_json::Value> = Vec::new();
+
+        if let Some(ref rep) = self.peer_representation {
+            result.push(serde_json::json!({
+                "role": "user",
+                "content": format!("<peer_representation>{rep}</peer_representation>"),
+            }));
+        }
+
+        if let Some(ref card) = self.peer_card {
+            result.push(serde_json::json!({
+                "role": "user",
+                "content": format!("<peer_card>{}</peer_card>", serde_json::to_string(card).unwrap_or_default()),
+            }));
+        }
+
+        if let Some(ref summary) = self.summary {
+            result.push(serde_json::json!({
+                "role": "user",
+                "content": format!("<summary>{}</summary>", summary.content),
+            }));
+        }
+
+        for message in &self.messages {
+            if message.peer_id == assistant {
+                result.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": message.content,
+                }));
+            } else {
+                result.push(serde_json::json!({
+                    "role": "user",
+                    "content": format!("{}: {}", message.peer_id, message.content),
+                }));
+            }
+        }
+
+        result
+    }
+
+    /// Returns the number of messages plus 1 if a summary is present.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.messages.len() + usize::from(self.summary.is_some())
+    }
+
+    /// Returns `true` if the context contains no messages and no summary.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_empty() && self.summary.is_none()
+    }
+}
