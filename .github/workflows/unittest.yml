@@ -87,11 +87,20 @@ jobs:
         with:
           python-version-file: "pyproject.toml"
 
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Prepare pnpm
+        run: corepack prepare pnpm@11.1.1 --activate
 
       - name: Install TypeScript SDK dependencies
-        run: bun install
+        run: corepack pnpm install --frozen-lockfile
         working-directory: sdks/typescript
 
       - name: Install the project

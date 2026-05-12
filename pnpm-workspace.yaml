@@ -1,0 +1,10 @@
+packages:
+  - 'docs'
+  - 'examples/langgraph/typescript'
+  - 'mcp'
+  - 'sdks/typescript'
+minimumReleaseAge: 1440
+blockExoticSubdeps: true
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  - undici-types
