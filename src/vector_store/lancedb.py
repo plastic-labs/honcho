@@ -99,7 +99,7 @@ class LanceDBVectorStore(VectorStore):
         fields.extend(self._metadata_fields_for_namespace(namespace))
         schema = pa.schema(fields)
         try:
-            table = await db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
+            table = await db.create_table(namespace, schema=schema)
             return table
         except Exception:
             # Table may have been created by another worker, try to open it

@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 
 from turbopuffer import AsyncTurbopuffer, InternalServerError, NotFoundError
 from turbopuffer.lib.namespace import AsyncNamespace
-from turbopuffer.types import Filter
+from turbopuffer.types import Filter, RowParam
 
 from src.config import settings
 from src.exceptions import VectorStoreError
@@ -76,12 +76,21 @@ class TurbopufferVectorStore(VectorStore):
 
         ns = self._get_namespace(namespace)
 
-        rows: list[dict[str, Any]] = [
-            {
-                "id": v.id,
-                "vector": v.embedding,
-                **(v.metadata or {}),
-            }
+        # The dict literal carries arbitrary metadata fields, which RowParam supports
+        # via extra_items=object. basedpyright can't see through the spread, so cast
+        # via object per its reportInvalidCast guidance.
+        rows: list[RowParam] = [
+            cast(
+                RowParam,
+                cast(
+                    object,
+                    {
+                        "id": v.id,
+                        "vector": v.embedding,
+                        **(v.metadata or {}),
+                    },
+                ),
+            )
             for v in vectors
         ]
 
