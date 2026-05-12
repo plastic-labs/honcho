@@ -1,0 +1,163 @@
+{
+  "description": "misinterpretation_correction_creates_orphan_fact [M] -- L1 test for the failure mode (failure-modes catalog, 'Time / temporal' section). The agent misinterprets the user's statement; the user explicitly corrects the misinterpretation; both the wrong claim (from the agent's misread) and the corrected claim end up in storage with no supersession marker. End-state shape resembles `time_drift_storage_no_supersession`, but the trigger is *agent misinterpretation* rather than user mind-change, and the wrong claim is one the user never literally stated. Corpus evidence: 63 explicit-misinterpretation hits in the SWE-chat corpus (DEV-1709, 2026-04-30). The bug compounds with `agent_synthesized_text_as_user_input` -- if agent claims slip into the representation via the source-attribution gap, user corrections cannot fully retract them. ===== Test design ===== Setup conversation: user_a opens with a clear, specific statement of their work (extracting a rate-limiter from a Python payment-service monolith into a standalone Go microservice). The assistant misreads in one turn (full payment service migration to Go). The user corrects explicitly and reaffirms the narrow scope. Subsequent turns develop the actual work (gRPC interface, Redis-backed token bucket, retry semantics). The wrong claim NEVER appears in a user turn -- only in the assistant's misread. ===== Why this setup ===== If the representation contains the wrong claim post-deriver, it MUST have been derived from the assistant turn (the bug), not from a literal user statement. This isolates the source-attribution failure mode from other extraction noise. ===== Pre-dream / pre-dream-fallback ===== The dreamer is not invoked in this fixture (the deriver alone is sufficient to surface the bug). Future variant could add a dream step to test whether the dreamer consolidates the orphan correctly. ===== Two-gate structure ===== (1) POSITIVE CONTROL: assert the representation captures the substantive correct work (rate-limiter being extracted into a Go service). Validates the deriver ran on real content. (2) NEGATIVE REPRODUCER: assert the representation does NOT contain the misinterpretation (claims about migrating the whole payment service from Python to Go, or about the monolith being rewritten). ===== Polarity ===== INITIAL polarity pass_if=true on both gates (invariant tests). Per verify-first methodology, polarity flips to pass_if=false only after a fixture has been observed firing on real code, with the observed behavior documented in this description. ===== Verify-first results (2026-05-12) ===== Both gates PASSED on deriver=openai/gpt-4.1-mini. Representation captured the work correctly scoped; no observation reflected the misinterpretation. Fixture stays as an invariant guard against deriver regressions.",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "misinterp_correction",
+      "peer_configs": {
+        "user_a": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "misinterp_correction",
+      "messages": [
+        {
+          "peer_id": "user_a",
+          "content": "Quick context before we dive in. I'm working on a backend refactor at my company. We have a Python monolith that handles payment processing. We're carving out one specific subsystem -- the rate-limiter -- into its own standalone Go service. The rest of the payment service stays in Python, the monolith stays where it is. Only the rate-limiter is being extracted."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Got it -- I'll help you migrate the payment service from Python to Go. Where do you want to start? The data model, the API surface, or the deployment story?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Hold on. I'm not migrating the payment service. The payment service stays in Python. The monolith stays in Python. The only thing being extracted is the rate-limiter -- one specific subsystem within payments. Everything else continues as it is. Can you reset on that before we keep going?"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Apologies, you're right. To restate: the Python payment-service monolith remains unchanged. The rate-limiter subsystem -- and only the rate-limiter -- is being pulled out into a standalone Go service. The rest of the payment service continues calling the rate-limiter via a new interface instead of in-process. Is that the correct picture?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Yes, exactly. So when you give me suggestions, scope them to the rate-limiter service and the boundary between it and the payment monolith. Not to the monolith internals."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Understood. Let's start with the interface between the payment monolith and the new rate-limiter service. What protocol are you using -- gRPC, REST, something else?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "gRPC. The payment monolith will call into the rate-limiter via a gRPC client. Protos are already drafted. The rate-limiter service exposes three RPCs: CheckAndConsume, ResetBucket, and GetBucketState. CheckAndConsume is the hot path -- it has to be sub-5ms p99 because it sits on the payment-authorization critical path."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Got it. Sub-5ms p99 is tight. What's the storage backend -- in-memory, Redis, something else?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Redis. Token-bucket algorithm, one bucket per merchant. Bucket state stored as a Redis hash with `tokens_remaining`, `last_refill_ts`, and `bucket_capacity`. Lua script for the atomic check-and-consume. We're not using Redis Cluster -- just a single Redis primary with a replica for failover. The latency budget assumes a single Redis hop."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "That's a clean design. One question on the Lua script: are you returning the post-consume state in the script's response, or doing a separate GET after?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Returning post-consume state in the same script call. Single round-trip. The Lua script returns {tokens_remaining, allowed_bool}. That's how I keep the p99 budget."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Smart. What about error handling -- if Redis is unreachable for a request, do you fail-open (allow the call) or fail-closed (reject)?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Fail-open with a circuit breaker. Three consecutive Redis errors trip the breaker for 30 seconds; during that window all CheckAndConsume calls return allowed=true without consulting Redis. This is intentional -- a Redis outage shouldn't take down payment auth. We accept the rate-limiting bypass risk during outages."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Reasonable trade-off. For the breaker state -- is it process-local in each rate-limiter instance, or shared across instances?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Process-local. Each rate-limiter instance maintains its own circuit-breaker state. Coordination would require yet another shared dependency, which defeats the point. The downside is that during a transient Redis issue, some instances might trip while others don't -- that's acceptable for us."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Makes sense. What about the gRPC service implementation -- standard generated stubs or are you wrapping them?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Wrapping. We have a thin handler layer that does request validation, tenant-isolation checks, and metrics emission before delegating to the bucket-consume logic. The generated stubs are too bare for our needs. Layout-wise: cmd/rate-limiter (main), internal/handler (gRPC handlers), internal/bucket (algorithm + Redis), internal/breaker (circuit breaker). Standard Go project layout."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Clean layout. What's your testing strategy -- unit tests against a fake Redis, integration tests against a real Redis instance, both?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Both. Unit tests use miniredis for in-memory Redis emulation. Integration tests spin up a real Redis container via testcontainers-go. End-to-end tests in CI hit the real gRPC server against a real Redis. We run the integration suite on every PR; the E2E suite only on main."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Solid testing pyramid. One area I want to flag: the Lua script atomicity. miniredis doesn't fully replicate Redis Lua semantics. Have you hit divergence issues there?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Yes, we had two cases where miniredis behavior diverged from real Redis on EVAL semantics around table return values. We pinned a specific miniredis version that handles our scripts correctly, and added a CI assertion that compares miniredis behavior to a containerized real Redis on the critical Lua scripts. It catches the divergence if miniredis updates break our assumptions."
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Good defense. Want to walk through the protocol buffer schema for the three RPCs next, or move to the Redis schema details?"
+        },
+        {
+          "peer_id": "user_a",
+          "content": "Let's do the proto schema. I want to make sure I'm not over- or under-specifying the response types."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 240,
+      "flush": true
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_a after the misinterpretation+correction conversation",
+      "target": "get_representation",
+      "observer_peer_id": "user_a",
+      "observed_peer_id": "user_a",
+      "session_id": "misinterp_correction",
+      "filename": "user_a_representation.json"
+    },
+    {
+      "step_type": "query",
+      "description": "POSITIVE CONTROL: assert the representation captures the user's substantive correct work (rate-limiter extraction into a Go microservice).",
+      "target": "get_representation",
+      "observer_peer_id": "user_a",
+      "observed_peer_id": "user_a",
+      "session_id": "misinterp_correction",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The representation for user_a is shown. The setup conversation established that user_a is extracting a rate-limiter subsystem from a Python payment-service monolith into a standalone Go microservice. The user provided substantive detail: gRPC RPCs (CheckAndConsume, ResetBucket, GetBucketState), Redis-backed token-bucket algorithm with Lua atomicity, sub-5ms p99 budget, fail-open circuit breaker, miniredis-vs-real-Redis testing strategy, Go project layout. Does the representation contain at least ONE substantive observation that captures the correct nature of user_a's work? Acceptable forms include: 'user_a is extracting a rate-limiter into a Go microservice', 'user_a is working on a Go service that uses Redis-backed token-bucket rate limiting', 'user_a is designing a gRPC-based rate-limiter service', or similar substantive captures. The observation must reflect the CORRECT scope (rate-limiter only) and the CORRECT direction (extracting into a separate Go service, not migrating the whole payment system). Return passed=true if at least one such substantive correct-scope observation is present. Return passed=false if the representation is empty OR if all observations are bare events / acknowledgments without substantive content.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "description": "NEGATIVE REPRODUCER: assert the representation does NOT contain the assistant's misinterpretation (claims about migrating the entire payment service or rewriting the Python monolith).",
+      "target": "get_representation",
+      "observer_peer_id": "user_a",
+      "observed_peer_id": "user_a",
+      "session_id": "misinterp_correction",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The representation for user_a is shown. EARLY in the conversation, the assistant misinterpreted user_a's work as 'migrating the payment service from Python to Go' -- treating the whole payment service as the target of migration rather than the rate-limiter subsystem. The user IMMEDIATELY corrected this and reaffirmed the narrow scope (payment service stays Python; only the rate-limiter is being extracted; monolith stays). The user NEVER literally stated the wrong version even in negation form -- they only restated the correct narrow scope. The bug being tested: does the deriver pick up the assistant's misinterpretation as an observation about user_a, despite the user's correction? Look for any observation that incorrectly captures the wrong scope, e.g.: 'user_a is migrating the payment service from Python to Go', 'user_a is rewriting their Python payment monolith in Go', 'user_a's project is a full payment-service migration', 'user_a is porting payment processing to Go', or similar claims that treat the entire payment service / monolith as the migration target. Return passed=true if NO such wrong-scope observation appears. Return passed=false if ANY observation reflects the assistant's misinterpretation rather than the user's corrected scope. NOTE: observations that mention 'rate-limiter' or correctly scope the work to one subsystem are fine -- those are not violations. The target of this check is observations that reflect the AGENT'S misread of the work scope.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}
