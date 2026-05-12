@@ -54,16 +54,5 @@ def test_models_uses_default_1536_when_no_env_override() -> None:
 
 
 def test_models_honors_explicit_embedding_vector_dimensions() -> None:
-    # Phase 1 still respects the dim-vs-MIGRATED guard at src/config.py:1278.
-    # Set VECTOR_STORE_TYPE=lancedb + VECTOR_STORE_MIGRATED=true to satisfy it.
-    # lancedb is chosen over turbopuffer because turbopuffer requires an
-    # additional VECTOR_STORE_TURBOPUFFER_API_KEY env var. Phase 2 deletes
-    # the guard and these escape-hatch envs become unnecessary.
-    dims = _run_in_fresh_interpreter(
-        {
-            "EMBEDDING_VECTOR_DIMENSIONS": "768",
-            "VECTOR_STORE_TYPE": "lancedb",
-            "VECTOR_STORE_MIGRATED": "true",
-        }
-    )
+    dims = _run_in_fresh_interpreter({"EMBEDDING_VECTOR_DIMENSIONS": "768"})
     assert dims == {"message_embedding_dim": 768, "document_dim": 768}

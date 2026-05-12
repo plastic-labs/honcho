@@ -1287,24 +1287,26 @@ class AppSettings(HonchoSettings):
             self.CACHE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
-        if "DIMENSIONS" not in self.VECTOR_STORE.model_fields_set:
-            self.VECTOR_STORE.DIMENSIONS = self.EMBEDDING.VECTOR_DIMENSIONS
-        elif self.VECTOR_STORE.DIMENSIONS != self.EMBEDDING.VECTOR_DIMENSIONS:
-            raise ValueError(
-                "VECTOR_STORE.DIMENSIONS must match EMBEDDING.VECTOR_DIMENSIONS"
+        if "DIMENSIONS" in self.VECTOR_STORE.model_fields_set:
+            # VECTOR_STORE_DIMENSIONS is deprecated: EMBEDDING_VECTOR_DIMENSIONS
+            # is the single source of truth. Log a runtime-visible warning
+            # so operators see it (DeprecationWarning is filtered by Python's
+            # default config outside __main__/tests) and also raise the stdlib
+            # warning so tests can assert on it.
+            import warnings
+
+            message = (
+                "VECTOR_STORE_DIMENSIONS is deprecated; "
+                "EMBEDDING_VECTOR_DIMENSIONS is authoritative. "
+                "Drop VECTOR_STORE_DIMENSIONS from your .env."
             )
+            logger.warning(message)
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+        self.VECTOR_STORE.DIMENSIONS = self.EMBEDDING.VECTOR_DIMENSIONS
         if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
             self.TELEMETRY.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.METRICS.model_fields_set:
             self.METRICS.NAMESPACE = self.NAMESPACE
-
-        if self.EMBEDDING.VECTOR_DIMENSIONS != 1536 and (
-            self.VECTOR_STORE.TYPE == "pgvector" or not self.VECTOR_STORE.MIGRATED
-        ):
-            raise ValueError(
-                "EMBEDDING.VECTOR_DIMENSIONS must remain 1536 while pgvector is "
-                + "active or vector-store migration is incomplete"
-            )
 
         return self
 
