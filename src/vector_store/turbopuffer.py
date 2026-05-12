@@ -87,7 +87,7 @@ class TurbopufferVectorStore(VectorStore):
 
         try:
             await ns.write(
-                upsert_rows=rows,
+                upsert_rows=cast(Any, rows),
                 distance_metric=DISTANCE_METRIC,
             )
             return

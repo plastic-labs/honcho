@@ -509,7 +509,7 @@ def mock_vector_store(request: pytest.FixtureRequest):
     from src.vector_store import (
         VectorQueryResult,
         VectorRecord,
-        _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+        _hash_namespace_components,
     )
 
     # Create a mock vector store that stores vectors in memory

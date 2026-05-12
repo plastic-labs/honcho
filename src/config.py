@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 ModelTransport = Literal["anthropic", "openai", "gemini"]
 EmbeddingTransport = Literal["openai", "gemini"]
+EmbeddingDimensionsMode = Literal["auto", "always", "never"]
+
+# OpenAI-compatible models that reject the `dimensions=` request parameter.
+_EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
+    {"text-embedding-ada-002"}
+)
 
 
 def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
@@ -294,6 +300,7 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     model: str = "text-embedding-3-small"
     transport: EmbeddingTransport = "openai"
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
+    dimensions_mode: EmbeddingDimensionsMode = "auto"
 
     @model_validator(mode="before")
     @classmethod
@@ -694,6 +701,23 @@ class EmbeddingSettings(HonchoSettings):
                 cls._MODEL_CONFIG_DEFAULT,
             )
         return data  # pyright: ignore[reportUnknownVariableType]
+
+    def resolve_send_dimensions(self) -> bool:
+        """Decide whether OpenAI embedding calls should forward ``dimensions=``.
+
+        Lives on the settings instance because ``auto`` mode needs access to
+        ``self.model_fields_set`` to tell whether the operator explicitly set
+        ``VECTOR_DIMENSIONS`` — a standalone resolver over
+        ``ConfiguredEmbeddingModelSettings`` cannot see that.
+        """
+        mode = self.MODEL_CONFIG.dimensions_mode
+        if mode == "always":
+            return True
+        if mode == "never":
+            return False
+        if self.MODEL_CONFIG.model in _EMBEDDING_KNOWN_REJECTING_MODELS:
+            return False
+        return "VECTOR_DIMENSIONS" in self.model_fields_set
 
 
 class DeriverSettings(HonchoSettings):
