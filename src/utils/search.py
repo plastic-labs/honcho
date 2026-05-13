@@ -12,7 +12,7 @@ from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.config import settings
+from src.config import is_sqlite, settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
@@ -26,6 +26,8 @@ T = TypeVar("T")
 
 def _uses_pgvector_message_search() -> bool:
     """Return True when semantic message search can stay entirely in Postgres."""
+    if is_sqlite():
+        return False
     return (
         settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
     )
@@ -268,7 +270,7 @@ async def _fulltext_search(
     # Escape ILIKE pattern characters to treat user input literally
     escaped_query = escape_ilike_pattern(query)
 
-    if has_special_chars:
+    if is_sqlite() or has_special_chars:
         # For queries with special characters, use exact string matching (ILIKE)
         search_condition = models.Message.content.ilike(
             f"%{escaped_query}%", escape=ILIKE_ESCAPE_CHAR

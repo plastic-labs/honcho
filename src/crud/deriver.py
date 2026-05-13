@@ -87,8 +87,8 @@ def _build_queue_status_query(
     observed: str | None = None,
 ) -> Select[Any]:
     """Build SQL query for queue status with validation and aggregation."""
-    observer_name_expr = models.QueueItem.payload["observer"].astext
-    observed_name_expr = models.QueueItem.payload["observed"].astext
+    observer_name_expr = models.QueueItem.payload["observer"].as_string()
+    observed_name_expr = models.QueueItem.payload["observed"].as_string()
 
     # Define conditions for cleaner window functions
     is_completed = models.QueueItem.processed
