@@ -116,6 +116,7 @@ class TurbopufferVectorStore(VectorStore):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
     ) -> list[VectorQueryResult]:
         """
         Query for similar vectors in Turbopuffer.
@@ -126,6 +127,8 @@ class TurbopufferVectorStore(VectorStore):
             top_k: Maximum number of results to return
             filters: Optional metadata filters
             max_distance: Optional maximum distance threshold (cosine distance)
+            include_attributes: Attributes to include in the response. Passing False
+                avoids parsing unused row attributes.
 
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)
@@ -149,7 +152,7 @@ class TurbopufferVectorStore(VectorStore):
                 "rank_by": rank_by,
                 "top_k": top_k,
                 "distance_metric": DISTANCE_METRIC,
-                "include_attributes": True,
+                "include_attributes": include_attributes,
             }
             if filter_condition is not None:
                 query_kwargs["filters"] = filter_condition

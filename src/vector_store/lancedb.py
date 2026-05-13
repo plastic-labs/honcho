@@ -197,6 +197,7 @@ class LanceDBVectorStore(VectorStore):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
     ) -> list[VectorQueryResult]:
         """
         Query for similar vectors in LanceDB.
@@ -207,6 +208,8 @@ class LanceDBVectorStore(VectorStore):
             top_k: Maximum number of results to return
             filters: Optional metadata filters
             max_distance: Optional maximum distance threshold (cosine distance)
+            include_attributes: Attributes to return with each result. False returns
+                no metadata; a list returns only those metadata fields.
 
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)
@@ -239,12 +242,21 @@ class LanceDBVectorStore(VectorStore):
                 if max_distance is not None and dist > max_distance:
                     continue
 
-                # Extract metadata (everything except id, vector, _distance)
-                metadata: dict[str, Any] = {
-                    k: v
-                    for k, v in row.items()
-                    if k not in ("id", "vector", "_distance")
-                }
+                # Extract requested metadata (everything except internal fields by default).
+                if include_attributes is False:
+                    metadata: dict[str, Any] = {}
+                else:
+                    metadata_keys = (
+                        set(include_attributes)
+                        if isinstance(include_attributes, list)
+                        else None
+                    )
+                    metadata = {
+                        k: v
+                        for k, v in row.items()
+                        if k not in ("id", "vector", "_distance")
+                        and (metadata_keys is None or k in metadata_keys)
+                    }
 
                 query_results.append(
                     VectorQueryResult(
