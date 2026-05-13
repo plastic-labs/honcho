@@ -1038,6 +1038,10 @@ class TelemetrySettings(HonchoSettings):
     # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
     NAMESPACE: str | None = None
 
+    # Honcho service version emitted on every event body for release-aware analytics.
+    # Resolution order: explicit setting → importlib.metadata.version("honcho") → None (omitted).
+    HONCHO_VERSION: str | None = None
+
 
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore

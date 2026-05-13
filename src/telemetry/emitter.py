@@ -13,11 +13,13 @@ import contextlib
 import json
 import logging
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from cloudevents.conversion import to_json  # pyright: ignore[reportUnknownVariableType]
 from cloudevents.http import CloudEvent
+
+from src._version import honcho_version as _resolve_honcho_version
 
 if TYPE_CHECKING:
     from src.telemetry.events.base import BaseEvent
@@ -159,6 +161,7 @@ class TelemetryEmitter:
             return
 
         from src.config import settings
+        from src.telemetry.prometheus.metrics import prometheus_metrics
 
         # Generate deterministic event ID
         event_id = event.generate_id()
@@ -179,11 +182,31 @@ class TelemetryEmitter:
             "dataschema": f"https://honcho.dev/schemas/{event.event_type()}/v{event.schema_version()}",
         }
 
+        # Build body and inject envelope-level identity. We do NOT mutate the event
+        # instance — tests and callers that observe the event after emit() see it
+        # unchanged. Only the serialized body that hits the wire carries the extras.
+        body: dict[str, Any] = event.model_dump(mode="json")
+        honcho_version = settings.TELEMETRY.HONCHO_VERSION
+        if not isinstance(honcho_version, str) or not honcho_version:
+            honcho_version = _resolve_honcho_version()
+        if isinstance(honcho_version, str) and honcho_version:
+            body["honcho_version"] = honcho_version
+
+        # Buffer-full check happens here because deque(maxlen=) silently evicts.
+        # Detect by length-before-append; if at capacity, the append will displace
+        # the oldest event — that's a drop.
+        will_drop_oldest = len(self._buffer) >= self.max_buffer_size
+
         # Create CloudEvent
-        cloud_event = CloudEvent(attributes, event.model_dump(mode="json"))
+        cloud_event = CloudEvent(attributes, body)
+
+        if will_drop_oldest:
+            prometheus_metrics.record_telemetry_event_dropped(reason="buffer_full")
 
         self._buffer.append(cloud_event)
         buffer_size = len(self._buffer)
+        prometheus_metrics.record_telemetry_event_emitted(event_type=event.event_type())
+        prometheus_metrics.set_telemetry_buffer_size(size=buffer_size)
         logger.debug("Queued event %s (buffer size: %d)", event_id, buffer_size)
 
         # Warning logs as buffer approaches max capacity
@@ -225,8 +248,16 @@ class TelemetryEmitter:
                 # Try to send the batch
                 success = await self._send_batch(batch)
                 if not success:
-                    # Put events back at the front of the buffer
+                    from src.telemetry.prometheus.metrics import prometheus_metrics
+
+                    # Put events back at the front of the buffer. If the buffer is
+                    # already full, deque.appendleft silently evicts from the right
+                    # — those events are lost. Count the eviction as send_failed.
                     for event in reversed(batch):
+                        if len(self._buffer) >= self.max_buffer_size:
+                            prometheus_metrics.record_telemetry_event_dropped(
+                                reason="send_failed"
+                            )
                         self._buffer.appendleft(event)
                     logger.warning(
                         "Failed to send batch of %d events, returned to buffer",

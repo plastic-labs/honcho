@@ -981,3 +981,98 @@ class TestCloudEventFormat:
         cloud_event = json.loads(captured_content)
         # Without namespace, source should be /honcho/{category}
         assert cloud_event["source"] == "/honcho/representation"
+
+
+class TestHonchoVersionInjection:
+    """Tests for Phase 0 honcho_version body injection."""
+
+    @pytest.mark.asyncio
+    async def test_honcho_version_present_when_set(self):
+        """When TELEMETRY.HONCHO_VERSION is set, it lands in event.data."""
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+
+        captured_content = None
+
+        async def capture_post(url, content=None, headers=None):
+            nonlocal captured_content
+            captured_content = content
+            response = MagicMock()
+            response.status_code = 200
+            response.raise_for_status = MagicMock()
+            return response
+
+        mock_client = AsyncMock()
+        mock_client.post = capture_post
+        mock_client.aclose = AsyncMock()
+        emitter._client = mock_client
+        emitter._running = True
+
+        with patch("src.config.settings") as mock_settings:
+            mock_settings.TELEMETRY.NAMESPACE = "test"
+            mock_settings.TELEMETRY.HONCHO_VERSION = "9.9.9-test"
+            event = create_test_event()
+            emitter.emit(event)
+
+        await emitter.flush()
+
+        assert captured_content is not None
+        cloud_event = json.loads(captured_content)
+        assert cloud_event["data"]["honcho_version"] == "9.9.9-test"
+
+    @pytest.mark.asyncio
+    async def test_honcho_version_absent_when_unset(self):
+        """When HONCHO_VERSION is not a string, the key falls back to importlib
+        (which may yield None in test env) and is omitted on None."""
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+
+        captured_content = None
+
+        async def capture_post(url, content=None, headers=None):
+            nonlocal captured_content
+            captured_content = content
+            response = MagicMock()
+            response.status_code = 200
+            response.raise_for_status = MagicMock()
+            return response
+
+        mock_client = AsyncMock()
+        mock_client.post = capture_post
+        mock_client.aclose = AsyncMock()
+        emitter._client = mock_client
+        emitter._running = True
+
+        # Force the resolver to return None so we exercise the absent-key code
+        # path without depending on whether the test environment can resolve
+        # the installed package metadata.
+        with (
+            patch("src.config.settings") as mock_settings,
+            patch("src.telemetry.emitter._resolve_honcho_version", return_value=None),
+        ):
+            mock_settings.TELEMETRY.NAMESPACE = "test"
+            mock_settings.TELEMETRY.HONCHO_VERSION = None
+            event = create_test_event()
+            emitter.emit(event)
+
+        await emitter.flush()
+
+        assert captured_content is not None
+        cloud_event = json.loads(captured_content)
+        assert "honcho_version" not in cloud_event["data"]
+
+    def test_emit_does_not_mutate_event_instance(self):
+        """Phase 0 contract: emit() injects into the serialized body, never the
+        event instance. Tests asserting on the event object stay deterministic."""
+        emitter = TelemetryEmitter(endpoint="http://test:8001/events")
+        emitter._running = True
+
+        with patch("src.config.settings") as mock_settings:
+            mock_settings.TELEMETRY.NAMESPACE = "test"
+            mock_settings.TELEMETRY.HONCHO_VERSION = "9.9.9-test"
+            event = create_test_event()
+            before = event.model_dump()
+            emitter.emit(event)
+            after = event.model_dump()
+
+        # The event instance must be unchanged by emit().
+        assert before == after
+        assert "honcho_version" not in after
