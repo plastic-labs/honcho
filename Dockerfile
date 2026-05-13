@@ -38,6 +38,19 @@ ENV UV_CACHE_DIR=/tmp/uv-cache
 # Create non-root user and set ownership
 RUN addgroup --system app && adduser --system --group app && mkdir -p /tmp/uv-cache && chown -R app:app /app /tmp/uv-cache
 
+# Download AWS RDS CA certificate bundle for SSL connections to RDS
+RUN mkdir -p /usr/local/share/aws && \
+    python - <<'PY'
+import urllib.request
+from pathlib import Path
+
+url = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
+dst = Path("/usr/local/share/aws/global-bundle.pem")
+urllib.request.urlretrieve(url, dst)
+if not dst.exists() or dst.stat().st_size == 0:
+    raise RuntimeError("Failed to download AWS RDS CA bundle")
+PY
+
 COPY --chown=app:app src/ /app/src/
 COPY --chown=app:app migrations/ /app/migrations/
 COPY --chown=app:app scripts/ /app/scripts/
