@@ -24,6 +24,7 @@ Using Honcho as your memory system will earn your agents higher retention, more 
 ## Contents
 
 - [Start Here](#start-here)
+- [Why Honcho](#why-honcho)
 - [The Honcho Loop](#the-honcho-loop)
 - [Quickstart](#quickstart)
 - [What Honcho Gives You](#what-honcho-gives-you)
@@ -47,6 +48,16 @@ The Honcho project is split between several repositories, with this one hosting 
 | Give my coding agent persistent memory | Claude Code, OpenCode, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
 | Add memory to my product | Python or TypeScript SDK | [Quickstart](#quickstart) |
 | Self-host Honcho | Docker / local development | [Self-hosting](#self-hosting) |
+
+## Why Honcho
+
+| Capability | What it means |
+|---|---|
+| Reasoning-first memory | Extracts conclusions from conversations and events, not just matching chunks. |
+| Peer-centric model | Tracks users, agents, groups, projects, and ideas as entities that change over time. |
+| Multi-peer perspective | Models what one peer knows about another when configured. |
+| Managed or self-hosted | Use `api.honcho.dev` or run the FastAPI server yourself. |
+| Agent-tool integrations | MCP, Claude Code, OpenCode, OpenClaw, Hermes, Cursor-compatible clients. |
 
 ## The Honcho Loop
 
@@ -204,6 +215,16 @@ hermes memory setup   # select "honcho", point at api.honcho.dev or your local s
 ```
 
 Details: [Hermes guide](https://docs.honcho.dev/v3/guides/integrations/hermes).
+
+### Add Honcho to your own codebase (agent skill)
+
+For wiring the Honcho SDK into an existing application, install the integration skill — it explores your codebase, asks about integration preferences, generates the SDK setup, and verifies it works:
+
+```bash
+npx skills add plastic-labs/honcho
+```
+
+Then invoke `/honcho-integration` in Claude Code (or `/honcho-dev:integrate` via the plugin marketplace). Details: [agentic development guide](https://docs.honcho.dev/v3/documentation/introduction/vibecoding).
 
 ### Other MCP clients
 
