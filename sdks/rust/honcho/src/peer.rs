@@ -1,17 +1,22 @@
 //! Peer wrapper — construction, metadata, chat, representation, context, search, and card.
 
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
+use futures_util::Stream;
+use reqwest::Method;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::conclusion::ConclusionScope;
 use crate::error::{HonchoError, Result};
 use crate::http::client::HttpClient;
 use crate::http::routes;
-use crate::types::dialectic::DialecticOptions;
+use crate::http::sse::parse_sse_stream;
 use crate::types::dialectic::RepresentationResponse;
-use crate::types::message::{Message, MessageCreate, MessageSearchOptions};
+use crate::types::dialectic::{DialecticOptions, ReasoningLevel};
+use crate::types::message::{MessageCreate, MessageResponse, MessageSearchOptions};
 use crate::types::pagination::{self, Page};
 use crate::types::peer::Peer as PeerResponse;
 use crate::types::peer::{PeerCardResponse, PeerCardSet, PeerContext};
@@ -252,6 +257,21 @@ impl Peer {
         }
     }
 
+    /// Create a streaming dialectic chat builder.
+    ///
+    /// Returns a [`ChatStreamBuilder`] that sends the request on `.send()`.
+    pub fn chat_stream(&self, query: impl Into<String>) -> ChatStreamBuilder {
+        ChatStreamBuilder {
+            http: self.inner.http.clone(),
+            workspace_id: self.inner.workspace_id.clone(),
+            peer_id: self.inner.id.clone(),
+            query: query.into(),
+            target: None,
+            session_id: None,
+            reasoning_level: None,
+        }
+    }
+
     // ── Representation ─────────────────────────────────────────────────
 
     /// Get the peer's representation (default parameters).
@@ -304,7 +324,7 @@ impl Peer {
     // ── Search ─────────────────────────────────────────────────────────
 
     /// Search messages for this peer.
-    pub async fn search(&self, query: &str) -> Result<Vec<Message>> {
+    pub async fn search(&self, query: &str) -> Result<Vec<MessageResponse>> {
         if query.is_empty() {
             return Err(HonchoError::Configuration(
                 "query must not be empty".to_string(),
@@ -394,6 +414,30 @@ impl Peer {
         self.get_card().await
     }
 
+    // ── F9.8: Conclusions ──────────────────────────────────────────────
+
+    /// Get a self-scoped conclusion handle (observer = observed = self).
+    #[must_use]
+    pub fn conclusions(&self) -> ConclusionScope {
+        ConclusionScope::new(
+            self.inner.http.clone(),
+            self.inner.workspace_id.clone(),
+            self.id().to_owned(),
+            self.id().to_owned(),
+        )
+    }
+
+    /// Get a cross-peer conclusion handle (observer = self, observed = target).
+    #[must_use]
+    pub fn conclusions_of(&self, target: impl Into<String>) -> ConclusionScope {
+        ConclusionScope::new(
+            self.inner.http.clone(),
+            self.inner.workspace_id.clone(),
+            self.id().to_owned(),
+            target.into(),
+        )
+    }
+
     // ── F5.8: Message builder (sync, no API call) ─────────────────────
 
     /// Create a message builder for this peer.
@@ -410,6 +454,80 @@ impl Peer {
             configuration: None,
             created_at: None,
         }
+    }
+}
+
+/// Builder for streaming dialectic chat requests.
+///
+/// Created via [`Peer::chat_stream()`]. Call `.send()` to start streaming.
+pub struct ChatStreamBuilder {
+    http: HttpClient,
+    workspace_id: String,
+    peer_id: String,
+    query: String,
+    target: Option<String>,
+    session_id: Option<String>,
+    reasoning_level: Option<ReasoningLevel>,
+}
+
+impl ChatStreamBuilder {
+    /// Scope the chat to a target peer.
+    #[must_use]
+    pub fn target(mut self, target: impl Into<String>) -> Self {
+        self.target = Some(target.into());
+        self
+    }
+
+    /// Scope the chat to a session.
+    #[must_use]
+    pub fn session(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Set the reasoning level (defaults to `Low` if unset).
+    #[must_use]
+    pub fn reasoning_level(mut self, level: ReasoningLevel) -> Self {
+        self.reasoning_level = Some(level);
+        self
+    }
+
+    /// Send the streaming chat request.
+    ///
+    /// # Errors
+    ///
+    /// Returns `HonchoError::Configuration` if the query is empty.
+    /// Returns transport/API errors if the request fails.
+    pub async fn send(self) -> Result<Pin<Box<dyn Stream<Item = Result<String>> + Send>>> {
+        if self.query.is_empty() {
+            return Err(HonchoError::Configuration(
+                "query must not be empty".to_owned(),
+            ));
+        }
+
+        let opts = DialecticOptions::builder()
+            .query(self.query)
+            .stream(true)
+            .maybe_target(self.target)
+            .maybe_session_id(self.session_id)
+            .reasoning_level(self.reasoning_level.unwrap_or_default())
+            .build();
+
+        let route = routes::peer_chat(&self.workspace_id, &self.peer_id);
+        let response = self
+            .http
+            .request_streaming(
+                Method::POST,
+                &route,
+                Some(
+                    &serde_json::to_value(&opts)
+                        .map_err(|e| HonchoError::Configuration(e.to_string()))?,
+                ),
+                &[],
+            )
+            .await?;
+
+        Ok(Box::pin(parse_sse_stream(response.bytes_stream())))
     }
 }
 
@@ -564,5 +682,21 @@ impl MessageBuilder {
             configuration: self.configuration,
             created_at: self.created_at,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::pin::Pin;
+
+    #[allow(dead_code)]
+    fn assert_send_static<T: Send + 'static>(_: &T) {}
+
+    #[test]
+    fn chat_stream_return_type_is_send_static() {
+        fn _assertion(stream: Pin<Box<dyn futures_util::Stream<Item = Result<String>> + Send>>) {
+            assert_send_static(&stream);
+        }
     }
 }

@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Phase 2 route helpers — consumed by Phase 3 high-level API
-
 use std::fmt::Write as _;
 
 pub(crate) const API_BASE_PATH: &str = "v3";
@@ -333,6 +331,11 @@ pub(crate) fn conclusion(workspace_id: &str, conclusion_id: &str) -> String {
         encode(workspace_id),
         encode(conclusion_id)
     )
+}
+
+/// Builds path for deleting a specific conclusion.
+pub(crate) fn conclusion_delete(workspace_id: &str, conclusion_id: &str) -> String {
+    conclusion(workspace_id, conclusion_id)
 }
 
 #[cfg(test)]

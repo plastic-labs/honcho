@@ -13,7 +13,7 @@ use crate::http::routes;
 use crate::peer::Peer;
 use crate::session::Session;
 use crate::types::dream::QueueStatus;
-use crate::types::message::Message;
+use crate::types::message::MessageResponse;
 use crate::types::peer::Peer as PeerResponse;
 use crate::types::session::Session as SessionResponse;
 use crate::types::workspace::Workspace;
@@ -242,7 +242,7 @@ impl Honcho {
     }
 
     /// Search messages across the workspace.
-    pub async fn search(&self, query: &str) -> Result<Vec<Message>> {
+    pub async fn search(&self, query: &str) -> Result<Vec<MessageResponse>> {
         self.ensure_workspace().await?;
         let body = serde_json::json!({"query": query, "filters": null, "limit": 10});
         self.inner

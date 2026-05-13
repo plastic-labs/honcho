@@ -43,7 +43,7 @@ macro_rules! schema_tests {
 mod message_schemas {
     use super::*;
 
-    schema_tests!(Message, "Message");
+    schema_tests!(MessageResponse, "Message");
     schema_tests!(MessageCreate, "MessageCreate");
     schema_tests!(MessageBatchCreate, "MessageBatchCreate");
     schema_tests!(MessageUpdate, "MessageUpdate");
@@ -87,7 +87,7 @@ mod page_message_roundtrip {
 #[test]
 fn message_all_fields_present() {
     let val = load_fixture("Message", "max");
-    let msg: Message = serde_json::from_value(val).unwrap();
+    let msg: MessageResponse = serde_json::from_value(val).unwrap();
     assert_eq!(msg.id, "msg_02");
     assert_eq!(msg.peer_id, "peer_abc123");
     assert_eq!(msg.session_id, "sess_xyz789");

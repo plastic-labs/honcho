@@ -5,3 +5,4 @@ pub mod client;
 pub mod decode;
 #[allow(missing_docs)]
 pub mod routes;
+pub(crate) mod sse;

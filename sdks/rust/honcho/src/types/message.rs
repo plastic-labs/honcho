@@ -7,12 +7,13 @@ use serde::{Deserialize, Serialize};
 
 pub use super::dream::ReasoningConfiguration;
 
-/// A message in a session.
+/// Raw API response for a message.
 ///
 /// Represents a single message created by a peer within a session.
+/// Use the top-level [`crate::Message`] wrapper for the enriched type.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[non_exhaustive]
-pub struct Message {
+pub struct MessageResponse {
     /// Unique message identifier.
     pub id: String,
     /// Message content text.
@@ -117,8 +118,8 @@ pub struct MessageUploadForm {
     pub created_at: Option<String>,
 }
 
-/// Paginated response of [`Message`] items.
-pub type MessagePage = super::pagination::Page<Message>;
+/// Paginated response of [`MessageResponse`] items.
+pub type MessagePage = super::pagination::Page<MessageResponse>;
 
 #[cfg(test)]
 mod tests {

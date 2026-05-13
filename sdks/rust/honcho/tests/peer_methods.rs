@@ -2,6 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
+use futures_util::StreamExt;
 use honcho_ai::Honcho;
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -318,4 +319,133 @@ async fn peer_sessions_returns_paginated() {
     assert!(items[0].is_active);
     assert_eq!(items[1].id, "s2");
     assert!(!items[1].is_active);
+}
+
+// ── F8.4 Streaming Chat ────────────────────────────────────────────
+
+fn sse_chunk(json: &str) -> String {
+    format!("data: {json}\n\n")
+}
+
+#[tokio::test]
+async fn chat_stream_basic() {
+    let server = MockServer::start().await;
+    let honcho = make_honcho(&server).await;
+    mount_peer_create(&server).await;
+
+    let sse_body = format!(
+        "{}{}{}",
+        sse_chunk(r#"{"delta":{"content":"hello"}}"#),
+        sse_chunk(r#"{"delta":{"content":" world"}}"#),
+        sse_chunk(r#"{"done":true}"#),
+    );
+
+    Mock::given(method("POST"))
+        .and(path("/v3/workspaces/ws1/peers/alice/chat"))
+        .and(body_json(&serde_json::json!({
+            "query": "hi",
+            "stream": true,
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(sse_body)
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let peer = honcho.peer("alice").await.unwrap();
+    let mut stream = peer.chat_stream("hi").send().await.unwrap();
+
+    let mut chunks = Vec::new();
+    while let Some(item) = stream.next().await {
+        chunks.push(item.unwrap());
+    }
+    assert_eq!(chunks, vec!["hello", " world"]);
+}
+
+#[tokio::test]
+async fn chat_stream_with_target_session_reasoning_level() {
+    let server = MockServer::start().await;
+    let honcho = make_honcho(&server).await;
+    mount_peer_create(&server).await;
+
+    let expected_body = serde_json::json!({
+        "query": "deep thought",
+        "stream": true,
+        "target": "bob",
+        "session_id": "sess42",
+        "reasoning_level": "high",
+    });
+
+    Mock::given(method("POST"))
+        .and(path("/v3/workspaces/ws1/peers/alice/chat"))
+        .and(body_json(&expected_body))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    sse_chunk(r#"{"delta":{"content":"response"}}"#)
+                        + &sse_chunk(r#"{"done":true}"#),
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&server)
+        .await;
+
+    let peer = honcho.peer("alice").await.unwrap();
+    let mut stream = peer
+        .chat_stream("deep thought")
+        .target("bob")
+        .session("sess42")
+        .reasoning_level(honcho_ai::types::dialectic::ReasoningLevel::High)
+        .send()
+        .await
+        .unwrap();
+
+    let mut chunks = Vec::new();
+    while let Some(item) = stream.next().await {
+        chunks.push(item.unwrap());
+    }
+    assert_eq!(chunks, vec!["response"]);
+}
+
+#[tokio::test]
+async fn chat_stream_error_before_first_byte_returns_err() {
+    let server = MockServer::start().await;
+    let honcho = make_honcho(&server).await;
+    mount_peer_create(&server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/v3/workspaces/ws1/peers/alice/chat"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let peer = honcho.peer("alice").await.unwrap();
+    let result = peer.chat_stream("hi").send().await;
+    assert!(result.is_err(), "expected error for 500 response");
+    let err = result.err().unwrap();
+    assert!(
+        matches!(
+            err,
+            honcho_ai::error::HonchoError::Server { status: 500, .. }
+        ),
+        "expected Server(500), got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn chat_stream_validates_non_empty_query() {
+    let server = MockServer::start().await;
+    let honcho = make_honcho(&server).await;
+    mount_peer_create(&server).await;
+
+    let peer = honcho.peer("alice").await.unwrap();
+    let result = peer.chat_stream("").send().await;
+    assert!(result.is_err(), "expected error for empty query");
+    let err = result.err().unwrap();
+    assert!(
+        matches!(err, honcho_ai::error::HonchoError::Configuration(ref msg) if msg.contains("query")),
+        "expected Configuration error for empty query, got {err:?}"
+    );
 }

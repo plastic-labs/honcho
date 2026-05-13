@@ -134,7 +134,7 @@ pub struct SessionContext {
     /// Session identifier.
     pub id: String,
     /// Messages in the session.
-    pub messages: Vec<super::message::Message>,
+    pub messages: Vec<super::message::MessageResponse>,
     /// The summary if available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<Summary>,
