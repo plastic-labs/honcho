@@ -10,7 +10,7 @@ Honcho is an infrastructure layer for building AI agents with memory and social 
 
 - Imbuing agents with a sense of identity
 - Personalizing user experiences through understanding user psychology
-- Providing a Dialectic API that injects personal context just-in-time
+- Providing a Chat Endpoint (the Dialectic agent) that injects personal context just-in-time
 - Supporting development of LLM-powered applications that adapt to end users
 - Enabling multi-peer sessions where multiple participants (users or agents) can interact
 
@@ -50,7 +50,7 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 
 ### Key Features
 
-#### Dialectic API (`/peers/{peer_id}/chat`)
+#### Chat Endpoint (Dialectic agent) (`/peers/{peer_id}/chat`)
 
 - Provides bespoke responses informed by the representation
 - Integrates long-term facts from vector storage
