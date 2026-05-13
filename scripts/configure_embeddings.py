@@ -37,11 +37,13 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import select, text  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine  # noqa: E402
 
 from src.config import settings  # noqa: E402
 from src.db import engine  # noqa: E402
+from src.models import Collection, Workspace  # noqa: E402
+from src.vector_store import VectorStore  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,7 @@ class _NamespaceRecord:
     """A single row in the --report output."""
 
     namespace: str
-    status: str  # one of: "ok", "missing", "mismatch", "unknown"
+    status: str  # one of: "ok", "missing", "mismatch"
     actual_dim: int | None
     target_dim: int
 
@@ -229,17 +231,23 @@ async def _apply_pgvector_alter(engine: AsyncEngine, plan: _PgvectorPlan) -> Non
 
 
 async def _enumerate_workspaces(conn: AsyncConnection) -> list[str]:
-    result = await conn.execute(text("SELECT name FROM workspaces ORDER BY created_at"))
-    return [row.name for row in result]
+    """All workspace names, ordered by creation. Uses the ORM so
+    ``Base.metadata.schema`` (configured from ``DB.SCHEMA``) is honored —
+    non-public schema deployments must not sample the wrong table."""
+    stmt = select(Workspace.name).order_by(Workspace.created_at)
+    result = await conn.execute(stmt)
+    return [row[0] for row in result]
 
 
 async def _enumerate_collections(
     conn: AsyncConnection,
 ) -> list[tuple[str, str, str]]:
-    result = await conn.execute(
-        text("SELECT workspace_name, observer, observed FROM collections")
-    )
-    return [(row.workspace_name, row.observer, row.observed) for row in result]
+    """Every (workspace_name, observer, observed) triple that has a row in
+    the collections table — these are the document namespaces that could
+    exist in an external store."""
+    stmt = select(Collection.workspace_name, Collection.observer, Collection.observed)
+    result = await conn.execute(stmt)
+    return [(row[0], row[1], row[2]) for row in result]
 
 
 async def _build_external_namespace_inventory(
@@ -274,15 +282,10 @@ async def _build_external_namespace_inventory(
     return pairs
 
 
-async def _probe_namespace_dim(store: object, namespace: str) -> int | None:
-    """Best-effort: return the namespace's declared dim if introspectable.
-
-    Returns ``None`` if the SDK does not expose a uniform dim accessor for
-    the configured store. Future work can specialize per store; today the
-    pgvector validator is the load-bearing dim safety.
-    """
-    _ = (store, namespace)
-    return None
+async def _probe_namespace_dim(store: VectorStore, namespace: str) -> int | None:
+    """Return the namespace's declared dim, or ``None`` if the namespace
+    does not exist yet. Delegates to the store-specific probe."""
+    return await store.probe_namespace_dim(namespace)
 
 
 async def _emit_report(engine: AsyncEngine, target_dim: int) -> int:
@@ -304,12 +307,16 @@ async def _emit_report(engine: AsyncEngine, target_dim: int) -> int:
     from src.vector_store import get_external_vector_store
 
     store = get_external_vector_store()
+    if store is None:
+        print("no external store configured; nothing to report")
+        return 0
 
     records: list[_NamespaceRecord] = []
     for _ns_type, namespace in inventory:
-        actual = await _probe_namespace_dim(store, namespace) if store else None
+        actual = await _probe_namespace_dim(store, namespace)
         if actual is None:
-            status = "unknown"
+            # Namespace has not been written to yet (lazy-create model).
+            status = "missing"
         elif actual == target_dim:
             status = "ok"
         else:

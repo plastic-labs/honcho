@@ -5,6 +5,7 @@ This module provides a Turbopuffer-based implementation of the VectorStore inter
 """
 
 import logging
+import re
 from collections.abc import Sequence
 from typing import Any, Literal, cast
 
@@ -307,3 +308,30 @@ class TurbopufferVectorStore(VectorStore):
         """Close the Turbopuffer client and release resources."""
         await self.tpuf.close()
         logger.debug("Turbopuffer client closed")
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        """Inspect a Turbopuffer namespace schema to recover the vector dim.
+
+        Turbopuffer namespaces are lazy-created; ``namespace.exists()`` returns
+        False before the first write. The schema response maps attribute name
+        to ``AttributeSchemaConfig``; the vector field's ``type`` string is
+        a bracket-prefixed dim with a width suffix, e.g. ``"[768]f32"``,
+        ``"[1536]f16"``, ``"[256]i8"``.
+        """
+        ns = self._get_namespace(namespace)
+        try:
+            if not await ns.exists():
+                return None
+        except NotFoundError:
+            return None
+
+        try:
+            schema = await ns.schema()
+        except NotFoundError:
+            return None
+
+        vector_attr = schema.get("vector")
+        if vector_attr is None:
+            return None
+        match = re.search(r"\[(\d+)\]", str(vector_attr.type))
+        return int(match.group(1)) if match else None

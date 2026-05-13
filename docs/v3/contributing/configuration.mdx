@@ -220,9 +220,9 @@ EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 
 Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
 
-- `auto` (default): forwards `dimensions=` when you have explicitly set `EMBEDDING_VECTOR_DIMENSIONS` to a non-default value, and the configured model is not on the known-rejecting list (currently `text-embedding-ada-002`). Deployments that stay on the default keep their existing behavior.
-- `always`: always forward. Use for OpenAI-compatible self-hosted providers that require it, and for same-as-default truncation (e.g. `text-embedding-3-large` truncated to 1536 — `auto` would skip the parameter because 1536 is the default).
-- `never`: never forward. Explicit opt-out for providers that reject the parameter.
+- `auto` (default): forwards `dimensions=` when **the operator has explicitly set `EMBEDDING_VECTOR_DIMENSIONS`** — provenance, not value — and the configured model is not on the known-rejecting list (currently `text-embedding-ada-002`). Explicit `EMBEDDING_VECTOR_DIMENSIONS=1536` *does* trigger the forward; this is how `text-embedding-3-large` truncation to 1536 is expressed. Deployments that leave the setting unset get their existing behavior (`dimensions=` is not forwarded).
+- `always`: always forward, regardless of whether `EMBEDDING_VECTOR_DIMENSIONS` was set. Use for OpenAI-compatible self-hosted providers that require it. Do not pick `always` *just* for same-as-default truncation — `auto` handles that case correctly as long as you set `EMBEDDING_VECTOR_DIMENSIONS=1536` explicitly in your environment. `always` is the right answer when your config layer might strip explicit "default-valued" envs, or when you want defense-in-depth.
+- `never`: never forward. Explicit opt-out for providers that reject the parameter (e.g. `text-embedding-ada-002` if it slips past the known-rejecting allowlist).
 
 #### Bootstrapping non-default dimensions
 
@@ -498,7 +498,8 @@ WEBHOOK_MAX_WORKSPACE_LIMIT=10
 VECTOR_STORE_TYPE=pgvector  # Options: pgvector, turbopuffer, lancedb
 VECTOR_STORE_MIGRATED=false
 VECTOR_STORE_NAMESPACE=honcho
-VECTOR_STORE_DIMENSIONS=1536
+# Embedding dim is configured via EMBEDDING_VECTOR_DIMENSIONS — see the
+# Embedding Configuration section. VECTOR_STORE_DIMENSIONS is deprecated.
 
 # Turbopuffer-specific
 VECTOR_STORE_TURBOPUFFER_API_KEY=your-turbopuffer-api-key
@@ -676,4 +677,4 @@ uv run alembic revision --autogenerate -m "Description"  # Create new migration
 
 5. **Dialectic level issues** — Unset level fields inherit from the built-in defaults. For Anthropic, `THINKING_BUDGET_TOKENS` must be >= 1024 when enabled. For providers without budgeted thinking, omit it or set it to `0`. `MAX_OUTPUT_TOKENS` must exceed `THINKING_BUDGET_TOKENS`.
 
-6. **Vector store issues** — For Turbopuffer, set the API key. Check `VECTOR_STORE_DIMENSIONS` matches your embedding model.
+6. **Vector store issues** — For Turbopuffer, set the API key. Check that `EMBEDDING_VECTOR_DIMENSIONS` matches your embedding model — the startup validator will refuse to boot on a mismatch.

@@ -180,6 +180,17 @@ class VectorStore(ABC):
         """
         ...
 
+    @abstractmethod
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        """
+        Return the declared vector dimension of an existing namespace.
+
+        Returns ``None`` if the namespace does not exist yet (lazy-create
+        model: not an error). Raises only when the SDK reports the
+        namespace exists but its schema is unreadable.
+        """
+        ...
+
 
 def _create_store_by_type(store_type: str) -> VectorStore:
     """Create a vector store instance by type name."""

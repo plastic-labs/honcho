@@ -369,3 +369,16 @@ class LanceDBVectorStore(VectorStore):
             self._db.close()
             self._db = None
             logger.debug("LanceDB connection closed")
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        """Inspect a LanceDB table's vector column to recover its declared dim."""
+        db = await self._get_db()
+        table_names = await db.table_names()
+        if namespace not in table_names:
+            return None
+        table = await db.open_table(namespace)
+        schema = await table.schema()
+        for field in schema:
+            if field.name == "vector" and hasattr(field.type, "list_size"):
+                return int(field.type.list_size)
+        return None

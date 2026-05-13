@@ -16,11 +16,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from src.config import AppSettings, settings
+from src.models import Workspace
+from src.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -195,25 +197,23 @@ async def _sample_external_namespaces(engine: AsyncEngine, *, target_dim: int) -
 
 
 async def _sample_workspace_names(engine: AsyncEngine, limit: int) -> list[str]:
-    """Pull up to ``limit`` workspace names ordered by creation time."""
-    query = text("SELECT name FROM workspaces ORDER BY created_at DESC LIMIT :limit")
-    async with engine.connect() as conn:
-        result = await conn.execute(query, {"limit": limit})
-        return [row.name for row in result]
+    """Pull up to ``limit`` workspace names ordered by creation time.
 
-
-async def _probe_namespace_dim(store: object, namespace: str) -> int | None:
-    """Best-effort: return the namespace's declared dim if introspectable.
-
-    Returns ``None`` if the namespace does not exist or the SDK does not
-    expose dim metadata for the configured store. Callers must treat
-    ``None`` as "do not flag a mismatch" — full enumeration is delegated to
-    the ``configure_embeddings --report`` path.
+    Uses the ORM ``Workspace`` model so ``Base.metadata.schema`` (configured
+    from ``settings.DB.SCHEMA`` in ``src/db.py``) is honored automatically —
+    a non-public schema deployment must not silently sample the wrong table.
     """
-    # The base ``VectorStore`` does not currently expose introspection of an
-    # individual namespace's dim. Until a concrete probe is added per store,
-    # treat all sampled namespaces as opaque. The pgvector check above is the
-    # load-bearing safety; first-write per workspace inherits its correctness
-    # from the embedding client honoring settings.EMBEDDING.VECTOR_DIMENSIONS.
-    _ = (store, namespace)
-    return None
+    stmt = select(Workspace.name).order_by(Workspace.created_at.desc()).limit(limit)
+    async with engine.connect() as conn:
+        result = await conn.execute(stmt)
+        return [row[0] for row in result]
+
+
+async def _probe_namespace_dim(store: VectorStore, namespace: str) -> int | None:
+    """Return the namespace's declared dim, or ``None`` if not present.
+
+    Delegates to the store's own ``probe_namespace_dim`` implementation
+    (lancedb opens the table, turbopuffer reads the schema). ``None`` means
+    "lazy-create namespace, nothing to validate against."
+    """
+    return await store.probe_namespace_dim(namespace)
