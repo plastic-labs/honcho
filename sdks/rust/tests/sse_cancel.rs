@@ -1,11 +1,10 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! R-34 — SSE cancellation safety tests.
 //!
 //! 1. `tokio::select!` + drop cancels a slow SSE stream without hanging
 //! 2. Dropping the stream mid-read is visible as a TCP disconnect (wiremock)
 //! 3. Malformed JSON mid-stream never panics; valid content around it is still yielded
 //! 4. `DialecticStream` wrapper cancels cleanly via `tokio::select!`
-
-#![allow(clippy::unwrap_used)]
 
 use std::pin::Pin;
 use std::time::{Duration, Instant};

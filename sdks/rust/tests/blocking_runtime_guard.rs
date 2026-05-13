@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 #[cfg(feature = "blocking")]
 #[test]
 fn honcho_new_does_not_panic() {

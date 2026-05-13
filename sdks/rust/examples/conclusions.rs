@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Conclusion lifecycle example: create → query → list → delete.
 //!
 //! This file demonstrates the conclusion API surface. It compiles but does

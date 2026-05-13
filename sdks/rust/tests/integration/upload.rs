@@ -1,3 +1,4 @@
+#![allow(clippy::print_stderr)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
 use honcho_ai::upload::FileSource;

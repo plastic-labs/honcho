@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Basic usage: create a peer, start a session, send messages, and get a response.
 //!
 //! Run with `cargo run --example quickstart`

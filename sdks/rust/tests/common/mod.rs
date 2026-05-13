@@ -88,17 +88,18 @@ pub fn validate_openapi(fixture: serde_json::Value, schema_name: &str) {
     let schema = schema_by_name(schema_name);
     let resolved = resolve_refs(&schema, spec);
 
-    let compiled = jsonschema::JSONSchema::compile(&resolved)
+    let compiled = jsonschema::validator_for(&resolved)
         .unwrap_or_else(|e| panic!("failed to compile schema {schema_name}: {e}"));
 
-    let result = compiled.validate(&fixture);
-    if let Err(errors) = result {
-        let msgs: Vec<String> = errors.map(|e| e.to_string()).collect();
-        panic!(
-            "fixture failed OpenAPI validation for schema {schema_name}:\n  {}",
-            msgs.join("\n  ")
-        );
-    }
+    let errors: Vec<String> = compiled
+        .iter_errors(&fixture)
+        .map(|e| e.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "fixture failed OpenAPI validation for schema {schema_name}:\n  {}",
+        errors.join("\n  ")
+    );
 }
 
 pub fn roundtrip<T>(fixture: serde_json::Value)

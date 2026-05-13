@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Search with options: workspace-level and peer-level search with filters.
 //!
 //! Demonstrates searching messages across the workspace, within a session,

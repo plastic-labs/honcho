@@ -43,9 +43,9 @@ tracing = { version = "0.1", optional = true }
 [dev-dependencies]
 wiremock = "0.6"
 pretty_assertions = "1"
-rstest = "0.23"
+rstest = "0.26"
 static_assertions = "1"
-jsonschema = "0.18"
+jsonschema = "0.46"
 paste = "1"
 tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread"] }
 temp-env = "0.3"
@@ -71,3 +71,20 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# restriction — SDK discipline
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+# pedantic noise reduction
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "warn"

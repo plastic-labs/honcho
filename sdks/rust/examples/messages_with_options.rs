@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Messages with filters: pagination, metadata, and search.
 //!
 //! Demonstrates adding messages with metadata, listing, searching,

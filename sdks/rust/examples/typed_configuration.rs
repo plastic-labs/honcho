@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout, clippy::expect_used)]
 //! Typed workspace configuration: get and set structured config.
 //!
 //! Demonstrates reading and writing workspace-level configuration

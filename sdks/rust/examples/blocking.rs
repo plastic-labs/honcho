@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Blocking (synchronous) API usage.
 //!
 //! Run with `cargo run --example blocking --features blocking`

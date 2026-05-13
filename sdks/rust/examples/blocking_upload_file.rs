@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Blocking (synchronous) API with session messages and configuration.
 //!
 //! Demonstrates the blocking facade for creating peers, sessions,

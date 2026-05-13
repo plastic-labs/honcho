@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Queue status: check background processing progress.
 //!
 //! Demonstrates checking the deriver queue at both the workspace

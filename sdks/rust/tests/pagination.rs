@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! F3.2 + F3.3 — Page pagination tests
 //!
 //! F3.2.x: Tests for `Page<TRaw, TOut>` first page + `next_page()`.

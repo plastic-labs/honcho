@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Upload a file to a session.
 //!
 //! Run with `cargo run --example upload`

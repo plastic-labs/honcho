@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Session context with custom options: summary + session-scoped representation.
 //!
 //! Demonstrates `context_with_options` for controlling what context is returned.

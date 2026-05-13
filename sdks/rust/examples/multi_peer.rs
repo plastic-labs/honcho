@@ -1,3 +1,4 @@
+#![allow(clippy::print_stdout)]
 //! Multi-peer session with peer management.
 //!
 //! Demonstrates adding multiple peers to a session, exchanging messages,
