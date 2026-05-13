@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sdks/rust/honcho
+        working-directory: sdks/rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,7 +32,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "sdks/rust/honcho"
+          workspaces: "sdks/rust"
       - name: Format check
         run: cargo fmt --check
       - name: Clippy
@@ -43,13 +43,13 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sdks/rust/honcho
+        working-directory: sdks/rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "sdks/rust/honcho"
+          workspaces: "sdks/rust"
       - name: Run tests
         run: cargo test --all-features
 
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: sdks/rust/honcho
+        working-directory: sdks/rust
     env:
       RUSTDOCFLAGS: "-Dwarnings"
     steps:
@@ -66,7 +66,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: "sdks/rust/honcho"
+          workspaces: "sdks/rust"
       - name: Build docs
         run: cargo doc --no-deps --all-features
 
@@ -76,7 +76,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     defaults:
       run:
-        working-directory: sdks/rust/honcho
+        working-directory: sdks/rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
