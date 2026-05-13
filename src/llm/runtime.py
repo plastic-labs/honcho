@@ -75,6 +75,9 @@ class AttemptPlan:
     thinking_budget_tokens: int | None
     reasoning_effort: ReasoningEffortType
     selected_config: ModelConfig
+    attempt: int
+    retry_attempts: int
+    is_fallback: bool
 
 
 def resolve_runtime_model_config(
@@ -166,6 +169,9 @@ def plan_attempt(
         thinking_budget_tokens=attempt_thinking_budget,
         reasoning_effort=attempt_reasoning_effort,
         selected_config=selected,
+        attempt=attempt,
+        retry_attempts=retry_attempts,
+        is_fallback=not is_primary,
     )
 
 

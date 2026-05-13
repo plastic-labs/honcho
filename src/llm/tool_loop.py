@@ -34,9 +34,35 @@ from .types import (
     HonchoLLMCallStreamChunk,
     IterationCallback,
     IterationData,
+    LLMTelemetryContext,
     StreamingResponseWithMetadata,
     VerbosityType,
 )
+
+
+def _telemetry_for_iteration(
+    base: LLMTelemetryContext | None, iteration: int
+) -> LLMTelemetryContext | None:
+    """Return a copy of `base` with `iteration` set, or None if no base.
+
+    We always copy rather than mutate the caller-supplied context so callers
+    that pass the same context into multiple `honcho_llm_call` invocations
+    don't see drift across concurrent runs.
+    """
+    if base is None:
+        return None
+    return LLMTelemetryContext(
+        workspace_name=base.workspace_name,
+        call_purpose=base.call_purpose,
+        parent_category=base.parent_category,
+        run_id=base.run_id,
+        iteration=iteration,
+        observer=base.observer,
+        observed=base.observed,
+        peer_name=base.peer_name,
+        agent_type=base.agent_type,
+    )
+
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +124,7 @@ async def stream_final_response(
     enable_retry: bool,
     retry_attempts: int,
     before_retry_callback: Callable[[Any], None],
+    telemetry: LLMTelemetryContext | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
     """Stream the final response after tool execution is complete.
 
@@ -129,6 +156,8 @@ async def stream_final_response(
             tool_choice=None,
             messages=conversation_messages,
             selected_config=winning_plan.selected_config,
+            plan=winning_plan,
+            telemetry=telemetry,
         )
 
     if enable_retry:
@@ -166,6 +195,7 @@ async def execute_tool_loop(
     before_retry_callback: Callable[[Any], None],
     stream_final: bool = False,
     iteration_callback: IterationCallback | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """Run the iterative tool calling loop for agentic LLM interactions.
 
@@ -215,6 +245,7 @@ async def execute_tool_loop(
         async def _call_with_messages(
             effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
             conversation_messages: list[dict[str, Any]] = conversation_messages,
+            iteration_for_call: int = iteration + 1,
         ) -> HonchoLLMCallResponse[Any]:
             plan = get_attempt_plan()
             return await honcho_llm_call_inner(
@@ -235,6 +266,8 @@ async def execute_tool_loop(
                 tool_choice=effective_tool_choice,
                 messages=conversation_messages,
                 selected_config=plan.selected_config,
+                plan=plan,
+                telemetry=_telemetry_for_iteration(telemetry, iteration_for_call),
             )
 
         if enable_retry:
@@ -293,6 +326,7 @@ async def execute_tool_loop(
                     enable_retry=enable_retry,
                     retry_attempts=retry_attempts,
                     before_retry_callback=before_retry_callback,
+                    telemetry=_telemetry_for_iteration(telemetry, iteration + 1),
                 )
                 return StreamingResponseWithMetadata(
                     stream=stream,
@@ -391,6 +425,10 @@ async def execute_tool_loop(
         f"Tool execution loop reached max iterations ({max_tool_iterations})"
     )
 
+    # The max-iteration synthesis call gets iteration N+1 in telemetry so Phase 2's
+    # AgentIterationEvent and this Phase 1 LLMCallCompletedEvent line up sequentially.
+    synthesis_iteration = iteration + 1
+
     synthesis_prompt = (
         "You have reached the maximum number of tool calls. "
         "Based on all the information you have gathered, provide your final response now. "
@@ -422,6 +460,7 @@ async def execute_tool_loop(
             enable_retry=enable_retry,
             retry_attempts=retry_attempts,
             before_retry_callback=before_retry_callback,
+            telemetry=_telemetry_for_iteration(telemetry, synthesis_iteration),
         )
         return StreamingResponseWithMetadata(
             stream=stream,
@@ -456,6 +495,8 @@ async def execute_tool_loop(
             tool_choice=None,
             messages=conversation_messages,
             selected_config=plan.selected_config,
+            plan=plan,
+            telemetry=_telemetry_for_iteration(telemetry, synthesis_iteration),
         )
 
     if enable_retry:

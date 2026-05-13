@@ -1042,6 +1042,13 @@ class TelemetrySettings(HonchoSettings):
     # Resolution order: explicit setting → importlib.metadata.version("honcho") → None (omitted).
     HONCHO_VERSION: str | None = None
 
+    # Sample rate for high-volume events: llm.call.completed, embedding.call.completed,
+    # agent.iteration, agent.tool.call.completed. Deterministic on run_id so traces
+    # remain coherent end-to-end. Aggregate envelopes (RepresentationCompleted,
+    # DialecticCompleted, DreamRun, etc.) are NEVER sampled — they're calibration
+    # ground truth.
+    HIGH_VOLUME_SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
+
 
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore

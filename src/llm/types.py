@@ -45,6 +45,38 @@ class IterationData:
     """Tokens written to cache in this iteration."""
 
 
+@dataclass
+class LLMTelemetryContext:
+    """Context threaded through honcho_llm_call → honcho_llm_call_inner so the
+    LLMCallCompletedEvent emitter (and Phase 2's AgentIterationEvent emitter)
+    can attribute calls to the right workspace / agent / iteration without
+    re-deriving any of it from ambient state.
+
+    Iteration is mutable: tool_loop updates this field before each inner call.
+    NOT read from set_current_iteration ContextVar — that fires after the LLM
+    call returns, so reading it from the executor would yield stale values.
+    """
+
+    workspace_name: str | None = None
+    # call_purpose carries the same string as src.telemetry.events.llm.CallPurpose values.
+    # Stored as str rather than importing the enum here to keep src/llm/ free of
+    # telemetry imports — the emitter validates against the enum.
+    call_purpose: str | None = None
+    parent_category: str | None = None
+    run_id: str | None = None
+    iteration: int | None = None
+    # Optional peer context (dream agents pass observer/observed; dialectic
+    # passes peer_name). Kept here so Phase 2's AgentIterationEvent can populate
+    # them without a separate threading path.
+    observer: str | None = None
+    observed: str | None = None
+    peer_name: str | None = None
+    # Tool-related context: agent_type is the human-readable identifier of the
+    # agent — dialectic/deduction/induction. Used by Phase 2's agent iteration
+    # event and Phase 3's tool call event.
+    agent_type: str | None = None
+
+
 IterationCallback = Callable[[IterationData], None]
 
 
@@ -130,6 +162,7 @@ __all__ = [
     "HonchoLLMCallStreamChunk",
     "IterationCallback",
     "IterationData",
+    "LLMTelemetryContext",
     "ProviderClient",
     "ReasoningEffortType",
     "StreamingResponseWithMetadata",

@@ -38,6 +38,7 @@ from .types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
     IterationCallback,
+    LLMTelemetryContext,
     ReasoningEffortType,
     StreamingResponseWithMetadata,
 )
@@ -73,6 +74,7 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -102,6 +104,7 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -131,6 +134,7 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
@@ -160,6 +164,7 @@ async def honcho_llm_call(
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> (
     HonchoLLMCallResponse[Any]
     | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -236,6 +241,8 @@ async def honcho_llm_call(
                 tools=tools,
                 tool_choice=tool_choice,
                 selected_config=plan.selected_config,
+                plan=plan,
+                telemetry=telemetry,
             )
         return await honcho_llm_call_inner(
             plan.provider,
@@ -254,6 +261,8 @@ async def honcho_llm_call(
             tools=tools,
             tool_choice=tool_choice,
             selected_config=plan.selected_config,
+            plan=plan,
+            telemetry=telemetry,
         )
 
     decorated = _call_with_provider_selection
@@ -346,6 +355,7 @@ async def honcho_llm_call(
         before_retry_callback=before_retry_callback,
         stream_final=stream_final_only,
         iteration_callback=iteration_callback,
+        telemetry=telemetry,
     )
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(

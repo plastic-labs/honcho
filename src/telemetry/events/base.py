@@ -57,6 +57,12 @@ class BaseEvent(BaseModel):
     _schema_version: ClassVar[int]
     _category: ClassVar[str]  # "work", "activity", or "resource"
 
+    # Volume class for sampling decisions:
+    # - "ground_truth": always emitted at rate 1.0 (aggregates, calibration keys)
+    # - "high_volume": subject to TELEMETRY.HIGH_VOLUME_SAMPLE_RATE
+    # Default is ground_truth so existing events keep firing unconditionally.
+    _volume_class: ClassVar[str] = "ground_truth"
+
     # Common timestamp field present in all events
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
@@ -77,6 +83,11 @@ class BaseEvent(BaseModel):
     def category(cls) -> str:
         """Return the event category (work, activity, or resource)."""
         return cls._category
+
+    @classmethod
+    def volume_class(cls) -> str:
+        """Return the volume class for sampling: 'ground_truth' or 'high_volume'."""
+        return cls._volume_class
 
     def get_resource_id(self) -> str:
         """Return the resource ID for idempotency key generation.

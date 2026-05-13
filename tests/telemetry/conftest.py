@@ -28,6 +28,7 @@ from src.telemetry.events.base import BaseEvent
 from src.telemetry.events.deletion import DeletionCompletedEvent
 from src.telemetry.events.dialectic import DialecticCompletedEvent
 from src.telemetry.events.dream import DreamRunEvent, DreamSpecialistEvent
+from src.telemetry.events.llm import CallPurpose, LLMCallCompletedEvent
 from src.telemetry.events.reconciliation import (
     CleanupStaleItemsCompletedEvent,
     SyncVectorsCompletedEvent,
@@ -100,6 +101,36 @@ def sample_file_uploaded_event(fixed_timestamp: datetime) -> FileUploadedEvent:
         file_size_bytes=1024,
         message_count=2,
         total_tokens=250,
+    )
+
+
+@pytest.fixture
+def sample_llm_call_event(fixed_timestamp: datetime) -> LLMCallCompletedEvent:
+    """Sample LLMCallCompletedEvent (Phase 1)."""
+    return LLMCallCompletedEvent(
+        timestamp=fixed_timestamp,
+        workspace_name="test_workspace",
+        call_purpose=CallPurpose.DIALECTIC_ANSWER,
+        parent_category="dialectic",
+        transport="anthropic",
+        provider_label=None,
+        model="claude-sonnet-4-5",
+        effective_max_output_tokens=4096,
+        provider_input_tokens=1234,
+        provider_output_tokens=567,
+        cache_read_tokens=100,
+        cache_creation_tokens=50,
+        finish_reason="stop",
+        outcome="success",
+        is_final_attempt=False,
+        attempt=1,
+        retry_attempts=3,
+        was_fallback=False,
+        duration_ms=1100.5,
+        has_tools=True,
+        tool_call_count=2,
+        run_id="abc12345",
+        iteration=1,
     )
 
 
@@ -345,6 +376,7 @@ def all_sample_events(
     sample_deletion_event: DeletionCompletedEvent,
     sample_sync_vectors_event: SyncVectorsCompletedEvent,
     sample_cleanup_event: CleanupStaleItemsCompletedEvent,
+    sample_llm_call_event: LLMCallCompletedEvent,
 ) -> list[BaseEvent]:
     """Return all sample events as a list for parametrized tests."""
     return [
@@ -363,6 +395,7 @@ def all_sample_events(
         sample_deletion_event,
         sample_sync_vectors_event,
         sample_cleanup_event,
+        sample_llm_call_event,
     ]
 
 

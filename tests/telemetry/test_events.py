@@ -30,6 +30,7 @@ from src.telemetry.events.base import BaseEvent, generate_event_id
 from src.telemetry.events.deletion import DeletionCompletedEvent
 from src.telemetry.events.dialectic import DialecticCompletedEvent
 from src.telemetry.events.dream import DreamRunEvent, DreamSpecialistEvent
+from src.telemetry.events.llm import CallPurpose, LLMCallCompletedEvent
 from src.telemetry.events.reconciliation import (
     CleanupStaleItemsCompletedEvent,
     SyncVectorsCompletedEvent,
@@ -185,6 +186,87 @@ class TestRepresentationCompletedEvent:
         assert data["workspace_name"] == "test_workspace"
         assert data["message_count"] == 10
         assert data["explicit_conclusion_count"] == 5
+
+
+# =============================================================================
+# Tests for LLMCallCompletedEvent (Phase 1)
+# =============================================================================
+
+
+class TestLLMCallCompletedEvent:
+    """Tests for the Phase 1 LLMCallCompletedEvent."""
+
+    def test_event_type(self):
+        assert LLMCallCompletedEvent.event_type() == "llm.call.completed"
+
+    def test_schema_version(self):
+        # Phase 1 ships at v1.
+        assert LLMCallCompletedEvent.schema_version() == 1
+
+    def test_category(self):
+        assert LLMCallCompletedEvent.category() == "llm"
+
+    def test_volume_class(self):
+        # Phase 1 event must be high_volume so the sampler picks it up.
+        assert LLMCallCompletedEvent.volume_class() == "high_volume"
+
+    def test_get_resource_id_includes_attempt(
+        self, sample_llm_call_event: LLMCallCompletedEvent
+    ):
+        # Resource id must include attempt so multiple retry attempts in one
+        # iteration get distinct deterministic ids.
+        assert (
+            sample_llm_call_event.get_resource_id()
+            == "abc12345:1:1:anthropic:claude-sonnet-4-5"
+        )
+
+    def test_call_purpose_enum_values(self):
+        # The closed taxonomy used by Phase 1 callers.
+        assert CallPurpose.DERIVER_REPRESENTATION.value == "deriver.representation"
+        assert CallPurpose.DIALECTIC_ANSWER.value == "dialectic.answer"
+        assert CallPurpose.DREAM_DEDUCTION.value == "dream.deduction"
+        assert CallPurpose.DREAM_INDUCTION.value == "dream.induction"
+        assert CallPurpose.SUMMARY_SHORT.value == "summary.short"
+        assert CallPurpose.SUMMARY_LONG.value == "summary.long"
+
+    def test_error_outcome_with_error_class(self, fixed_timestamp: datetime):
+        event = LLMCallCompletedEvent(
+            timestamp=fixed_timestamp,
+            transport="openai",
+            model="gpt-4",
+            effective_max_output_tokens=512,
+            outcome="error",
+            is_final_attempt=True,
+            error_class="RateLimitError",
+            attempt=3,
+            retry_attempts=3,
+            was_fallback=True,
+            duration_ms=200.0,
+        )
+        assert event.outcome == "error"
+        assert event.error_class == "RateLimitError"
+        assert event.is_final_attempt is True
+        # Token fields default to 0 when no result was produced.
+        assert event.provider_input_tokens == 0
+        assert event.provider_output_tokens == 0
+
+    def test_stream_placeholder_has_zero_tokens(self, fixed_timestamp: datetime):
+        event = LLMCallCompletedEvent(
+            timestamp=fixed_timestamp,
+            transport="anthropic",
+            model="claude-sonnet-4-5",
+            effective_max_output_tokens=2048,
+            outcome="success",
+            is_final_attempt=False,
+            attempt=1,
+            retry_attempts=3,
+            was_fallback=False,
+            duration_ms=0.0,
+            was_stream=True,
+        )
+        assert event.was_stream is True
+        assert event.provider_input_tokens == 0
+        assert event.provider_output_tokens == 0
 
 
 # =============================================================================

@@ -77,6 +77,7 @@ from src.telemetry.events.dream import (
     DreamRunEvent,
     DreamSpecialistEvent,
 )
+from src.telemetry.events.llm import CallPurpose, LLMCallCompletedEvent
 from src.telemetry.events.reconciliation import (
     CleanupStaleItemsCompletedEvent,
     SyncVectorsCompletedEvent,
@@ -107,6 +108,9 @@ __all__ = [
     "MessageCreatedEvent",
     "FileUploadedEvent",
     "GetContextEvent",
+    # LLM events
+    "LLMCallCompletedEvent",
+    "CallPurpose",
     # Reconciliation events
     "SyncVectorsCompletedEvent",
     "CleanupStaleItemsCompletedEvent",

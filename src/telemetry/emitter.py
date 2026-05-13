@@ -27,6 +27,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _should_sample(event: "BaseEvent", rate: float) -> bool:
+    """Trace-coherent deterministic sampler for high-volume events.
+
+    When the event carries a `run_id`, sampling decisions hash on that id —
+    so every event in an agent run either passes or fails the sampler, and
+    join queries downstream don't see half-traces. Events without `run_id`
+    (summarizer, deriver — non-agentic call sites) sample independently per
+    event using `event.generate_id()`, which is deterministic on
+    (type, resource_id, timestamp).
+    """
+    if rate >= 1.0:
+        return True
+    if rate <= 0.0:
+        return False
+    run_id = getattr(event, "run_id", None)
+    key = run_id if isinstance(run_id, str) and run_id else event.generate_id()
+    # Stable hash → 0..9999 → compare against rate * 10000.
+    bucket = int.from_bytes(_stable_hash(key)[:4], "big") % 10_000
+    return bucket < int(rate * 10_000)
+
+
+def _stable_hash(value: str) -> bytes:
+    import hashlib
+
+    return hashlib.sha256(value.encode("utf-8")).digest()
+
+
 class TelemetryEmitter:
     """Buffered, async CloudEvents emitter with retry logic.
 
@@ -162,6 +189,20 @@ class TelemetryEmitter:
 
         from src.config import settings
         from src.telemetry.prometheus.metrics import prometheus_metrics
+
+        # High-volume events are subject to HIGH_VOLUME_SAMPLE_RATE. Aggregate
+        # envelopes (representation.completed, dialectic.completed, dream.run,
+        # etc.) declare _volume_class="ground_truth" and skip the sampler.
+        # Sampling is deterministic on run_id when available so an entire
+        # agentic trace is either fully kept or fully dropped — never a
+        # half-sampled run that breaks join queries downstream.
+        if event.volume_class() == "high_volume" and not _should_sample(
+            event, settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE
+        ):
+            prometheus_metrics.record_telemetry_event_sampled_out(
+                event_type=event.event_type()
+            )
+            return
 
         # Generate deterministic event ID
         event_id = event.generate_id()

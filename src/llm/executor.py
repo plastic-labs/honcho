@@ -11,6 +11,8 @@ Used by:
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any, Literal, TypeVar, overload
 
@@ -23,13 +25,16 @@ from .backend import StreamChunk as BackendStreamChunk
 from .backend import ToolCallResult
 from .registry import CLIENTS, backend_for_provider
 from .request_builder import execute_completion, execute_stream
-from .runtime import effective_config_for_call
+from .runtime import AttemptPlan, effective_config_for_call
 from .types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
+    LLMTelemetryContext,
     ProviderClient,
     ReasoningEffortType,
 )
+
+logger = logging.getLogger(__name__)
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -43,6 +48,101 @@ def _tool_call_result_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
     if tool_call.thought_signature is not None:
         result["thought_signature"] = tool_call.thought_signature
     return result
+
+
+def _emit_llm_call_completed(
+    *,
+    plan: AttemptPlan | None,
+    telemetry: LLMTelemetryContext | None,
+    provider: ModelTransport,
+    model: str,
+    max_tokens: int,
+    duration_ms: float,
+    has_tools: bool,
+    was_stream: bool,
+    outcome: Literal["success", "error"],
+    result: BackendCompletionResult | None,
+    error: BaseException | None,
+) -> None:
+    """Build and emit an LLMCallCompletedEvent. Best-effort; swallows errors so
+    telemetry failures never bleed into the LLM call path."""
+    try:
+        from src.telemetry.events import CallPurpose, LLMCallCompletedEvent, emit
+
+        # call_purpose is a string slug on LLMTelemetryContext; validate against
+        # the enum here (silent drop on unknown values keeps telemetry resilient).
+        call_purpose: CallPurpose | None = None
+        if telemetry is not None and telemetry.call_purpose:
+            try:
+                call_purpose = CallPurpose(telemetry.call_purpose)
+            except ValueError:
+                logger.debug(
+                    "Unknown LLMTelemetryContext.call_purpose=%r; emitting without",
+                    telemetry.call_purpose,
+                )
+
+        attempt = plan.attempt if plan is not None else 1
+        retry_attempts = plan.retry_attempts if plan is not None else 1
+        was_fallback = plan.is_fallback if plan is not None else False
+
+        emit(
+            LLMCallCompletedEvent(
+                workspace_name=(telemetry.workspace_name if telemetry else None),
+                call_purpose=call_purpose,
+                parent_category=(telemetry.parent_category if telemetry else None),
+                transport=provider,
+                provider_label=_infer_provider_label(provider, model, plan),
+                model=model,
+                effective_max_output_tokens=max_tokens,
+                provider_input_tokens=(result.input_tokens if result else 0),
+                provider_output_tokens=(result.output_tokens if result else 0),
+                cache_read_tokens=(result.cache_read_input_tokens if result else 0),
+                cache_creation_tokens=(
+                    result.cache_creation_input_tokens if result else 0
+                ),
+                finish_reason=(result.finish_reason if result else None),
+                outcome=outcome,
+                is_final_attempt=(attempt >= retry_attempts),
+                error_class=(type(error).__name__ if error else None),
+                attempt=attempt,
+                retry_attempts=retry_attempts,
+                was_fallback=was_fallback,
+                duration_ms=duration_ms,
+                has_tools=has_tools,
+                tool_call_count=(len(result.tool_calls) if result else 0),
+                was_stream=was_stream,
+                run_id=(telemetry.run_id if telemetry else None),
+                iteration=(telemetry.iteration if telemetry else None),
+            )
+        )
+    except Exception:  # pragma: no cover - telemetry must not raise
+        logger.debug("Failed to emit LLMCallCompletedEvent", exc_info=True)
+
+
+def _infer_provider_label(
+    _transport: ModelTransport, model: str, plan: AttemptPlan | None
+) -> str | None:
+    """Best-effort vendor inference for relay setups.
+
+    When the model name carries a vendor prefix (OpenRouter convention:
+    "anthropic/claude-..." routed through the openai transport), surface that
+    as the provider label so analytics can distinguish "openai-the-vendor"
+    from "openai-the-transport-pointing-at-openrouter".
+
+    `_transport` is currently unused but kept on the signature so callers stay
+    explicit about which transport produced the call — future inference rules
+    (e.g. anthropic-direct vs anthropic-via-relay) may need it.
+    """
+    if "/" in model:
+        return model.split("/", 1)[0]
+    # Defensive getattr — selected_config may be a stub in tests or a config
+    # without an explicit base_url. Either way the inference is best-effort.
+    base_url = (
+        getattr(plan.selected_config, "base_url", None) if plan is not None else None
+    )
+    if base_url and "openrouter" in base_url.lower():
+        return "openrouter"
+    return None
 
 
 def completion_result_to_response(
@@ -92,6 +192,8 @@ async def honcho_llm_call_inner(
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
     selected_config: ModelConfig | None = None,
+    plan: AttemptPlan | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -114,6 +216,8 @@ async def honcho_llm_call_inner(
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
     selected_config: ModelConfig | None = None,
+    plan: AttemptPlan | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -136,6 +240,8 @@ async def honcho_llm_call_inner(
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
     selected_config: ModelConfig | None = None,
+    plan: AttemptPlan | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
@@ -157,11 +263,18 @@ async def honcho_llm_call_inner(
     tool_choice: str | dict[str, Any] | None = None,
     messages: list[dict[str, Any]] | None = None,
     selected_config: ModelConfig | None = None,
+    plan: AttemptPlan | None = None,
+    telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     """One backend call. No retry, no fallback, no tool loop.
 
     The outer src/llm/api.py `honcho_llm_call` handles retry + fallback +
     tool orchestration on top of this.
+
+    Phase 1 telemetry: emits one LLMCallCompletedEvent per call. On the stream
+    path, the event is emitted at stream-setup time with `was_stream=True` and
+    zero token counts (provider tokens aren't knowable until the stream drains
+    — see PLAN.md Phase 1 §8 streaming gap).
     """
     client = client_override or CLIENTS.get(provider)
     if client is None:
@@ -187,6 +300,23 @@ async def honcho_llm_call_inner(
     call_extras: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
 
     if stream:
+        # Stream path: emit a was_stream placeholder at setup time. The stream
+        # iterator drains on the caller side; we don't get back here to count
+        # tokens. The aggregate envelope (DialecticCompletedEvent etc.) carries
+        # accurate totals — calibration should source streamed totals there.
+        _emit_llm_call_completed(
+            plan=plan,
+            telemetry=telemetry,
+            provider=provider,
+            model=model,
+            max_tokens=max_tokens,
+            duration_ms=0.0,
+            has_tools=bool(tools),
+            was_stream=True,
+            outcome="success",
+            result=None,
+            error=None,
+        )
 
         async def _stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
             stream_iter = await execute_stream(
@@ -205,18 +335,39 @@ async def honcho_llm_call_inner(
 
         return _stream()
 
-    result = await execute_completion(
-        backend,
-        effective_config,
-        messages=messages,
-        max_tokens=max_tokens,
-        tools=tools,
-        tool_choice=tool_choice,
-        response_format=response_model,
-        cache_policy=effective_config.cache_policy,
-        extra_params=call_extras,
-    )
-    return completion_result_to_response(result)
+    start = time.perf_counter()
+    backend_result: BackendCompletionResult | None = None
+    error: BaseException | None = None
+    try:
+        backend_result = await execute_completion(
+            backend,
+            effective_config,
+            messages=messages,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+            response_format=response_model,
+            cache_policy=effective_config.cache_policy,
+            extra_params=call_extras,
+        )
+        return completion_result_to_response(backend_result)
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        _emit_llm_call_completed(
+            plan=plan,
+            telemetry=telemetry,
+            provider=provider,
+            model=model,
+            max_tokens=max_tokens,
+            duration_ms=(time.perf_counter() - start) * 1000,
+            has_tools=bool(tools),
+            was_stream=False,
+            outcome="success" if error is None else "error",
+            result=backend_result,
+            error=error,
+        )
 
 
 __all__ = [
