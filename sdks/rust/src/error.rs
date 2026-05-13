@@ -4,8 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use chrono::{DateTime, Utc};
 use httpdate::parse_http_date;
-use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::StatusCode;
+use reqwest::header::{HeaderMap, HeaderValue};
 
 /// Error type for all Honcho SDK operations.
 #[derive(Debug, thiserror::Error)]

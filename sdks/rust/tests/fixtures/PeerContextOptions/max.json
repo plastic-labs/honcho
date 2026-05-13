@@ -1,0 +1,8 @@
+{
+  "target": "peer_alpha",
+  "search_query": "recent project decisions",
+  "search_top_k": 15,
+  "search_max_distance": 0.6,
+  "include_most_frequent": true,
+  "max_conclusions": 25
+}

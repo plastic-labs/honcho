@@ -30,6 +30,7 @@ pub struct Peer {
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 #[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct PeerCreate {
     /// Unique identifier for the peer (alphanumeric, hyphens, underscores).
     pub id: String,
@@ -45,6 +46,7 @@ pub struct PeerCreate {
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 #[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct PeerUpdate {
     /// Updated metadata. If provided, replaces the existing metadata entirely.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -58,6 +60,7 @@ pub struct PeerUpdate {
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 #[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct PeerGet {
     /// Optional metadata-based filters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -88,6 +91,8 @@ pub struct PeerCardResponse {
 /// Request body for setting a peer card.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct PeerCardSet {
     /// The peer card content lines to set.
     pub peer_card: Vec<String>,
@@ -113,6 +118,7 @@ pub struct PeerContext {
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 #[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct PeerRepresentationGet {
     /// Optional session ID to scope the representation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -137,6 +143,32 @@ pub struct PeerRepresentationGet {
     pub include_most_frequent: Option<bool>,
     /// Maximum number of conclusions to include in the representation.
     /// Only used if `search_query` is provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_conclusions: Option<u32>,
+}
+
+/// Options for `Peer::context_with_options`.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
+pub struct PeerContextOptions {
+    /// Target peer to get context for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Semantic search query to filter relevant conclusions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_query: Option<String>,
+    /// Number of semantically relevant facts to return.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_top_k: Option<u32>,
+    /// Maximum semantic distance for search results (0.0–1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_max_distance: Option<f64>,
+    /// Whether to include the most frequent conclusions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_most_frequent: Option<bool>,
+    /// Maximum number of conclusions to include.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_conclusions: Option<u32>,
 }

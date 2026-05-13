@@ -1,9 +1,9 @@
 [package]
 name = "honcho-ai"
-version = "0.1.0"
-edition = "2021"
+version = "0.1.1"
+edition = "2024"
 rust-version = "1.88"
-license = "Apache-2.0"
+license = "MIT"
 repository = "https://github.com/plastic-labs/honcho"
 homepage = "https://github.com/plastic-labs/honcho"
 documentation = "https://docs.rs/honcho-ai"
@@ -53,6 +53,10 @@ tempfile = "3"
 
 [[example]]
 name = "blocking"
+required-features = ["blocking"]
+
+[[example]]
+name = "blocking_upload_file"
 required-features = ["blocking"]
 
 [package.metadata.docs.rs]

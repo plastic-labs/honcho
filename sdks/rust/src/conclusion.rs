@@ -61,42 +61,100 @@ impl Conclusion {
     }
 
     /// The conclusion's unique identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(c: &honcho_ai::Conclusion) {
+    /// assert!(!c.id().is_empty());
+    /// # }
+    /// ```
     #[must_use]
     pub fn id(&self) -> &str {
         &self.inner.id
     }
 
     /// The conclusion content text.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(c: &honcho_ai::Conclusion) {
+    /// println!("{}", c.content());
+    /// # }
+    /// ```
     #[must_use]
     pub fn content(&self) -> &str {
         &self.inner.content
     }
 
     /// ID of the peer that made this observation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(c: &honcho_ai::Conclusion) {
+    /// let observer = c.observer_id();
+    /// # }
+    /// ```
     #[must_use]
     pub fn observer_id(&self) -> &str {
         &self.inner.observer_id
     }
 
     /// ID of the peer being observed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(c: &honcho_ai::Conclusion) {
+    /// let observed = c.observed_id();
+    /// # }
+    /// ```
     #[must_use]
     pub fn observed_id(&self) -> &str {
         &self.inner.observed_id
     }
 
     /// Optional session this conclusion is scoped to.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(c: &honcho_ai::Conclusion) {
+    /// if let Some(sid) = c.session_id() {
+    ///     println!("scoped to session {sid}");
+    /// }
+    /// # }
+    /// ```
     #[must_use]
     pub fn session_id(&self) -> Option<&str> {
         self.inner.session_id.as_deref()
     }
 
     /// When this conclusion was created.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(c: &honcho_ai::Conclusion) {
+    /// let ts = c.created_at();
+    /// # }
+    /// ```
     #[must_use]
     pub fn created_at(&self) -> &DateTime<Utc> {
         &self.inner.created_at
     }
 
     /// The workspace this conclusion belongs to.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(c: &honcho_ai::Conclusion) {
+    /// assert!(!c.workspace_id().is_empty());
+    /// # }
+    /// ```
     #[must_use]
     pub fn workspace_id(&self) -> &str {
         &self.inner.workspace_id
@@ -134,6 +192,8 @@ impl fmt::Display for Conclusion {
 /// Use [`ConclusionCreateParams::new()`] for the common case, or the
 /// [`bon::Builder`]–generated builder for optional fields.
 #[derive(Debug, Clone, Serialize, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct ConclusionCreateParams {
     /// The conclusion content text.
     pub(crate) content: String,
@@ -144,6 +204,14 @@ pub struct ConclusionCreateParams {
 
 impl ConclusionCreateParams {
     /// Shortcut: create params with content only (no session).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use honcho_ai::ConclusionCreateParams;
+    ///
+    /// let params = ConclusionCreateParams::new("enjoys hiking");
+    /// ```
     #[must_use]
     pub fn new(content: impl Into<String>) -> Self {
         Self {
@@ -190,12 +258,28 @@ impl ConclusionScope {
     }
 
     /// The observer peer ID for this scope.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// println!("observer: {}", scope.observer_id());
+    /// # }
+    /// ```
     #[must_use]
     pub fn observer_id(&self) -> &str {
         &self.inner.observer
     }
 
     /// The observed peer ID for this scope.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// println!("observed: {}", scope.observed_id());
+    /// # }
+    /// ```
     #[must_use]
     pub fn observed_id(&self) -> &str {
         &self.inner.observed
@@ -208,6 +292,19 @@ impl ConclusionScope {
     /// batches of 100 (D24). Each chunk is a separate HTTP request; if any
     /// chunk fails the error is returned immediately (previously created
     /// conclusions from earlier chunks are not rolled back).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
+    /// use honcho_ai::ConclusionCreateParams;
+    /// let created = scope.create([
+    ///     ConclusionCreateParams::new("likes coffee"),
+    ///     ConclusionCreateParams::new("early riser"),
+    /// ]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// # Errors
     ///
@@ -251,9 +348,18 @@ impl ConclusionScope {
     /// conclusion endpoint — `POST /v3/workspaces/{ws}/peers/{observer}/representation`
     /// with `target: observed_id`.
     ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
+    /// let rep = scope.representation().send().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
-    /// The builder's `.send()` returns [`HonchoError::Configuration`] if
+    /// The builder's `.send()` returns [`HonchoError::Validation`] if
     /// `search_top_k` ∉ [1, 100], `search_max_distance` ∉ [0.0, 1.0],
     /// or `max_conclusions` ∉ [1, 100]. Returns [`HonchoError::Server`] on
     /// transport or API errors.
@@ -278,6 +384,18 @@ impl ConclusionScope {
     /// Chain `.session()`, `.page()`, `.size()`, `.reverse()` to customise,
     /// then call `.send()` to execute.
     ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
+    /// let page = scope.list().page(1).size(20).send().await?;
+    /// for c in page.items() {
+    ///     println!("{}", c.content);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns [`HonchoError::Server`] if the server rejects the request.
@@ -296,9 +414,21 @@ impl ConclusionScope {
     /// Defaults: `top_k` = 10, no distance threshold.
     /// Chain `.top_k()` and `.distance()` to customise, then call `.send()`.
     ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
+    /// let results = scope.query("hobbies").top_k(5).send().await?;
+    /// for c in &results {
+    ///     println!("{}", c.content);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
-    /// Returns [`HonchoError::Configuration`] if `top_k` ∉ [1, 100]
+    /// Returns [`HonchoError::Validation`] if `top_k` ∉ [1, 100]
     /// or `distance` ∉ [0.0, 1.0]. Returns [`HonchoError::Server`] on
     /// transport or API errors.
     pub fn query(&self, query: impl Into<String>) -> QueryConclusionsBuilder {
@@ -311,6 +441,15 @@ impl ConclusionScope {
     }
 
     /// Delete a conclusion by ID.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
+    /// scope.delete("conc-42").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// # Errors
     ///
@@ -339,6 +478,14 @@ pub struct ConclusionRepresentationBuilder {
 
 impl ConclusionRepresentationBuilder {
     /// Semantic search query to curate the representation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.representation().search_query("preferences");
+    /// # }
+    /// ```
     #[must_use]
     pub fn search_query(mut self, val: impl Into<String>) -> Self {
         self.search_query = Some(val.into());
@@ -346,6 +493,14 @@ impl ConclusionRepresentationBuilder {
     }
 
     /// Number of semantic-search-retrieved conclusions (1–100).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.representation().search_top_k(20);
+    /// # }
+    /// ```
     #[must_use]
     pub fn search_top_k(mut self, val: u32) -> Self {
         self.search_top_k = Some(val);
@@ -353,6 +508,14 @@ impl ConclusionRepresentationBuilder {
     }
 
     /// Maximum cosine distance for semantically relevant conclusions (0.0–1.0).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.representation().search_max_distance(0.5);
+    /// # }
+    /// ```
     #[must_use]
     pub fn search_max_distance(mut self, val: f64) -> Self {
         self.search_max_distance = Some(val);
@@ -360,6 +523,14 @@ impl ConclusionRepresentationBuilder {
     }
 
     /// Whether to include the most frequent conclusions.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.representation().include_most_frequent(true);
+    /// # }
+    /// ```
     #[must_use]
     pub fn include_most_frequent(mut self, val: bool) -> Self {
         self.include_most_frequent = Some(val);
@@ -367,6 +538,14 @@ impl ConclusionRepresentationBuilder {
     }
 
     /// Maximum number of conclusions to include (1–100).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.representation().max_conclusions(25);
+    /// # }
+    /// ```
     #[must_use]
     pub fn max_conclusions(mut self, val: u32) -> Self {
         self.max_conclusions = Some(val);
@@ -375,31 +554,44 @@ impl ConclusionRepresentationBuilder {
 
     /// Send the representation request.
     ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
+    /// let rep = scope.representation()
+    ///     .search_query("hobbies")
+    ///     .search_top_k(10)
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
-    /// Returns [`HonchoError::Configuration`]
+    /// Returns [`HonchoError::Validation`]
     /// if `search_top_k`, `search_max_distance`, or `max_conclusions` are out of range.
     pub async fn send(self) -> Result<String> {
-        if let Some(k) = self.search_top_k {
-            if !(1..=100).contains(&k) {
-                return Err(crate::error::HonchoError::Configuration(format!(
-                    "search_top_k must be between 1 and 100, got {k}"
-                )));
-            }
+        if let Some(k) = self.search_top_k
+            && !(1..=100).contains(&k)
+        {
+            return Err(crate::error::HonchoError::Validation(format!(
+                "search_top_k must be between 1 and 100, got {k}"
+            )));
         }
-        if let Some(d) = self.search_max_distance {
-            if !(0.0..=1.0).contains(&d) {
-                return Err(crate::error::HonchoError::Configuration(format!(
-                    "search_max_distance must be between 0.0 and 1.0, got {d}"
-                )));
-            }
+        if let Some(d) = self.search_max_distance
+            && !(0.0..=1.0).contains(&d)
+        {
+            return Err(crate::error::HonchoError::Validation(format!(
+                "search_max_distance must be between 0.0 and 1.0, got {d}"
+            )));
         }
-        if let Some(c) = self.max_conclusions {
-            if !(1..=100).contains(&c) {
-                return Err(crate::error::HonchoError::Configuration(format!(
-                    "max_conclusions must be between 1 and 100, got {c}"
-                )));
-            }
+        if let Some(c) = self.max_conclusions
+            && !(1..=100).contains(&c)
+        {
+            return Err(crate::error::HonchoError::Validation(format!(
+                "max_conclusions must be between 1 and 100, got {c}"
+            )));
         }
 
         let params = crate::types::peer::PeerRepresentationGet {
@@ -430,33 +622,75 @@ pub struct ListConclusionsBuilder {
 
 impl ListConclusionsBuilder {
     /// Set the page number (1-indexed, default 1).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.list().page(2);
+    /// # }
+    /// ```
     pub fn page(mut self, page: u32) -> Self {
         self.page = u64::from(page);
         self
     }
 
     /// Set the page size (default 50).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.list().size(25);
+    /// # }
+    /// ```
     pub fn size(mut self, size: u32) -> Self {
         self.size = u64::from(size);
         self
     }
 
     /// Filter conclusions to a specific session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.list().session("sess-42");
+    /// # }
+    /// ```
     pub fn session(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
         self
     }
 
     /// Reverse the default ordering.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.list().reverse(true);
+    /// # }
+    /// ```
     pub fn reverse(mut self, reverse: bool) -> Self {
         self.reverse = reverse;
         self
     }
 
     /// Send the list request and return a paginated result.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
+    /// let page = scope.list().page(1).size(20).send().await?;
+    /// println!("total: {}", page.total());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn send(self) -> Result<ConclusionPage> {
         if self.size == 0 {
-            return Err(HonchoError::Configuration(
+            return Err(HonchoError::Validation(
                 "page size must be greater than 0".to_string(),
             ));
         }
@@ -492,12 +726,28 @@ pub struct QueryConclusionsBuilder {
 
 impl QueryConclusionsBuilder {
     /// Set the number of results (1–100, default 10).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.query("interests").top_k(5);
+    /// # }
+    /// ```
     pub fn top_k(mut self, top_k: u32) -> Self {
         self.top_k = top_k;
         self
     }
 
     /// Set the maximum cosine distance threshold (0.0–1.0).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(scope: &honcho_ai::ConclusionScope) {
+    /// let _builder = scope.query("interests").distance(0.7);
+    /// # }
+    /// ```
     pub fn distance(mut self, distance: f64) -> Self {
         self.distance = Some(distance);
         self
@@ -505,23 +755,35 @@ impl QueryConclusionsBuilder {
 
     /// Send the query request.
     ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
+    /// let results = scope.query("preferences").top_k(5).distance(0.8).send().await?;
+    /// for c in &results {
+    ///     println!("{}", c.content);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
-    /// Returns [`HonchoError::Configuration`] if `top_k` ∉ [1, 100]
+    /// Returns [`HonchoError::Validation`] if `top_k` ∉ [1, 100]
     /// or `distance` ∉ [0.0, 1.0].
     pub async fn send(self) -> Result<Vec<ConclusionData>> {
         if !(1..=100).contains(&self.top_k) {
-            return Err(HonchoError::Configuration(format!(
+            return Err(HonchoError::Validation(format!(
                 "top_k must be between 1 and 100, got {}",
                 self.top_k
             )));
         }
-        if let Some(d) = self.distance {
-            if !(0.0..=1.0).contains(&d) {
-                return Err(HonchoError::Configuration(format!(
-                    "distance must be between 0.0 and 1.0, got {d}"
-                )));
-            }
+        if let Some(d) = self.distance
+            && !(0.0..=1.0).contains(&d)
+        {
+            return Err(HonchoError::Validation(format!(
+                "distance must be between 0.0 and 1.0, got {d}"
+            )));
         }
         let filters = serde_json::json!({
             "observer_id": self.scope.inner.observer,
@@ -1089,11 +1351,11 @@ mod tests {
             ConclusionScope::new(test_http(), "ws".to_owned(), "a".to_owned(), "b".to_owned());
 
         let err = scope.query("test").top_k(0).send().await.unwrap_err();
-        assert!(matches!(err, HonchoError::Configuration(_)));
-        assert_eq!(err.code(), "configuration_error");
+        assert!(matches!(err, HonchoError::Validation(_)));
+        assert_eq!(err.code(), "validation_error");
 
         let err = scope.query("test").top_k(101).send().await.unwrap_err();
-        assert!(matches!(err, HonchoError::Configuration(_)));
+        assert!(matches!(err, HonchoError::Validation(_)));
     }
 
     #[tokio::test]
@@ -1102,10 +1364,10 @@ mod tests {
             ConclusionScope::new(test_http(), "ws".to_owned(), "a".to_owned(), "b".to_owned());
 
         let err = scope.query("test").distance(-0.1).send().await.unwrap_err();
-        assert!(matches!(err, HonchoError::Configuration(_)));
+        assert!(matches!(err, HonchoError::Validation(_)));
 
         let err = scope.query("test").distance(1.1).send().await.unwrap_err();
-        assert!(matches!(err, HonchoError::Configuration(_)));
+        assert!(matches!(err, HonchoError::Validation(_)));
     }
 
     // ── F9.5: ConclusionScope::delete tests ──────────────────────────────

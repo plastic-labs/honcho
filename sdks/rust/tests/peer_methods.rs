@@ -10,6 +10,7 @@
 
 use futures_util::StreamExt;
 use honcho_ai::Honcho;
+use honcho_ai::types::peer::PeerContextOptions;
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -138,9 +139,9 @@ async fn peer_representation_validates_search_top_k() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, honcho_ai::error::HonchoError::Configuration(ref msg)
+        matches!(err, honcho_ai::error::HonchoError::Validation(ref msg)
             if msg.contains("search_top_k")),
-        "expected Configuration error for search_top_k, got {err:?}"
+        "expected Validation error for search_top_k, got {err:?}"
     );
 
     let err = peer
@@ -150,9 +151,9 @@ async fn peer_representation_validates_search_top_k() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, honcho_ai::error::HonchoError::Configuration(ref msg)
+        matches!(err, honcho_ai::error::HonchoError::Validation(ref msg)
             if msg.contains("search_top_k")),
-        "expected Configuration error for search_top_k=101, got {err:?}"
+        "expected Validation error for search_top_k=101, got {err:?}"
     );
 }
 
@@ -171,9 +172,9 @@ async fn peer_representation_validates_search_max_distance() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, honcho_ai::error::HonchoError::Configuration(ref msg)
+        matches!(err, honcho_ai::error::HonchoError::Validation(ref msg)
             if msg.contains("search_max_distance")),
-        "expected Configuration error for search_max_distance, got {err:?}"
+        "expected Validation error for search_max_distance, got {err:?}"
     );
 
     let err = peer
@@ -183,9 +184,9 @@ async fn peer_representation_validates_search_max_distance() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, honcho_ai::error::HonchoError::Configuration(ref msg)
+        matches!(err, honcho_ai::error::HonchoError::Validation(ref msg)
             if msg.contains("search_max_distance")),
-        "expected Configuration error for negative search_max_distance, got {err:?}"
+        "expected Validation error for negative search_max_distance, got {err:?}"
     );
 }
 
@@ -204,9 +205,9 @@ async fn peer_representation_validates_max_conclusions() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, honcho_ai::error::HonchoError::Configuration(ref msg)
+        matches!(err, honcho_ai::error::HonchoError::Validation(ref msg)
             if msg.contains("max_conclusions")),
-        "expected Configuration error for max_conclusions=0, got {err:?}"
+        "expected Validation error for max_conclusions=0, got {err:?}"
     );
 
     let err = peer
@@ -216,9 +217,9 @@ async fn peer_representation_validates_max_conclusions() {
         .await
         .unwrap_err();
     assert!(
-        matches!(err, honcho_ai::error::HonchoError::Configuration(ref msg)
+        matches!(err, honcho_ai::error::HonchoError::Validation(ref msg)
             if msg.contains("max_conclusions")),
-        "expected Configuration error for max_conclusions=101, got {err:?}"
+        "expected Validation error for max_conclusions=101, got {err:?}"
     );
 }
 
@@ -276,6 +277,70 @@ async fn peer_context_with_target_sends_query() {
     assert_eq!(ctx.target_id, "bob");
     assert_eq!(ctx.representation.as_deref(), Some("Bob is helpful."));
     assert!(ctx.peer_card.is_none());
+}
+
+#[tokio::test]
+async fn peer_context_with_options_sends_all_query_params() {
+    let server = MockServer::start().await;
+    let honcho = make_honcho(&server);
+    mount_peer_create(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/v3/workspaces/ws1/peers/alice/context"))
+        .and(query_param("target", "bob"))
+        .and(query_param("search_query", "preferences"))
+        .and(query_param("search_top_k", "10"))
+        .and(query_param("search_max_distance", "0.5"))
+        .and(query_param("include_most_frequent", "true"))
+        .and(query_param("max_conclusions", "20"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "peer_id": "alice",
+            "target_id": "bob",
+            "representation": "curated context",
+            "peer_card": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let peer = honcho.peer("alice").await.unwrap();
+    let opts = PeerContextOptions::builder()
+        .target("bob")
+        .search_query("preferences")
+        .search_top_k(10)
+        .search_max_distance(0.5)
+        .include_most_frequent(true)
+        .max_conclusions(20)
+        .build();
+    let ctx = peer.context_with_options(&opts).await.unwrap();
+    assert_eq!(ctx.peer_id, "alice");
+    assert_eq!(ctx.target_id, "bob");
+    assert_eq!(ctx.representation.as_deref(), Some("curated context"));
+}
+
+#[tokio::test]
+async fn peer_context_with_options_sends_only_set_params() {
+    let server = MockServer::start().await;
+    let honcho = make_honcho(&server);
+    mount_peer_create(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/v3/workspaces/ws1/peers/alice/context"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "peer_id": "alice",
+            "target_id": "alice",
+            "representation": "self context",
+            "peer_card": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let peer = honcho.peer("alice").await.unwrap();
+    let opts = PeerContextOptions::builder().build();
+    let ctx = peer.context_with_options(&opts).await.unwrap();
+    assert_eq!(ctx.peer_id, "alice");
+    assert_eq!(ctx.representation.as_deref(), Some("self context"));
 }
 
 // ── F5.7 Sessions ──────────────────────────────────────────────────
@@ -451,7 +516,7 @@ async fn chat_stream_validates_non_empty_query() {
     assert!(result.is_err(), "expected error for empty query");
     let err = result.err().unwrap();
     assert!(
-        matches!(err, honcho_ai::error::HonchoError::Configuration(ref msg) if msg.contains("query")),
-        "expected Configuration error for empty query, got {err:?}"
+        matches!(err, honcho_ai::error::HonchoError::Validation(ref msg) if msg.contains("query")),
+        "expected Validation error for empty query, got {err:?}"
     );
 }

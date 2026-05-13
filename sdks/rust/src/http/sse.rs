@@ -185,11 +185,12 @@ impl SseParser {
 
         let obj = parsed.as_object()?;
 
-        if let Some(done_val) = obj.get("done") {
-            if !done_val.is_null() && done_val.as_bool().unwrap_or(false) {
-                self.done = true;
-                return None;
-            }
+        if let Some(done_val) = obj.get("done")
+            && !done_val.is_null()
+            && done_val.as_bool().unwrap_or(false)
+        {
+            self.done = true;
+            return None;
         }
 
         let delta = obj.get("delta")?.as_object()?;

@@ -6,12 +6,12 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::types::dialectic::{DialecticOptions, ReasoningLevel};
-use crate::types::message::MessageResponse;
+use crate::types::message::MessageSearchOptions;
 use crate::types::peer::PeerContext;
 use crate::types::session::Session;
 
 use super::conclusion::ConclusionScope;
-use super::iter::{collect_all_pages, BlockingIter};
+use super::iter::{BlockingIter, collect_all_pages};
 use super::runtime::block_on;
 
 /// Synchronous wrapper around [`crate::Peer`].
@@ -114,6 +114,14 @@ impl Peer {
         block_on(self.inner.context_with_target(target))
     }
 
+    /// Get the peer's context with custom options.
+    pub fn context_with_options(
+        &self,
+        options: &crate::types::peer::PeerContextOptions,
+    ) -> Result<PeerContext> {
+        block_on(self.inner.context_with_options(options))
+    }
+
     /// List sessions for this peer, collecting across pages.
     pub fn sessions(&self) -> Result<Vec<Session>> {
         block_on(async {
@@ -123,8 +131,16 @@ impl Peer {
     }
 
     /// Search messages for this peer.
-    pub fn search(&self, query: &str) -> Result<Vec<MessageResponse>> {
+    pub fn search(&self, query: &str) -> Result<Vec<crate::Message>> {
         block_on(self.inner.search(query))
+    }
+
+    /// Search messages for this peer with custom options.
+    pub fn search_with_options(
+        &self,
+        options: &MessageSearchOptions,
+    ) -> Result<Vec<crate::Message>> {
+        block_on(self.inner.search_with_options(options))
     }
 
     /// Get this peer's card.

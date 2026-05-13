@@ -66,14 +66,6 @@ pub struct MessageUpdate {
     pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Parameters for listing / filtering messages.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct MessageGet {
-    /// Optional filter predicates.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub filters: Option<HashMap<String, serde_json::Value>>,
-}
-
 /// Configuration that can be attached to a message.
 ///
 /// All fields optional; message-level config overrides session and workspace config.
@@ -84,37 +76,23 @@ pub struct MessageConfiguration {
 }
 
 /// Parameters for searching messages.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct MessageSearchOptions {
     /// Search query string.
     pub query: String,
     /// Optional filters to scope the search.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub filters: Option<HashMap<String, serde_json::Value>>,
     /// Maximum number of results (1–100, default 10).
     #[serde(default = "default_limit")]
+    #[builder(default = default_limit())]
     pub limit: u32,
 }
 
 fn default_limit() -> u32 {
     10
-}
-
-/// Multipart form body for file-based message upload.
-///
-/// Used by the `POST …/messages/upload` endpoint. `file` and `peer_id` are
-/// required; the remaining fields are optional string-encoded payloads.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct MessageUploadForm {
-    /// Raw file contents as bytes.
-    pub file: Vec<u8>,
-    /// ID of the peer uploading the file.
-    pub peer_id: String,
-    /// Optional JSON-encoded metadata string.
-    pub metadata: Option<String>,
-    /// Optional JSON-encoded configuration string.
-    pub configuration: Option<String>,
-    /// Optional ISO-8601 timestamp override.
-    pub created_at: Option<String>,
 }
 
 /// Paginated response of [`MessageResponse`] items.

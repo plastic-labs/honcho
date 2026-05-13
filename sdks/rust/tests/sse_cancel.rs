@@ -1,15 +1,16 @@
-//! A.3 — SSE cancel-safety and malformed-data tests.
+//! R-34 — SSE cancellation safety tests.
 //!
-//! Test 1: Dropping the stream mid-read causes a TCP disconnect visible to
-//!         the wiremock mockserver.
-//! Test 2: Malformed JSON mid-stream never panics; valid content around it is
-//!         still yielded.
+//! 1. `tokio::select!` + drop cancels a slow SSE stream without hanging
+//! 2. Dropping the stream mid-read is visible as a TCP disconnect (wiremock)
+//! 3. Malformed JSON mid-stream never panics; valid content around it is still yielded
+//! 4. `DialecticStream` wrapper cancels cleanly via `tokio::select!`
 
 #![allow(clippy::unwrap_used)]
 
 use std::pin::Pin;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use futures_util::StreamExt;
 use honcho_ai::error::HonchoError;
 use honcho_ai::http::sse::parse_sse_stream;
@@ -22,7 +23,47 @@ fn sse_chunk(data: &str) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Test 1: cancel-safety — drop stream, assert TCP disconnect
+// Test 1: tokio::select! cancels slow stream, drop completes fast
+// ═══════════════════════════════════════════════════════════════════════
+#[tokio::test]
+async fn tokio_select_cancel_drops_stream_cleanly() {
+    let slow_bytes: Pin<
+        Box<dyn futures_util::Stream<Item = Result<Bytes, reqwest::Error>> + Send>,
+    > = Box::pin(async_stream::stream! {
+        yield Ok(Bytes::from(
+            "data: {\"delta\":{\"content\":\"first\"}}\n\n",
+        ));
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        yield Ok(Bytes::from(
+            "data: {\"delta\":{\"content\":\"never\"}}\n\n",
+        ));
+    });
+
+    let mut s = Box::pin(parse_sse_stream(slow_bytes));
+
+    let result = tokio::select! {
+        chunk = s.next() => chunk,
+        () = tokio::time::sleep(Duration::from_secs(5)) => {
+            panic!("timed out waiting for first SSE chunk");
+        }
+    };
+
+    let content = result.expect("stream ended unexpectedly").unwrap();
+    assert_eq!(content, "first");
+
+    // Drop while inner stream still sleeping — must complete without blocking
+    let before = Instant::now();
+    drop(s);
+    let elapsed = before.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "drop took {elapsed:?} — possible resource leak or blocking on Drop",
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Test 2: cancel-safety — drop stream, assert TCP disconnect
 // ═══════════════════════════════════════════════════════════════════════
 #[tokio::test]
 async fn drop_stream_causes_tcp_disconnect() {
@@ -62,7 +103,7 @@ async fn drop_stream_causes_tcp_disconnect() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Test 2: malformed JSON mid-stream does not panic
+// Test 3: malformed JSON mid-stream does not panic
 // ═══════════════════════════════════════════════════════════════════════
 #[tokio::test]
 async fn malformed_json_mid_stream_no_panic() {
@@ -103,4 +144,48 @@ async fn malformed_json_mid_stream_no_panic() {
         "should yield content after malformed JSON"
     );
     assert_eq!(ok_results.len(), 2, "only valid chunks should appear");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Test 4: DialecticStream wrapper cancels cleanly via tokio::select!
+// ═══════════════════════════════════════════════════════════════════════
+#[tokio::test]
+async fn dialectic_stream_cancel_via_select() {
+    use honcho_ai::DialecticStream;
+
+    let slow_bytes: Pin<
+        Box<dyn futures_util::Stream<Item = Result<Bytes, reqwest::Error>> + Send>,
+    > = Box::pin(async_stream::stream! {
+        yield Ok(Bytes::from(
+            "data: {\"delta\":{\"content\":\"hello\"}}\n\n",
+        ));
+        tokio::time::sleep(Duration::from_secs(300)).await;
+        yield Ok(Bytes::from(
+            "data: {\"delta\":{\"content\":\"world\"}}\n\n",
+        ));
+    });
+
+    let inner = parse_sse_stream(slow_bytes);
+    let mut ds = DialecticStream::new(Box::pin(inner));
+
+    let item = tokio::select! {
+        chunk = ds.next() => chunk,
+        () = tokio::time::sleep(Duration::from_secs(5)) => {
+            panic!("timed out waiting for DialecticStream chunk");
+        }
+    };
+
+    let content = item.expect("stream ended").unwrap();
+    assert_eq!(content, "hello");
+    assert_eq!(ds.final_response(), "hello");
+    assert!(!ds.is_complete());
+
+    let before = Instant::now();
+    drop(ds);
+    let elapsed = before.elapsed();
+
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "DialecticStream drop took {elapsed:?} — cancellation not clean",
+    );
 }

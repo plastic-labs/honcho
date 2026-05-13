@@ -106,16 +106,16 @@ async fn full_lifecycle() {
     let session_ids: Vec<String> = sessions_page.items().into_iter().map(|s| s.id).collect();
     assert!(session_ids.contains(&"lifecycle-session".to_string()));
 
-    let fetched = session.get_message(&created[0].id).await.unwrap();
-    assert_eq!(fetched.id, created[0].id);
+    let fetched = session.get_message(created[0].id()).await.unwrap();
+    assert_eq!(fetched.id(), created[0].id());
 
     let mut update_meta = HashMap::new();
     update_meta.insert("edited".to_owned(), json!(true));
     let updated_msg = session
-        .update_message(&created[0].id, update_meta)
+        .update_message(created[0].id(), update_meta)
         .await
         .unwrap();
-    assert_eq!(updated_msg.metadata.get("edited").unwrap(), &json!(true));
+    assert_eq!(updated_msg.metadata().get("edited").unwrap(), &json!(true));
 
     session.delete().await.unwrap();
     drop(guard);
@@ -174,7 +174,7 @@ async fn session_clone_and_summaries() {
     assert_ne!(cloned.id(), session.id());
 
     let cloned_with_msg = session
-        .clone_session_with_message(&created[0].id)
+        .clone_session_with_message(created[0].id())
         .await
         .unwrap();
     assert_ne!(cloned_with_msg.id(), session.id());
@@ -271,8 +271,8 @@ async fn workspace_metadata_and_configuration() {
 
     let mut config = HashMap::new();
     config.insert("feature_x".to_owned(), json!(true));
-    client.set_configuration(config).await.unwrap();
-    let fetched_config = client.get_configuration().await.unwrap();
+    client.set_configuration_raw(config).await.unwrap();
+    let fetched_config = client.get_configuration_raw().await.unwrap();
     assert_eq!(fetched_config.get("feature_x").unwrap(), &json!(true));
 
     drop(guard);

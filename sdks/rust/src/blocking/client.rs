@@ -6,14 +6,14 @@ use url::Url;
 use crate::client::HonchoParams;
 use crate::error::Result;
 use crate::types::dream::QueueStatus;
-use crate::types::message::MessageResponse;
 use crate::types::peer::Peer as PeerResponse;
 use crate::types::session::Session as SessionResponse;
+use crate::types::workspace::WorkspaceConfiguration;
 
-use super::iter::collect_all_pages;
-use super::runtime::block_on;
 use super::Peer as BlockingPeer;
 use super::Session as BlockingSession;
+use super::iter::collect_all_pages;
+use super::runtime::block_on;
 
 /// Synchronous wrapper around [`crate::Honcho`].
 #[derive(Clone)]
@@ -67,18 +67,31 @@ impl Honcho {
     }
 
     /// Search messages across the workspace.
-    pub fn search(&self, query: &str) -> Result<Vec<MessageResponse>> {
+    pub fn search(&self, query: &str) -> Result<Vec<crate::Message>> {
         block_on(self.inner.search(query))
     }
 
     /// Get queue processing status.
-    pub fn queue_status(&self) -> Result<QueueStatus> {
-        block_on(self.inner.queue_status())
+    pub fn queue_status(
+        &self,
+        observer_id: Option<&str>,
+        sender_id: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Result<QueueStatus> {
+        block_on(self.inner.queue_status(observer_id, sender_id, session_id))
     }
 
     /// Schedule a dream task for memory consolidation.
-    pub fn schedule_dream(&self, observer: &str) -> Result<()> {
-        block_on(self.inner.schedule_dream(observer))
+    pub fn schedule_dream(
+        &self,
+        observer: &str,
+        session_id: Option<&str>,
+        observed_peer: Option<&str>,
+    ) -> Result<()> {
+        block_on(
+            self.inner
+                .schedule_dream(observer, session_id, observed_peer),
+        )
     }
 
     /// Delete a workspace by ID.
@@ -96,14 +109,24 @@ impl Honcho {
         block_on(self.inner.set_metadata(metadata))
     }
 
-    /// Fetch workspace configuration.
-    pub fn get_configuration(&self) -> Result<HashMap<String, Value>> {
+    /// Fetch workspace configuration as a typed [`WorkspaceConfiguration`].
+    pub fn get_configuration(&self) -> Result<WorkspaceConfiguration> {
         block_on(self.inner.get_configuration())
     }
 
-    /// Set workspace configuration.
-    pub fn set_configuration(&self, configuration: HashMap<String, Value>) -> Result<()> {
-        block_on(self.inner.set_configuration(configuration))
+    /// Set workspace configuration from a typed [`WorkspaceConfiguration`].
+    pub fn set_configuration(&self, config: &WorkspaceConfiguration) -> Result<()> {
+        block_on(self.inner.set_configuration(config))
+    }
+
+    /// Fetch workspace configuration as a raw JSON map.
+    pub fn get_configuration_raw(&self) -> Result<HashMap<String, Value>> {
+        block_on(self.inner.get_configuration_raw())
+    }
+
+    /// Set workspace configuration from a raw JSON map.
+    pub fn set_configuration_raw(&self, configuration: HashMap<String, Value>) -> Result<()> {
+        block_on(self.inner.set_configuration_raw(configuration))
     }
 
     /// List all peers in the workspace, collecting across pages.

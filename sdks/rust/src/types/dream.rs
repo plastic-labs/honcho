@@ -45,10 +45,10 @@ pub struct ReasoningConfiguration {
 /// Maps `ScheduleDreamRequest` from the `OpenAPI` spec.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]
 #[non_exhaustive]
-#[builder(derive(Debug))]
+#[builder(derive(Debug), on(String, into))]
+#[builder(finish_fn = build)]
 pub struct ScheduleDreamRequest {
     /// Observer peer name.
-    #[builder(into)]
     pub observer: String,
     /// Type of dream to schedule.
     pub dream_type: DreamType,

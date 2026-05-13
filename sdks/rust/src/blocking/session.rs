@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::session::PeerSpec;
-use crate::types::message::MessageResponse;
+use crate::types::message::MessageSearchOptions;
 use crate::types::session::SessionPeerConfig;
 
 use super::runtime::block_on;
@@ -108,12 +108,12 @@ impl Session {
     pub fn add_messages(
         &self,
         messages: Vec<crate::types::message::MessageCreate>,
-    ) -> Result<Vec<MessageResponse>> {
+    ) -> Result<Vec<crate::Message>> {
         block_on(self.inner.add_messages(messages))
     }
 
     /// List messages, collecting across pages.
-    pub fn messages(&self) -> Result<Vec<MessageResponse>> {
+    pub fn messages(&self) -> Result<Vec<crate::Message>> {
         block_on(async {
             let page = self.inner.messages().await?;
             Ok(super::iter::collect_all_pages(page).await)
@@ -136,7 +136,7 @@ impl Session {
     }
 
     /// Get a single message by ID.
-    pub fn get_message(&self, id: &str) -> Result<MessageResponse> {
+    pub fn get_message(&self, id: &str) -> Result<crate::Message> {
         block_on(self.inner.get_message(id))
     }
 
@@ -145,7 +145,7 @@ impl Session {
         &self,
         id: &str,
         metadata: HashMap<String, Value>,
-    ) -> Result<MessageResponse> {
+    ) -> Result<crate::Message> {
         block_on(self.inner.update_message(id, metadata))
     }
 
@@ -154,14 +154,30 @@ impl Session {
         block_on(self.inner.context())
     }
 
+    /// Get session context with custom parameters.
+    pub fn context_with_options(
+        &self,
+        options: &crate::types::session::SessionContextOptions,
+    ) -> Result<crate::types::session::SessionContext> {
+        block_on(self.inner.context_with_options(options))
+    }
+
     /// Get available summaries.
     pub fn summaries(&self) -> Result<crate::types::session::SessionSummaries> {
         block_on(self.inner.summaries())
     }
 
     /// Search messages within this session.
-    pub fn search(&self, query: &str) -> Result<Vec<MessageResponse>> {
+    pub fn search(&self, query: &str) -> Result<Vec<crate::Message>> {
         block_on(self.inner.search(query))
+    }
+
+    /// Search messages within this session with custom options.
+    pub fn search_with_options(
+        &self,
+        options: &MessageSearchOptions,
+    ) -> Result<Vec<crate::Message>> {
+        block_on(self.inner.search_with_options(options))
     }
 
     /// Get a peer's representation scoped to this session.
@@ -170,7 +186,11 @@ impl Session {
     }
 
     /// Get processing queue status for this session.
-    pub fn queue_status(&self) -> Result<crate::types::dream::QueueStatus> {
-        block_on(self.inner.queue_status())
+    pub fn queue_status(
+        &self,
+        observer_id: Option<&str>,
+        sender_id: Option<&str>,
+    ) -> Result<crate::types::dream::QueueStatus> {
+        block_on(self.inner.queue_status(observer_id, sender_id))
     }
 }

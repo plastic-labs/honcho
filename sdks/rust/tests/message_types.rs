@@ -47,25 +47,8 @@ mod message_schemas {
     schema_tests!(MessageCreate, "MessageCreate");
     schema_tests!(MessageBatchCreate, "MessageBatchCreate");
     schema_tests!(MessageUpdate, "MessageUpdate");
-    schema_tests!(MessageGet, "MessageGet");
     schema_tests!(MessageConfiguration, "MessageConfiguration");
     schema_tests!(MessageSearchOptions, "MessageSearchOptions");
-}
-
-mod message_upload_form_roundtrip {
-    use super::*;
-
-    #[rstest]
-    fn roundtrip_message_upload_form_min() {
-        let val = load_fixture("MessageUploadForm", "min");
-        roundtrip::<MessageUploadForm>(val);
-    }
-
-    #[rstest]
-    fn roundtrip_message_upload_form_max() {
-        let val = load_fixture("MessageUploadForm", "max");
-        roundtrip::<MessageUploadForm>(val);
-    }
 }
 
 mod page_message_roundtrip {

@@ -5,14 +5,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
-use reqwest::multipart::Form;
 use reqwest::Method;
+use reqwest::multipart::Form;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::error::{HonchoError, Result};
 use crate::http::client::HttpClient;
 use crate::http::routes;
+use crate::message::Message;
 use crate::types::message::MessageResponse;
 use crate::types::session::Session as SessionResponse;
 use crate::types::session::SessionPeerConfig;
@@ -114,24 +115,62 @@ pub struct UploadFileBuilder<'a> {
 
 impl UploadFileBuilder<'_> {
     /// Set the peer that owns the uploaded file (required).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.upload_file(honcho_ai::FileSource::bytes("f.txt", b"data", "text/plain")).peer("alice");
+    /// # }
+    /// ```
     pub fn peer(mut self, id: impl Into<String>) -> Self {
         self.peer_id = Some(id.into());
         self
     }
 
     /// Attach arbitrary JSON metadata to the created message(s).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.upload_file(honcho_ai::FileSource::bytes("f.txt", b"data", "text/plain"))
+    ///     .peer("alice")
+    ///     .metadata(serde_json::json!({"source": "upload"}));
+    /// # }
+    /// ```
     pub fn metadata(mut self, value: Value) -> Self {
         self.metadata = Some(value);
         self
     }
 
     /// Attach configuration to the created message(s).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.upload_file(honcho_ai::FileSource::bytes("f.txt", b"data", "text/plain"))
+    ///     .peer("alice")
+    ///     .configuration(serde_json::json!({"reasoning": true}));
+    /// # }
+    /// ```
     pub fn configuration(mut self, value: Value) -> Self {
         self.configuration = Some(value);
         self
     }
 
     /// Override the creation timestamp (ISO 3339).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.upload_file(honcho_ai::FileSource::bytes("f.txt", b"data", "text/plain"))
+    ///     .peer("alice")
+    ///     .created_at(chrono::Utc::now());
+    /// # }
+    /// ```
     pub fn created_at(mut self, dt: DateTime<Utc>) -> Self {
         self.created_at = Some(dt);
         self
@@ -140,9 +179,26 @@ impl UploadFileBuilder<'_> {
     /// Resolve the file source, build the multipart form, POST, and return
     /// the created messages.
     ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let msgs = session
+    ///     .upload_file(honcho_ai::FileSource::bytes("doc.pdf", b"data", "application/pdf"))
+    ///     .peer("alice")
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns [`HonchoError::Validation`] if no peer was set via `.peer()`.
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip(self), name = "upload_file_send")
+    )]
     pub async fn send(self) -> Result<Vec<crate::Message>> {
         let peer_id = self
             .peer_id
@@ -246,18 +302,46 @@ impl Session {
     }
 
     /// The session's unique identifier.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// println!("{}", session.id());
+    /// # }
+    /// ```
     #[must_use]
     pub fn id(&self) -> &str {
         &self.inner.id
     }
 
     /// Whether the session is currently active.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// if session.is_active() {
+    ///     println!("session is active");
+    /// }
+    /// # }
+    /// ```
     #[must_use]
     pub fn is_active(&self) -> bool {
         self.inner.is_active.load(Ordering::Relaxed)
     }
 
     /// Cached metadata from the last API response.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// if let Some(meta) = session.metadata() {
+    ///     println!("{meta:?}");
+    /// }
+    /// # }
+    /// ```
     #[must_use]
     pub fn metadata(&self) -> Option<HashMap<String, Value>> {
         self.inner
@@ -268,6 +352,16 @@ impl Session {
     }
 
     /// Cached configuration from the last API response.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// if let Some(config) = session.configuration() {
+    ///     println!("{config:?}");
+    /// }
+    /// # }
+    /// ```
     #[must_use]
     pub fn configuration(&self) -> Option<HashMap<String, Value>> {
         self.inner
@@ -280,6 +374,15 @@ impl Session {
     // ── F6.1: Refresh / Metadata / Configuration CRUD ──────────────────
 
     /// Refresh the session's cached metadata and configuration from the server.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// session.refresh().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn refresh(&self) -> Result<()> {
         let body = serde_json::json!({"id": self.inner.id});
         let resp: SessionResponse = self
@@ -308,6 +411,15 @@ impl Session {
     }
 
     /// Fetch and return the session's metadata, updating the cache.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let meta = session.get_metadata().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_metadata(&self) -> Result<HashMap<String, Value>> {
         self.refresh().await?;
         Ok(self
@@ -320,6 +432,17 @@ impl Session {
     }
 
     /// Set session metadata on the server and update the cache.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let mut meta = std::collections::HashMap::new();
+    /// meta.insert("topic".into(), "rust".into());
+    /// session.set_metadata(meta).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_metadata(&self, metadata: HashMap<String, Value>) -> Result<()> {
         let body = serde_json::json!({"metadata": metadata});
         let resp: SessionResponse = self
@@ -340,6 +463,15 @@ impl Session {
     }
 
     /// Fetch and return session configuration, updating the cache.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let config = session.get_configuration().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_configuration(&self) -> Result<HashMap<String, Value>> {
         self.refresh().await?;
         Ok(self
@@ -352,6 +484,17 @@ impl Session {
     }
 
     /// Set session configuration on the server and update the cache.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let mut config = std::collections::HashMap::new();
+    /// config.insert("model".into(), "gpt-4".into());
+    /// session.set_configuration(config).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_configuration(&self, configuration: HashMap<String, Value>) -> Result<()> {
         let body = serde_json::json!({"configuration": configuration});
         let resp: SessionResponse = self
@@ -374,34 +517,68 @@ impl Session {
     // ── F6.2: Peer Management ──────────────────────────────────────────
 
     /// Add a single peer to this session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// session.add_peer("alice").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn add_peer(&self, id: impl Into<String>) -> Result<()> {
         self.add_peers(std::iter::once(PeerSpec::Id(id.into())))
             .await
     }
 
     /// Add multiple peers to this session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// session.add_peers(["alice", "bob"]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn add_peers(
         &self,
         specs: impl IntoIterator<Item = impl Into<PeerSpec>>,
     ) -> Result<()> {
         let peers_map = normalize_peers(specs)?;
-        let body = serde_json::json!({"peers": peers_map});
         let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
-        self.inner.http.post(&route, Some(&body), &[]).await
+        self.inner.http.post(&route, Some(&peers_map), &[]).await
     }
 
     /// Set the complete peer list for this session (replaces existing).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// session.set_peers(["alice", "bob"]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_peers(
         &self,
         specs: impl IntoIterator<Item = impl Into<PeerSpec>>,
     ) -> Result<()> {
         let peers_map = normalize_peers(specs)?;
-        let body = serde_json::json!({"peers": peers_map});
         let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
-        self.inner.http.put(&route, Some(&body), &[]).await
+        self.inner.http.put(&route, Some(&peers_map), &[]).await
     }
 
     /// Remove peers from this session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// session.remove_peers(["bob"]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn remove_peers(
         &self,
         ids: impl IntoIterator<Item = impl Into<String>>,
@@ -415,6 +592,18 @@ impl Session {
     }
 
     /// List peers in this session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let peers = session.peers().await?;
+    /// for p in &peers {
+    ///     println!("{}", p.id());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn peers(&self) -> Result<Vec<crate::Peer>> {
         let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
         let page: PeersPageResponse = self.inner.http.get(&route, &[]).await?;
@@ -434,12 +623,32 @@ impl Session {
     // ── F6.3: Per-peer configuration ───────────────────────────────────
 
     /// Get per-peer configuration for a specific peer in this session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let config = session.get_peer_configuration("alice").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn get_peer_configuration(&self, peer_id: &str) -> Result<SessionPeerConfig> {
         let route = routes::session_peer_config(&self.inner.workspace_id, &self.inner.id, peer_id);
         self.inner.http.get(&route, &[]).await
     }
 
     /// Set per-peer configuration for a specific peer in this session.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// use honcho_ai::types::session::SessionPeerConfig;
+    /// let config = SessionPeerConfig { observe_me: Some(true), observe_others: Some(false) };
+    /// session.set_peer_configuration("alice", &config).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn set_peer_configuration(
         &self,
         peer_id: &str,
@@ -456,43 +665,79 @@ impl Session {
     /// If more than 100 messages are provided, they are automatically chunked
     /// into batches of 100 and sent as separate requests. On chunk failure the
     /// already-sent messages are **not** rolled back (non-atomic).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(client: &honcho_ai::Honcho, session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let peer = client.peer("alice").await?;
+    /// let msg = peer.message("Hello!").build()?;
+    /// let messages = session.add_messages(vec![msg]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn add_messages(
         &self,
         messages: Vec<crate::types::message::MessageCreate>,
-    ) -> Result<Vec<crate::types::message::MessageResponse>> {
-        use crate::types::message::MessageResponse;
-
+    ) -> Result<Vec<Message>> {
         if messages.is_empty() {
             return Ok(Vec::new());
         }
 
         let route = routes::messages(&self.inner.workspace_id, &self.inner.id);
 
-        if messages.len() <= 100 {
+        let responses: Vec<MessageResponse> = if messages.len() <= 100 {
             let body = serde_json::json!({"messages": messages});
-            return self
-                .inner
-                .http
-                .post::<_, Vec<MessageResponse>>(&route, Some(&body), &[])
-                .await;
-        }
+            self.inner.http.post(&route, Some(&body), &[]).await?
+        } else {
+            let mut all = Vec::with_capacity(messages.len());
+            for chunk in messages.chunks(100) {
+                let body = serde_json::json!({"messages": chunk});
+                let batch: Vec<MessageResponse> =
+                    self.inner.http.post(&route, Some(&body), &[]).await?;
+                all.extend(batch);
+            }
+            all
+        };
 
-        let mut all = Vec::with_capacity(messages.len());
-        for chunk in messages.chunks(100) {
-            let body = serde_json::json!({"messages": chunk});
-            let batch: Vec<MessageResponse> =
-                self.inner.http.post(&route, Some(&body), &[]).await?;
-            all.extend(batch);
-        }
-        Ok(all)
+        Ok(responses
+            .into_iter()
+            .map(|r| Message::from_raw(self.inner.http.clone(), self.inner.workspace_id.clone(), r))
+            .collect())
     }
 
     /// List messages in this session (paginated).
-    pub async fn messages(
-        &self,
-    ) -> Result<crate::types::pagination::Page<crate::types::message::MessageResponse>> {
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let page = session.messages().await?;
+    /// for msg in page.items() {
+    ///     println!("{}", msg.content());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn messages(&self) -> Result<crate::types::pagination::Page<Message>> {
         let route = routes::messages_list(&self.inner.workspace_id, &self.inner.id);
-        crate::types::pagination::paginate_post(&self.inner.http, &route, None, 1, 50, false).await
+        let page: crate::types::pagination::Page<MessageResponse> =
+            crate::types::pagination::paginate_post(&self.inner.http, &route, None, 1, 50, false)
+                .await?;
+        let http = self.inner.http.clone();
+        let ws = self.inner.workspace_id.clone();
+        let messages: Vec<Message> = page
+            .items()
+            .into_iter()
+            .map(|r| Message::from_raw(http.clone(), ws.clone(), r))
+            .collect();
+        Ok(crate::types::pagination::Page::new(
+            messages,
+            page.total(),
+            page.page(),
+            page.size(),
+            page.pages(),
+        ))
     }
 
     // ── F7.3: File upload ───────────────────────────────────────────────
@@ -549,6 +794,16 @@ impl Session {
     // ── F6.5: Delete, clone, get/update message ────────────────────────
 
     /// Delete this session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// session.delete().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn delete(&self) -> Result<()> {
         self.inner
             .http
@@ -560,6 +815,16 @@ impl Session {
     }
 
     /// Clone this session, returning a new `Session`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let cloned = session.clone_session().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn clone_session(&self) -> Result<Session> {
         let route = routes::session_clone(&self.inner.workspace_id, &self.inner.id);
         let resp: SessionResponse = self.inner.http.post(&route, None::<&Value>, &[]).await?;
@@ -571,6 +836,16 @@ impl Session {
     }
 
     /// Clone this session up to (and including) the given message.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let cloned = session.clone_session_with_message("msg-42").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn clone_session_with_message(&self, message_id: &str) -> Result<Session> {
         let route = routes::session_clone(&self.inner.workspace_id, &self.inner.id);
         let resp: SessionResponse = self
@@ -586,20 +861,53 @@ impl Session {
     }
 
     /// Get a single message by ID.
-    pub async fn get_message(&self, id: &str) -> Result<crate::types::message::MessageResponse> {
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let msg = session.get_message("msg-1").await?;
+    /// println!("{}", msg.content());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
+    pub async fn get_message(&self, id: &str) -> Result<Message> {
         let route = routes::message(&self.inner.workspace_id, &self.inner.id, id);
-        self.inner.http.get(&route, &[]).await
+        let resp: MessageResponse = self.inner.http.get(&route, &[]).await?;
+        Ok(Message::from_raw(
+            self.inner.http.clone(),
+            self.inner.workspace_id.clone(),
+            resp,
+        ))
     }
 
     /// Update a message's metadata.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let mut meta = std::collections::HashMap::new();
+    /// meta.insert("edited".into(), true.into());
+    /// let msg = session.update_message("msg-1", meta).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, metadata), fields(session_id = self.inner.id.as_str())))]
     pub async fn update_message(
         &self,
         id: &str,
         metadata: HashMap<String, Value>,
-    ) -> Result<crate::types::message::MessageResponse> {
+    ) -> Result<Message> {
         let route = routes::message(&self.inner.workspace_id, &self.inner.id, id);
         let body = serde_json::json!({"metadata": metadata});
-        self.inner.http.put(&route, Some(&body), &[]).await
+        let resp: MessageResponse = self.inner.http.put(&route, Some(&body), &[]).await?;
+        Ok(Message::from_raw(
+            self.inner.http.clone(),
+            self.inner.workspace_id.clone(),
+            resp,
+        ))
     }
 
     // ── F6.6: Context ───────────────────────────────────────────────────
@@ -607,33 +915,86 @@ impl Session {
     /// Get the session context with default parameters.
     ///
     /// Fetches messages, summary, peer representation, and peer card for this session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let ctx = session.context().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn context(&self) -> Result<crate::types::session::SessionContext> {
-        self.context_with_options(true, false).await
+        let opts = crate::types::session::SessionContextOptions::builder()
+            .summary(true)
+            .limit_to_session(false)
+            .build();
+        self.context_with_options(&opts).await
     }
 
     /// Get the session context with custom parameters.
     ///
-    /// - `summary`: whether to include the session summary.
-    /// - `limit_to_session`: whether to limit representation context to this session.
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// use honcho_ai::types::session::SessionContextOptions;
+    /// let opts = SessionContextOptions::builder().summary(true).build();
+    /// let ctx = session.context_with_options(&opts).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn context_with_options(
         &self,
-        summary: bool,
-        limit_to_session: bool,
+        options: &crate::types::session::SessionContextOptions,
     ) -> Result<crate::types::session::SessionContext> {
         let route = routes::session_context(&self.inner.workspace_id, &self.inner.id);
-        self.inner
-            .http
-            .get(
-                &route,
-                &[
-                    ("summary", if summary { "true" } else { "false" }),
-                    (
-                        "limit_to_session",
-                        if limit_to_session { "true" } else { "false" },
-                    ),
-                ],
-            )
-            .await
+        let mut params: Vec<(&str, String)> = vec![
+            (
+                "summary",
+                if options.summary { "true" } else { "false" }.to_string(),
+            ),
+            (
+                "limit_to_session",
+                if options.limit_to_session {
+                    "true"
+                } else {
+                    "false"
+                }
+                .to_string(),
+            ),
+        ];
+        if let Some(ref v) = options.tokens {
+            params.push(("tokens", v.to_string()));
+        }
+        if let Some(ref v) = options.peer_target {
+            params.push(("peer_target", v.clone()));
+        }
+        if let Some(ref v) = options.peer_perspective {
+            params.push(("peer_perspective", v.clone()));
+        }
+        if let Some(ref v) = options.search_query {
+            params.push(("search_query", v.clone()));
+        }
+        if let Some(ref v) = options.search_top_k {
+            params.push(("search_top_k", v.to_string()));
+        }
+        if let Some(ref v) = options.search_max_distance {
+            params.push(("search_max_distance", v.to_string()));
+        }
+        if let Some(ref v) = options.include_most_frequent {
+            params.push((
+                "include_most_frequent",
+                if *v { "true" } else { "false" }.to_string(),
+            ));
+        }
+        if let Some(ref v) = options.max_conclusions {
+            params.push(("max_conclusions", v.to_string()));
+        }
+        let refs: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        self.inner.http.get(&route, &refs).await
     }
 
     // ── F6.8: Summaries ─────────────────────────────────────────────────
@@ -642,6 +1003,16 @@ impl Session {
     ///
     /// Returns both short and long summaries if they are available.
     /// Summaries are created asynchronously as messages are added.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let summaries = session.summaries().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn summaries(&self) -> Result<crate::types::session::SessionSummaries> {
         let route = routes::session_summaries(&self.inner.workspace_id, &self.inner.id);
         self.inner.http.get(&route, &[]).await
@@ -651,9 +1022,22 @@ impl Session {
 
     /// Search messages within this session (default limit of 10).
     ///
-    /// Returns `Err(HonchoError::Configuration)` when `query` is empty.
-    pub async fn search(&self, query: &str) -> Result<Vec<crate::types::message::MessageResponse>> {
-        self.search_with_options(crate::types::message::MessageSearchOptions {
+    /// Returns `Err(HonchoError::Validation)` when `query` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let results = session.search("important topic").await?;
+    /// for msg in results {
+    ///     println!("{}", msg.content());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
+    pub async fn search(&self, query: &str) -> Result<Vec<Message>> {
+        self.search_with_options(&crate::types::message::MessageSearchOptions {
             query: query.to_string(),
             filters: None,
             limit: 10,
@@ -663,23 +1047,51 @@ impl Session {
 
     /// Search messages within this session with custom options (limit, filters).
     ///
-    /// Returns `Err(HonchoError::Configuration)` when `query` is empty.
+    /// Returns `Err(HonchoError::Validation)` when `query` is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// use honcho_ai::types::message::MessageSearchOptions;
+    /// let opts = MessageSearchOptions { query: "topic".into(), filters: None, limit: 20 };
+    /// let results = session.search_with_options(&opts).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, options), fields(session_id = self.inner.id.as_str())))]
     pub async fn search_with_options(
         &self,
-        options: crate::types::message::MessageSearchOptions,
-    ) -> Result<Vec<crate::types::message::MessageResponse>> {
+        options: &crate::types::message::MessageSearchOptions,
+    ) -> Result<Vec<Message>> {
         if options.query.is_empty() {
-            return Err(crate::error::HonchoError::Configuration(
+            return Err(crate::error::HonchoError::Validation(
                 "query must not be empty".to_string(),
             ));
         }
         let route = routes::session_search(&self.inner.workspace_id, &self.inner.id);
-        self.inner.http.post(&route, Some(&options), &[]).await
+        let responses: Vec<MessageResponse> =
+            self.inner.http.post(&route, Some(&options), &[]).await?;
+        Ok(responses
+            .into_iter()
+            .map(|r| Message::from_raw(self.inner.http.clone(), self.inner.workspace_id.clone(), r))
+            .collect())
     }
 
     /// Get a peer's representation scoped to this session.
     ///
     /// Uses the peer representation endpoint with `session_id` filter.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let rep = session.representation("alice").await?;
+    /// println!("{rep}");
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn representation(&self, peer_id: &str) -> Result<String> {
         let route = routes::peer_representation(&self.inner.workspace_id, peer_id);
         let body = serde_json::json!({
@@ -691,12 +1103,30 @@ impl Session {
     }
 
     /// Get the processing queue status for this session.
-    pub async fn queue_status(&self) -> Result<crate::types::dream::QueueStatus> {
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let status = session.queue_status(None, None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
+    pub async fn queue_status(
+        &self,
+        observer_id: Option<&str>,
+        sender_id: Option<&str>,
+    ) -> Result<crate::types::dream::QueueStatus> {
         let route = routes::workspace_queue_status(&self.inner.workspace_id);
-        self.inner
-            .http
-            .get(&route, &[("session_id", &self.inner.id)])
-            .await
+        let mut query: Vec<(&str, &str)> = vec![("session_id", self.inner.id.as_str())];
+        if let Some(v) = observer_id {
+            query.push(("observer_id", v));
+        }
+        if let Some(v) = sender_id {
+            query.push(("sender_id", v));
+        }
+        self.inner.http.get(&route, &query).await
     }
 }
 

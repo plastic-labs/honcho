@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use honcho_ai::Honcho;
 use honcho_ai::Peer;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -240,7 +240,7 @@ async fn peer_chat_validates_empty_query() {
     let peer = make_peer(&server).await;
 
     let err = peer.chat("").await.unwrap_err();
-    assert_eq!(err.code(), "configuration_error");
+    assert_eq!(err.code(), "validation_error");
 }
 
 // ── F5.3: Search ──────────────────────────────────────────────────────
@@ -254,7 +254,6 @@ async fn peer_search_returns_messages() {
         .and(path("/v3/workspaces/ws1/peers/alice/search"))
         .and(body_json(&serde_json::json!({
             "query": "hello",
-            "filters": null,
             "limit": 10
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
@@ -274,8 +273,8 @@ async fn peer_search_returns_messages() {
 
     let results = peer.search("hello").await.unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].id, "msg1");
-    assert_eq!(results[0].content, "hello world");
+    assert_eq!(results[0].id(), "msg1");
+    assert_eq!(results[0].content(), "hello world");
 }
 
 #[tokio::test]

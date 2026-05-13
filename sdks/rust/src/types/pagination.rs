@@ -240,22 +240,22 @@ impl<TRaw: 'static, TOut: 'static> Page<TRaw, TOut> {
                 yield transform(item);
             }
 
-            if let Some(fetcher) = fetcher {
-                if has_next {
-                    let mut current_page = next_page_num;
-                    let mut pages = total_pages;
-                    while current_page <= pages {
-                        let resp = (fetcher)(current_page).await?;
-                        pages = resp.pages;
-                        let is_last = resp.page >= pages;
-                        for item in resp.items {
-                            yield transform(item);
-                        }
-                        if is_last {
-                            break;
-                        }
-                        current_page = resp.page + 1;
+            if let Some(fetcher) = fetcher
+                && has_next
+            {
+                let mut current_page = next_page_num;
+                let mut pages = total_pages;
+                while current_page <= pages {
+                    let resp = (fetcher)(current_page).await?;
+                    pages = resp.pages;
+                    let is_last = resp.page >= pages;
+                    for item in resp.items {
+                        yield transform(item);
                     }
+                    if is_last {
+                        break;
+                    }
+                    current_page = resp.page + 1;
                 }
             }
         }

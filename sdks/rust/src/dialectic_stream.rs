@@ -31,6 +31,7 @@ where
     S: Stream<Item = Result<String>> + Unpin,
 {
     /// Wrap a stream, accumulating all successful content chunks.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all))]
     pub fn new(stream: S) -> Self {
         Self {
             inner: stream,

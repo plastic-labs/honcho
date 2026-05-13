@@ -36,6 +36,7 @@ fn is_default_bool(val: &bool) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]
 #[non_exhaustive]
 #[builder(derive(Debug), on(String, into))]
+#[builder(finish_fn = build)]
 pub struct DialecticOptions {
     /// Dialectic API prompt (1–10,000 chars).
     pub query: String,

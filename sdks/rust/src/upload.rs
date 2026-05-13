@@ -83,6 +83,15 @@ impl FileSource {
     ///
     /// The reader is consumed lazily via [`tokio_util::io::ReaderStream`]
     /// so the upload does **not** buffer the entire payload in memory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use honcho_ai::FileSource;
+    ///
+    /// let cursor = std::io::Cursor::new(b"hello".to_vec());
+    /// let src = FileSource::stream("out.txt", cursor, "text/plain");
+    /// ```
     pub fn stream(
         filename: impl Into<String>,
         reader: impl AsyncRead + Send + 'static,

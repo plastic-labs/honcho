@@ -1,0 +1,12 @@
+{
+  "summary": true,
+  "tokens": 4096,
+  "peer_target": "user_42",
+  "peer_perspective": "assistant_bot",
+  "search_query": "What are the user's main interests?",
+  "limit_to_session": true,
+  "search_top_k": 20,
+  "search_max_distance": 0.75,
+  "include_most_frequent": true,
+  "max_conclusions": 50
+}

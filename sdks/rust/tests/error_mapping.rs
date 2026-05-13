@@ -9,7 +9,7 @@
 use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
-use honcho_ai::error::{from_response, parse_error_body, parse_retry_after, HonchoError};
+use honcho_ai::error::{HonchoError, from_response, parse_error_body, parse_retry_after};
 use pretty_assertions::assert_eq;
 use reqwest::header::{HeaderMap, HeaderValue};
 use rstest::rstest;

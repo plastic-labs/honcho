@@ -5,8 +5,8 @@
 //!
 //! Run with `cargo run --example multi_peer`
 
-use honcho_ai::types::dialectic::DialecticOptions;
 use honcho_ai::Honcho;
+use honcho_ai::types::dialectic::DialecticOptions;
 
 #[tokio::main]
 async fn main() -> honcho_ai::error::Result<()> {

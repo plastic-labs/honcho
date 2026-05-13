@@ -17,8 +17,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 static SCHEMAS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
 

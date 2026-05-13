@@ -10,9 +10,9 @@
 
 use std::collections::HashMap;
 
-use honcho_ai::session::Session;
 use honcho_ai::Honcho;
-use serde_json::{json, Value};
+use honcho_ai::session::Session;
+use serde_json::{Value, json};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -119,8 +119,8 @@ async fn add_messages_single_message() {
 
     let result = session.add_messages(messages).await.unwrap();
     assert_eq!(result.len(), 1);
-    assert_eq!(result[0].id, "msg1");
-    assert_eq!(result[0].content, "hello");
+    assert_eq!(result[0].id(), "msg1");
+    assert_eq!(result[0].content(), "hello");
 }
 
 #[tokio::test]
@@ -179,8 +179,8 @@ async fn add_messages_exactly_100_is_one_request() {
 
     let result = session.add_messages(msgs).await.unwrap();
     assert_eq!(result.len(), 100);
-    assert_eq!(result[0].id, "m0");
-    assert_eq!(result[99].id, "m99");
+    assert_eq!(result[0].id(), "m0");
+    assert_eq!(result[99].id(), "m99");
 }
 
 #[tokio::test]
@@ -223,8 +223,8 @@ async fn add_messages_101_is_two_requests() {
 
     let result = session.add_messages(msgs).await.unwrap();
     assert_eq!(result.len(), 101);
-    assert_eq!(result[0].id, "m0");
-    assert_eq!(result[100].id, "m100");
+    assert_eq!(result[0].id(), "m0");
+    assert_eq!(result[100].id(), "m100");
 }
 
 #[tokio::test]
@@ -267,8 +267,8 @@ async fn add_messages_batch_over_100_chunks() {
 
     let result = session.add_messages(msgs).await.unwrap();
     assert_eq!(result.len(), 150);
-    assert_eq!(result[0].id, "m0");
-    assert_eq!(result[149].id, "m149");
+    assert_eq!(result[0].id(), "m0");
+    assert_eq!(result[149].id(), "m149");
 }
 
 // ── F6.4: messages (paginated) ─────────────────────────────────────────
@@ -299,8 +299,8 @@ async fn messages_paginated() {
     assert_eq!(page.total(), 2);
     let items = page.items();
     assert_eq!(items.len(), 2);
-    assert_eq!(items[0].id, "msg1");
-    assert_eq!(items[1].id, "msg2");
+    assert_eq!(items[0].id(), "msg1");
+    assert_eq!(items[1].id(), "msg2");
 }
 
 // ── F6.5: delete ───────────────────────────────────────────────────────
@@ -371,8 +371,8 @@ async fn get_message_returns_message() {
         .await;
 
     let msg = session.get_message("msg99").await.unwrap();
-    assert_eq!(msg.id, "msg99");
-    assert_eq!(msg.content, "found it");
+    assert_eq!(msg.id(), "msg99");
+    assert_eq!(msg.content(), "found it");
 }
 
 // ── F6.5: update_message ───────────────────────────────────────────────
@@ -404,6 +404,6 @@ async fn update_message_puts_metadata() {
     meta.insert("tagged".to_string(), json!(true));
 
     let msg = session.update_message("msg1", meta).await.unwrap();
-    assert_eq!(msg.id, "msg1");
-    assert_eq!(msg.metadata.get("tagged").unwrap(), true);
+    assert_eq!(msg.id(), "msg1");
+    assert_eq!(msg.metadata().get("tagged").unwrap(), true);
 }

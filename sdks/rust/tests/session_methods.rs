@@ -7,9 +7,10 @@
     missing_docs
 )]
 
-use honcho_ai::session::Session;
 use honcho_ai::Honcho;
-use serde_json::{json, Value};
+use honcho_ai::session::Session;
+use honcho_ai::types::session::SessionContextOptions;
+use serde_json::{Value, json};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -173,7 +174,6 @@ async fn session_search_returns_messages() {
         .and(path("/v3/workspaces/ws1/sessions/sess1/search"))
         .and(body_json(json!({
             "query": "hello",
-            "filters": null,
             "limit": 10
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
@@ -193,7 +193,7 @@ async fn session_search_returns_messages() {
 
     let results = session.search("hello").await.unwrap();
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0].content, "hello world");
+    assert_eq!(results[0].content(), "hello world");
 }
 
 #[tokio::test]
@@ -202,7 +202,7 @@ async fn session_search_validates_empty_query() {
     let session = make_session(&server).await;
 
     let err = session.search("").await.unwrap_err();
-    assert_eq!(err.code(), "configuration_error");
+    assert_eq!(err.code(), "validation_error");
 }
 
 // ── F6.9: Representation ──────────────────────────────────────────────
@@ -246,9 +246,73 @@ async fn session_queue_status_gets_with_session_id() {
         .mount(&server)
         .await;
 
-    let status = session.queue_status().await.unwrap();
+    let status = session.queue_status(None, None).await.unwrap();
     assert_eq!(status.total_work_units, 5);
     assert_eq!(status.completed_work_units, 3);
     assert_eq!(status.in_progress_work_units, 1);
     assert_eq!(status.pending_work_units, 1);
+}
+
+// ── Context with options ───────────────────────────────────────────
+
+#[tokio::test]
+async fn session_context_with_options_sends_all_query_params() {
+    let server = MockServer::start().await;
+    let session = make_session(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/v3/workspaces/ws1/sessions/sess1/context"))
+        .and(query_param("summary", "false"))
+        .and(query_param("limit_to_session", "true"))
+        .and(query_param("tokens", "4096"))
+        .and(query_param("peer_target", "bob"))
+        .and(query_param("peer_perspective", "alice"))
+        .and(query_param("search_query", "preferences"))
+        .and(query_param("search_top_k", "10"))
+        .and(query_param("search_max_distance", "0.5"))
+        .and(query_param("include_most_frequent", "true"))
+        .and(query_param("max_conclusions", "20"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(context_response_json()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let opts = SessionContextOptions::builder()
+        .summary(false)
+        .limit_to_session(true)
+        .tokens(4096)
+        .peer_target("bob")
+        .peer_perspective("alice")
+        .search_query("preferences")
+        .search_top_k(10)
+        .search_max_distance(0.5)
+        .include_most_frequent(true)
+        .max_conclusions(20)
+        .build();
+
+    let ctx = session.context_with_options(&opts).await.unwrap();
+    assert_eq!(ctx.id, "sess1");
+}
+
+#[tokio::test]
+async fn session_context_with_options_sends_only_set_params() {
+    let server = MockServer::start().await;
+    let session = make_session(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/v3/workspaces/ws1/sessions/sess1/context"))
+        .and(query_param("summary", "true"))
+        .and(query_param("limit_to_session", "false"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(context_response_json()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let opts = SessionContextOptions::builder()
+        .summary(true)
+        .limit_to_session(false)
+        .build();
+
+    let ctx = session.context_with_options(&opts).await.unwrap();
+    assert_eq!(ctx.id, "sess1");
 }

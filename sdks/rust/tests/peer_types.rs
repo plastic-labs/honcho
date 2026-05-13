@@ -10,8 +10,8 @@ use honcho_ai::types::peer::{
     PeerPage, PeerRepresentationGet, PeerUpdate,
 };
 use rstest::rstest;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 fn do_test<T>(schema_name: &str, variant: &str)
 where

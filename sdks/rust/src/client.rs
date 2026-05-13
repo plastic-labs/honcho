@@ -16,7 +16,7 @@ use crate::types::dream::QueueStatus;
 use crate::types::message::MessageResponse;
 use crate::types::peer::Peer as PeerResponse;
 use crate::types::session::Session as SessionResponse;
-use crate::types::workspace::Workspace;
+use crate::types::workspace::{Workspace, WorkspaceConfiguration};
 
 /// API environment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -74,6 +74,13 @@ pub struct HonchoParams {
 
 impl Honcho {
     /// Quick constructor pointing at `base_url` for `workspace_id`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "my-workspace")?;
+    /// # Ok::<(), honcho_ai::error::HonchoError>(())
+    /// ```
     pub fn new(base_url: &str, workspace_id: &str) -> Result<Self> {
         let http =
             HttpClient::from_params(HttpClient::builder().base_url(base_url.to_string()).build())?;
@@ -90,11 +97,32 @@ impl Honcho {
     }
 
     /// Returns a builder for [`HonchoParams`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let params = honcho_ai::Honcho::builder()
+    ///     .base_url("http://localhost:8000".to_owned())
+    ///     .workspace_id("my-workspace".to_owned())
+    ///     .build();
+    /// let client = honcho_ai::Honcho::from_params(params)?;
+    /// # Ok::<(), honcho_ai::error::HonchoError>(())
+    /// ```
     pub fn builder() -> HonchoParamsBuilder {
         HonchoParams::builder()
     }
 
     /// Constructs a [`Honcho`] from params.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let params = honcho_ai::Honcho::builder()
+    ///     .base_url("http://localhost:8000".to_owned())
+    ///     .build();
+    /// let client = honcho_ai::Honcho::from_params(params)?;
+    /// # Ok::<(), honcho_ai::error::HonchoError>(())
+    /// ```
     pub fn from_params(params: HonchoParams) -> Result<Self> {
         let resolved_base_url = params
             .base_url
@@ -148,11 +176,29 @@ impl Honcho {
     }
 
     /// Eagerly ensure the workspace exists.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// client.force_ensure().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn force_ensure(&self) -> Result<()> {
         self.ensure_workspace().await
     }
 
     /// Returns the workspace ID this client is scoped to.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// assert_eq!(client.workspace_id(), "ws-1");
+    /// # Ok::<(), honcho_ai::error::HonchoError>(())
+    /// ```
     #[must_use]
     pub fn workspace_id(&self) -> &str {
         &self.inner.workspace_id
@@ -191,8 +237,51 @@ impl Honcho {
         Ok(())
     }
 
-    /// Fetch workspace configuration from the server.
-    pub async fn get_configuration(&self) -> Result<HashMap<String, Value>> {
+    /// Fetch workspace configuration as a typed [`WorkspaceConfiguration`].
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = client.get_configuration().await?;
+    /// if let Some(reasoning) = &config.reasoning {
+    ///     println!("reasoning enabled: {:?}", reasoning.enabled);
+    /// }
+    /// ```
+    pub async fn get_configuration(&self) -> Result<WorkspaceConfiguration> {
+        let raw = self.get_configuration_raw().await?;
+        let value = serde_json::Value::Object(raw.into_iter().collect());
+        serde_json::from_value(value).map_err(|e| HonchoError::Decode {
+            path: "configuration".to_string(),
+            source: e,
+        })
+    }
+
+    /// Set workspace configuration from a typed [`WorkspaceConfiguration`].
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = WorkspaceConfiguration::builder()
+    ///     .reasoning(ReasoningConfiguration { enabled: Some(true), custom_instructions: None })
+    ///     .build();
+    /// client.set_configuration(&config).await?;
+    /// ```
+    pub async fn set_configuration(&self, config: &WorkspaceConfiguration) -> Result<()> {
+        let body = serde_json::json!({"configuration": config});
+        let _: Workspace = self
+            .inner
+            .http
+            .put(&routes::workspace(self.workspace_id()), Some(&body), &[])
+            .await?;
+        Ok(())
+    }
+
+    /// Fetch workspace configuration as a raw JSON map.
+    ///
+    /// Prefer [`get_configuration`](Self::get_configuration) for typed access.
+    /// Use this when the server returns fields not yet represented in
+    /// [`WorkspaceConfiguration`].
+    pub async fn get_configuration_raw(&self) -> Result<HashMap<String, Value>> {
         let body = serde_json::json!({"id": self.workspace_id()});
         let ws: Workspace = self
             .inner
@@ -202,8 +291,12 @@ impl Honcho {
         Ok(ws.configuration)
     }
 
-    /// Set workspace configuration on the server.
-    pub async fn set_configuration(&self, configuration: HashMap<String, Value>) -> Result<()> {
+    /// Set workspace configuration from a raw JSON map.
+    ///
+    /// Prefer [`set_configuration`](Self::set_configuration) for typed access.
+    /// Use this when you need to send fields not yet represented in
+    /// [`WorkspaceConfiguration`].
+    pub async fn set_configuration_raw(&self, configuration: HashMap<String, Value>) -> Result<()> {
         let body = serde_json::json!({"configuration": configuration});
         let _: Workspace = self
             .inner
@@ -214,6 +307,16 @@ impl Honcho {
     }
 
     /// Get or create a peer by ID.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let peer = client.peer("alice").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn peer(&self, id: impl Into<String>) -> Result<Peer> {
         self.ensure_workspace().await?;
         let body = serde_json::json!({"id": id.into()});
@@ -226,6 +329,16 @@ impl Honcho {
     }
 
     /// Get or create a session by ID.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let session = client.session("s-42").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn session(&self, id: impl Into<String>) -> Result<Session> {
         self.ensure_workspace().await?;
         let body = serde_json::json!({"id": id.into()});
@@ -242,35 +355,97 @@ impl Honcho {
     }
 
     /// Search messages across the workspace.
-    pub async fn search(&self, query: &str) -> Result<Vec<MessageResponse>> {
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let results = client.search("important topic").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn search(&self, query: &str) -> Result<Vec<crate::Message>> {
         self.ensure_workspace().await?;
-        let body = serde_json::json!({"query": query, "filters": null, "limit": 10});
-        self.inner
+        let body = serde_json::json!({"query": query, "limit": 10});
+        let responses: Vec<MessageResponse> = self
+            .inner
             .http
             .post(
                 &routes::workspace_search(&self.inner.workspace_id),
                 Some(&body),
                 &[],
             )
-            .await
+            .await?;
+        Ok(responses
+            .into_iter()
+            .map(|r| {
+                crate::Message::from_raw(
+                    self.inner.http.clone(),
+                    self.inner.workspace_id.clone(),
+                    r,
+                )
+            })
+            .collect())
     }
 
     /// Get queue processing status.
-    pub async fn queue_status(&self) -> Result<QueueStatus> {
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let status = client.queue_status(None, None, None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn queue_status(
+        &self,
+        observer_id: Option<&str>,
+        sender_id: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Result<QueueStatus> {
         self.ensure_workspace().await?;
+        let mut query: Vec<(&str, &str)> = Vec::new();
+        if let Some(v) = observer_id {
+            query.push(("observer_id", v));
+        }
+        if let Some(v) = sender_id {
+            query.push(("sender_id", v));
+        }
+        if let Some(v) = session_id {
+            query.push(("session_id", v));
+        }
         self.inner
             .http
             .get(
                 &routes::workspace_queue_status(&self.inner.workspace_id),
-                &[],
+                &query,
             )
             .await
     }
 
     /// Schedule a dream task for memory consolidation.
-    pub async fn schedule_dream(&self, observer: &str) -> Result<()> {
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// client.schedule_dream("alice", None, None).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn schedule_dream(
+        &self,
+        observer: &str,
+        session_id: Option<&str>,
+        observed_peer: Option<&str>,
+    ) -> Result<()> {
         self.ensure_workspace().await?;
-        let body = serde_json::json!({"observer": observer, "observed": observer, "session_id": null, "dream_type": "omni"});
+        let observed_peer = observed_peer.unwrap_or(observer);
+        let body = serde_json::json!({"observer": observer, "observed": observed_peer, "session_id": session_id, "dream_type": "omni"});
         self.inner
             .http
             .post(
@@ -282,6 +457,16 @@ impl Honcho {
     }
 
     /// Delete a workspace by ID.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// client.delete_workspace("old-ws").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn delete_workspace(&self, id: &str) -> Result<()> {
         self.inner.http.delete(&routes::workspace(id), &[]).await
     }
@@ -291,6 +476,19 @@ impl Honcho {
     /// List peers in the workspace. Returns a paginated result.
     ///
     /// Defaults: page=1, size=50, reverse=false, no filters.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let page = client.peers().await?;
+    /// for peer in page.items() {
+    ///     println!("{}", peer.id);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn peers(&self) -> Result<crate::types::pagination::Page<crate::types::peer::Peer>> {
         self.ensure_workspace().await?;
         crate::types::pagination::paginate_post(
@@ -305,6 +503,18 @@ impl Honcho {
     }
 
     /// List peers with filters.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let mut filters = std::collections::HashMap::new();
+    /// filters.insert("role".into(), "admin".into());
+    /// let page = client.peers_with_filters(filters, 1, 10, false).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn peers_with_filters(
         &self,
         filters: HashMap<String, Value>,
@@ -328,6 +538,19 @@ impl Honcho {
     /// List sessions in the workspace. Returns a paginated result.
     ///
     /// Defaults: page=1, size=50, reverse=false, no filters.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let page = client.sessions().await?;
+    /// for session in page.items() {
+    ///     println!("{}", session.id);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn sessions(
         &self,
     ) -> Result<crate::types::pagination::Page<crate::types::session::Session>> {
@@ -344,6 +567,18 @@ impl Honcho {
     }
 
     /// List sessions with filters.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let mut filters = std::collections::HashMap::new();
+    /// filters.insert("is_active".into(), true.into());
+    /// let page = client.sessions_with_filters(filters, 1, 10, false).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn sessions_with_filters(
         &self,
         filters: HashMap<String, Value>,
@@ -368,6 +603,19 @@ impl Honcho {
     ///
     /// Defaults: page=1, size=50, reverse=false, no filters.
     /// No workspace scope required — queries all workspaces.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// let page = client.workspaces().await?;
+    /// for id in page.items() {
+    ///     println!("{id}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn workspaces(&self) -> Result<crate::types::pagination::Page<Workspace, String>> {
         let page = crate::types::pagination::paginate_post::<Workspace>(
             &self.inner.http,

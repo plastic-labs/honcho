@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use reqwest::Method;
-use serde::de::DeserializeOwned;
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use url::Url;
 
 use crate::error::{self, HonchoError, Result};
@@ -33,6 +33,8 @@ pub struct HttpClient {
 }
 
 #[derive(bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 #[doc(hidden)]
 pub struct HttpClientParams {
     base_url: String,

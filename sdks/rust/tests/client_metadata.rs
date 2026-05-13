@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use honcho_ai::client::Honcho;
+use honcho_ai::types::workspace::WorkspaceConfiguration;
 use serde_json::json;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -125,15 +126,7 @@ async fn get_configuration_posts_to_workspaces_with_id() {
     let honcho = Honcho::new(&server.uri(), "test-ws").unwrap();
     let result = honcho.get_configuration().await.unwrap();
 
-    assert_eq!(
-        result
-            .get("reasoning")
-            .unwrap()
-            .get("enabled")
-            .unwrap()
-            .as_bool(),
-        Some(true)
-    );
+    assert_eq!(result.reasoning.as_ref().unwrap().enabled, Some(true));
 }
 
 #[tokio::test]
@@ -151,7 +144,10 @@ async fn get_configuration_empty_when_no_configuration() {
     let honcho = Honcho::new(&server.uri(), "test-ws").unwrap();
     let result = honcho.get_configuration().await.unwrap();
 
-    assert!(result.is_empty());
+    assert!(result.reasoning.is_none());
+    assert!(result.peer_card.is_none());
+    assert!(result.summary.is_none());
+    assert!(result.dream.is_none());
 }
 
 #[tokio::test]
@@ -170,9 +166,9 @@ async fn set_configuration_puts_to_workspace_id() {
 
     let honcho = Honcho::new(&server.uri(), "test-ws").unwrap();
 
-    let mut cfg = HashMap::new();
-    cfg.insert("reasoning".to_string(), json!({"enabled": false}));
-    honcho.set_configuration(cfg).await.unwrap();
+    let cfg: WorkspaceConfiguration =
+        serde_json::from_value(json!({"reasoning": {"enabled": false}})).unwrap();
+    honcho.set_configuration(&cfg).await.unwrap();
 }
 
 #[tokio::test]

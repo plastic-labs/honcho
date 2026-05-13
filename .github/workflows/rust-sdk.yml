@@ -9,13 +9,17 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust-version: ['1.88', stable]
     defaults:
       run:
         working-directory: sdks/rust
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ matrix.rust-version }}
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -23,7 +27,6 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
-      - run: cargo test --test integration
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: '-D warnings'

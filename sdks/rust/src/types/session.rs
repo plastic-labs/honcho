@@ -30,6 +30,8 @@ pub struct Session {
 /// Request body for creating a new session.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct SessionCreate {
     /// Unique session identifier (alphanumeric, hyphens, underscores).
     pub id: String,
@@ -47,6 +49,8 @@ pub struct SessionCreate {
 /// Request body for updating a session.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct SessionUpdate {
     /// Updated metadata (replaces existing).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,6 +63,8 @@ pub struct SessionUpdate {
 /// Query parameters for listing/getting sessions.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct SessionGet {
     /// Filter criteria for sessions.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -131,6 +137,50 @@ pub struct SessionPeerConfig {
     pub observe_others: Option<bool>,
 }
 
+/// Options for `Session::context_with_options`.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
+pub struct SessionContextOptions {
+    /// Whether to include the session summary.
+    #[serde(default = "default_true")]
+    #[builder(default = true)]
+    pub summary: bool,
+    /// Whether to limit representation context to this session only.
+    #[serde(default)]
+    #[builder(default)]
+    pub limit_to_session: bool,
+    /// Maximum number of tokens to include in the context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u32>,
+    /// A peer ID to get context for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_target: Option<String>,
+    /// A peer ID to get context from the perspective of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_perspective: Option<String>,
+    /// A query string used to fetch semantically relevant conclusions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_query: Option<String>,
+    /// Number of semantically relevant facts to return when searching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_top_k: Option<u32>,
+    /// Maximum semantic distance for search results (0.0–1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_max_distance: Option<f64>,
+    /// Whether to include the most frequent conclusions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_most_frequent: Option<bool>,
+    /// Maximum number of conclusions to include.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_conclusions: Option<u32>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Context returned when requesting session state.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -189,6 +239,37 @@ pub struct Summary {
     pub created_at: DateTime<Utc>,
     /// Number of tokens in the summary text.
     pub token_count: u32,
+}
+
+/// Options for listing sessions with filters and pagination.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
+pub struct SessionListOptions {
+    /// Filter criteria for sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filters: Option<HashMap<String, serde_json::Value>>,
+    /// Page number (1-based).
+    #[serde(default = "default_page")]
+    #[builder(default = default_page())]
+    pub page: u64,
+    /// Page size.
+    #[serde(default = "default_size")]
+    #[builder(default = default_size())]
+    pub size: u64,
+    /// Reverse order.
+    #[serde(default)]
+    #[builder(default)]
+    pub reverse: bool,
+}
+
+fn default_page() -> u64 {
+    1
+}
+
+fn default_size() -> u64 {
+    50
 }
 
 /// A paginated list of sessions.
