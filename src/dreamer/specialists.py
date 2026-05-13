@@ -464,7 +464,11 @@ class InductionSpecialist(BaseSpecialist):
     """
 
     name: str = "induction"
-    peer_card_update_instruction: str = "Only add highly stable profile traits/preferences; do not copy transient conclusions."
+    peer_card_update_instruction: str = (
+        "Only add highly stable profile traits/preferences. Preserve applicability conditions: "
+        "if a pattern is domain-specific, encode that scope explicitly. Do not merge "
+        "unrelated examples into one trait, and do not include evidence lists or `e.g.` clauses."
+    )
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         if peer_card_enabled:
@@ -496,14 +500,25 @@ class InductionSpecialist(BaseSpecialist):
 
 ## PEER CARD (REQUIRED)
 
-After identifying patterns, only update the peer card for durable profile-level traits/preferences:
-- `TRAIT: Analytical thinker`
-- `TRAIT: Tends to reschedule when stressed`
-- `PREFERENCE: Prefers detailed explanations`
+After identifying patterns, only update the peer card for durable profile-level traits/preferences.
 
-Do NOT add temporary patterns, episode-specific conclusions, or reasoning summaries.
-Call `update_peer_card` with the complete deduplicated list only when a durable profile update is warranted.
-Keep it concise (max 40 entries)."""
+### Preserve scope and applicability conditions
+- If a pattern is only supported within one domain, NAME THAT DOMAIN explicitly in the peer card entry.
+- Prefer scoped preferences over global traits when the evidence is domain-specific.
+- Good: `PREFERENCE: For reading nonfiction, prefers annotated print books over ebooks`
+- Bad: `TRAIT: Prefers physical media`
+
+### Avoid cross-domain over-generalization
+- Do NOT merge unrelated examples into a single personality trait just because they sound similar.
+- If evidence comes from different domains and the shared mechanism is interpretive rather than explicit, do NOT create a `TRAIT:` entry.
+- Bad: `TRAIT: Meticulous planner (e.g., vacation itinerary optimization, desk cable management by length)`
+- Better: keep separate scoped observations, or leave them as inductive observations only.
+
+### Peer card hygiene
+- Do NOT add temporary patterns, episode-specific conclusions, or reasoning summaries.
+- Do NOT include evidence lists, parenthetical example bundles, or `e.g.` clauses in peer card entries.
+- Call `update_peer_card` with the complete deduplicated list only when a durable profile update is warranted.
+- Keep it concise (max 40 entries)."""
 
         return f"""You are an inductive reasoning agent identifying patterns about {observed}.
 
@@ -565,7 +580,10 @@ Use `create_observations_inductive`.
 3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
 4. Look for HOW things change over time, not just static facts
 5. Include source_ids - always link back to evidence
-6. Empty or missing source_ids will be rejected"""
+6. Empty or missing source_ids will be rejected
+7. Preserve applicability conditions - if a pattern only holds in one domain or context, state that scope explicitly
+8. Do not generalize from superficially similar but unrelated examples into a personality trait
+9. When in doubt, prefer a scoped `PREFERENCE:` or keep the insight as an inductive observation rather than promoting it to a global `TRAIT:`"""
 
     def build_user_prompt(
         self,

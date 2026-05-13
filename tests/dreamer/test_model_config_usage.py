@@ -3,8 +3,37 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.config import settings
-from src.dreamer.specialists import DeductionSpecialist
+from src.dreamer.specialists import DeductionSpecialist, InductionSpecialist
 from src.llm import HonchoLLMCallResponse
+from src.utils.agent_tools import TOOLS
+
+
+def test_induction_specialist_prompt_discourages_cross_domain_trait_merges() -> None:
+    specialist = InductionSpecialist()
+    prompt = specialist.build_system_prompt("alice")
+
+    assert "Preserve scope and applicability conditions" in prompt
+    assert "Do NOT merge unrelated examples into a single personality trait" in prompt
+    assert (
+        "PREFERENCE: For reading nonfiction, prefers annotated print books over ebooks"
+        in prompt
+    )
+    assert (
+        "TRAIT: Meticulous planner (e.g., vacation itinerary optimization, desk cable management by length)"
+        in prompt
+    )
+
+
+def test_update_peer_card_tool_description_mentions_scope_and_example_bundles() -> None:
+    tool = TOOLS["update_peer_card"]
+    description = tool["description"]
+    content_description = tool["input_schema"]["properties"]["content"]["description"]
+
+    assert "Preserve applicability conditions" in description
+    assert "Do not merge unrelated examples into one trait" in description
+    assert "temporary events" in description
+    assert "duplicate entries" in description
+    assert "not an evidence list or example bundle" in content_description
 
 
 @pytest.mark.asyncio

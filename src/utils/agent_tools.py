@@ -431,7 +431,8 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": (
             "Update the peer card with durable profile facts about the observed peer. "
             + "Only include stable biographical facts, standing instructions, and long-lived preferences/traits. "
-            + "Do not include one-off conclusions, temporary events, or duplicate entries."
+            + "Preserve applicability conditions: if something is domain-specific, name that scope explicitly. "
+            + "Do not merge unrelated examples into one trait, and do not include evidence bundles, `e.g.` clauses, one-off conclusions, temporary events, or duplicate entries."
         ),
         "input_schema": {
             "type": "object",
@@ -440,7 +441,7 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "description": (
                         "Complete deduplicated peer card list (max 40 entries). "
-                        + "Each entry should be a concise standalone profile fact."
+                        + "Each entry should be a concise standalone profile fact with any necessary scope, not an evidence list or example bundle."
                     ),
                     "items": {"type": "string"},
                 },
