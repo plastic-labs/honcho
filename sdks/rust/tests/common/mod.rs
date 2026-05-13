@@ -1,4 +1,19 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::needless_pass_by_value,
+    clippy::map_unwrap_or,
+    clippy::uninlined_format_args,
+    clippy::unnecessary_debug_formatting,
+    clippy::needless_match,
+    clippy::redundant_closure_for_method_calls,
+    clippy::needless_borrows_for_generic_args,
+    clippy::doc_markdown,
+    clippy::unused_async,
+    clippy::manual_range_contains,
+    missing_docs
+)]
 
 use std::path::{Path, PathBuf};
 
@@ -10,9 +25,12 @@ static SCHEMAS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::ne
 fn openapi_spec() -> &'static serde_json::Value {
     SCHEMAS.get_or_init(|| {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-        let path = Path::new(&manifest_dir).join("../../../docs/v3/openapi.json");
+        let path = std::env::var("HONCHO_OPENAPI_SPEC").map_or_else(
+            |_| Path::new(&manifest_dir).join("../../docs/v3/openapi.json"),
+            PathBuf::from,
+        );
         let content = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("failed to read openapi.json at {:?}: {e}", path));
+            .unwrap_or_else(|e| panic!("failed to read openapi.json at {}: {e}", path.display()));
         serde_json::from_str(&content)
             .unwrap_or_else(|e| panic!("failed to parse openapi.json: {e}"))
     })
@@ -21,11 +39,7 @@ fn openapi_spec() -> &'static serde_json::Value {
 fn schema_by_name(name: &str) -> serde_json::Value {
     let spec = openapi_spec();
     let schemas = spec["components"]["schemas"].as_object().unwrap();
-    let lookup = match name {
-        "Page_Workspace_" => "Page_Workspace_",
-        "Page_Session_" => "Page_Session_",
-        other => other,
-    };
+    let lookup = name;
     schemas
         .get(lookup)
         .unwrap_or_else(|| panic!("schema {name} not found in OpenAPI spec"))
@@ -40,7 +54,7 @@ fn resolve_refs(value: &serde_json::Value, spec: &serde_json::Value) -> serde_js
                 let schema_name = parts.last().unwrap();
                 let resolved = spec["components"]["schemas"]
                     .get(schema_name)
-                    .unwrap_or_else(|| panic!("Unresolved $ref: {}", schema_name))
+                    .unwrap_or_else(|| panic!("Unresolved $ref: {schema_name}"))
                     .clone();
                 return resolve_refs(&resolved, spec);
             }

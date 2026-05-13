@@ -50,3 +50,6 @@ pub use message::Message;
 pub use peer::Peer;
 pub use session::{Session, UploadFileBuilder};
 pub use upload::FileSource;
+
+#[cfg(feature = "blocking")]
+pub mod blocking;

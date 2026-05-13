@@ -1,8 +1,10 @@
 //! HTTP client internals.
 
-#[allow(missing_docs)]
+/// Low-level HTTP client wrapper around `reqwest`.
 pub mod client;
+/// Response decoding helpers.
 pub mod decode;
-#[allow(missing_docs)]
+/// API route path builders.
 pub mod routes;
-pub(crate) mod sse;
+/// Server-Sent Events (SSE) stream parsing.
+pub mod sse;

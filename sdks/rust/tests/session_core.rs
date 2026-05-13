@@ -1,6 +1,13 @@
 //! Integration tests for Session core: F6.1–F6.3.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::needless_pass_by_value,
+    clippy::needless_borrows_for_generic_args,
+    clippy::unused_async,
+    missing_docs
+)]
 
 use std::collections::HashMap;
 
@@ -51,14 +58,14 @@ fn peer_config(observe_me: Option<bool>, observe_others: Option<bool>) -> Sessio
     .unwrap()
 }
 
-async fn make_honcho(server: &MockServer) -> Honcho {
+fn make_honcho(server: &MockServer) -> Honcho {
     Honcho::new(&server.uri(), "ws1").unwrap()
 }
 
 async fn make_session(server: &MockServer) -> Session {
     Mock::given(method("POST"))
         .and(path("/v3/workspaces"))
-        .and(body_json(&json!({"id": "ws1"})))
+        .and(body_json(json!({"id": "ws1"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(workspace_response_json()))
         .up_to_n_times(1)
         .mount(server)
@@ -66,13 +73,13 @@ async fn make_session(server: &MockServer) -> Session {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/sessions"))
-        .and(body_json(&json!({"id": "sess1"})))
+        .and(body_json(json!({"id": "sess1"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(session_response_json()))
         .up_to_n_times(1)
         .mount(server)
         .await;
 
-    let honcho = make_honcho(server).await;
+    let honcho = make_honcho(server);
     honcho.session("sess1").await.unwrap()
 }
 
@@ -163,7 +170,7 @@ async fn session_set_metadata_puts_to_session_endpoint() {
 
     Mock::given(method("PUT"))
         .and(path("/v3/workspaces/ws1/sessions/sess1"))
-        .and(body_json(&json!({"metadata": {"updated": true}})))
+        .and(body_json(json!({"metadata": {"updated": true}})))
         .respond_with(ResponseTemplate::new(200).set_body_json(&resp))
         .mount(&server)
         .await;
@@ -203,7 +210,7 @@ async fn session_set_configuration_puts_to_session_endpoint() {
 
     Mock::given(method("PUT"))
         .and(path("/v3/workspaces/ws1/sessions/sess1"))
-        .and(body_json(&json!({"configuration": {"mode": "fast"}})))
+        .and(body_json(json!({"configuration": {"mode": "fast"}})))
         .respond_with(ResponseTemplate::new(200).set_body_json(&resp))
         .mount(&server)
         .await;
@@ -223,7 +230,7 @@ async fn session_add_peer_posts_to_session_peers() {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/peers"))
-        .and(body_json(&json!({"peers": {"alice": {}}})))
+        .and(body_json(json!({"peers": {"alice": {}}})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -240,7 +247,7 @@ async fn session_add_peers_with_config() {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/peers"))
-        .and(body_json(&json!({
+        .and(body_json(json!({
             "peers": {
                 "alice": {"observe_me": true, "observe_others": false}
             }
@@ -262,7 +269,7 @@ async fn session_set_peers_puts_to_session_peers() {
 
     Mock::given(method("PUT"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/peers"))
-        .and(body_json(&json!({"peers": {"bob": {}, "carol": {}}})))
+        .and(body_json(json!({"peers": {"bob": {}, "carol": {}}})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -277,7 +284,7 @@ async fn session_remove_peers_deletes_with_json_array_body() {
 
     Mock::given(method("DELETE"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/peers"))
-        .and(body_json(&json!(["alice", "bob"])))
+        .and(body_json(json!(["alice", "bob"])))
         .respond_with(ResponseTemplate::new(200))
         .mount(&server)
         .await;
@@ -332,7 +339,7 @@ async fn peer_spec_from_str() {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/peers"))
-        .and(body_json(&json!({"peers": {"alice": {}}})))
+        .and(body_json(json!({"peers": {"alice": {}}})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -347,7 +354,7 @@ async fn peer_spec_from_string() {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/peers"))
-        .and(body_json(&json!({"peers": {"alice": {}}})))
+        .and(body_json(json!({"peers": {"alice": {}}})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
@@ -367,7 +374,7 @@ async fn peer_spec_from_tuple_str_config() {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/peers"))
-        .and(body_json(&json!({
+        .and(body_json(json!({
             "peers": {"alice": {"observe_me": true}}
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
@@ -410,7 +417,7 @@ async fn session_set_peer_configuration_puts_config() {
 
     Mock::given(method("PUT"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/peers/alice/config"))
-        .and(body_json(&json!({
+        .and(body_json(json!({
             "observe_me": true,
             "observe_others": false
         })))

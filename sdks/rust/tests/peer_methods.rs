@@ -1,6 +1,12 @@
 //! Wiremock tests for Peer methods (F5.5–F5.7).
 
-#![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::needless_borrows_for_generic_args,
+    clippy::unused_async,
+    missing_docs
+)]
 
 use futures_util::StreamExt;
 use honcho_ai::Honcho;
@@ -26,7 +32,7 @@ fn workspace_response() -> serde_json::Value {
     })
 }
 
-async fn make_honcho(server: &MockServer) -> Honcho {
+fn make_honcho(server: &MockServer) -> Honcho {
     Honcho::from_params(
         Honcho::builder()
             .base_url(server.uri())
@@ -60,7 +66,7 @@ async fn mount_peer_create(server: &MockServer) {
 #[tokio::test]
 async fn peer_representation_basic() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     let repr_body = serde_json::json!({});
@@ -81,7 +87,7 @@ async fn peer_representation_basic() {
 #[tokio::test]
 async fn peer_representation_with_options() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     Mock::given(method("POST"))
@@ -120,7 +126,7 @@ async fn peer_representation_with_options() {
 #[tokio::test]
 async fn peer_representation_validates_search_top_k() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     let peer = honcho.peer("alice").await.unwrap();
@@ -153,7 +159,7 @@ async fn peer_representation_validates_search_top_k() {
 #[tokio::test]
 async fn peer_representation_validates_search_max_distance() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     let peer = honcho.peer("alice").await.unwrap();
@@ -186,7 +192,7 @@ async fn peer_representation_validates_search_max_distance() {
 #[tokio::test]
 async fn peer_representation_validates_max_conclusions() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     let peer = honcho.peer("alice").await.unwrap();
@@ -221,7 +227,7 @@ async fn peer_representation_validates_max_conclusions() {
 #[tokio::test]
 async fn peer_context_returns_peer_context() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     Mock::given(method("GET"))
@@ -249,7 +255,7 @@ async fn peer_context_returns_peer_context() {
 #[tokio::test]
 async fn peer_context_with_target_sends_query() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     Mock::given(method("GET"))
@@ -277,7 +283,7 @@ async fn peer_context_with_target_sends_query() {
 #[tokio::test]
 async fn peer_sessions_returns_paginated() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     let session1 = serde_json::json!({
@@ -330,7 +336,7 @@ fn sse_chunk(json: &str) -> String {
 #[tokio::test]
 async fn chat_stream_basic() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     let sse_body = format!(
@@ -367,7 +373,7 @@ async fn chat_stream_basic() {
 #[tokio::test]
 async fn chat_stream_with_target_session_reasoning_level() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     let expected_body = serde_json::json!({
@@ -412,7 +418,7 @@ async fn chat_stream_with_target_session_reasoning_level() {
 #[tokio::test]
 async fn chat_stream_error_before_first_byte_returns_err() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     Mock::given(method("POST"))
@@ -437,7 +443,7 @@ async fn chat_stream_error_before_first_byte_returns_err() {
 #[tokio::test]
 async fn chat_stream_validates_non_empty_query() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
     let peer = honcho.peer("alice").await.unwrap();

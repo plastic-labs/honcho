@@ -1,8 +1,8 @@
 [package]
 name = "honcho-ai"
-version = "0.1.0-alpha.0"
+version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/plastic-labs/honcho"
 homepage = "https://github.com/plastic-labs/honcho"
@@ -11,12 +11,16 @@ description = "Rust SDK for Honcho — AI agent memory and social cognition infr
 keywords = ["honcho", "ai", "memory", "agents"]
 categories = ["api-bindings", "asynchronous"]
 readme = "README.md"
+exclude = [
+    "tests/fixtures/parity/**",
+]
 
 [features]
 default = ["rustls-tls"]
 rustls-tls = ["reqwest/rustls-tls"]
 native-tls = ["reqwest/native-tls"]
 tracing = ["dep:tracing"]
+blocking = []
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "http2"] }
@@ -47,8 +51,14 @@ tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread"] }
 temp-env = "0.3"
 tempfile = "3"
 
+[[example]]
+name = "blocking"
+required-features = ["blocking"]
+
 [package.metadata.docs.rs]
 all-features = true
+features = ["blocking", "tracing"]
+targets = ["x86_64-unknown-linux-gnu"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [lints.rust]

@@ -1,6 +1,12 @@
 //! Integration tests for Session messages, delete, clone, and message ops (F6.4–F6.5).
 
-#![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::needless_borrows_for_generic_args,
+    clippy::unused_async,
+    missing_docs
+)]
 
 use std::collections::HashMap;
 
@@ -54,7 +60,7 @@ fn message_json(id: &str, content: &str, peer_id: &str) -> Value {
     })
 }
 
-async fn make_honcho(server: &MockServer) -> Honcho {
+fn make_honcho(server: &MockServer) -> Honcho {
     Honcho::new(&server.uri(), "ws1").unwrap()
 }
 
@@ -75,7 +81,7 @@ async fn make_session(server: &MockServer) -> Session {
         .mount(server)
         .await;
 
-    let honcho = make_honcho(server).await;
+    let honcho = make_honcho(server);
     honcho.session("sess1").await.unwrap()
 }
 

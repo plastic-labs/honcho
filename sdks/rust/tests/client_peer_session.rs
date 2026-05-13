@@ -1,6 +1,12 @@
-//! Tests for Honcho::peer() and Honcho::session() (F4.4).
+//! Tests for `Honcho::peer()` and `Honcho::session()` (F4.4).
 
-#![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::needless_borrows_for_generic_args,
+    clippy::unused_async,
+    missing_docs
+)]
 
 use honcho_ai::Honcho;
 use wiremock::matchers::{body_json, method, path};
@@ -36,7 +42,7 @@ fn workspace_response() -> serde_json::Value {
     })
 }
 
-async fn make_honcho(server: &MockServer) -> Honcho {
+fn make_honcho(server: &MockServer) -> Honcho {
     Honcho::from_params(
         Honcho::builder()
             .base_url(server.uri())
@@ -49,7 +55,7 @@ async fn make_honcho(server: &MockServer) -> Honcho {
 async fn mount_workspace_ensure(server: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/v3/workspaces"))
-        .and(body_json(&serde_json::json!({"id": "ws1"})))
+        .and(body_json(serde_json::json!({"id": "ws1"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(workspace_response()))
         .mount(server)
         .await;
@@ -60,7 +66,7 @@ async fn mount_workspace_ensure(server: &MockServer) {
 #[tokio::test]
 async fn peer_makes_get_or_create_post_returns_peer() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
 
     let expected_body = serde_json::json!({"id": "alice"});
 
@@ -84,7 +90,7 @@ async fn peer_makes_get_or_create_post_returns_peer() {
 #[tokio::test]
 async fn peer_calls_ensure_workspace_first() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
 
     assert_eq!(honcho.workspace_id(), "ws1");
 
@@ -105,7 +111,7 @@ async fn peer_calls_ensure_workspace_first() {
 #[tokio::test]
 async fn session_makes_get_or_create_post() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server).await;
+    let honcho = make_honcho(&server);
 
     let expected_body = serde_json::json!({"id": "sess1"});
 

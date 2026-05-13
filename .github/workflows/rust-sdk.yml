@@ -1,0 +1,57 @@
+name: rust-sdk
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['sdks/rust/**', 'docs/v3/openapi.json', '.github/workflows/rust-sdk.yml']
+  push:
+    branches: [main]
+    paths: ['sdks/rust/**', 'docs/v3/openapi.json']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'sdks/rust'
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
+      - run: cargo test --test integration
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: '-D warnings'
+  msrv:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-msrv
+      - run: cargo msrv verify
+  integration:
+    needs: test
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'sdks/rust'
+      - run: cargo test --test integration
+        env:
+          HONCHO_API_URL: ${{ secrets.HONCHO_API_URL }}
+          HONCHO_API_KEY: ${{ secrets.HONCHO_API_KEY }}

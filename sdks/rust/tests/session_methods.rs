@@ -1,6 +1,11 @@
-//! Integration tests for Session context, summaries, search, representation, and queue_status.
+//! Integration tests for Session context, summaries, search, representation, and `queue_status`.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::needless_borrows_for_generic_args,
+    missing_docs
+)]
 
 use honcho_ai::session::Session;
 use honcho_ai::Honcho;
@@ -31,7 +36,7 @@ fn session_response_json() -> Value {
 async fn make_session(server: &MockServer) -> Session {
     Mock::given(method("POST"))
         .and(path("/v3/workspaces"))
-        .and(body_json(&json!({"id": "ws1"})))
+        .and(body_json(json!({"id": "ws1"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(workspace_response_json()))
         .up_to_n_times(1)
         .mount(server)
@@ -39,7 +44,7 @@ async fn make_session(server: &MockServer) -> Session {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/sessions"))
-        .and(body_json(&json!({"id": "sess1"})))
+        .and(body_json(json!({"id": "sess1"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(session_response_json()))
         .up_to_n_times(1)
         .mount(server)
@@ -166,7 +171,7 @@ async fn session_search_returns_messages() {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/sessions/sess1/search"))
-        .and(body_json(&json!({
+        .and(body_json(json!({
             "query": "hello",
             "filters": null,
             "limit": 10
@@ -209,7 +214,7 @@ async fn session_representation_posts_to_peer_representation() {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/peers/alice/representation"))
-        .and(body_json(&json!({"session_id": "sess1"})))
+        .and(body_json(json!({"session_id": "sess1"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "representation": "Alice likes Rust"
         })))

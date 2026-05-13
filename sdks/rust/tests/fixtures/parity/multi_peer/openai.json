@@ -1,0 +1,27 @@
+[
+  {
+    "role": "user",
+    "name": "alice",
+    "content": "what is rust?"
+  },
+  {
+    "role": "assistant",
+    "name": "bot",
+    "content": "rust is a systems language"
+  },
+  {
+    "role": "user",
+    "name": "bob",
+    "content": "tell me more"
+  },
+  {
+    "role": "assistant",
+    "name": "bot",
+    "content": "it has zero-cost abstractions"
+  },
+  {
+    "role": "user",
+    "name": "alice",
+    "content": "sounds great"
+  }
+]

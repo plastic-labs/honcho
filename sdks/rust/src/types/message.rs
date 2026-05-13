@@ -78,7 +78,6 @@ pub struct MessageGet {
 ///
 /// All fields optional; message-level config overrides session and workspace config.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[non_exhaustive]
 pub struct MessageConfiguration {
     /// Reasoning configuration for this message.
     pub reasoning: Option<ReasoningConfiguration>,
@@ -122,6 +121,14 @@ pub struct MessageUploadForm {
 pub type MessagePage = super::pagination::Page<MessageResponse>;
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unnecessary_wraps,
+    clippy::needless_pass_by_value,
+    clippy::unused_async
+)]
 mod tests {
     use super::*;
 

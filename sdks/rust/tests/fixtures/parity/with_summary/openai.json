@@ -1,0 +1,24 @@
+[
+  {
+    "role": "system",
+    "content": "<peer_representation>User is polite and brief.</peer_representation>"
+  },
+  {
+    "role": "system",
+    "content": "<peer_card>['friendly', 'concise']</peer_card>"
+  },
+  {
+    "role": "system",
+    "content": "<summary>A brief greeting exchange.</summary>"
+  },
+  {
+    "role": "user",
+    "name": "user1",
+    "content": "hello"
+  },
+  {
+    "role": "assistant",
+    "name": "assistant",
+    "content": "hi"
+  }
+]

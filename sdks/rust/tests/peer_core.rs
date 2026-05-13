@@ -1,6 +1,14 @@
 //! Integration tests for Peer core, chat, search, and card methods (Phase 5).
 
-#![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::needless_pass_by_value,
+    clippy::needless_borrows_for_generic_args,
+    clippy::unused_async,
+    clippy::items_after_statements,
+    missing_docs
+)]
 
 use std::collections::HashMap;
 
@@ -39,7 +47,7 @@ fn workspace_response_json() -> Value {
     })
 }
 
-async fn make_honcho(server: &MockServer) -> Honcho {
+fn make_honcho(server: &MockServer) -> Honcho {
     Honcho::new(&server.uri(), "ws1").unwrap()
 }
 
@@ -60,7 +68,7 @@ async fn make_peer(server: &MockServer) -> Peer {
         .mount(server)
         .await;
 
-    let honcho = make_honcho(server).await;
+    let honcho = make_honcho(server);
     honcho.peer("alice").await.unwrap()
 }
 

@@ -1,4 +1,4 @@
-//! Tests for SessionContext::to_openai, to_anthropic, and len.
+//! Tests for `SessionContext::to_openai`, `to_anthropic`, and `len`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 

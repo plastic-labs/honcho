@@ -1,4 +1,11 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::needless_borrows_for_generic_args,
+    clippy::unused_async,
+    missing_docs
+)]
 
 use honcho_ai::client::Honcho;
 use honcho_ai::types::dream::QueueStatus;
@@ -15,7 +22,7 @@ fn workspace_json() -> serde_json::Value {
     })
 }
 
-async fn make_honcho(server: &MockServer, workspace_id: &str) -> Honcho {
+fn make_honcho(server: &MockServer, workspace_id: &str) -> Honcho {
     Honcho::from_params(
         Honcho::builder()
             .base_url(server.uri())
@@ -41,7 +48,7 @@ fn message_json(id: &str) -> serde_json::Value {
 async fn mount_ensure_workspace(server: &MockServer) {
     Mock::given(method("POST"))
         .and(path("/v3/workspaces"))
-        .and(body_json(&serde_json::json!({"id": "ws1"})))
+        .and(body_json(serde_json::json!({"id": "ws1"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(workspace_json()))
         .mount(server)
         .await;
@@ -50,7 +57,7 @@ async fn mount_ensure_workspace(server: &MockServer) {
 #[tokio::test]
 async fn search_returns_messages() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server, "ws1").await;
+    let honcho = make_honcho(&server, "ws1");
 
     mount_ensure_workspace(&server).await;
 
@@ -79,7 +86,7 @@ async fn search_returns_messages() {
 #[tokio::test]
 async fn queue_status_returns_status() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server, "ws1").await;
+    let honcho = make_honcho(&server, "ws1");
 
     mount_ensure_workspace(&server).await;
 
@@ -116,7 +123,7 @@ async fn queue_status_returns_status() {
 #[tokio::test]
 async fn schedule_dream_posts_correct_body() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server, "ws1").await;
+    let honcho = make_honcho(&server, "ws1");
 
     mount_ensure_workspace(&server).await;
 
@@ -140,7 +147,7 @@ async fn schedule_dream_posts_correct_body() {
 #[tokio::test]
 async fn delete_workspace_calls_delete() {
     let server = MockServer::start().await;
-    let honcho = make_honcho(&server, "ws1").await;
+    let honcho = make_honcho(&server, "ws1");
 
     Mock::given(method("DELETE"))
         .and(path("/v3/workspaces/ws_to_delete"))

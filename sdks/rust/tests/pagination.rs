@@ -1,7 +1,7 @@
 //! F3.2 + F3.3 — Page pagination tests
 //!
-//! F3.2.x: Tests for `Page<TRaw, TOut>` first page + next_page().
-//! F3.3.x: Tests for Page::into_stream().
+//! F3.2.x: Tests for `Page<TRaw, TOut>` first page + `next_page()`.
+//! F3.3.x: Tests for `Page::into_stream()`.
 
 use honcho_ai::error::HonchoError;
 use honcho_ai::types::pagination::{Page, PageResponse};

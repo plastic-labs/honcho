@@ -18,6 +18,14 @@ pub struct DialecticStream<S> {
     complete: bool,
 }
 
+impl<S> std::fmt::Debug for DialecticStream<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DialecticStream")
+            .field("state", &"<hidden>")
+            .finish()
+    }
+}
+
 impl<S> DialecticStream<S>
 where
     S: Stream<Item = Result<String>> + Unpin,
@@ -67,9 +75,15 @@ where
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unnecessary_wraps,
+    clippy::needless_pass_by_value,
+    clippy::unused_async
+)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use futures_util::StreamExt;
 
     use super::*;

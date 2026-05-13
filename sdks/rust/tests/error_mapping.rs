@@ -1,4 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::manual_range_contains,
+    missing_docs
+)]
 
 use std::time::Duration;
 
@@ -119,7 +125,7 @@ fn rate_limit_429_parses_retry_after_http_date() {
             ..
         } => {
             let secs = dur.as_secs_f64();
-            assert!(secs >= 4.9 && secs <= 5.1, "expected ~5s, got {secs}s");
+            assert!((4.9..=5.1).contains(&secs), "expected ~5s, got {secs}s");
         }
         _ => panic!("expected RateLimit with retry_after, got {err:?}"),
     }

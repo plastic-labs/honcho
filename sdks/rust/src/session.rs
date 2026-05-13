@@ -384,7 +384,7 @@ impl Session {
         &self,
         specs: impl IntoIterator<Item = impl Into<PeerSpec>>,
     ) -> Result<()> {
-        let peers_map = normalize_peers(specs);
+        let peers_map = normalize_peers(specs)?;
         let body = serde_json::json!({"peers": peers_map});
         let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
         self.inner.http.post(&route, Some(&body), &[]).await
@@ -395,7 +395,7 @@ impl Session {
         &self,
         specs: impl IntoIterator<Item = impl Into<PeerSpec>>,
     ) -> Result<()> {
-        let peers_map = normalize_peers(specs);
+        let peers_map = normalize_peers(specs)?;
         let body = serde_json::json!({"peers": peers_map});
         let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
         self.inner.http.put(&route, Some(&body), &[]).await
@@ -608,12 +608,30 @@ impl Session {
     ///
     /// Fetches messages, summary, peer representation, and peer card for this session.
     pub async fn context(&self) -> Result<crate::types::session::SessionContext> {
+        self.context_with_options(true, false).await
+    }
+
+    /// Get the session context with custom parameters.
+    ///
+    /// - `summary`: whether to include the session summary.
+    /// - `limit_to_session`: whether to limit representation context to this session.
+    pub async fn context_with_options(
+        &self,
+        summary: bool,
+        limit_to_session: bool,
+    ) -> Result<crate::types::session::SessionContext> {
         let route = routes::session_context(&self.inner.workspace_id, &self.inner.id);
         self.inner
             .http
             .get(
                 &route,
-                &[("summary", "true"), ("limit_to_session", "false")],
+                &[
+                    ("summary", if summary { "true" } else { "false" }),
+                    (
+                        "limit_to_session",
+                        if limit_to_session { "true" } else { "false" },
+                    ),
+                ],
             )
             .await
     }
@@ -631,22 +649,32 @@ impl Session {
 
     // ── F6.9: Search, representation, queue_status ──────────────────────
 
-    /// Search messages within this session.
+    /// Search messages within this session (default limit of 10).
     ///
     /// Returns `Err(HonchoError::Configuration)` when `query` is empty.
     pub async fn search(&self, query: &str) -> Result<Vec<crate::types::message::MessageResponse>> {
-        if query.is_empty() {
+        self.search_with_options(crate::types::message::MessageSearchOptions {
+            query: query.to_string(),
+            filters: None,
+            limit: 10,
+        })
+        .await
+    }
+
+    /// Search messages within this session with custom options (limit, filters).
+    ///
+    /// Returns `Err(HonchoError::Configuration)` when `query` is empty.
+    pub async fn search_with_options(
+        &self,
+        options: crate::types::message::MessageSearchOptions,
+    ) -> Result<Vec<crate::types::message::MessageResponse>> {
+        if options.query.is_empty() {
             return Err(crate::error::HonchoError::Configuration(
                 "query must not be empty".to_string(),
             ));
         }
-        let body = crate::types::message::MessageSearchOptions {
-            query: query.to_string(),
-            filters: None,
-            limit: 10,
-        };
         let route = routes::session_search(&self.inner.workspace_id, &self.inner.id);
-        self.inner.http.post(&route, Some(&body), &[]).await
+        self.inner.http.post(&route, Some(&options), &[]).await
     }
 
     /// Get a peer's representation scoped to this session.
@@ -672,21 +700,26 @@ impl Session {
     }
 }
 
-fn normalize_peers(specs: impl IntoIterator<Item = impl Into<PeerSpec>>) -> serde_json::Value {
+fn normalize_peers(
+    specs: impl IntoIterator<Item = impl Into<PeerSpec>>,
+) -> Result<serde_json::Value> {
     let map: serde_json::Map<String, Value> = specs
         .into_iter()
         .map(|s| {
             let spec = s.into();
             let val = match &spec {
                 PeerSpec::Id(_) => serde_json::json!({}),
-                PeerSpec::WithConfig(_, cfg) => {
-                    serde_json::to_value(cfg).unwrap_or_else(|_| serde_json::json!({}))
-                }
+                PeerSpec::WithConfig(_, cfg) => serde_json::to_value(cfg).map_err(|e| {
+                    HonchoError::Configuration(format!(
+                        "failed to serialize peer config for {}: {e}",
+                        spec.id()
+                    ))
+                })?,
             };
-            (spec.id().to_owned(), val)
+            Ok((spec.id().to_owned(), val))
         })
-        .collect();
-    Value::Object(map)
+        .collect::<Result<_>>()?;
+    Ok(Value::Object(map))
 }
 
 #[cfg(test)]

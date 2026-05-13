@@ -7,6 +7,7 @@ use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct RequiresString {
+    #[allow(dead_code)] // Field intentionally unused — tests decoder path
     id: String,
 }
 

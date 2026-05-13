@@ -33,6 +33,7 @@ pub struct HttpClient {
 }
 
 #[derive(bon::Builder)]
+#[doc(hidden)]
 pub struct HttpClientParams {
     base_url: String,
     api_key: Option<String>,
@@ -189,7 +190,23 @@ impl HttpClient {
             }
 
             let headers = response.headers().clone();
-            let body_bytes = response.bytes().await.unwrap_or_default();
+            let Ok(body_bytes) = response.bytes().await else {
+                let msg = format!(
+                    "request failed with status {} (could not read response body)",
+                    status.as_u16()
+                );
+                return Err(if status.is_server_error() {
+                    HonchoError::Server {
+                        status: status.as_u16(),
+                        message: msg,
+                    }
+                } else {
+                    HonchoError::Client {
+                        status: status.as_u16(),
+                        message: msg,
+                    }
+                });
+            };
             let api_error = error::from_response(status, &headers, &body_bytes, Utc::now());
 
             let is_retryable = matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504);
@@ -440,7 +457,14 @@ pub fn delay_for_attempt(attempt: u32) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::unnecessary_wraps,
+        clippy::needless_pass_by_value,
+        clippy::unused_async
+    )]
 
     use super::*;
     use crate::error::HonchoError;
@@ -451,11 +475,11 @@ mod tests {
     use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    async fn make_client(server: &MockServer) -> HttpClient {
+    fn make_client(server: &MockServer) -> HttpClient {
         HttpClient::from_params(HttpClient::builder().base_url(server.uri()).build()).unwrap()
     }
 
-    async fn make_client_with_key(server: &MockServer, api_key: &str) -> HttpClient {
+    fn make_client_with_key(server: &MockServer, api_key: &str) -> HttpClient {
         HttpClient::from_params(
             HttpClient::builder()
                 .base_url(server.uri())
@@ -500,9 +524,8 @@ mod tests {
                 .base_url("not a url".to_string())
                 .build(),
         );
-        let err = match result {
-            Err(e) => e,
-            Ok(_) => panic!("expected Configuration error"),
+        let Err(err) = result else {
+            panic!("expected Configuration error")
         };
         assert!(matches!(err, HonchoError::Configuration(_)));
     }
@@ -526,7 +549,7 @@ mod tests {
     #[tokio::test]
     async fn builder_default_max_retries_is_2() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(503))
@@ -563,7 +586,7 @@ mod tests {
     #[tokio::test]
     async fn get_sends_get_request() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(peer_json()))
@@ -577,7 +600,7 @@ mod tests {
     #[tokio::test]
     async fn post_sends_post_with_body() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
         let body = serde_json::json!({"name": "test"});
 
         Mock::given(method("POST"))
@@ -593,7 +616,7 @@ mod tests {
     #[tokio::test]
     async fn put_sends_put_with_body() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
         let body = serde_json::json!({"name": "updated"});
 
         Mock::given(method("PUT"))
@@ -609,7 +632,7 @@ mod tests {
     #[tokio::test]
     async fn patch_sends_patch_with_body() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
         let body = serde_json::json!({"name": "patched"});
 
         Mock::given(method("PATCH"))
@@ -625,15 +648,14 @@ mod tests {
     #[tokio::test]
     async fn delete_returns_unit() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("DELETE"))
             .respond_with(ResponseTemplate::new(204))
             .mount(&server)
             .await;
 
-        let result: () = client.delete("/v3/test", &[]).await.unwrap();
-        assert_eq!(result, ());
+        let _: () = client.delete("/v3/test", &[]).await.unwrap();
     }
 
     // ── Auth & headers ───────────────────────────────────────────────────
@@ -641,7 +663,7 @@ mod tests {
     #[tokio::test]
     async fn sends_bearer_auth_when_api_key_set() {
         let server = MockServer::start().await;
-        let client = make_client_with_key(&server, "test-key").await;
+        let client = make_client_with_key(&server, "test-key");
 
         Mock::given(method("GET"))
             .and(header("authorization", "Bearer test-key"))
@@ -655,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn sends_user_agent() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .and(header_exists("user-agent"))
@@ -669,7 +691,7 @@ mod tests {
     #[tokio::test]
     async fn sends_content_type() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .and(header("content-type", "application/json"))
@@ -683,7 +705,7 @@ mod tests {
     #[tokio::test]
     async fn sends_accept() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .and(header("accept", "application/json"))
@@ -719,29 +741,27 @@ mod tests {
     #[tokio::test]
     async fn unit_type_for_204_no_content() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("DELETE"))
             .respond_with(ResponseTemplate::new(204))
             .mount(&server)
             .await;
 
-        let result: () = client.delete("/v3/test", &[]).await.unwrap();
-        assert_eq!(result, ());
+        let _: () = client.delete("/v3/test", &[]).await.unwrap();
     }
 
     #[tokio::test]
     async fn unit_type_for_200_empty_body() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200))
             .mount(&server)
             .await;
 
-        let result: () = client.get("/v3/test", &[]).await.unwrap();
-        assert_eq!(result, ());
+        let _: () = client.get("/v3/test", &[]).await.unwrap();
     }
 
     // ── Timeout ──────────────────────────────────────────────────────────
@@ -829,7 +849,7 @@ mod tests {
     #[tokio::test]
     async fn malformed_json_returns_decode_error() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .respond_with(
@@ -856,7 +876,7 @@ mod tests {
     #[tokio::test]
     async fn retries_on_retryable_status(#[case] status: u16) {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(peer_json()))
@@ -959,7 +979,7 @@ mod tests {
     #[tokio::test]
     async fn retry_after_zero_retries_immediately() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(peer_json()))
@@ -979,7 +999,7 @@ mod tests {
     #[tokio::test]
     async fn retry_after_seconds_used() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(peer_json()))
@@ -1001,7 +1021,7 @@ mod tests {
     #[tokio::test]
     async fn e2e_get_peer_typed() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         let fixture = serde_json::json!({
             "id": "p1",
@@ -1028,7 +1048,7 @@ mod tests {
     #[tokio::test]
     async fn e2e_post_workspace_typed() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         let fixture = serde_json::json!({
             "id": "ws_abc123",
@@ -1058,7 +1078,7 @@ mod tests {
     #[tokio::test]
     async fn post_multipart_sends_form_data() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("POST"))
             .and(path("/v3/upload"))
@@ -1082,7 +1102,7 @@ mod tests {
     #[tokio::test]
     async fn post_multipart_with_query_params() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("POST"))
             .and(path("/v3/upload"))
@@ -1107,7 +1127,7 @@ mod tests {
     #[tokio::test]
     async fn post_multipart_server_error_returns_error() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(503))
@@ -1131,7 +1151,7 @@ mod tests {
     #[tokio::test]
     async fn request_streaming_returns_response_on_200() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         let sse_body = "data: hello\n\ndata: world\n\n";
 
@@ -1163,7 +1183,7 @@ mod tests {
     #[tokio::test]
     async fn request_streaming_error_status_maps_to_honcho_error() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(422))
@@ -1189,7 +1209,7 @@ mod tests {
     #[tokio::test]
     async fn request_streaming_sends_accept_event_stream_header() {
         let server = MockServer::start().await;
-        let client = make_client(&server).await;
+        let client = make_client(&server);
 
         Mock::given(method("POST"))
             .and(header("accept", "text/event-stream"))

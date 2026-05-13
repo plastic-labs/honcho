@@ -28,6 +28,7 @@ pub struct Session {
 }
 
 /// Request body for creating a new session.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
 pub struct SessionCreate {
     /// Unique session identifier (alphanumeric, hyphens, underscores).
@@ -44,6 +45,7 @@ pub struct SessionCreate {
 }
 
 /// Request body for updating a session.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
 pub struct SessionUpdate {
     /// Updated metadata (replaces existing).
@@ -55,6 +57,7 @@ pub struct SessionUpdate {
 }
 
 /// Query parameters for listing/getting sessions.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
 pub struct SessionGet {
     /// Filter criteria for sessions.
@@ -117,6 +120,7 @@ pub struct SummaryConfiguration {
 }
 
 /// Per-peer observation settings within a session.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionPeerConfig {
     /// Whether Honcho will use reasoning to form a representation of this peer.
@@ -161,6 +165,7 @@ pub struct SessionSummaries {
 }
 
 /// The type of session summary.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SummaryType {

@@ -45,6 +45,15 @@ struct ChatResponse {
     content: Option<String>,
 }
 
+impl std::fmt::Debug for Peer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Peer")
+            .field("id", &self.inner.id)
+            .field("workspace_id", &self.inner.workspace_id)
+            .finish()
+    }
+}
+
 impl Peer {
     pub(crate) fn from_parts(http: HttpClient, workspace_id: String, resp: PeerResponse) -> Self {
         Self {
@@ -323,23 +332,31 @@ impl Peer {
 
     // ── Search ─────────────────────────────────────────────────────────
 
-    /// Search messages for this peer.
+    /// Search messages for this peer (default limit of 10).
     pub async fn search(&self, query: &str) -> Result<Vec<MessageResponse>> {
-        if query.is_empty() {
+        self.search_with_options(MessageSearchOptions {
+            query: query.to_string(),
+            filters: None,
+            limit: 10,
+        })
+        .await
+    }
+
+    /// Search messages for this peer with custom options (limit, filters).
+    pub async fn search_with_options(
+        &self,
+        options: MessageSearchOptions,
+    ) -> Result<Vec<MessageResponse>> {
+        if options.query.is_empty() {
             return Err(HonchoError::Configuration(
                 "query must not be empty".to_string(),
             ));
         }
-        let body = MessageSearchOptions {
-            query: query.to_string(),
-            filters: None,
-            limit: 10,
-        };
         self.inner
             .http
             .post(
                 &routes::peer_search(&self.inner.workspace_id, &self.inner.id),
-                Some(&body),
+                Some(&options),
                 &[],
             )
             .await
@@ -624,15 +641,15 @@ impl RepresentationBuilder {
             }
         }
 
-        let params = serde_json::json!({
-            "session_id": self.session_id,
-            "target": self.target,
-            "search_query": self.search_query,
-            "search_top_k": self.search_top_k,
-            "search_max_distance": self.search_max_distance,
-            "include_most_frequent": self.include_most_frequent,
-            "max_conclusions": self.max_conclusions,
-        });
+        let params = crate::types::peer::PeerRepresentationGet {
+            session_id: self.session_id,
+            target: self.target,
+            search_query: self.search_query,
+            search_top_k: self.search_top_k,
+            search_max_distance: self.search_max_distance,
+            include_most_frequent: self.include_most_frequent,
+            max_conclusions: self.max_conclusions,
+        };
 
         let route = routes::peer_representation(&self.workspace_id, &self.peer_id);
         let resp: RepresentationResponse = self.http.post(&route, Some(&params), &[]).await?;
@@ -686,6 +703,14 @@ impl MessageBuilder {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unnecessary_wraps,
+    clippy::needless_pass_by_value,
+    clippy::unused_async
+)]
 mod tests {
     use super::*;
     use std::pin::Pin;

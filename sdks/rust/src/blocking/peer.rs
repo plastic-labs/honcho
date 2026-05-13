@@ -1,0 +1,291 @@
+use std::collections::HashMap;
+use std::pin::Pin;
+
+use futures_util::Stream;
+use serde_json::Value;
+
+use crate::error::Result;
+use crate::types::dialectic::{DialecticOptions, ReasoningLevel};
+use crate::types::message::MessageResponse;
+use crate::types::peer::PeerContext;
+use crate::types::session::Session;
+
+use super::conclusion::ConclusionScope;
+use super::iter::{collect_all_pages, BlockingIter};
+use super::runtime::block_on;
+
+/// Synchronous wrapper around [`crate::Peer`].
+#[derive(Clone)]
+pub struct Peer {
+    inner: crate::Peer,
+}
+
+impl Peer {
+    pub(crate) fn new(inner: crate::Peer) -> Self {
+        Self { inner }
+    }
+
+    /// Peer's unique identifier.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    /// Cached metadata.
+    #[must_use]
+    pub fn metadata(&self) -> Option<HashMap<String, Value>> {
+        self.inner.metadata()
+    }
+
+    /// Cached configuration.
+    #[must_use]
+    pub fn configuration(&self) -> Option<HashMap<String, Value>> {
+        self.inner.configuration()
+    }
+
+    /// Refresh cached state from the server.
+    pub fn refresh(&self) -> Result<()> {
+        block_on(self.inner.refresh())
+    }
+
+    /// Fetch and return metadata, updating the cache.
+    pub fn get_metadata(&self) -> Result<HashMap<String, Value>> {
+        block_on(self.inner.get_metadata())
+    }
+
+    /// Set metadata on the server and update the cache.
+    pub fn set_metadata(&self, metadata: HashMap<String, Value>) -> Result<()> {
+        block_on(self.inner.set_metadata(metadata))
+    }
+
+    /// Fetch and return configuration, updating the cache.
+    pub fn get_configuration(&self) -> Result<HashMap<String, Value>> {
+        block_on(self.inner.get_configuration())
+    }
+
+    /// Set configuration on the server and update the cache.
+    pub fn set_configuration(&self, configuration: HashMap<String, Value>) -> Result<()> {
+        block_on(self.inner.set_configuration(configuration))
+    }
+
+    /// Patch-update metadata.
+    pub fn update(&self, metadata: HashMap<String, Value>) -> Result<()> {
+        block_on(self.inner.update(metadata))
+    }
+
+    /// Non-streaming dialectic chat.
+    pub fn chat(&self, query: &str) -> Result<Option<String>> {
+        block_on(self.inner.chat(query))
+    }
+
+    /// Non-streaming dialectic chat with full options.
+    pub fn chat_with_options(&self, options: &DialecticOptions) -> Result<Option<String>> {
+        block_on(self.inner.chat_with_options(options))
+    }
+
+    /// Start a streaming dialectic chat. Returns a builder; call `.send()` for an iterator.
+    #[must_use]
+    pub fn chat_stream(&self, query: impl Into<String>) -> BlockingChatStreamBuilder {
+        BlockingChatStreamBuilder {
+            inner: self.inner.chat_stream(query),
+        }
+    }
+
+    /// Get the peer's representation.
+    pub fn representation(&self) -> Result<String> {
+        block_on(self.inner.representation())
+    }
+
+    /// Get a builder for fine-grained representation parameters.
+    #[must_use]
+    pub fn representation_builder(&self) -> BlockingRepresentationBuilder {
+        BlockingRepresentationBuilder {
+            inner: self.inner.representation_builder(),
+        }
+    }
+
+    /// Get the peer's context.
+    pub fn context(&self) -> Result<PeerContext> {
+        block_on(self.inner.context())
+    }
+
+    /// Get the peer's context scoped to a target.
+    pub fn context_with_target(&self, target: &str) -> Result<PeerContext> {
+        block_on(self.inner.context_with_target(target))
+    }
+
+    /// List sessions for this peer, collecting across pages.
+    pub fn sessions(&self) -> Result<Vec<Session>> {
+        block_on(async {
+            let page = self.inner.sessions().await?;
+            Ok(collect_all_pages(page).await)
+        })
+    }
+
+    /// Search messages for this peer.
+    pub fn search(&self, query: &str) -> Result<Vec<MessageResponse>> {
+        block_on(self.inner.search(query))
+    }
+
+    /// Get this peer's card.
+    pub fn get_card(&self) -> Result<Option<Vec<String>>> {
+        block_on(self.inner.get_card())
+    }
+
+    /// Get this peer's card scoped to a target.
+    pub fn get_card_with_target(&self, target: &str) -> Result<Option<Vec<String>>> {
+        block_on(self.inner.get_card_with_target(target))
+    }
+
+    /// Set this peer's card.
+    pub fn set_card(&self, card: Vec<String>) -> Result<Option<Vec<String>>> {
+        block_on(self.inner.set_card(card))
+    }
+
+    /// Set this peer's card scoped to a target.
+    pub fn set_card_with_target(
+        &self,
+        card: Vec<String>,
+        target: &str,
+    ) -> Result<Option<Vec<String>>> {
+        block_on(self.inner.set_card_with_target(card, target))
+    }
+
+    /// Self-scoped conclusion handle.
+    #[must_use]
+    pub fn conclusions(&self) -> ConclusionScope {
+        ConclusionScope::new(self.inner.conclusions())
+    }
+
+    /// Cross-peer conclusion handle.
+    #[must_use]
+    pub fn conclusions_of(&self, target: impl Into<String>) -> ConclusionScope {
+        ConclusionScope::new(self.inner.conclusions_of(target))
+    }
+
+    /// Create a message builder (sync, no API call).
+    #[must_use]
+    pub fn message(&self, content: impl Into<String>) -> crate::peer::MessageBuilder {
+        self.inner.message(content)
+    }
+}
+
+/// Blocking streaming dialectic chat builder.
+pub struct BlockingChatStreamBuilder {
+    inner: crate::peer::ChatStreamBuilder,
+}
+
+impl BlockingChatStreamBuilder {
+    /// Scope the chat to a target peer.
+    #[must_use]
+    pub fn target(self, target: impl Into<String>) -> Self {
+        Self {
+            inner: self.inner.target(target),
+        }
+    }
+
+    /// Scope the chat to a session.
+    #[must_use]
+    pub fn session(self, session_id: impl Into<String>) -> Self {
+        Self {
+            inner: self.inner.session(session_id),
+        }
+    }
+
+    /// Set the reasoning level.
+    #[must_use]
+    pub fn reasoning_level(self, level: ReasoningLevel) -> Self {
+        Self {
+            inner: self.inner.reasoning_level(level),
+        }
+    }
+
+    /// Send and return an iterator over SSE chunks.
+    pub fn send(self) -> Result<ChatStreamIterator> {
+        let stream = block_on(self.inner.send())?;
+        Ok(ChatStreamIterator {
+            inner: BlockingIter::new(stream),
+        })
+    }
+}
+
+/// Iterator over streaming dialectic chat chunks.
+pub struct ChatStreamIterator {
+    inner: BlockingIter<Pin<Box<dyn Stream<Item = Result<String>> + Send>>>,
+}
+
+impl Iterator for ChatStreamIterator {
+    type Item = Result<String>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
+/// Blocking builder for fine-grained representation requests.
+pub struct BlockingRepresentationBuilder {
+    inner: crate::peer::RepresentationBuilder,
+}
+
+impl BlockingRepresentationBuilder {
+    /// Scope to a session.
+    #[must_use]
+    pub fn session_id(self, val: impl Into<String>) -> Self {
+        Self {
+            inner: self.inner.session_id(val),
+        }
+    }
+
+    /// Target peer.
+    #[must_use]
+    pub fn target(self, val: impl Into<String>) -> Self {
+        Self {
+            inner: self.inner.target(val),
+        }
+    }
+
+    /// Semantic search query.
+    #[must_use]
+    pub fn search_query(self, val: impl Into<String>) -> Self {
+        Self {
+            inner: self.inner.search_query(val),
+        }
+    }
+
+    /// Top-K for semantic search (1–100).
+    #[must_use]
+    pub fn search_top_k(self, val: u32) -> Self {
+        Self {
+            inner: self.inner.search_top_k(val),
+        }
+    }
+
+    /// Max cosine distance (0.0–1.0).
+    #[must_use]
+    pub fn search_max_distance(self, val: f64) -> Self {
+        Self {
+            inner: self.inner.search_max_distance(val),
+        }
+    }
+
+    /// Include most frequent conclusions.
+    #[must_use]
+    pub fn include_most_frequent(self, val: bool) -> Self {
+        Self {
+            inner: self.inner.include_most_frequent(val),
+        }
+    }
+
+    /// Max conclusions (1–100).
+    #[must_use]
+    pub fn max_conclusions(self, val: u32) -> Self {
+        Self {
+            inner: self.inner.max_conclusions(val),
+        }
+    }
+
+    /// Send the representation request.
+    pub fn send(self) -> Result<String> {
+        block_on(self.inner.send())
+    }
+}

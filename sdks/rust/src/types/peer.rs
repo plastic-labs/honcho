@@ -27,6 +27,7 @@ pub struct Peer {
 }
 
 /// Parameters for creating a new peer.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 #[builder(on(String, into))]
 pub struct PeerCreate {
@@ -41,6 +42,7 @@ pub struct PeerCreate {
 }
 
 /// Parameters for updating an existing peer.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 #[builder(on(String, into))]
 pub struct PeerUpdate {
@@ -53,6 +55,7 @@ pub struct PeerUpdate {
 }
 
 /// Filter parameters for listing peers.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 #[builder(on(String, into))]
 pub struct PeerGet {
@@ -107,6 +110,7 @@ pub struct PeerContext {
 }
 
 /// Parameters for getting a peer's representation.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 #[builder(on(String, into))]
 pub struct PeerRepresentationGet {

@@ -23,7 +23,7 @@ async fn main() -> honcho_ai::error::Result<()> {
     let created = scope
         .create([ConclusionCreateParams::new("Alice likes dark mode")])
         .await?;
-    println!("created: {:?}", created);
+    println!("created: {created:?}");
 
     // Create with session scope
     let _ = scope

@@ -81,6 +81,7 @@ pub struct WorkspaceConfiguration {
 }
 
 /// Request body for creating a workspace.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
 #[builder(on(String, into))]
 #[builder(finish_fn = build)]
@@ -96,6 +97,7 @@ pub struct WorkspaceCreate {
 }
 
 /// Request body for updating a workspace.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
 #[builder(on(String, into))]
 #[builder(finish_fn = build)]
@@ -109,6 +111,7 @@ pub struct WorkspaceUpdate {
 }
 
 /// Request body for listing/getting workspaces.
+#[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
 #[builder(on(String, into))]
 #[builder(finish_fn = build)]

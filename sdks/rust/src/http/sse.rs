@@ -186,7 +186,7 @@ impl SseParser {
         let obj = parsed.as_object()?;
 
         if let Some(done_val) = obj.get("done") {
-            if !done_val.is_null() && done_val.as_bool().unwrap_or(true) {
+            if !done_val.is_null() && done_val.as_bool().unwrap_or(false) {
                 self.done = true;
                 return None;
             }
@@ -207,7 +207,8 @@ impl Default for SseParser {
     }
 }
 
-pub(crate) fn parse_sse_stream(
+/// Parse a byte stream of SSE data into a stream of content strings.
+pub fn parse_sse_stream(
     stream: impl futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl futures_util::Stream<Item = Result<String, crate::error::HonchoError>> + Send + 'static {
     let mut parser = SseParser::new();
@@ -281,11 +282,7 @@ mod tests {
         full.extend_from_slice("\u{00e9}".as_bytes());
         full.extend_from_slice(b"\"}}\n\n");
 
-        let split_pos = full
-            .iter()
-            .position(|&b| b == 0xC3)
-            .map(|p| p + 1)
-            .unwrap_or(0);
+        let split_pos = full.iter().position(|&b| b == 0xC3).map_or(0, |p| p + 1);
 
         let mut p = SseParser::new();
         let mut results = Vec::new();

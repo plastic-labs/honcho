@@ -1,4 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::needless_pass_by_value,
+    missing_docs
+)]
 
 use honcho_ai::client::Honcho;
 use honcho_ai::types::pagination::Page;
@@ -155,7 +161,7 @@ async fn sessions_returns_paginated() {
 #[tokio::test]
 async fn workspaces_returns_ids() {
     let server = MockServer::start().await;
-    let _honcho = make_honcho(&server, "ws1");
+    let honcho = make_honcho(&server, "ws1");
 
     let body = page_json(
         vec![workspace_json("ws_abc"), workspace_json("ws_def")],
@@ -173,7 +179,7 @@ async fn workspaces_returns_ids() {
         .mount(&server)
         .await;
 
-    let page = _honcho.workspaces().await.unwrap();
+    let page = honcho.workspaces().await.unwrap();
     let ids = page.items();
     assert_eq!(ids.len(), 2);
     assert_eq!(ids[0], "ws_abc");

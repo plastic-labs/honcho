@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Reasoning effort level for dialectic queries.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningLevel {

@@ -1,4 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::needless_borrows_for_generic_args,
+    missing_docs
+)]
 
 mod common;
 
@@ -66,7 +72,7 @@ fn reasoning_level_serde_roundtrip() {
         let v = serde_json::json!(lvl);
         let parsed: ReasoningLevel = serde_json::from_value(v.clone()).unwrap();
         assert_eq!(
-            serde_json::to_value(&parsed).unwrap(),
+            serde_json::to_value(parsed).unwrap(),
             v,
             "mismatch for {lvl}"
         );
