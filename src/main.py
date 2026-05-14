@@ -28,6 +28,7 @@ from src.routers import (
     webhooks,
     workspaces,
 )
+from src.startup import validate_embedding_schema
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
@@ -124,6 +125,12 @@ if SENTRY_ENABLED:
 async def lifespan(_: FastAPI):
     # Initialize CloudEvents telemetry
     await initialize_telemetry_async()
+
+    # Validate embedding schema before serving any traffic. Fails closed: if
+    # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical
+    # pgvector columns, the process refuses to start rather than silently
+    # writing wrong-dim vectors.
+    await validate_embedding_schema(engine)
 
     try:
         await init_cache()
