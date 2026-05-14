@@ -85,7 +85,8 @@ STALE_SESSION_TIMEOUT_MINUTES = 5
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
 DEDUPLICATE = true
 LOG_OBSERVATIONS = false
-MAX_INPUT_TOKENS = 23000
+MAX_INPUT_TOKENS = 25000
+MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 1024
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
@@ -254,9 +255,7 @@ TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
 NAMESPACE = "honcho"
-# This should match embedding.vector_dimensions. pgvector and dual-write mode
-# currently still require 1536 until a schema migration lands.
-DIMENSIONS = 1536
+# DIMENSIONS is deprecated; embedding.vector_dimensions is authoritative.
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
 LANCEDB_PATH = "./lancedb_data"

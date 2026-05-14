@@ -698,6 +698,7 @@ async def _search_messages_external(
         query_embedding,
         top_k=limit * oversample,
         filters=vector_filters if vector_filters else None,
+        include_attributes=["message_id"],
     )
 
     if not vector_results:

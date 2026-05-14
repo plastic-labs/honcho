@@ -11,9 +11,33 @@ from inspect import cleandoc as c
 from src.utils.tokens import estimate_tokens
 
 
+def _normalized_custom_instructions(custom_instructions: str | None) -> str | None:
+    """Return stripped custom instructions, if any."""
+    if custom_instructions is None:
+        return None
+
+    normalized = custom_instructions.strip()
+    return normalized or None
+
+
+def _custom_instructions_section(custom_instructions: str | None) -> str:
+    """Render optional custom instructions for the deriver prompt."""
+    normalized_custom_instructions = _normalized_custom_instructions(custom_instructions)
+    if normalized_custom_instructions is None:
+        return ""
+
+    return c(
+        f"""
+        CUSTOM INSTRUCTIONS:
+        {normalized_custom_instructions}
+        """
+    )
+
+
 def minimal_deriver_prompt(
     peer_id: str,
     messages: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """
     Generate minimal prompt for fast observation extraction.
@@ -25,6 +49,7 @@ def minimal_deriver_prompt(
     Returns:
         Formatted prompt string for observation extraction.
     """
+    custom_instructions_section = _custom_instructions_section(custom_instructions)
     return c(
         f"""
 Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
@@ -45,6 +70,8 @@ EXAMPLES:
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
 - EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
 
+{custom_instructions_section}
+
 Messages to analyze:
 <messages>
 {messages}
@@ -55,12 +82,24 @@ Messages to analyze:
 
 @cache
 def estimate_minimal_deriver_prompt_tokens() -> int:
-    """Estimate base prompt tokens (cached)."""
-    try:
-        prompt = minimal_deriver_prompt(
-            peer_id="",
-            messages="",
-        )
-        return estimate_tokens(prompt)
-    except Exception:
-        return 300
+    """Estimate the static minimal deriver prompt without custom instructions."""
+    prompt = minimal_deriver_prompt(
+        peer_id="",
+        messages="",
+        custom_instructions=None,
+    )
+    return estimate_tokens(prompt)
+
+
+def estimate_deriver_prompt_tokens(custom_instructions: str | None) -> int:
+    """Estimate minimal deriver prompt tokens, including custom instructions if present."""
+    normalized_custom_instructions = _normalized_custom_instructions(custom_instructions)
+    if normalized_custom_instructions is None:
+        return estimate_minimal_deriver_prompt_tokens()
+
+    prompt = minimal_deriver_prompt(
+        peer_id="",
+        messages="",
+        custom_instructions=normalized_custom_instructions,
+    )
+    return estimate_tokens(prompt)

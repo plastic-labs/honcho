@@ -4,7 +4,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from typing import NamedTuple, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 import tiktoken
 from google import genai
@@ -131,10 +131,12 @@ class _EmbeddingClient:
         vector_dimensions: int,
         max_input_tokens: int,
         max_tokens_per_request: int,
+        send_dimensions: bool,
     ):
         self.transport: str = config.transport
         self.model: str = config.model
         self.vector_dimensions: int = vector_dimensions
+        self.send_dimensions: bool = send_dimensions
 
         if self.transport == "gemini":
             if not config.api_key:
@@ -217,9 +219,10 @@ class _EmbeddingClient:
         openai_client = self.client
 
         async def _call_openai() -> list[float]:
-            response = await openai_client.embeddings.create(
-                model=self.model, input=[query]
-            )
+            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            if self.send_dimensions:
+                openai_kwargs["dimensions"] = self.vector_dimensions
+            response = await openai_client.embeddings.create(**openai_kwargs)
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
         return await _emit_embedding_call(
@@ -266,10 +269,13 @@ class _EmbeddingClient:
                                     self._validate_embedding_dimensions(emb.values)
                                 )
                 else:  # openai
-                    response = await self.client.embeddings.create(
-                        input=batch,
-                        model=self.model,
-                    )
+                    openai_kwargs: dict[str, Any] = {
+                        "input": batch,
+                        "model": self.model,
+                    }
+                    if self.send_dimensions:
+                        openai_kwargs["dimensions"] = self.vector_dimensions
+                    response = await self.client.embeddings.create(**openai_kwargs)
                     batch_embeddings.extend(
                         [
                             self._validate_embedding_dimensions(data.embedding)
@@ -426,9 +432,13 @@ class _EmbeddingClient:
                                 self._validate_embedding_dimensions(embedding.values)
                             )
             else:  # openai
-                response = await self.client.embeddings.create(
-                    model=self.model, input=[item.text for item in batch]
-                )
+                openai_kwargs: dict[str, Any] = {
+                    "model": self.model,
+                    "input": [item.text for item in batch],
+                }
+                if self.send_dimensions:
+                    openai_kwargs["dimensions"] = self.vector_dimensions
+                response = await self.client.embeddings.create(**openai_kwargs)
                 for item, embedding_data in zip(batch, response.data, strict=True):
                     result[item.text_id][item.chunk_index] = (
                         self._validate_embedding_dimensions(embedding_data.embedding)
@@ -564,6 +574,7 @@ class EmbeddingClient:
                         vector_dimensions=settings.EMBEDDING.VECTOR_DIMENSIONS,
                         max_input_tokens=settings.EMBEDDING.MAX_INPUT_TOKENS,
                         max_tokens_per_request=settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
+                        send_dimensions=settings.EMBEDDING.resolve_send_dimensions(),
                     )
                     self._instance_signature = signature
                     logger.debug(
@@ -587,6 +598,7 @@ class EmbeddingClient:
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
+            settings.EMBEDDING.resolve_send_dimensions(),
         )
 
     async def embed(self, query: str) -> list[float]:
