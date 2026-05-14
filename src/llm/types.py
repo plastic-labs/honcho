@@ -103,6 +103,11 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
     # OpenRouter reasoning_details for Gemini models — must be preserved across turns.
     reasoning_details: list[dict[str, Any]] = Field(default_factory=list)
+    # Phase 4: True when honcho_llm_call truncated the input messages to fit
+    # `max_input_tokens` before dispatching to the provider. Lets the deriver
+    # populate `hit_input_token_cap` on RepresentationCompletedEvent with a
+    # real measurement (not just the configured cap).
+    input_was_truncated: bool = False
 
 
 class HonchoLLMCallStreamChunk(BaseModel):

@@ -39,6 +39,9 @@ async def process_representation_tasks_batch(
     observers: list[str],
     observed: str,
     queue_item_message_ids: list[int],
+    hit_batch_token_cap: bool = False,
+    was_flush_enabled: bool = False,
+    batch_max_tokens: int = 0,
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, save to multiple collections.
@@ -49,6 +52,9 @@ async def process_representation_tasks_batch(
         observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
         queue_item_message_ids: Message IDs from queue items being processed
+        hit_batch_token_cap: Phase 4 — queue batcher clamped this batch to fit
+        was_flush_enabled: Phase 4 — DERIVER.FLUSH_ENABLED snapshot at batch time
+        batch_max_tokens: Phase 4 — DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
     """
     if not messages:
         return
@@ -234,6 +240,13 @@ async def process_representation_tasks_batch(
 
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observed}")
 
+    # Phase 4: token-breakdown fields derived from messages + cap snapshots.
+    queued_message_count = len(queue_item_message_ids)
+    prompt_message_count = len(messages)
+    prompt_message_tokens = sum(msg.token_count for msg in messages)
+    extra_context_message_count = max(prompt_message_count - queued_message_count, 0)
+    extra_context_tokens = max(prompt_message_tokens - messages_tokens, 0)
+
     # Emit telemetry event
     emit(
         RepresentationCompletedEvent(
@@ -251,5 +264,18 @@ async def process_representation_tasks_batch(
             input_tokens=messages_tokens,
             total_input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
+            # Phase 4 additive fields
+            queued_message_count=queued_message_count,
+            prompt_message_count=prompt_message_count,
+            prompt_message_tokens=prompt_message_tokens,
+            extra_context_message_count=extra_context_message_count,
+            extra_context_tokens=extra_context_tokens,
+            prompt_scaffold_tokens=prompt_tokens,
+            batch_max_tokens=batch_max_tokens,
+            max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
+            was_flush_enabled=was_flush_enabled,
+            hit_batch_token_cap=hit_batch_token_cap,
+            hit_input_token_cap=response.input_was_truncated,
+            observer_count=len(observers),
         )
     )

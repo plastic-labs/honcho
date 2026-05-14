@@ -2,6 +2,7 @@ import asyncio
 import signal
 from asyncio import Task
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, NamedTuple, cast
@@ -54,6 +55,25 @@ class WorkerOwnership(NamedTuple):
 
     work_unit_key: str
     aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
+
+
+@dataclass
+class QueueBatchResult:
+    """Result of `QueueManager.get_queue_item_batch`.
+
+    Phase 4 telemetry needs to know two things in addition to the batch
+    contents: whether the cumulative-token cap clamped the batch, and what
+    the configured cap was. These flags feed `RepresentationCompletedEvent`
+    so analytics can detect "we under-batched because of a flush" vs
+    "we hit the cap and kept going".
+    """
+
+    messages_context: list[models.Message] = field(default_factory=list)
+    items_to_process: list["QueueItem"] = field(default_factory=list)
+    configuration: ResolvedConfiguration | None = None
+    hit_batch_token_cap: bool = False
+    was_flush_enabled: bool = False
+    batch_max_tokens: int = 0
 
 
 def _detach_queue_batch_objects(
@@ -464,13 +484,12 @@ class QueueManager:
                         break
                     try:
                         if work_unit.task_type == "representation":
-                            (
-                                messages_context,
-                                items_to_process,
-                                message_level_configuration,
-                            ) = await self.get_queue_item_batch(
+                            batch_result = await self.get_queue_item_batch(
                                 work_unit.task_type, work_unit_key, ownership.aqs_id
                             )
+                            messages_context = batch_result.messages_context
+                            items_to_process = batch_result.items_to_process
+                            message_level_configuration = batch_result.configuration
                             logger.debug(
                                 f"Worker {worker_id} retrieved {len(messages_context)} messages and {len(items_to_process)} queue items for work unit {work_unit_key} (AQS ID: {ownership.aqs_id})"
                             )
@@ -503,6 +522,9 @@ class QueueManager:
                                     observers=observers,
                                     observed=work_unit.observed,
                                     queue_item_message_ids=queue_item_message_ids,
+                                    hit_batch_token_cap=batch_result.hit_batch_token_cap,
+                                    was_flush_enabled=batch_result.was_flush_enabled,
+                                    batch_max_tokens=batch_result.batch_max_tokens,
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
@@ -636,13 +658,17 @@ class QueueManager:
         task_type: str,
         work_unit_key: str,
         aqs_id: str,
-    ) -> tuple[list[models.Message], list[QueueItem], ResolvedConfiguration | None]:
+    ) -> "QueueBatchResult":
         """
         Batch processing for representation and agent tasks.
-        Returns a tuple of (messages_context, items_to_process, configuration).
+
+        Returns a `QueueBatchResult` carrying:
         - messages_context: unique Message rows (conversation turns) forming the context window
         - items_to_process: QueueItems for the current work_unit_key within that window
         - configuration: Resolved configuration for the batch
+        - hit_batch_token_cap: True when the cumulative-token window clamped the batch
+        - was_flush_enabled: snapshot of `settings.DERIVER.FLUSH_ENABLED` at fetch time
+        - batch_max_tokens: snapshot of the cap actually applied to this batch
         """
         if task_type != "representation":
             raise ValueError(
@@ -650,6 +676,7 @@ class QueueManager:
             )
 
         batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        was_flush_enabled = settings.DERIVER.FLUSH_ENABLED
         parsed_key = parse_work_unit_key(work_unit_key)
         messages_context: list[models.Message] = []
         items_to_process: list[QueueItem] = []
@@ -663,7 +690,10 @@ class QueueManager:
                 .where(models.ActiveQueueSession.id == aqs_id)
             )
             if not ownership_check.scalar_one_or_none():
-                return [], [], None
+                return QueueBatchResult(
+                    was_flush_enabled=was_flush_enabled,
+                    batch_max_tokens=batch_max_tokens,
+                )
 
             # Step 2: Build a single SQL query that:
             # 1. Finds the earliest unprocessed message for this work_unit_key
@@ -756,15 +786,29 @@ class QueueManager:
             result = await db.execute(query)
             rows = result.all()
             if not rows:
-                return [], [], None
+                return QueueBatchResult(
+                    was_flush_enabled=was_flush_enabled,
+                    batch_max_tokens=batch_max_tokens,
+                )
 
             seen_messages: set[int] = set()
+            cumulative_tokens = 0
             for m, qi in rows:
                 if m.id not in seen_messages:
                     messages_context.append(m)
                     seen_messages.add(m.id)
+                    cumulative_tokens += m.token_count or 0
                 if qi is not None:
                     items_to_process.append(qi)
+
+            # Phase 4: the batcher SQL uses `cumulative_token_count <= batch_max_tokens`
+            # as an OR with "always include first unprocessed message" — so when
+            # the running total is above the cap, at least one message was kept
+            # past the cap (the first unprocessed) and everything beyond it was
+            # filtered out. Treat that as the cap binding the batch.
+            hit_batch_token_cap = bool(
+                batch_max_tokens and cumulative_tokens > batch_max_tokens
+            )
 
             _detach_queue_batch_objects(db, messages_context, items_to_process)
 
@@ -780,7 +824,14 @@ class QueueManager:
                 m for m in messages_context if m.id <= max_queue_item_message_id
             ]
 
-        return messages_context, items_to_process, resolved_config
+        return QueueBatchResult(
+            messages_context=messages_context,
+            items_to_process=items_to_process,
+            configuration=resolved_config,
+            hit_batch_token_cap=hit_batch_token_cap,
+            was_flush_enabled=was_flush_enabled,
+            batch_max_tokens=batch_max_tokens,
+        )
 
     async def mark_queue_items_as_processed(
         self, items: list[QueueItem], work_unit_key: str

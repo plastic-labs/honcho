@@ -158,6 +158,9 @@ async def process_representation_batch(
     observers: list[str] | None,
     observed: str | None,
     queue_item_message_ids: list[int],
+    hit_batch_token_cap: bool = False,
+    was_flush_enabled: bool = False,
+    batch_max_tokens: int = 0,
 ) -> None:
     """
     Prepares and processes a batch of messages for representation tasks.
@@ -168,6 +171,9 @@ async def process_representation_batch(
         observers: List of observers for the messages
         observed: The observed of the messages
         queue_item_message_ids: Message IDs from queue items
+        hit_batch_token_cap: Phase 4 — whether the queue batcher clamped this batch to fit
+        was_flush_enabled: Phase 4 — snapshot of DERIVER.FLUSH_ENABLED at fetch time
+        batch_max_tokens: Phase 4 — DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no messages")
@@ -182,6 +188,9 @@ async def process_representation_batch(
         observers=observers,
         observed=observed,
         queue_item_message_ids=queue_item_message_ids,
+        hit_batch_token_cap=hit_batch_token_cap,
+        was_flush_enabled=was_flush_enabled,
+        batch_max_tokens=batch_max_tokens,
     )
 
 

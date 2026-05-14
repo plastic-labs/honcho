@@ -183,22 +183,24 @@ class TestQueueProcessing:
         await db_session.commit()
         await db_session.refresh(aqs)
 
-        _, items_to_process, _ = await qm.get_queue_item_batch(
+        batch = await qm.get_queue_item_batch(
             task_type="representation",
             work_unit_key=first.work_unit_key,
             aqs_id=aqs.id,
         )
+        items_to_process = batch.items_to_process
         nxt = items_to_process[0] if items_to_process else None
         assert nxt is not None and nxt.id == first.id
 
         # Mark first processed, next should be the second
         first.processed = True
         await db_session.commit()
-        _, items_to_process2, _ = await qm.get_queue_item_batch(
+        batch2 = await qm.get_queue_item_batch(
             task_type="representation",
             work_unit_key=first.work_unit_key,
             aqs_id=aqs.id,
         )
+        items_to_process2 = batch2.items_to_process
         nxt2 = items_to_process2[0] if items_to_process2 else None
         assert nxt2 is not None and nxt2.id == second.id
 
@@ -358,6 +360,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
+            **_extra: Any,  # Phase 4 added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {
@@ -485,11 +488,13 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(alice_aqs)
 
-            alice_messages, alice_items, _ = await qm.get_queue_item_batch(
+            alice_batch = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=alice_work_unit_key,
                 aqs_id=alice_aqs.id,
             )
+            alice_messages = alice_batch.messages_context
+            alice_items = alice_batch.items_to_process
 
             assert len(alice_messages) == 6
             alice_message_ids: set[int] = {m.id for m in alice_messages}
@@ -513,11 +518,13 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(bob_aqs)
 
-            bob_messages, bob_items, _ = await qm.get_queue_item_batch(
+            bob_batch = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=bob_work_unit_key,
                 aqs_id=bob_aqs.id,
             )
+            bob_messages = bob_batch.messages_context
+            bob_items = bob_batch.items_to_process
 
             # Bob should get 5 messages (1..5) - includes preceding alice message for context
             assert len(bob_messages) == 5
@@ -540,11 +547,13 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(steve_aqs)
 
-            steve_messages, steve_items, _ = await qm.get_queue_item_batch(
+            steve_batch = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=steve_work_unit_key,
                 aqs_id=steve_aqs.id,
             )
+            steve_messages = steve_batch.messages_context
+            steve_items = steve_batch.items_to_process
 
             # Steve should get 6 messages (2..7) - includes preceding bob message for context
             assert len(steve_messages) == 6
@@ -658,11 +667,12 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(alice_aqs)
 
-                alice_messages2, _, _ = await qm.get_queue_item_batch(
+                alice_batch2 = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=alice_work_unit_key,
                     aqs_id=alice_aqs.id,
                 )
+                alice_messages2 = alice_batch2.messages_context
 
                 # Includes preceding steve message for context -> [2,3,4]
                 assert len(alice_messages2) == 3
@@ -682,11 +692,12 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(bob_aqs)
 
-                bob_messages2, _, _ = await qm.get_queue_item_batch(
+                bob_batch2 = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=bob_work_unit_key,
                     aqs_id=bob_aqs.id,
                 )
+                bob_messages2 = bob_batch2.messages_context
 
                 assert len(bob_messages2) == 1
                 assert bob_messages2[0].id == messages[0].id  # bob only
@@ -702,11 +713,12 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(steve_aqs)
 
-                steve_messages2, _, _ = await qm.get_queue_item_batch(
+                steve_batch2 = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=steve_work_unit_key,
                     aqs_id=steve_aqs.id,
                 )
+                steve_messages2 = steve_batch2.messages_context
 
                 # Includes preceding bob message for context -> [1,2]
                 assert len(steve_messages2) == 2
@@ -926,6 +938,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
+            **_extra: Any,  # Phase 4 added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {
@@ -1046,6 +1059,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
+            **_extra: Any,  # Phase 4 added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {

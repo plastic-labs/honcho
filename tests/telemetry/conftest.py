@@ -72,6 +72,19 @@ def sample_representation_event(
         input_tokens=5000,
         total_input_tokens=7500,
         output_tokens=500,
+        # Phase 4 additive fields
+        queued_message_count=3,
+        prompt_message_count=10,
+        prompt_message_tokens=7000,
+        extra_context_message_count=7,
+        extra_context_tokens=2000,
+        prompt_scaffold_tokens=500,
+        batch_max_tokens=20_000,
+        max_input_tokens=23_000,
+        was_flush_enabled=False,
+        hit_batch_token_cap=False,
+        hit_input_token_cap=False,
+        observer_count=1,
     )
 
 

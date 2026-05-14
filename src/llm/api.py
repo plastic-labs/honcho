@@ -315,9 +315,98 @@ async def honcho_llm_call(
 
     # Tool-less path: call once and return.
     if not tools or not tool_executor:
-        result: (
-            HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
-        ) = await decorated()
+        # Phase 4: enforce `max_input_tokens` for tool-less calls too. Before
+        # this change, only `execute_tool_loop` consumed the kwarg — the
+        # deriver passed it but it was silently dropped, so the "input was
+        # truncated" signal it needed for RepresentationCompletedEvent could
+        # not be measured. Now we truncate the message list up-front (using
+        # the same helper the tool loop uses) and surface the flag on the
+        # returned response.
+        toolless_input_was_truncated = False
+        toolless_messages = messages
+        if max_input_tokens is not None:
+            from .conversation import truncate_messages_to_fit
+
+            base_messages = messages or [{"role": "user", "content": prompt}]
+            original_count = len(base_messages)
+            toolless_messages = truncate_messages_to_fit(
+                base_messages, max_input_tokens
+            )
+            toolless_input_was_truncated = len(toolless_messages) != original_count
+
+        # Re-bind the closure to use the truncated message list.
+        if toolless_messages is not None:
+            captured_messages = toolless_messages
+
+            async def _toolless_call() -> (
+                HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+            ):
+                plan = _get_attempt_plan()
+                # Branch on stream so each call site lands on the right
+                # `Literal[True]/False` overload — basedpyright won't infer
+                # which overload a runtime `bool` matches.
+                if stream:
+                    return await honcho_llm_call_inner(
+                        plan.provider,
+                        plan.model,
+                        prompt,
+                        max_tokens,
+                        response_model=response_model,
+                        json_mode=json_mode,
+                        temperature=effective_temperature(temperature),
+                        stop_seqs=stop_seqs,
+                        reasoning_effort=plan.reasoning_effort,
+                        verbosity=verbosity,
+                        thinking_budget_tokens=plan.thinking_budget_tokens,
+                        stream=True,
+                        client_override=plan.client,
+                        tools=tools,
+                        tool_choice=tool_choice,
+                        selected_config=plan.selected_config,
+                        plan=plan,
+                        telemetry=telemetry,
+                        messages=captured_messages,
+                    )
+                return await honcho_llm_call_inner(
+                    plan.provider,
+                    plan.model,
+                    prompt,
+                    max_tokens,
+                    response_model=response_model,
+                    json_mode=json_mode,
+                    temperature=effective_temperature(temperature),
+                    stop_seqs=stop_seqs,
+                    reasoning_effort=plan.reasoning_effort,
+                    verbosity=verbosity,
+                    thinking_budget_tokens=plan.thinking_budget_tokens,
+                    stream=False,
+                    client_override=plan.client,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    selected_config=plan.selected_config,
+                    plan=plan,
+                    telemetry=telemetry,
+                    messages=captured_messages,
+                )
+
+            wrapped = _toolless_call
+            if track_name:
+                wrapped = ai_track(track_name)(wrapped)
+            if enable_retry:
+                wrapped = retry(
+                    stop=stop_after_attempt(retry_attempts),
+                    wait=wait_exponential(multiplier=1, min=4, max=10),
+                    before_sleep=before_retry_callback,
+                )(wrapped)
+            result: (
+                HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+            ) = await wrapped()
+        else:
+            result = await decorated()
+
+        if toolless_input_was_truncated and isinstance(result, HonchoLLMCallResponse):
+            result.input_was_truncated = True
+
         if trace_name and isinstance(result, HonchoLLMCallResponse):
             log_reasoning_trace(
                 task_type=trace_name,
