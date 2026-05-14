@@ -120,6 +120,14 @@ async def get_sessions(
 ) -> Select[tuple[models.Session]]:
     """
     Get all active sessions in a workspace.
+
+    Args:
+        workspace_name: Name of the workspace
+        filters: Optional filters to apply to the query
+        reverse: If True, order by created_at descending; if False, ascending
+
+    Returns:
+        Select statement for Session objects
     """
     stmt = (
         select(models.Session)
