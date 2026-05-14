@@ -5,11 +5,37 @@ on:
     paths: ['sdks/rust/**', 'docs/v3/openapi.json', '.github/workflows/rust-sdk.yml']
   push:
     branches: [main]
-    paths: ['sdks/rust/**', 'docs/v3/openapi.json']
+    paths: ['sdks/rust/**', 'docs/v3/openapi.json', '.github/workflows/rust-sdk.yml']
+
+concurrency:
+  group: rust-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'sdks/rust'
+      - run: cargo fmt --all --check
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: '-D warnings'
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         rust-version: ['1.88', stable]
     defaults:
@@ -20,16 +46,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust-version }}
-          components: rustfmt, clippy
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: 'sdks/rust'
-      - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
       - run: cargo test --all-features
-      - run: cargo doc --no-deps --all-features
-        env:
-          RUSTDOCFLAGS: '-D warnings'
   msrv:
     runs-on: ubuntu-latest
     defaults:
@@ -37,6 +59,9 @@ jobs:
         working-directory: sdks/rust
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'sdks/rust'
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-msrv
