@@ -114,7 +114,7 @@ if settings.LLM.GEMINI_API_KEY:
         if settings.LLM.GEMINI_BASE_URL
         else None
     )
-    CLIENTS["gemini"] = genai.client.Client(
+    CLIENTS["gemini"] = genai.Client(
         api_key=settings.LLM.GEMINI_API_KEY,
         http_options=http_options,
     )
