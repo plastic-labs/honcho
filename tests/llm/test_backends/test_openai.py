@@ -262,6 +262,33 @@ async def test_openai_backend_allows_missing_usage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_backend_allows_none_usage_tokens() -> None:
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content="ok", tool_calls=[]),
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=None, completion_tokens=None),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+    )
+
+    assert result.content == "ok"
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "response",
     [
@@ -325,6 +352,55 @@ async def test_openai_structured_response_falls_back_to_json_object() -> None:
     first_call, second_call = client.chat.completions.create.await_args_list
     assert first_call.kwargs["response_format"]["type"] == "json_schema"
     assert second_call.kwargs["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_openai_structured_response_falls_back_when_parse_returns_no_content() -> None:
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        parsed=None,
+                        content=None,
+                        refusal=None,
+                        tool_calls=[],
+                    ),
+                )
+            ],
+            usage=None,
+        )
+    )
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content='{"answer": "fallback worked"}',
+                        tool_calls=[],
+                    ),
+                )
+            ],
+            usage=None,
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Give JSON"}],
+        max_tokens=100,
+        response_format=StructuredAnswer,
+    )
+
+    assert isinstance(result.content, StructuredAnswer)
+    assert result.content.answer == "fallback worked"
+    client.chat.completions.create.assert_awaited_once()
+    call = client.chat.completions.create.await_args
+    assert call.kwargs["response_format"]["type"] == "json_schema"
 
 
 @pytest.mark.asyncio

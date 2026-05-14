@@ -225,7 +225,15 @@ class OpenAIBackend:
                         response,
                         content_override=refusal,
                     )
-                raise ValidationException("No parsed content in structured response")
+                fallback_response, content = await self._fallback_structured_response(
+                    params=params,
+                    response_format=response_format,
+                    model=model,
+                )
+                return self._normalize_response(
+                    fallback_response,
+                    content_override=content,
+                )
             return self._normalize_response(
                 response,
                 content_override=validate_structured_output(parsed, response_format),
@@ -394,8 +402,8 @@ class OpenAIBackend:
             content=content_override
             if content_override is not None
             else (getattr(message, "content", None) or ""),
-            input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
-            output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
+            input_tokens=(getattr(usage, "prompt_tokens", 0) or 0) if usage else 0,
+            output_tokens=(getattr(usage, "completion_tokens", 0) or 0) if usage else 0,
             cache_creation_input_tokens=cache_creation,
             cache_read_input_tokens=cache_read,
             finish_reason=finish_reason or "stop",
@@ -468,7 +476,7 @@ class OpenAIBackend:
                 return response, content
             except _STRUCTURED_FALLBACK_ERRORS as exc:
                 last_error = exc
-                logger.info(
+                logger.warning(
                     "OpenAI structured output fallback %s failed: %s",
                     fallback_name,
                     exc.__class__.__name__,
