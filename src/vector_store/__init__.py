@@ -134,6 +134,7 @@ class VectorStore(ABC):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
     ) -> list[VectorQueryResult]:
         """
         Query for similar vectors.
@@ -144,6 +145,8 @@ class VectorStore(ABC):
             top_k: Maximum number of results to return
             filters: Optional metadata filters
             max_distance: Optional maximum distance threshold (cosine distance)
+            include_attributes: Attributes to return with each result. Use False when
+                callers only need IDs/scores, or a list for selected metadata.
 
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)

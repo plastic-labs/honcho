@@ -79,3 +79,41 @@ async def test_upsert_many_succeeds_without_raising(
 
     assert result is None
     namespace_mock.write.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_query_passes_requested_include_attributes(
+    store: TurbopufferVectorStore,
+) -> None:
+    namespace_mock = MagicMock()
+    namespace_mock.query = AsyncMock(return_value=MagicMock(rows=[]))
+    store._get_namespace = MagicMock(return_value=namespace_mock)  # pyright: ignore[reportPrivateUsage]
+
+    await store.query(
+        "honcho.msg.test",
+        [0.1, 0.2, 0.3, 0.4],
+        include_attributes=["message_id"],
+    )
+
+    namespace_mock.query.assert_awaited_once()
+    assert namespace_mock.query.await_args.kwargs["include_attributes"] == [
+        "message_id"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_query_can_skip_attributes(
+    store: TurbopufferVectorStore,
+) -> None:
+    namespace_mock = MagicMock()
+    namespace_mock.query = AsyncMock(return_value=MagicMock(rows=[]))
+    store._get_namespace = MagicMock(return_value=namespace_mock)  # pyright: ignore[reportPrivateUsage]
+
+    await store.query(
+        "honcho.doc.test",
+        [0.1, 0.2, 0.3, 0.4],
+        include_attributes=False,
+    )
+
+    namespace_mock.query.assert_awaited_once()
+    assert namespace_mock.query.await_args.kwargs["include_attributes"] is False

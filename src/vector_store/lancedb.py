@@ -197,6 +197,7 @@ class LanceDBVectorStore(VectorStore):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
         max_distance: float | None = None,
+        include_attributes: bool | list[str] = True,
     ) -> list[VectorQueryResult]:
         """
         Query for similar vectors in LanceDB.
@@ -207,6 +208,8 @@ class LanceDBVectorStore(VectorStore):
             top_k: Maximum number of results to return
             filters: Optional metadata filters
             max_distance: Optional maximum distance threshold (cosine distance)
+            include_attributes: Attributes to return with each result. False returns
+                no metadata; a list returns only those metadata fields.
 
         Returns:
             List of VectorQueryResult objects, ordered by similarity (most similar first)
@@ -217,8 +220,14 @@ class LanceDBVectorStore(VectorStore):
             return []
 
         try:
-            # Build query
             query = table.vector_search(embedding).distance_type("cosine").limit(top_k)
+
+            if include_attributes is False:
+                # Caller only needs id/score. Don't fetch any metadata or the vector.
+                query = query.select(["id"])
+            elif isinstance(include_attributes, list):
+                projection = ["id", *(c for c in include_attributes if c != "id")]
+                query = query.select(projection)
 
             # Apply filters if provided
             if filters:
