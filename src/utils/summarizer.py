@@ -457,7 +457,7 @@ async def _create_and_save_summary(
     )
 
     # Compute scaffold tokens up front (cheap + idempotent) so both the
-    # save-summary path and the Phase 6 telemetry emit below can use it
+    # save-summary path and the telemetry emit below can use it
     # without basedpyright tripping on a possibly-unbound name.
     if summary_type == SummaryType.SHORT:
         prompt_tokens = estimate_short_summary_prompt_tokens()
@@ -535,7 +535,7 @@ async def _create_and_save_summary(
                 summary_type="short" if summary_type == SummaryType.SHORT else "long",
                 input_tokens=llm_input_tokens,
                 output_tokens=llm_output_tokens,
-                # Phase 6 additive token-breakdown fields
+                # additive token-breakdown fields
                 previous_summary_tokens=previous_summary_tokens,
                 message_tokens=messages_tokens,
                 prompt_scaffold_tokens=prompt_tokens,

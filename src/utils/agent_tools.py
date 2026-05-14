@@ -817,7 +817,7 @@ async def create_observations(
         logger.info("No non-empty observations to create")
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
-    # Phase 1: Ensure collection exists (short DB scope)
+    # Ensure collection exists (short DB scope)
     async with tracked_db("create_observations.collection") as db:
         await crud.get_or_create_collection(
             db,
@@ -826,7 +826,7 @@ async def create_observations(
             observed=observed,
         )
 
-    # Phase 2: Compute embeddings (no DB needed)
+    # Compute embeddings (no DB needed)
     contents = [obs.content for obs in normalized_observations]
     embeddings_by_index: dict[int, list[float]] | None = None
     try:
@@ -901,7 +901,7 @@ async def create_observations(
         )
         documents.append(doc)
 
-    # Phase 3: Bulk create all documents (short DB scope)
+    # Bulk create all documents (short DB scope)
     accepted: list[schemas.DocumentCreate] = []
     if documents:
         async with tracked_db("create_observations.save") as db:
@@ -1322,7 +1322,7 @@ async def _handle_create_observations_impl(
         )
         response += f"\nFailed {len(all_failures)}: {failure_details}"
 
-    # Phase 3+5: surface created_count so DreamSpecialistEvent can sum actual
+    # +5: surface created_count so DreamSpecialistEvent can sum actual
     # observations across the run rather than just counting create_observations
     # calls (which would conflate "1 call that made 5 observations" with
     # "5 calls that each made 1").
@@ -1449,7 +1449,7 @@ async def _handle_update_peer_card(
             )
         )
 
-    # Phase 5: signal a successful peer_card update so DreamSpecialistEvent
+    # signal a successful peer_card update so DreamSpecialistEvent
     # can set its `peer_card_updated` flag without name-counting.
     from src.utils.types import ToolResult
 
@@ -1507,7 +1507,7 @@ async def _handle_search_memory(
             + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
         )
 
-    # Base Phase 3 telemetry metadata; results_count gets filled in below.
+    # Base telemetry metadata; results_count gets filled in below.
     search_meta: dict[str, Any] = {
         "top_k": top_k,
         "used_embedding": True,
@@ -1933,7 +1933,7 @@ async def _handle_delete_observations(
             )
         )
 
-    # Phase 3+5: surface deleted_count + levels for DreamSpecialistEvent rollups.
+    # +5: surface deleted_count + levels for DreamSpecialistEvent rollups.
     from src.utils.types import ToolResult
 
     return ToolResult(
@@ -2043,9 +2043,7 @@ async def _handle_get_reasoning_chain(
                     premise_lines: list[Any] = []
                     for p in premises:
                         p_level = p.level or "explicit"
-                        premise_lines.append(
-                            f"  - [id:{p.id}] ({p_level}): {p.content}"
-                        )
+                        premise_lines.append(f" - [id:{p.id}] ({p_level}): {p.content}")
                     output_parts.append(
                         f"\n**Premises ({len(premises)}):**\n"
                         + "\n".join(premise_lines)
@@ -2062,7 +2060,7 @@ async def _handle_get_reasoning_chain(
                     source_lines: list[Any] = []
                     for s in sources:
                         s_level = s.level or "explicit"
-                        source_lines.append(f"  - [id:{s.id}] ({s_level}): {s.content}")
+                        source_lines.append(f" - [id:{s.id}] ({s_level}): {s.content}")
                     output_parts.append(
                         f"\n**Sources ({len(sources)}):**\n" + "\n".join(source_lines)
                     )
@@ -2090,7 +2088,7 @@ async def _handle_get_reasoning_chain(
                 child_lines: list[Any] = []
                 for c in children:
                     c_level = c.level or "explicit"
-                    child_lines.append(f"  - [id:{c.id}] ({c_level}): {c.content}")
+                    child_lines.append(f" - [id:{c.id}] ({c_level}): {c.content}")
                 output_parts.append(
                     f"\n**Derived Conclusions ({len(children)}):**\n"
                     + "\n".join(child_lines)
@@ -2218,7 +2216,7 @@ async def create_tool_executor(
                 handler_result = await handler(ctx, tool_input)
                 # Handlers return either a plain str (existing contract) or a
                 # ToolResult(content, metadata) carrying structured fields for
-                # Phase 3 telemetry and Phase 5 specialist rollups.
+                # telemetry and specialist rollups.
                 if isinstance(handler_result, ToolResult):
                     result_str = handler_result.content
                     metadata = handler_result.metadata
@@ -2346,7 +2344,7 @@ def _estimate_tokens(text: str) -> int:
 def _estimate_tokens_safe(text: str | None) -> int | None:
     """Wrapper around `_estimate_tokens` that returns None on falsy input.
 
-    Used by Phase 3 search-handler metadata where we want `query_tokens=None`
+    Used by search-handler metadata where we want `query_tokens=None`
     when the query is empty rather than 0 (which could be confused with a
     real measurement).
     """

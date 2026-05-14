@@ -131,7 +131,7 @@ class LLMCallCompletedEvent(BaseEvent):
     # Agent correlation (None for non-agent calls like summarizer / deriver)
     run_id: str | None = Field(
         default=None,
-        description="Agent run id (ULID when widened in Phase 4.6 follow-up)",
+        description="Agent run id (ULID when widened in follow-up)",
     )
     iteration: int | None = Field(
         default=None,
@@ -165,11 +165,10 @@ class EmbeddingCallPurpose(str, Enum):
 class EmbeddingCallCompletedEvent(BaseEvent):
     """Emitted once per embedding-provider call.
 
-    Embedding calls are real provider spend (per-token like LLM calls) but
-    were invisible before Phase 7. Search tools, observation creation, the
-    message-embedding sync, and the deriver/summarizer paths all hit the
-    embedding API; this event captures cost-attribution context for all of
-    them.
+    Embedding calls are real provider spend (per-token like LLM calls).
+    Search tools, observation creation, the message-embedding sync, and
+    the deriver/summarizer paths all hit the embedding API; this event
+    captures cost-attribution context for all of them.
 
     Volume note: this event is high-volume. Interactive paths
     (`search_memory` / `search_messages`) emit one event per query, so under

@@ -127,12 +127,12 @@ async def run_dream(
     deduction_result: SpecialistResult | None = None
     induction_result: SpecialistResult | None = None
 
-    # Phase 0: Surprisal-based sampling (if enabled)
+    # Surprisal-based sampling (if enabled)
     # Specialists are self-directed by default - hints are optional suggestions
     exploration_hints: list[str] | None = None
 
     if settings.DREAM.SURPRISAL.ENABLED:
-        logger.info(f"[{run_id}] Phase 0: Computing surprisal scores")
+        logger.info(f"[{run_id}] Computing surprisal scores")
         try:
             from src.dreamer.surprisal import sample_observations_with_surprisal
 
@@ -171,8 +171,8 @@ async def run_dream(
             accumulate_metric(task_name, "surprisal_error", str(e), "blob")
             # Specialists will explore freely without hints
 
-    # Phase 1: Run deduction specialist (manages its own DB sessions)
-    logger.info(f"[{run_id}] Phase 1: Running deduction specialist")
+    # Run deduction specialist (manages its own DB sessions)
+    logger.info(f"[{run_id}] Running deduction specialist")
     deduction_specialist = SPECIALISTS["deduction"]
     try:
         deduction_result = await deduction_specialist.run(
@@ -195,8 +195,8 @@ async def run_dream(
         logger.error(f"[{run_id}] Deduction specialist failed: {e}", exc_info=True)
         accumulate_metric(task_name, "deduction_error", str(e), "blob")
 
-    # Phase 2: Run induction specialist (after deduction so it can see new deductive obs)
-    logger.info(f"[{run_id}] Phase 2: Running induction specialist")
+    # Run induction specialist (after deduction so it can see new deductive obs)
+    logger.info(f"[{run_id}] Running induction specialist")
     induction_specialist = SPECIALISTS["induction"]
     try:
         induction_result = await induction_specialist.run(
@@ -254,7 +254,7 @@ async def run_dream(
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,
             total_duration_ms=duration_ms,
-            # Phase 5 additions — scheduling context threaded through the
+            # scheduling context threaded through the
             # queue payload by check_and_schedule_dream.
             dream_type=dream_type,
             enabled_types_count=len(settings.DREAM.ENABLED_TYPES),
@@ -329,7 +329,7 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     observer=payload.observer,
                     observed=payload.observed,
                     session_name=payload.session_name,
-                    # Phase 5 scheduling context — propagated to DreamRunEvent.
+                    # scheduling context — propagated to DreamRunEvent.
                     dream_type=payload.dream_type.value,
                     threshold_reason=payload.threshold_reason,
                     delay_reason=payload.delay_reason,

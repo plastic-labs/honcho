@@ -1,10 +1,10 @@
 # pyright: reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false, reportArgumentType=false
-"""Phase 4 tests for RepresentationCompletedEvent additive fields + truncation.
+"""tests for RepresentationCompletedEvent additive fields + truncation.
 
 Targets:
 - Schema stays at v2 (additive, no bump). Existing `input_tokens` semantics
   unchanged.
-- Phase 4 fields are defaultable (no breakage for callers that ignore them)
+- fields are defaultable (no breakage for callers that ignore them)
   and round-trip through Pydantic serialization.
 - `HonchoLLMCallResponse.input_was_truncated` defaults to False but can be
   flipped by the tool-less truncation path in `src/llm/api.py`.
@@ -18,12 +18,12 @@ from src.telemetry.events.representation import RepresentationCompletedEvent
 
 class TestRepresentationV2AdditiveFields:
     def test_schema_stays_at_v2(self):
-        """Phase 4 is additive — schema_version must NOT bump to 3."""
+        """is additive — schema_version must NOT bump to 3."""
         assert RepresentationCompletedEvent.schema_version() == 2
 
-    def test_phase_4_fields_are_optional(self):
-        """Existing callers (pre-Phase-4 deriver code) must keep working
-        without supplying any new fields. All Phase 4 fields default."""
+    def test_new_fields_are_optional(self):
+        """Existing callers must keep working without supplying any new
+        fields. All new fields default."""
         event = RepresentationCompletedEvent(
             workspace_name="ws",
             session_name="s",
@@ -40,7 +40,7 @@ class TestRepresentationV2AdditiveFields:
             total_input_tokens=200,
             output_tokens=50,
         )
-        # All Phase 4 fields land with defaults.
+        # All fields land with defaults.
         assert event.queued_message_count == 0
         assert event.prompt_message_count == 0
         assert event.prompt_message_tokens == 0
@@ -57,7 +57,7 @@ class TestRepresentationV2AdditiveFields:
     def test_input_tokens_semantics_preserved(self):
         """The billing-resolution key must remain 'queued-message tokens'.
 
-        Phase 4 added many fields, but `input_tokens` MUST stay as the
+        added many fields, but `input_tokens` MUST stay as the
         billing key Xatu's Stripe meter reads. Don't rename or repurpose.
         """
         event = RepresentationCompletedEvent(
@@ -126,7 +126,7 @@ class TestRepresentationV2AdditiveFields:
         assert event.max_input_tokens == 23_000
         assert event.observer_count == 2
 
-    def test_model_dump_includes_phase_4_fields(self):
+    def test_model_dump_includes_new_fields(self):
         event = RepresentationCompletedEvent(
             workspace_name="ws",
             session_name="s",
@@ -159,7 +159,7 @@ class TestRepresentationV2AdditiveFields:
             "hit_input_token_cap",
             "observer_count",
         ):
-            assert field in data, f"missing Phase 4 field: {field}"
+            assert field in data, f"missing field: {field}"
         assert data["hit_batch_token_cap"] is True
 
 

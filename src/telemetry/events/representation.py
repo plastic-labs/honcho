@@ -61,7 +61,7 @@ class RepresentationCompletedEvent(BaseEvent):
         ...,
         description=(
             "Queued-message tokens (the ones we're actually reasoning ABOUT). "
-            "Phase 4 keeps this field unchanged — it's the billing-resolution key "
+            "keeps this field unchanged — it's the billing-resolution key "
             "consumed by Xatu's Stripe meter for representation.completed."
         ),
     )
@@ -71,7 +71,7 @@ class RepresentationCompletedEvent(BaseEvent):
     )
     output_tokens: int = Field(..., description="Output tokens generated")
 
-    # ---- Phase 4 additions (additive, schema stays v2) --------------------
+    # ---- Additive fields ----
     # Token breakdown beyond `input_tokens` (queued-message tokens already
     # captured above). These break out what made up the LLM prompt so analytics
     # can answer "how much did extra context cost us per call".
@@ -100,7 +100,7 @@ class RepresentationCompletedEvent(BaseEvent):
         description="Estimated tokens for the system/scaffold portion of the prompt",
     )
 
-    # Cap configuration + hit flags (Phase 4)
+    # Cap configuration + hit flags ()
     batch_max_tokens: int = Field(
         default=0,
         description="settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS at fetch time",
@@ -119,8 +119,7 @@ class RepresentationCompletedEvent(BaseEvent):
     hit_input_token_cap: bool = Field(
         default=False,
         description=(
-            "True when the LLM call truncated input messages to fit max_input_tokens. "
-            "Now measurable because Phase 4 wired tool-less truncation into honcho_llm_call."
+            "True when the LLM call truncated input messages to fit max_input_tokens."
         ),
     )
 

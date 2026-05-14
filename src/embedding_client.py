@@ -26,7 +26,7 @@ async def _emit_embedding_call(
     input_tokens_estimate: int,
     fn: Callable[[], Awaitable[_T]],
 ) -> _T:
-    """Phase 7 wrapper: time a single embedding-provider call, emit
+    """time a single embedding-provider call, emit
     `embedding.call.completed` on both success and exception, and return the
     call's result. Errors propagate unchanged — telemetry never bleeds into
     the caller's control flow.

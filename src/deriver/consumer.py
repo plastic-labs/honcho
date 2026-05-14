@@ -171,9 +171,9 @@ async def process_representation_batch(
         observers: List of observers for the messages
         observed: The observed of the messages
         queue_item_message_ids: Message IDs from queue items
-        hit_batch_token_cap: Phase 4 — whether the queue batcher clamped this batch to fit
-        was_flush_enabled: Phase 4 — snapshot of DERIVER.FLUSH_ENABLED at fetch time
-        batch_max_tokens: Phase 4 — DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
+        hit_batch_token_cap: whether the queue batcher clamped this batch to fit
+        was_flush_enabled: snapshot of DERIVER.FLUSH_ENABLED at fetch time
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no messages")

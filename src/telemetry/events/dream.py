@@ -69,7 +69,7 @@ class DreamRunEvent(BaseEvent):
     )
     total_duration_ms: float = Field(..., description="Total processing time")
 
-    # ---- Phase 5 additions (additive, schema v2) ---------------------------
+    # ---- Additive fields ----
     dream_type: str | None = Field(
         default=None,
         description="DreamType slug (currently 'omni'; future: 'deductive'/'inductive')",
@@ -145,7 +145,7 @@ class DreamSpecialistEvent(BaseEvent):
     duration_ms: float = Field(..., description="Processing time")
     success: bool = Field(..., description="Whether the specialist succeeded")
 
-    # ---- Phase 5 additions (additive, schema v2) ---------------------------
+    # ---- Additive fields ----
     # Denormalized rollups so analytics can answer "how many observations did
     # this specialist actually produce" without re-aggregating per-tool events.
     # Sourced from ToolResult.metadata via tool_loop's all_tool_calls, NOT

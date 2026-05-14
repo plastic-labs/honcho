@@ -35,7 +35,7 @@ def _should_sample(event: "BaseEvent", rate: object) -> bool:
     which in tests gets MagicMock'd. A MagicMock comparison against 1.0
     raises TypeError, so we validate at the boundary and fall back to
     passthrough on anything non-numeric. Mirrors the same guard pattern
-    used for `HONCHO_VERSION` in Phase 0.
+    used for `HONCHO_VERSION` .
 
     When the event carries a `run_id`, sampling decisions hash on that id —
     so every event in an agent run either passes or fails the sampler, and

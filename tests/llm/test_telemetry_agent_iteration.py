@@ -1,5 +1,5 @@
 # pyright: reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false, reportArgumentType=false
-"""Phase 2 tests for AgentIterationEvent emission.
+"""tests for AgentIterationEvent emission.
 
 Targets:
 - `src/llm/tool_loop.py::_emit_agent_iteration` fires one event per LLM
@@ -216,6 +216,6 @@ class TestEmitAgentIteration:
 
 
 def test_volume_class_is_high_volume():
-    """Phase 2 emission targets a high-volume event class so the sampler
+    """emission targets a high-volume event class so the sampler
     can throttle iteration events independently of aggregates."""
     assert AgentIterationEvent.volume_class() == "high_volume"

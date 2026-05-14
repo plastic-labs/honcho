@@ -21,7 +21,7 @@ def get_current_iteration() -> int:
     return _current_iteration.get()
 
 
-# Phase 3 telemetry: ordinal of the tool call within its iteration. Two calls
+# ordinal of the tool call within its iteration. Two calls
 # to the same tool in one iteration (the model can do this) need distinct
 # resource ids on AgentToolCallCompletedEvent — seq disambiguates.
 _current_tool_call_seq: ContextVar[int] = ContextVar("current_tool_call_seq", default=0)
@@ -50,10 +50,10 @@ def get_current_provider_tool_call_id() -> str | None:
     return _current_provider_tool_call_id.get()
 
 
-# Phase 3/5 bridge: after `execute_tool` finishes, the metadata dict from the
-# handler's ToolResult is published here so tool_loop can stash it on the
-# `all_tool_calls` entry (which DreamSpecialistEvent reads for rollups in
-# Phase 5). Default is None (not {}) per ruff B039 — mutable defaults on
+# After `execute_tool` finishes, the metadata dict from the handler's
+# ToolResult is published here so tool_loop can stash it on the
+# `all_tool_calls` entry (which DreamSpecialistEvent reads for rollups).
+# Default is None (not {}) per ruff B039 — mutable defaults on
 # ContextVars are foot-guns; the getter normalizes None → {}.
 _last_tool_metadata: ContextVar[dict[str, Any] | None] = ContextVar(
     "last_tool_metadata", default=None
@@ -70,7 +70,7 @@ def get_last_tool_metadata() -> dict[str, Any]:
     return _last_tool_metadata.get() or {}
 
 
-# Phase 7: embedding-call purpose ContextVar. Callers wrap embedding-driving
+# embedding-call purpose ContextVar. Callers wrap embedding-driving
 # operations in `with embedding_call_purpose("search_memory"): ...` so the
 # embedding client can stamp every provider call with the originating intent
 # without changing the call signature. None = caller didn't instrument; the
@@ -138,12 +138,12 @@ def embedding_call_purpose(
 
 @dataclass
 class ToolResult:
-    """Internal return shape used by Phase 3 tool handlers.
+    """Internal return shape used by tool handlers.
 
     Handlers may continue to return a plain `str` (existing contract). When
     they need to carry structured metadata for downstream events — search
     `top_k`/`results_count` for AgentToolCallCompletedEvent, or
-    `created_count`/`deleted_count` for Phase 5 specialist rollups — they
+    `created_count`/`deleted_count` for specialist rollups — they
     return `ToolResult(content=..., metadata={...})` instead. The
     `execute_tool` closure in `create_tool_executor` unwraps the dataclass
     before returning the string to `tool_loop`.

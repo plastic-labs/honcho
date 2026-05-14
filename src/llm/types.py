@@ -48,7 +48,7 @@ class IterationData:
 @dataclass
 class LLMTelemetryContext:
     """Context threaded through honcho_llm_call → honcho_llm_call_inner so the
-    LLMCallCompletedEvent emitter (and Phase 2's AgentIterationEvent emitter)
+    LLMCallCompletedEvent emitter (and AgentIterationEvent emitter)
     can attribute calls to the right workspace / agent / iteration without
     re-deriving any of it from ambient state.
 
@@ -66,14 +66,14 @@ class LLMTelemetryContext:
     run_id: str | None = None
     iteration: int | None = None
     # Optional peer context (dream agents pass observer/observed; dialectic
-    # passes peer_name). Kept here so Phase 2's AgentIterationEvent can populate
+    # passes peer_name). Kept here so AgentIterationEvent can populate
     # them without a separate threading path.
     observer: str | None = None
     observed: str | None = None
     peer_name: str | None = None
     # Tool-related context: agent_type is the human-readable identifier of the
-    # agent — dialectic/deduction/induction. Used by Phase 2's agent iteration
-    # event and Phase 3's tool call event.
+    # agent — dialectic/deduction/induction. Used by agent iteration
+    # event and tool call event.
     agent_type: str | None = None
 
 
@@ -103,7 +103,7 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
     # OpenRouter reasoning_details for Gemini models — must be preserved across turns.
     reasoning_details: list[dict[str, Any]] = Field(default_factory=list)
-    # Phase 4: True when honcho_llm_call truncated the input messages to fit
+    # True when honcho_llm_call truncated the input messages to fit
     # `max_input_tokens` before dispatching to the provider. Lets the deriver
     # populate `hit_input_token_cap` on RepresentationCompletedEvent with a
     # real measurement (not just the configured cap).

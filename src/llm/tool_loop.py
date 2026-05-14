@@ -74,7 +74,7 @@ def _emit_agent_iteration(
     iteration: int,
     response: HonchoLLMCallResponse[Any],
 ) -> None:
-    """Phase 2: emit AgentIterationEvent after each per-iteration LLM response.
+    """emit AgentIterationEvent after each per-iteration LLM response.
 
     Fired immediately after `response = await call_func()` in the per-iteration
     loop AND after the max-iteration synthesis call. Emitted regardless of
@@ -341,7 +341,7 @@ async def execute_tool_loop(
         total_cache_creation_tokens += response.cache_creation_input_tokens
         total_cache_read_tokens += response.cache_read_input_tokens
 
-        # Phase 2: emit one AgentIterationEvent per LLM response BEFORE the
+        # emit one AgentIterationEvent per LLM response BEFORE the
         # no-tool early return. The terminating iteration counts too — it has
         # an empty tool_calls list and is essential for cost calibration.
         _emit_agent_iteration(telemetry, iteration + 1, response)
@@ -429,7 +429,7 @@ async def execute_tool_loop(
 
             logger.debug(f"Executing tool: {tool_name}")
 
-            # Phase 3 telemetry: the executor closure reads these from
+            # the executor closure reads these from
             # ContextVars to populate AgentToolCallCompletedEvent. Set BEFORE
             # the executor call so two calls to the same tool in one iteration
             # get distinct seq values. Reset last-tool metadata so we never
@@ -439,7 +439,7 @@ async def execute_tool_loop(
 
             try:
                 tool_result = await tool_executor(tool_name, tool_input)
-                # Stash ToolResult.metadata on all_tool_calls so Phase 5
+                # Stash ToolResult.metadata on all_tool_calls so
                 # specialist rollups can read created/deleted observation
                 # counts without round-tripping through the event store.
                 tool_result_metadata = get_last_tool_metadata()
@@ -498,8 +498,8 @@ async def execute_tool_loop(
         f"Tool execution loop reached max iterations ({max_tool_iterations})"
     )
 
-    # The max-iteration synthesis call gets iteration N+1 in telemetry so Phase 2's
-    # AgentIterationEvent and this Phase 1 LLMCallCompletedEvent line up sequentially.
+    # The max-iteration synthesis call gets iteration N+1 in telemetry so 's
+    # AgentIterationEvent and this LLMCallCompletedEvent line up sequentially.
     synthesis_iteration = iteration + 1
 
     synthesis_prompt = (
@@ -583,7 +583,7 @@ async def execute_tool_loop(
 
     final_response = await final_call_func()
 
-    # Phase 2: emit the synthesis-call iteration event BEFORE merging cumulative
+    # emit the synthesis-call iteration event BEFORE merging cumulative
     # totals onto final_response below — otherwise the event's per-iteration
     # token counts would double-count the running totals.
     _emit_agent_iteration(

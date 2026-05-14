@@ -1,5 +1,5 @@
 # pyright: reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false, reportArgumentType=false
-"""Phase 3 tests for AgentToolCallCompletedEvent emission.
+"""tests for AgentToolCallCompletedEvent emission.
 
 Targets:
 - `_emit_agent_tool_call_completed` in `src/utils/agent_tools.py` builds a
@@ -8,7 +8,7 @@ Targets:
   the existing handler contract keep working.
 - The `tool_call_seq` ContextVar disambiguates resource ids when the same
   tool is called twice in one iteration.
-- Phase 3 event opts into the high-volume sampler.
+- event opts into the high-volume sampler.
 - Search handlers publish search-specific metadata
   (top_k / used_embedding / query_tokens / results_count) so analytics can
   filter by retrieval intent.
@@ -31,7 +31,7 @@ from src.utils.types import (
 
 @final
 class _StubToolContext:
-    """Duck-typed ToolContext stand-in — Phase 3 emitter only reads identifiers."""
+    """Duck-typed ToolContext stand-in — emitter only reads identifiers."""
 
     workspace_name: str
     run_id: str | None
@@ -260,5 +260,5 @@ class TestEmitAgentToolCallCompleted:
 
 
 def test_volume_class_is_high_volume():
-    """Phase 3 event is high-volume — sampled alongside llm.call.completed."""
+    """event is high-volume — sampled alongside llm.call.completed."""
     assert AgentToolCallCompletedEvent.volume_class() == "high_volume"

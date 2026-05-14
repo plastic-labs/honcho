@@ -1,5 +1,5 @@
 # pyright: reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false, reportArgumentType=false
-"""Phase 1 tests for LLMCallCompletedEvent emission and the high-volume sampler.
+"""tests for LLMCallCompletedEvent emission and the high-volume sampler.
 
 Targets:
 - `src/llm/executor.py::honcho_llm_call_inner` emits one event per call,

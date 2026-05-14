@@ -1,5 +1,5 @@
 # pyright: reportPrivateUsage=false
-"""Phase 5 tests: DreamSpecialistEvent + DreamRunEvent v2 fields.
+"""tests: DreamSpecialistEvent + DreamRunEvent v2 fields.
 
 Targets:
 - Schema bumps to v2 (DreamRunEvent + DreamSpecialistEvent).
@@ -23,8 +23,8 @@ class TestSchemaVersionsBumpedToV2:
 
 
 class TestDreamRunEventV2Fields:
-    def test_phase_5_fields_default(self):
-        """Existing callers that don't supply Phase 5 scheduling fields must
+    def test_scheduler_fields_default(self):
+        """Existing callers that don't supply scheduling fields must
         still construct a valid event — all new fields default to None or 0."""
         event = DreamRunEvent(
             run_id="abc",
@@ -97,7 +97,7 @@ class TestDreamRunEventV2Fields:
         )
         # threshold_reason captures the WHY; delay_reason captures the WHEN.
         # They are separate dimensions — flattening into one field would lose
-        # the gate semantics that Phase 5 was specifically designed to expose.
+        # the gate semantics that was specifically designed to expose.
         assert event.threshold_reason != event.delay_reason
 
 
@@ -124,7 +124,7 @@ class TestDreamSpecialistEventV2Rollups:
     def test_observation_counts_are_observation_truth_not_call_counts(self):
         """The whole point of sourcing rollups from ToolResult.metadata
         instead of tool-name counts: a single `create_observations` call can
-        produce N observations (or zero on validation failure). Phase 5 must
+        produce N observations (or zero on validation failure). must
         report observation truth, not call truth."""
         event = DreamSpecialistEvent(
             run_id="abc",
@@ -134,7 +134,7 @@ class TestDreamSpecialistEventV2Rollups:
             observed="user",
             iterations=2,
             # Two create_observations CALLS, but they produced 7 observations
-            # together (e.g. one batch of 5, one batch of 2). Phase 5 reports
+            # together (e.g. one batch of 5, one batch of 2). reports
             # 7 (the metadata-sourced truth), not 2 (the call count).
             tool_calls_count=2,
             input_tokens=100,
@@ -147,7 +147,7 @@ class TestDreamSpecialistEventV2Rollups:
         assert event.created_observation_count == 7
 
 
-class TestDreamPayloadPhase5Fields:
+class TestDreamPayloadSchedulerFields:
     def test_payload_defaults(self):
         from src.schemas import DreamType
 

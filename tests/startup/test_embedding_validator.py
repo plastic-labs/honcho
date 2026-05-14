@@ -1,4 +1,4 @@
-"""Phase 2: startup embedding-schema validator + VECTOR_STORE_DIMENSIONS deprecation."""
+"""Startup embedding-schema validator + VECTOR_STORE_DIMENSIONS deprecation."""
 
 from __future__ import annotations
 
@@ -178,9 +178,9 @@ def test_vector_store_dimensions_explicit_set_warns(
 
 
 def test_non_1536_pgvector_without_migrated_no_longer_raises_at_config_time() -> None:
-    """Phase 2 removed the dim-vs-MIGRATED guard. Constructing AppSettings
+    """The dim-vs-MIGRATED guard has been removed. Constructing AppSettings
     with non-1536 + default pgvector + MIGRATED=false should now succeed
-    (the runtime schema validator at startup is the new safety net)."""
+    (the runtime schema validator at startup is the safety net)."""
     env = {
         **os.environ,
         "PYTHON_DOTENV_DISABLED": "1",

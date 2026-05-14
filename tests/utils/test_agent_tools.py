@@ -253,7 +253,7 @@ class TestCreateObservations:
         result = await _handle_create_observations(ctx, {"observations": []})
 
         assert "ERROR" in result
-        # Handlers may return ToolResult (Phase 3); str() returns .content.
+        # Handlers may return ToolResult (); str() returns .content.
         assert "empty" in str(result).lower()
 
     async def test_batch_embedding_failure_falls_back_to_individual_embeds(
@@ -415,7 +415,7 @@ class TestCreateObservations:
 
         result = await create_observations(
             observations=[
-                schemas.ObservationInput(content="   ", level="explicit"),
+                schemas.ObservationInput(content=" ", level="explicit"),
                 schemas.ObservationInput(
                     content=" trimmed observation ", level="explicit"
                 ),
@@ -756,7 +756,7 @@ class TestSearchMessages:
 
         result = await _handle_search_messages(ctx, {"query": "test message"})
 
-        # Phase 3: handler may return ToolResult (with search metadata) or
+        # handler may return ToolResult (with search metadata) or
         # a plain str. Both carry the result text; just check it's
         # introspectable as string content.
         from src.utils.types import ToolResult
@@ -1050,7 +1050,7 @@ class TestUpdatePeerCard:
         workspace, peer1, peer2, _, _, _ = tool_test_data
         ctx = make_tool_context()
 
-        oversized = ["Name: John", "  Name:  John  ", "", "   "]
+        oversized = ["Name: John", " Name: John ", "", " "]
         oversized.extend([f"Fact {i}" for i in range(MAX_PEER_CARD_FACTS + 5)])
 
         await _handle_update_peer_card(ctx, {"content": oversized})

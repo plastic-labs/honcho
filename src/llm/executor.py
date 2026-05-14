@@ -271,10 +271,10 @@ async def honcho_llm_call_inner(
     The outer src/llm/api.py `honcho_llm_call` handles retry + fallback +
     tool orchestration on top of this.
 
-    Phase 1 telemetry: emits one LLMCallCompletedEvent per call. On the stream
+    emits one LLMCallCompletedEvent per call. On the stream
     path, the event is emitted at stream-setup time with `was_stream=True` and
     zero token counts (provider tokens aren't knowable until the stream drains
-    — see PLAN.md Phase 1 §8 streaming gap).
+    — see the spec §8 streaming gap).
     """
     client = client_override or CLIENTS.get(provider)
     if client is None:

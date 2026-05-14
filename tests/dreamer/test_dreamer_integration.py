@@ -368,7 +368,7 @@ class TestExecuteDreamSessionFilter:
             observed: str,
             dream_type: Any,
             session_name: str,
-            **_phase5_extra: Any,  # threshold_reason / delay_reason / etc.
+            **_scheduler_extra: Any,  # threshold_reason / delay_reason / etc.
         ) -> None:
             captured_kwargs.update(
                 {

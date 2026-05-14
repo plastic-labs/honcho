@@ -287,8 +287,8 @@ If you update it, send the full deduplicated list and remove stale entries.
 
         log_performance_metrics(f"dreamer_{self.name}", run_id)
 
-        # Phase 5 rollups: count actual observations created/deleted from the
-        # ToolResult.metadata that Phase 3 stashed on `all_tool_calls[i]`.
+        # count actual observations created/deleted from the
+        # ToolResult.metadata that stashed on `all_tool_calls[i]`.
         # Counting tool-name occurrences would mis-attribute: a single
         # create_observations call can produce N (or zero) observations. The
         # truth lives in the handler's returned metadata.
@@ -333,7 +333,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                 output_tokens=response.output_tokens,
                 duration_ms=duration_ms,
                 success=True,
-                # Phase 5 denormalized rollups
+                # denormalized rollups
                 created_observation_count=created_observation_count,
                 deleted_observation_count=deleted_observation_count,
                 peer_card_updated=peer_card_updated,
@@ -603,8 +603,8 @@ Use `create_observations_inductive`.
     "content": "The pattern or generalization",
     "source_ids": ["id1", "id2", "id3"],
     "sources": ["evidence 1", "evidence 2"],
-    "pattern_type": "tendency",  // preference|behavior|personality|tendency|correlation
-    "confidence": "medium"  // low (2 sources), medium (3-4), high (5+)
+    "pattern_type": "tendency", // preference|behavior|personality|tendency|correlation
+    "confidence": "medium" // low (2 sources), medium (3-4), high (5+)
   }}]
 }}
 ```

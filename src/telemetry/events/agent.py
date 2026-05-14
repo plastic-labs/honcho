@@ -224,13 +224,13 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
         description=(
             "Provider-side input tokens for the summary LLM call "
             "(equivalent to HonchoLLMCallResponse.input_tokens). "
-            "Phase 6 keeps this field unchanged — adding a duplicate "
+            "keeps this field unchanged — adding a duplicate "
             "`provider_input_tokens` would only churn analytics queries."
         ),
     )
     output_tokens: int = Field(..., description="Output tokens (summary token count)")
 
-    # ---- Phase 6 additions (additive, schema v2) ---------------------------
+    # ---- Additive fields ----
     # Breakdown of what *went into* the summary prompt. Lets calibration
     # answer "how much of a summary call's cost was the previous-summary
     # rollup vs. the new messages vs. the scaffold/instructions" without
@@ -263,7 +263,7 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
 
 
 class AgentToolCallCompletedEvent(BaseEvent):
-    """Phase 3 generic tool-call event: fires once per tool invocation.
+    """generic tool-call event: fires once per tool invocation.
 
     Complements the four state-changer events (conclusions_created/deleted,
     peer_card_updated, summary_created), which carry semantic information

@@ -58,7 +58,7 @@ class TestQueueProcessing:
     async def test_work_unit_claiming(
         self,
         db_session: AsyncSession,
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+        sample_queue_items: list[models.QueueItem],  # noqa: ARG001 # pyright: ignore[reportUnusedParameter]
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ) -> None:
         """Test that work units can be claimed and are not available to other workers"""
@@ -92,7 +92,7 @@ class TestQueueProcessing:
     @pytest.mark.asyncio
     async def test_get_and_claim_excludes_already_claimed(
         self,
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+        sample_queue_items: list[models.QueueItem],  # noqa: ARG001 # pyright: ignore[reportUnusedParameter]
     ) -> None:
         queue_manager = QueueManager()
         first_batch = await queue_manager.get_and_claim_work_units()
@@ -106,7 +106,7 @@ class TestQueueProcessing:
     async def test_claim_work_unit_conflict_returns_false(
         self,
         db_session: AsyncSession,
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+        sample_queue_items: list[models.QueueItem],  # noqa: ARG001 # pyright: ignore[reportUnusedParameter]
     ) -> None:
         # Pre-create an active session for a key
         queue_manager = QueueManager()
@@ -207,7 +207,7 @@ class TestQueueProcessing:
     @pytest.mark.asyncio
     async def test_cleanup_work_unit_removes_row(
         self,
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+        sample_queue_items: list[models.QueueItem],  # noqa: ARG001 # pyright: ignore[reportUnusedParameter]
         db_session: AsyncSession,
     ) -> None:
         qm = QueueManager()
@@ -360,7 +360,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
-            **_extra: Any,  # Phase 4 added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
+            **_extra: Any,  # added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {
@@ -938,7 +938,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
-            **_extra: Any,  # Phase 4 added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
+            **_extra: Any,  # added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {
@@ -1059,7 +1059,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
-            **_extra: Any,  # Phase 4 added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
+            **_extra: Any,  # added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {

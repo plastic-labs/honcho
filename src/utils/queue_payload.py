@@ -57,7 +57,7 @@ class DreamPayload(BasePayload):
     observer: str
     observed: str
     session_name: str | None = None
-    # Phase 5 telemetry: scheduling context captured at schedule time so the
+    # scheduling context captured at schedule time so the
     # eventual DreamRunEvent can attribute the cycle back to *why* it was
     # scheduled (which threshold tripped) and *what* governed when it fired
     # (idle delay vs. immediate vs. min-hours gate). Defaults preserve

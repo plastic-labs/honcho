@@ -298,7 +298,7 @@ class DialecticAgent:
         """Build the LLMTelemetryContext shared by answer() and answer_stream().
 
         Carries the instance's `_run_id` (always set in __init__) + workspace +
-        peer identifiers so Phase 1's LLMCallCompletedEvent and Phase 2's
+        peer identifiers so LLMCallCompletedEvent and 's
         AgentIterationEvent can attribute every per-iteration LLM call back to
         this dialectic invocation.
         """

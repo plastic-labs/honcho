@@ -413,10 +413,10 @@ def create_dream_record(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to if specified
-        threshold_reason: Phase 5 — what tripped the schedule
-        delay_reason: Phase 5 — what governed when it fires
-        documents_since_last_dream_at_schedule: Phase 5 — count snapshot at schedule time
-        document_threshold: Phase 5 — DOCUMENT_THRESHOLD snapshot at schedule time
+        threshold_reason: what tripped the schedule
+        delay_reason: what governed when it fires
+        documents_since_last_dream_at_schedule: count snapshot at schedule time
+        document_threshold: DOCUMENT_THRESHOLD snapshot at schedule time
 
     Returns:
         Queue record dictionary with workspace_name and other fields

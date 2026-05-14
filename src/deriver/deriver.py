@@ -54,9 +54,9 @@ async def process_representation_tasks_batch(
         observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
         queue_item_message_ids: Message IDs from queue items being processed
-        hit_batch_token_cap: Phase 4 — queue batcher clamped this batch to fit
-        was_flush_enabled: Phase 4 — DERIVER.FLUSH_ENABLED snapshot at batch time
-        batch_max_tokens: Phase 4 — DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
+        hit_batch_token_cap: queue batcher clamped this batch to fit
+        was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
     """
     if not messages:
         return
@@ -248,13 +248,13 @@ async def process_representation_tasks_batch(
         accumulate_metric(
             f"minimal_deriver_{latest_message.id}_{observed}",
             "explicit_observations",
-            "\n".join(f"  • {obs}" for obs in observations.explicit),
+            "\n".join(f" • {obs}" for obs in observations.explicit),
             "blob",
         )
 
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observed}")
 
-    # Phase 4: token-breakdown fields derived from messages + cap snapshots.
+    # token-breakdown fields derived from messages + cap snapshots.
     queued_message_count = len(queue_item_message_ids)
     prompt_message_count = len(messages)
     prompt_message_tokens = sum(msg.token_count for msg in messages)
@@ -278,7 +278,7 @@ async def process_representation_tasks_batch(
             input_tokens=messages_tokens,
             total_input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
-            # Phase 4 additive fields
+            # additive fields
             queued_message_count=queued_message_count,
             prompt_message_count=prompt_message_count,
             prompt_message_tokens=prompt_message_tokens,

@@ -72,7 +72,7 @@ def sample_representation_event(
         input_tokens=5000,
         total_input_tokens=7500,
         output_tokens=500,
-        # Phase 4 additive fields
+        # additive fields
         queued_message_count=3,
         prompt_message_count=10,
         prompt_message_tokens=7000,
@@ -119,7 +119,7 @@ def sample_file_uploaded_event(fixed_timestamp: datetime) -> FileUploadedEvent:
 
 @pytest.fixture
 def sample_llm_call_event(fixed_timestamp: datetime) -> LLMCallCompletedEvent:
-    """Sample LLMCallCompletedEvent (Phase 1)."""
+    """Sample LLMCallCompletedEvent ()."""
     return LLMCallCompletedEvent(
         timestamp=fixed_timestamp,
         workspace_name="test_workspace",
@@ -186,7 +186,7 @@ def sample_dream_run_event(fixed_timestamp: datetime) -> DreamRunEvent:
         total_input_tokens=25000,
         total_output_tokens=3000,
         total_duration_ms=45000.0,
-        # Phase 5 additive fields
+        # additive fields
         dream_type="omni",
         enabled_types_count=1,
         threshold_reason="document_threshold",
@@ -212,7 +212,7 @@ def sample_dream_specialist_event(fixed_timestamp: datetime) -> DreamSpecialistE
         output_tokens=2000,
         duration_ms=25000.0,
         success=True,
-        # Phase 5 additive rollups
+        # additive rollups
         created_observation_count=7,
         deleted_observation_count=2,
         peer_card_updated=True,
@@ -336,7 +336,7 @@ def sample_summary_created_event(
         summary_type="short",
         input_tokens=4000,
         output_tokens=300,
-        # Phase 6 additive token breakdown
+        # additive token breakdown
         previous_summary_tokens=200,
         message_tokens=3500,
         prompt_scaffold_tokens=300,

@@ -1,5 +1,5 @@
 # pyright: reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false, reportArgumentType=false
-"""Phase 7 tests for EmbeddingCallCompletedEvent emission.
+"""tests for EmbeddingCallCompletedEvent emission.
 
 Targets:
 - New `EmbeddingCallCompletedEvent` (embedding.call.completed) at schema v1
@@ -37,7 +37,7 @@ class TestEventShape:
         assert EmbeddingCallCompletedEvent.category() == "llm"
 
     def test_volume_class_is_high_volume(self):
-        """Phase 7 event participates in HIGH_VOLUME_SAMPLE_RATE alongside
+        """event participates in HIGH_VOLUME_SAMPLE_RATE alongside
         llm.call.completed — search-heavy paths can flood the buffer."""
         assert EmbeddingCallCompletedEvent.volume_class() == "high_volume"
 

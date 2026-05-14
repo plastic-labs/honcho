@@ -61,7 +61,7 @@ class WorkerOwnership(NamedTuple):
 class QueueBatchResult:
     """Result of `QueueManager.get_queue_item_batch`.
 
-    Phase 4 telemetry needs to know two things in addition to the batch
+    telemetry needs to know two things in addition to the batch
     contents: whether the cumulative-token cap clamped the batch, and what
     the configured cap was. These flags feed `RepresentationCompletedEvent`
     so analytics can detect "we under-batched because of a flush" vs
@@ -799,7 +799,7 @@ class QueueManager:
                 if qi is not None:
                     items_to_process.append(qi)
 
-            # Phase 4: detect if `batch_max_tokens` clipped the batch. The
+            # detect if `batch_max_tokens` clipped the batch. The
             # `allowed_condition` SQL keeps rows with `cumulative_token_count
             # <= cap` (plus an always-included first-unprocessed escape
             # hatch), so summing the kept rows' token_count and checking

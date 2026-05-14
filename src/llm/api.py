@@ -315,7 +315,7 @@ async def honcho_llm_call(
 
     # Tool-less path: call once and return.
     if not tools or not tool_executor:
-        # Phase 4: enforce `max_input_tokens` for tool-less calls too. Before
+        # enforce `max_input_tokens` for tool-less calls too. Before
         # this change, only `execute_tool_loop` consumed the kwarg — the
         # deriver passed it but it was silently dropped, so the "input was
         # truncated" signal it needed for RepresentationCompletedEvent could

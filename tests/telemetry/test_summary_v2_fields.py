@@ -1,5 +1,5 @@
 # pyright: reportPrivateUsage=false
-"""Phase 6 tests for AgentToolSummaryCreatedEvent additive token breakdown.
+"""tests for AgentToolSummaryCreatedEvent additive token breakdown.
 
 Targets:
 - Schema bumps to v2.
@@ -22,9 +22,9 @@ class TestSchemaBump:
         assert AgentToolSummaryCreatedEvent.schema_version() == 2
 
 
-class TestPhase6AdditiveFields:
+class TestAdditiveFields:
     def test_new_fields_default_to_zero(self):
-        """Pre-Phase-6 callers (no breakdown fields) must construct valid events."""
+        """Callers that omit the breakdown fields must construct valid events."""
         event = AgentToolSummaryCreatedEvent(
             run_id="r",
             iteration=0,
@@ -45,8 +45,8 @@ class TestPhase6AdditiveFields:
 
     def test_input_tokens_semantic_preserved(self):
         """`input_tokens` continues to be the provider-side LLM input count.
-        Phase 6 deliberately does NOT add a redundant `provider_input_tokens`
-        — the existing field already serves that purpose, and a duplicate
+        We deliberately do NOT add a redundant `provider_input_tokens` —
+        the existing field already serves that purpose, and a duplicate
         would silently fork downstream queries."""
         event = AgentToolSummaryCreatedEvent(
             run_id="r",
@@ -99,7 +99,7 @@ class TestPhase6AdditiveFields:
         assert event.previous_summary_tokens == 0
         assert event.message_tokens > 0
 
-    def test_model_dump_includes_phase_6_fields(self):
+    def test_model_dump_includes_breakdown_fields(self):
         event = AgentToolSummaryCreatedEvent(
             run_id="r",
             iteration=0,
@@ -123,5 +123,5 @@ class TestPhase6AdditiveFields:
             "message_tokens",
             "prompt_scaffold_tokens",
         ):
-            assert field in data, f"missing Phase 6 field: {field}"
+            assert field in data, f"missing field: {field}"
         assert data["message_tokens"] == 700

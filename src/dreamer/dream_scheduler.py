@@ -67,7 +67,7 @@ class DreamScheduler:
     ) -> None:
         """Schedule a dream for a collection after a delay.
 
-        Phase 5 telemetry kwargs are captured at schedule time and threaded
+        telemetry kwargs are captured at schedule time and threaded
         through the queue payload so DreamRunEvent can attribute the dream
         back to its scheduling context.
         """
@@ -303,7 +303,7 @@ async def check_and_schedule_dream(
     )
 
     if documents_since_last_dream >= settings.DREAM.DOCUMENT_THRESHOLD:
-        # Phase 5 telemetry: capture *why* this schedule fired (threshold) and
+        # capture *why* this schedule fired (threshold) and
         # *how* it will fire (idle vs immediate). The two gates were
         # intentionally split — collapsing them into a single trigger_reason
         # would lose the scheduling semantics.

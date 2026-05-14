@@ -984,7 +984,7 @@ class TestCloudEventFormat:
 
 
 class TestHonchoVersionInjection:
-    """Tests for Phase 0 honcho_version body injection."""
+    """Tests for honcho_version body injection."""
 
     @pytest.mark.asyncio
     async def test_honcho_version_present_when_set(self):
@@ -1060,7 +1060,7 @@ class TestHonchoVersionInjection:
         assert "honcho_version" not in cloud_event["data"]
 
     def test_emit_does_not_mutate_event_instance(self):
-        """Phase 0 contract: emit() injects into the serialized body, never the
+        """contract: emit() injects into the serialized body, never the
         event instance. Tests asserting on the event object stay deterministic."""
         emitter = TelemetryEmitter(endpoint="http://test:8001/events")
         emitter._running = True

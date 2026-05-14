@@ -189,25 +189,25 @@ class TestRepresentationCompletedEvent:
 
 
 # =============================================================================
-# Tests for LLMCallCompletedEvent (Phase 1)
+# Tests for LLMCallCompletedEvent ()
 # =============================================================================
 
 
 class TestLLMCallCompletedEvent:
-    """Tests for the Phase 1 LLMCallCompletedEvent."""
+    """Tests for the LLMCallCompletedEvent."""
 
     def test_event_type(self):
         assert LLMCallCompletedEvent.event_type() == "llm.call.completed"
 
     def test_schema_version(self):
-        # Phase 1 ships at v1.
+        # ships at v1.
         assert LLMCallCompletedEvent.schema_version() == 1
 
     def test_category(self):
         assert LLMCallCompletedEvent.category() == "llm"
 
     def test_volume_class(self):
-        # Phase 1 event must be high_volume so the sampler picks it up.
+        # event must be high_volume so the sampler picks it up.
         assert LLMCallCompletedEvent.volume_class() == "high_volume"
 
     def test_get_resource_id_includes_attempt(
@@ -221,7 +221,7 @@ class TestLLMCallCompletedEvent:
         )
 
     def test_call_purpose_enum_values(self):
-        # The closed taxonomy used by Phase 1 callers.
+        # The closed taxonomy used by callers.
         assert CallPurpose.DERIVER_REPRESENTATION.value == "deriver.representation"
         assert CallPurpose.DIALECTIC_ANSWER.value == "dialectic.answer"
         assert CallPurpose.DREAM_DEDUCTION.value == "dream.deduction"
