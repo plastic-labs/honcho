@@ -730,7 +730,7 @@ class TestAgentToolSummaryCreatedEvent:
 
     def test_schema_version(self):
         """schema_version() returns correct value."""
-        assert AgentToolSummaryCreatedEvent.schema_version() == 1
+        assert AgentToolSummaryCreatedEvent.schema_version() == 2
 
     def test_category(self):
         """category() returns correct value."""

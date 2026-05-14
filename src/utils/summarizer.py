@@ -439,14 +439,16 @@ async def _create_and_save_summary(
         message_count=message_count,
     )
 
+    # Compute scaffold tokens up front (cheap + idempotent) so both the
+    # save-summary path and the Phase 6 telemetry emit below can use it
+    # without basedpyright tripping on a possibly-unbound name.
+    if summary_type == SummaryType.SHORT:
+        prompt_tokens = estimate_short_summary_prompt_tokens()
+    else:
+        prompt_tokens = estimate_long_summary_prompt_tokens()
+
     # Step 3: Save to database with new transaction
     if not is_fallback:
-        # Get base prompt tokens based on summary type
-        if summary_type == SummaryType.SHORT:
-            prompt_tokens = estimate_short_summary_prompt_tokens()
-        else:
-            prompt_tokens = estimate_long_summary_prompt_tokens()
-
         track_deriver_input_tokens(
             task_type=DeriverTaskTypes.SUMMARY,
             components={
@@ -499,6 +501,9 @@ async def _create_and_save_summary(
     # Note: Using AgentToolSummaryCreatedEvent with dummy run_id/iteration since
     # this is called from the deriver, not from an agentic loop
     if not is_fallback:
+        # `prompt_tokens` is set in the `if not is_fallback` block above for
+        # both SHORT and LONG summary types — we're inside the same branch, so
+        # it's guaranteed bound here.
         emit(
             AgentToolSummaryCreatedEvent(
                 run_id="deriver",  # Placeholder - not from an agentic run
@@ -513,6 +518,10 @@ async def _create_and_save_summary(
                 summary_type="short" if summary_type == SummaryType.SHORT else "long",
                 input_tokens=llm_input_tokens,
                 output_tokens=llm_output_tokens,
+                # Phase 6 additive token-breakdown fields
+                previous_summary_tokens=previous_summary_tokens,
+                message_tokens=messages_tokens,
+                prompt_scaffold_tokens=prompt_tokens,
             )
         )
 

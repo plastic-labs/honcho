@@ -336,6 +336,10 @@ def sample_summary_created_event(
         summary_type="short",
         input_tokens=4000,
         output_tokens=300,
+        # Phase 6 additive token breakdown
+        previous_summary_tokens=200,
+        message_tokens=3500,
+        prompt_scaffold_tokens=300,
     )
 
 

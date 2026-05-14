@@ -191,7 +191,7 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "agent.tool.summary.created"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "agent"
 
     # Run identification (may be placeholder if not from an agentic loop)
@@ -220,9 +220,42 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
 
     # Token usage
     input_tokens: int = Field(
-        ..., description="Input tokens used for summary generation"
+        ...,
+        description=(
+            "Provider-side input tokens for the summary LLM call "
+            "(equivalent to HonchoLLMCallResponse.input_tokens). "
+            "Phase 6 keeps this field unchanged — adding a duplicate "
+            "`provider_input_tokens` would only churn analytics queries."
+        ),
     )
     output_tokens: int = Field(..., description="Output tokens (summary token count)")
+
+    # ---- Phase 6 additions (additive, schema v2) ---------------------------
+    # Breakdown of what *went into* the summary prompt. Lets calibration
+    # answer "how much of a summary call's cost was the previous-summary
+    # rollup vs. the new messages vs. the scaffold/instructions" without
+    # re-deriving from the message corpus.
+    previous_summary_tokens: int = Field(
+        default=0,
+        description=(
+            "Token count of the previous summary text fed back in as context. "
+            "0 when this is the first summary for the session."
+        ),
+    )
+    message_tokens: int = Field(
+        default=0,
+        description=(
+            "Sum of `Message.token_count` across the messages being "
+            "summarized (excludes scaffold and previous_summary)."
+        ),
+    )
+    prompt_scaffold_tokens: int = Field(
+        default=0,
+        description=(
+            "Estimated tokens for the static scaffold portion of the prompt "
+            "(from estimate_short/long_summary_prompt_tokens)."
+        ),
+    )
 
     def get_resource_id(self) -> str:
         """Resource ID includes run_id and iteration for uniqueness."""
