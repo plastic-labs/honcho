@@ -5,6 +5,7 @@ This module provides a Turbopuffer-based implementation of the VectorStore inter
 """
 
 import logging
+import re
 from collections.abc import Sequence
 from typing import Any, Literal, cast
 
@@ -87,7 +88,7 @@ class TurbopufferVectorStore(VectorStore):
 
         try:
             await ns.write(
-                upsert_rows=rows,
+                upsert_rows=cast(Any, rows),
                 distance_metric=DISTANCE_METRIC,
             )
             return
@@ -310,3 +311,46 @@ class TurbopufferVectorStore(VectorStore):
         """Close the Turbopuffer client and release resources."""
         await self.tpuf.close()
         logger.debug("Turbopuffer client closed")
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        """Inspect a Turbopuffer namespace schema to recover the vector dim.
+
+        Turbopuffer namespaces are lazy-created; ``namespace.exists()`` returns
+        False before the first write. The schema response maps attribute name
+        to ``AttributeSchemaConfig``; the vector field's ``type`` string is
+        a bracket-prefixed dim with a width suffix, e.g. ``"[768]f32"``,
+        ``"[1536]f16"``, ``"[256]i8"``.
+
+        Returns ``None`` only when the namespace does not exist yet
+        (NotFoundError or ``exists() == False``). When the namespace
+        exists but its schema lacks a parseable ``vector`` attribute,
+        raises ``VectorStoreError`` — silently bucketing that as "missing"
+        would let a corrupt namespace pass the startup validator.
+        """
+        ns = self._get_namespace(namespace)
+        try:
+            if not await ns.exists():
+                return None
+        except NotFoundError:
+            return None
+
+        try:
+            schema = await ns.schema()
+        except NotFoundError:
+            return None
+
+        vector_attr = schema.get("vector")
+        if vector_attr is None:
+            raise VectorStoreError(
+                f"Turbopuffer namespace {namespace!r} exists but its schema"
+                + " has no 'vector' attribute; cannot probe dim."
+            )
+        type_str = str(vector_attr.type)
+        match = re.search(r"\[(\d+)\]", type_str)
+        if match is None:
+            raise VectorStoreError(
+                f"Turbopuffer namespace {namespace!r} has an unparseable"
+                + f" vector type {type_str!r}; expected `[<dim>]<width>`"
+                + " (e.g. `[768]f32`). SDK format may have changed."
+            )
+        return int(match.group(1))

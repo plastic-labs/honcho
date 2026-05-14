@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-09T17:08:30.746497Z"
+exclude-newer = "2026-05-09T19:09:35.818254Z"
 exclude-newer-span = "P5D"
 
 [manifest]
@@ -478,15 +478,14 @@ wheels = [
 
 [[package]]
 name = "cloudevents"
-version = "2.0.0"
+version = "1.12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "deprecation" },
-    { name = "python-dateutil" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/71/ee/22614a29a1754e6abd979eebfb5f5ecc8ffb6e4e267f3879f017bc5d5531/cloudevents-2.0.0.tar.gz", hash = "sha256:3224851b2ac902b868ed4bc1aa10772ada8cdf85f180322b12968d90a1dceef2", size = 46940, upload-time = "2026-03-24T16:22:20.214Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/1b/8363f787b239602fc5a69efcc8f626ad8e23ef7a5c8771742dc042862f2c/cloudevents-1.12.1.tar.gz", hash = "sha256:1eb52051309c3228934f86f41d50bd02c0e3d9561e5876e73ad8ad9f98f0d3ef", size = 34580, upload-time = "2026-03-12T20:43:07.763Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/3a/4df9a7de0bbb30dc6c0f9f707602160ff269dd01a11127f237ef01232b13/cloudevents-2.0.0-py3-none-any.whl", hash = "sha256:babb257989a933b18312897c3bf3a7cc65e270831227822f2db10b50d1278546", size = 94592, upload-time = "2026-03-24T16:22:19.094Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/3d/f44ff1fc4be64a93242ff295c0b6b5aa7275d81f9f616bd4d16a34c1fd59/cloudevents-1.12.1-py3-none-any.whl", hash = "sha256:5f1574bf49ff334381319bdddcab02175a69ca877a26d0900b59c85505b675b3", size = 55765, upload-time = "2026-03-12T20:43:06.813Z" },
 ]
 
 [[package]]
@@ -1219,7 +1218,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
     { name = "cashews", extras = ["redis"], specifier = "==7.4.4" },
-    { name = "cloudevents", specifier = ">=1.12.0" },
+    { name = "cloudevents", specifier = ">=1.12.0,<2.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.131.0" },
     { name = "fastapi-pagination", specifier = ">=0.14.2" },
     { name = "google-genai", specifier = ">=1.32.0" },

@@ -125,7 +125,7 @@ class HonchoStorage(Storage):
                 including logical operators (AND, OR, NOT), comparison operators
                 (gt, gte, lt, lte, eq, ne), and metadata filtering.
                 Example: {"peer_id": "user123"} or {"metadata": {"type": "important"}}
-                See: https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters
+                See: https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters
 
         Returns:
             List of message dictionaries in CrewAI expected format.

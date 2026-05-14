@@ -480,7 +480,7 @@ export class Peer {
    *
    * @param options - Either a legacy raw filter object or an options object with
    *                  `filters`, `page`, `size`, and `reverse`. See
-   *                  [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   *                  [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a paginated list of Session objects this peer belongs to.
    *          Returns an empty list if the peer is not a member of any sessions
    */
@@ -684,7 +684,7 @@ export class Peer {
    * Makes an API call to search endpoint.
    *
    * @param query The search query to use
-   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   * @param filters - Optional filters to scope the search. See [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @param limit - Optional limit on the number of results to return.
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
