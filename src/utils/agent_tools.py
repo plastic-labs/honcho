@@ -32,6 +32,36 @@ logger = logging.getLogger(__name__)
 # Hard cap to prevent unbounded peer card growth from repeated agent updates.
 MAX_PEER_CARD_FACTS = 40
 
+# Identity-marker prefixes allowed on the peer card. Anything else is rejected
+# structurally — see `_validate_peer_card_entry`.
+PEER_CARD_ALLOWED_PREFIXES: tuple[str, ...] = (
+    "IDENTITY:",
+    "ATTRIBUTE:",
+    "RELATIONSHIP:",
+    "INSTRUCTION:",
+)
+
+# Per-entry character cap to block evidence-bundle dumps and runaway lines.
+MAX_PEER_CARD_ENTRY_LENGTH = 200
+
+
+def _validate_peer_card_entry(line: str) -> bool:
+    """Structural validation for a single peer card entry.
+
+    Returns True when the line starts with one of the allowed prefixes followed
+    by a space, has a non-empty body after the prefix, and fits within the per-
+    entry length cap. Subject-substance correctness (is this actually about the
+    observed peer?) is left to the prompt — this is form-only.
+    """
+    if not line or len(line) > MAX_PEER_CARD_ENTRY_LENGTH:
+        return False
+    for prefix in PEER_CARD_ALLOWED_PREFIXES:
+        prefix_with_space = f"{prefix} "
+        if line.startswith(prefix_with_space):
+            body = line[len(prefix_with_space) :].strip()
+            return bool(body)
+    return False
+
 
 def _normalized_observation_input(
     obs: schemas.ObservationInput,
@@ -429,9 +459,16 @@ TOOLS: dict[str, dict[str, Any]] = {
     "update_peer_card": {
         "name": "update_peer_card",
         "description": (
-            "Update the peer card with durable profile facts about the observed peer. "
-            + "Only include stable biographical facts, standing instructions, and long-lived preferences/traits. "
-            + "Do not include one-off conclusions, temporary events, or duplicate entries."
+            "Update the peer card with stable identity markers about the observed peer. "
+            "An identity marker distinguishes the peer from others of its kind and persists across interactions. "
+            "The peer may be any entity with identity that changes over time (human, agent, codebase, team, organization) — do not assume the peer is human. "
+            "Each entry must start with one of four prefixes: `IDENTITY:` (canonical name, kind, aliases, IDs), "
+            "`ATTRIBUTE:` (stable durable property, including explicitly stated standing preferences), "
+            "`RELATIONSHIP:` (durable link to another entity), or "
+            "`INSTRUCTION:` (standing rule of engagement the peer has explicitly stated). "
+            "Do not write `TRAIT:` or behavioral `PREFERENCE:` entries, one-off observations, transient state, "
+            "inferred facts not directly supported by evidence, evidence bundles / `e.g.` clauses, or entries about co-occurring peers. "
+            "Entries without an allowed prefix or that exceed the per-entry length cap are rejected."
         ),
         "input_schema": {
             "type": "object",
@@ -440,7 +477,9 @@ TOOLS: dict[str, dict[str, Any]] = {
                     "type": "array",
                     "description": (
                         "Complete deduplicated peer card list (max 40 entries). "
-                        + "Each entry should be a concise standalone profile fact."
+                        "Each entry must start with one of the allowed prefixes "
+                        "(`IDENTITY: `, `ATTRIBUTE: `, `RELATIONSHIP: `, `INSTRUCTION: `) "
+                        "followed by one concise identity marker. Entries without an allowed prefix are rejected."
                     ),
                     "items": {"type": "string"},
                 },
@@ -765,7 +804,7 @@ DEDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
 # Tools for the induction specialist (dreamer phase 2)
 # Creates inductive observations from explicit and deductive observations
 # Includes message access for context and self-directed exploration
-# Note: get_peer_card is not included - peer card is injected into the prompt directly
+# Induction does not write to the peer card — that is deduction's responsibility.
 INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     # Discovery tools
     TOOLS["get_recent_observations"],
@@ -773,7 +812,6 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["search_messages"],
     # Action tools
     TOOLS["create_observations_inductive"],
-    TOOLS["update_peer_card"],
 ]
 
 
@@ -808,7 +846,9 @@ async def create_observations(
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
     normalized_observations = [
-        _normalized_observation_input(obs) for obs in observations if obs.content.strip()
+        _normalized_observation_input(obs)
+        for obs in observations
+        if obs.content.strip()
     ]
     if not normalized_observations:
         logger.info("No non-empty observations to create")
@@ -1362,9 +1402,11 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
         )
         return "Peer card content was empty, no update performed."
 
-    # Normalize and deduplicate to keep peer cards bounded and stable.
+    # Normalize, validate structure, and deduplicate to keep peer cards bounded
+    # and on-spec.
     normalized_peer_card: list[str] = []
     seen: set[str] = set()
+    rejected_count = 0
     items = (
         cast(list[str], raw_peer_card_content)
         if isinstance(raw_peer_card_content, list)
@@ -1375,6 +1417,14 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
         if not line:
             continue
 
+        if not _validate_peer_card_entry(line):
+            rejected_count += 1
+            logger.info(
+                "Rejecting peer card entry (no allowed prefix, empty body, or over length cap): %r",
+                line[:80],
+            )
+            continue
+
         # Case-insensitive dedupe with whitespace normalization.
         normalized_key = " ".join(line.lower().split())
         if normalized_key in seen:
@@ -1382,12 +1432,30 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
         seen.add(normalized_key)
         normalized_peer_card.append(line)
 
-    # Don't clear the peer card if all content normalized to empty.
+    if rejected_count:
+        logger.info(
+            "Peer card update for %s/%s/%s rejected %d structurally invalid entries",
+            ctx.workspace_name,
+            ctx.observer,
+            ctx.observed,
+            rejected_count,
+        )
+
+    # Don't clear the peer card if all content normalized to empty or every
+    # entry was structurally invalid.
     if not normalized_peer_card:
         logger.warning(
-            "Peer card update normalized to empty for %s, keeping existing card",
+            "Peer card update normalized to empty for %s (rejected=%d), keeping existing card",
             ctx.workspace_name,
+            rejected_count,
         )
+        if rejected_count:
+            return (
+                f"Peer card update rejected: all {rejected_count} entries failed "
+                "structural validation. Each entry must start with one of "
+                "`IDENTITY: `, `ATTRIBUTE: `, `RELATIONSHIP: `, or `INSTRUCTION: ` "
+                "and stay under the per-entry length cap."
+            )
         return "Peer card content was empty after normalization, no update performed."
 
     if len(normalized_peer_card) > MAX_PEER_CARD_FACTS:

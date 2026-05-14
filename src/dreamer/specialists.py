@@ -72,9 +72,12 @@ class BaseSpecialist(ABC):
     """Base class for agentic specialists."""
 
     name: str = "base"
+    # Whether this specialist is allowed to write to the peer card. Defaults to True;
+    # specialists that should never touch the card (e.g., induction) override to False.
+    can_update_peer_card: bool = True
     # Subclasses can override to customize the peer card update instruction
     peer_card_update_instruction: str = (
-        "Only update this with durable profile facts via `update_peer_card`."
+        "Only update this with durable identity markers via `update_peer_card`."
     )
 
     @abstractmethod
@@ -165,8 +168,12 @@ If you update it, send the full deduplicated list and remove stale entries.
                     db, workspace_name, schemas.PeerCreate(name=observed)
                 )
 
-            # Determine if peer card tools should be included
-            peer_card_enabled = configuration is None or configuration.peer_card.create
+            # Determine if peer card tools should be included. Specialists that
+            # cannot write to the peer card (e.g., induction) skip the fetch and
+            # the prompt section entirely.
+            peer_card_enabled = self.can_update_peer_card and (
+                configuration is None or configuration.peer_card.create
+            )
 
             # Fetch current peer card to inject into prompt (saves a tool call)
             current_peer_card: list[str] | None = None
@@ -316,7 +323,7 @@ class DeductionSpecialist(BaseSpecialist):
     """
 
     name: str = "deduction"
-    peer_card_update_instruction: str = "Update this with `update_peer_card` only for stable biographical/profile facts."
+    peer_card_update_instruction: str = "Update this with `update_peer_card` only for stable identity markers. See the PEER CARD section in the system prompt for the allowed entry kinds and rules."
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
         if peer_card_enabled:
@@ -344,26 +351,46 @@ class DeductionSpecialist(BaseSpecialist):
     ) -> str:
         peer_card_section = ""
         if peer_card_enabled:
-            peer_card_section = """
+            peer_card_section = f"""
 
 ## PEER CARD (REQUIRED)
 
-The peer card is a summary of stable biographical facts. You MUST update it when you learn:
-- Name, age, location, occupation
-- Family members and relationships
-- Standing instructions ("call me X", "don't mention Y")
-- Core preferences and traits
+The peer card is {observed}'s identity store: stable identity markers that distinguish this entity from others and persist across interactions. Behavior, tendencies, transient state, and episodic facts belong in observations, not on the peer card.
 
-Never add temporary event summaries, one-off conclusions, reasoning traces, or contradiction notes.
+A peer can be anything with identity that changes over time — a human, an agent, a codebase, a team, an organization. Do not assume {observed} is human. Do not require any field; empty is the correct output when evidence is absent.
 
-Format entries as:
-- Plain facts: "Name: Alice", "Works at Google", "Lives in NYC"
-- `INSTRUCTION: ...` for standing instructions
-- `PREFERENCE: ...` for preferences
-- `TRAIT: ...` for personality traits
+### Allowed entry kinds
 
-Call `update_peer_card` with the complete updated list when you have new biographical info.
-Keep it concise (max 40 entries), deduplicated, and current."""
+Each entry must start with one of these four prefixes (exact case, followed by a space):
+
+- `IDENTITY: ...` — canonical name, kind, aliases, IDs
+  - `IDENTITY: Name: Alice`
+  - `IDENTITY: Kind: Python monorepo`
+  - `IDENTITY: Version: 4.2`
+  - `IDENTITY: Aliases: alice@example.com`
+- `ATTRIBUTE: ...` — stable durable property of the entity (including explicitly stated standing preferences)
+  - `ATTRIBUTE: Location: NYC`
+  - `ATTRIBUTE: Language: Python`
+  - `ATTRIBUTE: Prefers tea`
+  - `ATTRIBUTE: Charter: ship Honcho infrastructure`
+- `RELATIONSHIP: ...` — durable link to another entity
+  - `RELATIONSHIP: Spouse: Bob`
+  - `RELATIONSHIP: Maintainer: vineeth`
+  - `RELATIONSHIP: Members: vineeth, rajat`
+- `INSTRUCTION: ...` — standing rule of engagement that {observed} has explicitly stated (do/don't for the observer). Only when explicit; never inferred from behavior.
+  - `INSTRUCTION: Call me Vee`
+  - `INSTRUCTION: Never push to main without review`
+
+### Rules
+
+1. **Stable.** If the value plausibly changes within six months absent a deliberate announcement, it does not belong on the card. Prefer leaving the card empty over filling it with volatile content.
+2. **Subject is {observed}.** Every entry must be a fact about {observed}, not about another participant in the session. Never write facts about co-occurring peers into the card, no matter how frequently they appear in the messages.
+3. **Evidence-grounded.** Only write what {observed} has explicitly stated, or what another participant has explicitly stated about {observed} with {observed}'s assent. No "general knowledge" inferences (`"co-founder"` does not imply an age; mentioning a colleague does not imply a family relationship).
+4. **Type-agnostic.** {observed} may not be human. Do not require name/age/location/family/occupation fields.
+5. **No behavioral content.** TRAITs, behavioral tendencies, patterns, and inferred preferences belong in observations, not on the peer card. Do not write `TRAIT:` entries or behavioral `PREFERENCE:` entries — they will be rejected.
+6. **No evidence bundles.** Each entry is one concise fact. No `e.g.` clauses, no parenthetical example lists, no semicolon-separated value dumps.
+
+Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record. Entries that do not start with one of the four allowed prefixes will be rejected. Keep concise (max 40 entries)."""
 
         return f"""You are a deductive reasoning agent analyzing observations about {observed}.
 
@@ -460,20 +487,19 @@ class InductionSpecialist(BaseSpecialist):
     1. Explores observations to understand what's there
     2. Identifies patterns and generalizations across multiple observations
     3. Creates new inductive observations with source linkage
-    4. Updates peer card with high-confidence traits and tendencies
+
+    Does not write to the peer card — the peer card stores stable identity markers,
+    which is deduction's responsibility. Inductive patterns and tendencies stay as
+    observations.
     """
 
     name: str = "induction"
-    peer_card_update_instruction: str = "Only add highly stable profile traits/preferences; do not copy transient conclusions."
+    # Induction never writes to the peer card; behavioral patterns are observations.
+    can_update_peer_card: bool = False
 
     def get_tools(self, *, peer_card_enabled: bool = True) -> list[dict[str, Any]]:
-        if peer_card_enabled:
-            return INDUCTION_SPECIALIST_TOOLS
-        return [
-            t
-            for t in INDUCTION_SPECIALIST_TOOLS
-            if t["name"] not in PEER_CARD_TOOL_NAMES
-        ]
+        _ = peer_card_enabled
+        return INDUCTION_SPECIALIST_TOOLS
 
     def get_model_config(self) -> ConfiguredModelSettings:
         return _require_specialist_model_config(
@@ -490,21 +516,7 @@ class InductionSpecialist(BaseSpecialist):
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
     ) -> str:
-        peer_card_section = ""
-        if peer_card_enabled:
-            peer_card_section = """
-
-## PEER CARD (REQUIRED)
-
-After identifying patterns, only update the peer card for durable profile-level traits/preferences:
-- `TRAIT: Analytical thinker`
-- `TRAIT: Tends to reschedule when stressed`
-- `PREFERENCE: Prefers detailed explanations`
-
-Do NOT add temporary patterns, episode-specific conclusions, or reasoning summaries.
-Call `update_peer_card` with the complete deduplicated list only when a durable profile update is warranted.
-Keep it concise (max 40 entries)."""
-
+        _ = peer_card_enabled
         return f"""You are an inductive reasoning agent identifying patterns about {observed}.
 
 ## YOUR JOB
@@ -540,7 +552,6 @@ Create inductive observations when you see patterns:
 ### Temporal Patterns
 - "Career goals have remained consistent"
 - "Living situation changes frequently"
-{peer_card_section}
 
 ## CREATING OBSERVATIONS
 
@@ -572,11 +583,13 @@ Use `create_observations_inductive`.
         hints: list[str] | None,
         peer_card: list[str] | None = None,
     ) -> str:
-        peer_card_context = self._build_peer_card_context(peer_card)
+        # Induction does not consume peer card context — it produces inductive
+        # observations, not identity-marker updates.
+        _ = peer_card
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
-            return f"""{peer_card_context}Explore and find patterns. These areas may be worth investigating:
+            return f"""Explore and find patterns. These areas may be worth investigating:
 
 {hints_str}
 
@@ -584,7 +597,7 @@ But follow the evidence - if you find patterns elsewhere, pursue those.
 
 Start with `get_recent_observations`."""
 
-        return f"""{peer_card_context}Explore the observation space and identify patterns.
+        return """Explore the observation space and identify patterns.
 
 Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
 
