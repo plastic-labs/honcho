@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- Support for using [Qdrant](https://qdrant.tech/) as the vector search provider.
 - New `src/llm/` package as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy
 - `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback
 - Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends
@@ -169,7 +170,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Prometheus token tracking for deriver and dialectic operations
 - n8n integration
 - Cloud Events for auditable telemetry
-- External Vector Store support for turbopuffer and lancedb with reconciliation flow
+- External Vector Store support for turbopuffer, lancedb, and qdrant with reconciliation flow
 
 ### Changed
 
