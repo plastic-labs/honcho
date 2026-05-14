@@ -221,8 +221,8 @@ async def get_peers(
     stmt = apply_filter(stmt, models.Peer, filters)
 
     if reverse:
-        return stmt.order_by(models.Peer.created_at.desc())
-    return stmt.order_by(models.Peer.created_at.asc())
+        return stmt.order_by(models.Peer.created_at.desc(), models.Peer.id.desc())
+    return stmt.order_by(models.Peer.created_at.asc(), models.Peer.id.asc())
 
 
 async def update_peer(
@@ -319,8 +319,8 @@ async def get_sessions_for_peer(
     stmt = apply_filter(stmt, models.Session, filters)
 
     if reverse:
-        stmt = stmt.order_by(models.Session.created_at.desc())
+        stmt = stmt.order_by(models.Session.created_at.desc(), models.Session.id.desc())
     else:
-        stmt = stmt.order_by(models.Session.created_at.asc())
+        stmt = stmt.order_by(models.Session.created_at.asc(), models.Session.id.asc())
 
     return stmt

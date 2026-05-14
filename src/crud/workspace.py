@@ -168,9 +168,13 @@ async def get_all_workspaces(
     stmt = select(models.Workspace)
     stmt = apply_filter(stmt, models.Workspace, filters)
     if reverse:
-        stmt = stmt.order_by(models.Workspace.created_at.desc())
+        stmt = stmt.order_by(
+            models.Workspace.created_at.desc(), models.Workspace.id.desc()
+        )
     else:
-        stmt = stmt.order_by(models.Workspace.created_at.asc())
+        stmt = stmt.order_by(
+            models.Workspace.created_at.asc(), models.Workspace.id.asc()
+        )
     return stmt
 
 

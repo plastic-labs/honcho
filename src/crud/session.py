@@ -130,8 +130,8 @@ async def get_sessions(
     stmt = apply_filter(stmt, models.Session, filters)
 
     if reverse:
-        return stmt.order_by(models.Session.created_at.desc())
-    return stmt.order_by(models.Session.created_at.asc())
+        return stmt.order_by(models.Session.created_at.desc(), models.Session.id.desc())
+    return stmt.order_by(models.Session.created_at.asc(), models.Session.id.asc())
 
 
 async def get_or_create_session(
