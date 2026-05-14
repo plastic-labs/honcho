@@ -27,8 +27,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _should_sample(event: "BaseEvent", rate: float) -> bool:
+def _should_sample(event: "BaseEvent", rate: object) -> bool:
     """Trace-coherent deterministic sampler for high-volume events.
+
+    `rate` is typed as `object` (rather than `float`) because the caller
+    reads it straight from `settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE`,
+    which in tests gets MagicMock'd. A MagicMock comparison against 1.0
+    raises TypeError, so we validate at the boundary and fall back to
+    passthrough on anything non-numeric. Mirrors the same guard pattern
+    used for `HONCHO_VERSION` in Phase 0.
 
     When the event carries a `run_id`, sampling decisions hash on that id —
     so every event in an agent run either passes or fails the sampler, and
@@ -37,15 +44,18 @@ def _should_sample(event: "BaseEvent", rate: float) -> bool:
     event using `event.generate_id()`, which is deterministic on
     (type, resource_id, timestamp).
     """
-    if rate >= 1.0:
+    if not isinstance(rate, int | float):
         return True
-    if rate <= 0.0:
+    rate_f = float(rate)
+    if rate_f >= 1.0:
+        return True
+    if rate_f <= 0.0:
         return False
     run_id = getattr(event, "run_id", None)
     key = run_id if isinstance(run_id, str) and run_id else event.generate_id()
     # Stable hash → 0..9999 → compare against rate * 10000.
     bucket = int.from_bytes(_stable_hash(key)[:4], "big") % 10_000
-    return bucket < int(rate * 10_000)
+    return bucket < int(rate_f * 10_000)
 
 
 def _stable_hash(value: str) -> bytes:
