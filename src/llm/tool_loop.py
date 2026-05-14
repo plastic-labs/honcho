@@ -20,7 +20,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import ModelTransport
 from src.exceptions import ValidationException
-from src.utils.types import set_current_iteration
+from src.utils.types import (
+    get_last_tool_metadata,
+    set_current_iteration,
+    set_current_tool_call_seq,
+    set_last_tool_metadata,
+)
 
 from .executor import honcho_llm_call_inner
 from .registry import history_adapter_for_provider
@@ -417,15 +422,27 @@ async def execute_tool_loop(
         set_current_iteration(iteration + 1)
 
         tool_results: list[dict[str, Any]] = []
-        for tool_call in response.tool_calls_made:
+        for seq, tool_call in enumerate(response.tool_calls_made):
             tool_name = tool_call["name"]
             tool_input = tool_call["input"]
             tool_id = tool_call.get("id", "")
 
             logger.debug(f"Executing tool: {tool_name}")
 
+            # Phase 3 telemetry: the executor closure reads these from
+            # ContextVars to populate AgentToolCallCompletedEvent. Set BEFORE
+            # the executor call so two calls to the same tool in one iteration
+            # get distinct seq values. Reset last-tool metadata so we never
+            # observe stale state from a prior call.
+            set_current_tool_call_seq(seq, tool_id or None)
+            set_last_tool_metadata({})
+
             try:
                 tool_result = await tool_executor(tool_name, tool_input)
+                # Stash ToolResult.metadata on all_tool_calls so Phase 5
+                # specialist rollups can read created/deleted observation
+                # counts without round-tripping through the event store.
+                tool_result_metadata = get_last_tool_metadata()
                 tool_results.append(
                     {
                         "tool_id": tool_id,
@@ -438,6 +455,7 @@ async def execute_tool_loop(
                         "tool_name": tool_name,
                         "tool_input": tool_input,
                         "tool_result": tool_result,
+                        "tool_result_metadata": tool_result_metadata,
                     }
                 )
             except Exception as e:

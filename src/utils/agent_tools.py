@@ -25,7 +25,7 @@ from src.telemetry.events import (
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
-from src.utils.types import get_current_iteration
+from src.utils.types import ToolResult, get_current_iteration
 
 logger = logging.getLogger(__name__)
 
@@ -808,7 +808,9 @@ async def create_observations(
         return ObservationsCreatedResult(created_count=0, created_levels=[], failed=[])
 
     normalized_observations = [
-        _normalized_observation_input(obs) for obs in observations if obs.content.strip()
+        _normalized_observation_input(obs)
+        for obs in observations
+        if obs.content.strip()
     ]
     if not normalized_observations:
         logger.info("No non-empty observations to create")
@@ -1207,7 +1209,7 @@ async def _handle_create_observations_impl(
     tool_input: dict[str, Any],
     *,
     forced_level: str | None = None,
-) -> str:
+) -> "str | ToolResult":
     """Handle create_observations tool."""
     raw_observations = tool_input.get("observations", [])
 
@@ -1311,18 +1313,27 @@ async def _handle_create_observations_impl(
         )
         response += f"\nFailed {len(all_failures)}: {failure_details}"
 
-    return response
+    # Phase 3+5: surface created_count so DreamSpecialistEvent can sum actual
+    # observations across the run rather than just counting create_observations
+    # calls (which would conflate "1 call that made 5 observations" with
+    # "5 calls that each made 1").
+    from src.utils.types import ToolResult
+
+    return ToolResult(
+        content=response,
+        metadata={"created_count": result.created_count, "levels": levels},
+    )
 
 
 async def _handle_create_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     return await _handle_create_observations_impl(ctx, tool_input)
 
 
 async def _handle_create_observations_deductive(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     return await _handle_create_observations_impl(
         ctx,
         tool_input,
@@ -1332,7 +1343,7 @@ async def _handle_create_observations_deductive(
 
 async def _handle_create_observations_inductive(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     return await _handle_create_observations_impl(
         ctx,
         tool_input,
@@ -1340,7 +1351,9 @@ async def _handle_create_observations_inductive(
     )
 
 
-async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+async def _handle_update_peer_card(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> "str | ToolResult":
     """Handle update_peer_card tool."""
     # Check if peer card creation is disabled via configuration
     if ctx.configuration is not None and not ctx.configuration.peer_card.create:
@@ -1427,7 +1440,14 @@ async def _handle_update_peer_card(ctx: ToolContext, tool_input: dict[str, Any])
             )
         )
 
-    return f"Updated peer card for {ctx.observed} by {ctx.observer}"
+    # Phase 5: signal a successful peer_card update so DreamSpecialistEvent
+    # can set its `peer_card_updated` flag without name-counting.
+    from src.utils.types import ToolResult
+
+    return ToolResult(
+        content=f"Updated peer card for {ctx.observed} by {ctx.observer}",
+        metadata={"peer_card_updated": True, "facts_count": len(normalized_peer_card)},
+    )
 
 
 async def _handle_get_recent_history(
@@ -1457,8 +1477,12 @@ async def _handle_get_recent_history(
     return _truncate_tool_output(output)
 
 
-async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+async def _handle_search_memory(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> "str | ToolResult":
     """Handle search_memory tool."""
+    from src.utils.types import ToolResult
+
     top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
     query = tool_input["query"]
     try:
@@ -1468,6 +1492,14 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
             "ERROR: Query exceeds maximum token limit of "
             + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}. Please use a shorter query."
         )
+
+    # Base Phase 3 telemetry metadata; results_count gets filled in below.
+    search_meta: dict[str, Any] = {
+        "top_k": top_k,
+        "used_embedding": True,
+        "embedding_query_count": 1,
+        "query_tokens": _estimate_tokens_safe(query),
+    }
 
     documents = await crud.query_documents(
         db=None,
@@ -1512,7 +1544,11 @@ async def _handle_search_memory(ctx: ToolContext, tool_input: dict[str, Any]) ->
             )
         return f"No observations found for query '{query}'"
     mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
-    return f"Found {total_count} observations for query '{query}':\n\n{mem_str}"
+    search_meta["results_count"] = total_count
+    return ToolResult(
+        content=f"Found {total_count} observations for query '{query}':\n\n{mem_str}",
+        metadata=search_meta,
+    )
 
 
 async def _handle_get_observation_context(
@@ -1543,8 +1579,12 @@ async def _handle_get_observation_context(
     return _truncate_tool_output(output)
 
 
-async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+async def _handle_search_messages(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> "str | ToolResult":
     """Handle search_messages tool."""
+    from src.utils.types import ToolResult
+
     query = tool_input["query"]
     limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
     # Pre-compute embedding outside DB session to avoid holding a connection
@@ -1559,10 +1599,20 @@ async def _handle_search_messages(ctx: ToolContext, tool_input: dict[str, Any]) 
         embedding=query_embedding,
         observer=ctx.observer,
     )
+    search_meta: dict[str, Any] = {
+        "top_k": limit,
+        "used_embedding": True,
+        "embedding_query_count": 1,
+        "query_tokens": _estimate_tokens_safe(query),
+        "results_count": len(snippets),
+    }
     if not snippets:
-        return f"No messages found for query '{query}'"
+        return ToolResult(
+            content=f"No messages found for query '{query}'",
+            metadata=search_meta,
+        )
     formatted = _format_message_snippets(snippets, f"for query '{query}'")
-    return formatted
+    return ToolResult(content=formatted, metadata=search_meta)
 
 
 async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
@@ -1820,7 +1870,7 @@ async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) ->
 
 async def _handle_delete_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     """Handle delete_observations tool."""
     observation_ids = tool_input.get("observation_ids", [])
     if not observation_ids:
@@ -1859,7 +1909,16 @@ async def _handle_delete_observations(
             )
         )
 
-    return f"Deleted {deleted_count} observations"
+    # Phase 3+5: surface deleted_count + levels for DreamSpecialistEvent rollups.
+    from src.utils.types import ToolResult
+
+    return ToolResult(
+        content=f"Deleted {deleted_count} observations",
+        metadata={
+            "deleted_count": deleted_count,
+            "levels": [level for _, level in deleted],
+        },
+    )
 
 
 async def _handle_finish_consolidation(
@@ -2110,33 +2169,163 @@ async def create_tool_executor(
         Returns:
             String result describing what was done
         """
+        import time
+
+        from src.utils.types import (
+            ToolResult,
+            get_current_iteration,
+            get_current_provider_tool_call_id,
+            get_current_tool_call_seq,
+            set_last_tool_metadata,
+        )
+
         logger.info("[tool call] %s %s", tool_name, tool_input)
+
+        start = time.perf_counter()
+        # Defaults populated even on early returns / error paths so the
+        # AgentToolCallCompletedEvent emission below can fire consistently.
+        result_str: str = ""
+        metadata: dict[str, Any] = {}
+        is_error: bool = False
 
         try:
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
-                result = await handler(ctx, tool_input)
-                logger.info("[tool result] %s %s", tool_name, result)
-                return result
-            return f"Unknown tool: {tool_name}"
+                handler_result = await handler(ctx, tool_input)
+                # Handlers return either a plain str (existing contract) or a
+                # ToolResult(content, metadata) carrying structured fields for
+                # Phase 3 telemetry and Phase 5 specialist rollups.
+                if isinstance(handler_result, ToolResult):
+                    result_str = handler_result.content
+                    metadata = handler_result.metadata
+                else:
+                    result_str = handler_result
+                logger.info("[tool result] %s %s", tool_name, result_str)
+            else:
+                result_str = f"Unknown tool: {tool_name}"
+                is_error = True
+                logger.warning(result_str)
 
         except ValueError as e:
             # Recoverable errors (bad input, validation failures) - return to LLM
-            error_msg = f"Tool {tool_name} failed with invalid input: {e}"
-            logger.warning(error_msg)
-            return error_msg
+            result_str = f"Tool {tool_name} failed with invalid input: {e}"
+            is_error = True
+            logger.warning(result_str)
         except KeyError as e:
             # Missing required parameters - return to LLM
-            error_msg = f"Tool {tool_name} missing required parameter: {e}"
-            logger.warning(error_msg)
-            return error_msg
+            result_str = f"Tool {tool_name} missing required parameter: {e}"
+            is_error = True
+            logger.warning(result_str)
         except Exception as e:
             # Unexpected errors - log with full traceback but still return to LLM
             # We don't re-raise because the LLM should be able to continue with other tools
-            error_msg = f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
-            logger.error(error_msg, exc_info=True)
+            result_str = (
+                f"Tool {tool_name} failed unexpectedly: {type(e).__name__}: {e}"
+            )
+            is_error = True
+            logger.error(result_str, exc_info=True)
             # No explicit rollback needed — each handler uses tracked_db() which
             # handles rollback in its finally block
-            return error_msg
+
+        duration_ms = (time.perf_counter() - start) * 1000
+
+        # Publish ToolResult.metadata for tool_loop to stash on all_tool_calls.
+        # Reset to {} (rather than leaving stale metadata) so a non-ToolResult
+        # handler doesn't appear to have leaked metadata from a prior call.
+        set_last_tool_metadata(metadata)
+
+        _emit_agent_tool_call_completed(
+            ctx=ctx,
+            tool_name=tool_name,
+            duration_ms=duration_ms,
+            result_str=result_str,
+            metadata=metadata,
+            is_error=is_error,
+            iteration=get_current_iteration(),
+            tool_call_seq=get_current_tool_call_seq(),
+            provider_tool_call_id=get_current_provider_tool_call_id(),
+        )
+
+        return result_str
 
     return execute_tool
+
+
+def _emit_agent_tool_call_completed(
+    *,
+    ctx: "ToolContext",
+    tool_name: str,
+    duration_ms: float,
+    result_str: str,
+    metadata: dict[str, Any],
+    is_error: bool,
+    iteration: int,
+    tool_call_seq: int,
+    provider_tool_call_id: str | None,
+) -> None:
+    """Build and emit AgentToolCallCompletedEvent. Best-effort; swallows errors.
+
+    Skipped when the executor was constructed without agent identifiers
+    (run_id / agent_type / parent_category) — telemetry attribution requires
+    all three.
+    """
+    if not (ctx.run_id and ctx.agent_type and ctx.parent_category):
+        return
+    try:
+        from src.telemetry.events import AgentToolCallCompletedEvent, emit
+
+        emit(
+            AgentToolCallCompletedEvent(
+                run_id=ctx.run_id,
+                iteration=iteration,
+                tool_call_seq=tool_call_seq,
+                provider_tool_call_id=provider_tool_call_id,
+                parent_category=ctx.parent_category,
+                agent_type=ctx.agent_type,
+                workspace_name=ctx.workspace_name,
+                tool_name=tool_name,
+                duration_ms=duration_ms,
+                is_error=is_error,
+                result_chars=len(result_str),
+                result_chars_before_truncation=metadata.get(
+                    "result_chars_before_truncation"
+                ),
+                result_tokens_estimate=_estimate_tokens(result_str),
+                was_truncated=bool(metadata.get("was_truncated", False)),
+                query_tokens=metadata.get("query_tokens"),
+                top_k=metadata.get("top_k"),
+                results_count=metadata.get("results_count"),
+                used_embedding=metadata.get("used_embedding"),
+                embedding_query_count=int(metadata.get("embedding_query_count") or 0),
+            )
+        )
+    except Exception:  # pragma: no cover - telemetry must not raise
+        logger.debug("Failed to emit AgentToolCallCompletedEvent", exc_info=True)
+
+
+def _estimate_tokens(text: str) -> int:
+    """Tiktoken-based size proxy for tool result strings. Best-effort."""
+    if not text:
+        return 0
+    try:
+        import tiktoken
+
+        # Use cl100k_base as a stable default — matches the embedding-client
+        # fallback. Exact accuracy isn't required; this is a size proxy.
+        encoding = tiktoken.get_encoding("cl100k_base")
+        return len(encoding.encode(text))
+    except Exception:
+        # Fall back to a rough char→token ratio so the field is always populated.
+        return max(1, len(text) // 4)
+
+
+def _estimate_tokens_safe(text: str | None) -> int | None:
+    """Wrapper around `_estimate_tokens` that returns None on falsy input.
+
+    Used by Phase 3 search-handler metadata where we want `query_tokens=None`
+    when the query is empty rather than 0 (which could be confused with a
+    real measurement).
+    """
+    if not text:
+        return None
+    return _estimate_tokens(text)

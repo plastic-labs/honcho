@@ -60,6 +60,7 @@ import logging
 
 from src.telemetry.events.agent import (
     AgentIterationEvent,
+    AgentToolCallCompletedEvent,
     AgentToolConclusionsCreatedEvent,
     AgentToolConclusionsDeletedEvent,
     AgentToolPeerCardUpdatedEvent,
@@ -100,6 +101,7 @@ __all__ = [
     "DialecticCompletedEvent",
     # Agent events
     "AgentIterationEvent",
+    "AgentToolCallCompletedEvent",
     "AgentToolConclusionsCreatedEvent",
     "AgentToolConclusionsDeletedEvent",
     "AgentToolPeerCardUpdatedEvent",
