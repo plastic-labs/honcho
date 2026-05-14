@@ -31,6 +31,7 @@ class AgentIterationEvent(BaseEvent):
     _event_type: ClassVar[str] = "agent.iteration"
     _schema_version: ClassVar[int] = 1
     _category: ClassVar[str] = "agent"
+    _volume_class: ClassVar[str] = "high_volume"
 
     # Run identification
     run_id: str = Field(..., description="8-char UUID prefix for run correlation")

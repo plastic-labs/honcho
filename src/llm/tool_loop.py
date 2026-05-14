@@ -64,6 +64,56 @@ def _telemetry_for_iteration(
     )
 
 
+def _emit_agent_iteration(
+    telemetry: LLMTelemetryContext | None,
+    iteration: int,
+    response: HonchoLLMCallResponse[Any],
+) -> None:
+    """Phase 2: emit AgentIterationEvent after each per-iteration LLM response.
+
+    Fired immediately after `response = await call_func()` in the per-iteration
+    loop AND after the max-iteration synthesis call. Emitted regardless of
+    whether the model requested tool calls — the no-tool terminating iteration
+    still counts as an iteration for cost calibration.
+
+    Skipped when telemetry context is missing or lacks the required agent
+    identifiers (no agent → no agent.iteration event).
+    """
+    if telemetry is None or not telemetry.run_id:
+        return
+    if not telemetry.parent_category or not telemetry.agent_type:
+        # Without agent_type / parent_category we can't fill the event's
+        # required fields. Skip rather than emit a half-populated event.
+        return
+    if not telemetry.workspace_name:
+        return
+    try:
+        # Local import: keeps src/llm/ free of a hard dependency on telemetry
+        # at import time so the LLM layer remains usable in unit tests that
+        # don't initialize the telemetry stack.
+        from src.telemetry.events import AgentIterationEvent, emit
+
+        emit(
+            AgentIterationEvent(
+                run_id=telemetry.run_id,
+                parent_category=telemetry.parent_category,
+                agent_type=telemetry.agent_type,
+                workspace_name=telemetry.workspace_name,
+                observer=telemetry.observer,
+                observed=telemetry.observed,
+                peer_name=telemetry.peer_name,
+                iteration=iteration,
+                tool_calls=[tc["name"] for tc in response.tool_calls_made],
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                cache_read_tokens=response.cache_read_input_tokens or 0,
+                cache_creation_tokens=response.cache_creation_input_tokens or 0,
+            )
+        )
+    except Exception:  # pragma: no cover - telemetry must not raise
+        logger.debug("Failed to emit AgentIterationEvent", exc_info=True)
+
+
 logger = logging.getLogger(__name__)
 
 # Bounds for max_tool_iterations to prevent runaway loops.
@@ -285,6 +335,11 @@ async def execute_tool_loop(
         total_output_tokens += response.output_tokens
         total_cache_creation_tokens += response.cache_creation_input_tokens
         total_cache_read_tokens += response.cache_read_input_tokens
+
+        # Phase 2: emit one AgentIterationEvent per LLM response BEFORE the
+        # no-tool early return. The terminating iteration counts too — it has
+        # an empty tool_calls list and is essential for cost calibration.
+        _emit_agent_iteration(telemetry, iteration + 1, response)
 
         if not response.tool_calls_made:
             logger.debug("No tool calls in response, finishing")
@@ -509,6 +564,16 @@ async def execute_tool_loop(
         final_call_func = _final_call
 
     final_response = await final_call_func()
+
+    # Phase 2: emit the synthesis-call iteration event BEFORE merging cumulative
+    # totals onto final_response below — otherwise the event's per-iteration
+    # token counts would double-count the running totals.
+    _emit_agent_iteration(
+        _telemetry_for_iteration(telemetry, synthesis_iteration),
+        synthesis_iteration,
+        final_response,
+    )
+
     final_response.tool_calls_made = all_tool_calls
     final_response.iterations = iteration + 1
     final_response.input_tokens = total_input_tokens + final_response.input_tokens

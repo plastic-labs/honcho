@@ -23,6 +23,7 @@ from src.config import ConfiguredModelSettings, settings
 from src.dependencies import tracked_db
 from src.exceptions import ValidationException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
+from src.llm.types import LLMTelemetryContext
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DreamSpecialistEvent, emit
@@ -229,6 +230,10 @@ If you update it, send the full deduplicated list and remove stale entries.
             nonlocal iteration_count
             iteration_count = data.iteration
 
+        # call_purpose maps "deduction"/"induction" specialist names onto the
+        # closed CallPurpose enum slugs without importing the enum here.
+        call_purpose_slug = f"dream.{self.name}"
+
         # Run the agent loop
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
             model_config=model_config,
@@ -241,6 +246,15 @@ If you update it, send the full deduplicated list and remove stale entries.
             messages=messages,
             track_name=f"Dreamer/{self.name}",
             iteration_callback=iteration_callback,
+            telemetry=LLMTelemetryContext(
+                workspace_name=workspace_name,
+                call_purpose=call_purpose_slug,
+                parent_category="dream",
+                agent_type=self.name,
+                run_id=run_id,
+                observer=observer,
+                observed=observed,
+            ),
         )
 
         # Log metrics
