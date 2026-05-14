@@ -11,7 +11,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, exists, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -792,23 +792,61 @@ class QueueManager:
                 )
 
             seen_messages: set[int] = set()
-            cumulative_tokens = 0
             for m, qi in rows:
                 if m.id not in seen_messages:
                     messages_context.append(m)
                     seen_messages.add(m.id)
-                    cumulative_tokens += m.token_count or 0
                 if qi is not None:
                     items_to_process.append(qi)
 
-            # Phase 4: the batcher SQL uses `cumulative_token_count <= batch_max_tokens`
-            # as an OR with "always include first unprocessed message" — so when
-            # the running total is above the cap, at least one message was kept
-            # past the cap (the first unprocessed) and everything beyond it was
-            # filtered out. Treat that as the cap binding the batch.
-            hit_batch_token_cap = bool(
-                batch_max_tokens and cumulative_tokens > batch_max_tokens
-            )
+            # Phase 4: detect if `batch_max_tokens` clipped the batch. The
+            # `allowed_condition` SQL keeps rows with `cumulative_token_count
+            # <= cap` (plus an always-included first-unprocessed escape
+            # hatch), so summing the kept rows' token_count and checking
+            # against the cap won't fire — kept rows are by definition under
+            # the cap. The real signal is "did the source range have at
+            # least one row whose cumulative count exceeded the cap?"
+            #
+            # We answer with a single `SELECT EXISTS` against the same row
+            # set the original CTE built. Bounded by the kept-row max id so
+            # we don't scan the whole session forward.
+            if batch_max_tokens > 0 and messages_context:
+                max_kept_id = messages_context[-1].id
+                cap_hit_check = await db.execute(
+                    select(
+                        func.coalesce(func.sum(models.Message.token_count), 0).label(
+                            "total_in_range"
+                        )
+                    )
+                    .where(models.Message.session_name == parsed_key.session_name)
+                    .where(models.Message.workspace_name == parsed_key.workspace_name)
+                    .where(models.Message.id >= effective_start_id)
+                    .where(models.Message.id <= max_kept_id)
+                )
+                total_in_range = cap_hit_check.scalar() or 0
+                # Then: is there at least one more message past max_kept_id
+                # in the same session? If so, the cap stopped us before it.
+                next_exists_check = await db.execute(
+                    select(
+                        exists(
+                            select(models.Message.id)
+                            .where(
+                                models.Message.session_name == parsed_key.session_name
+                            )
+                            .where(
+                                models.Message.workspace_name
+                                == parsed_key.workspace_name
+                            )
+                            .where(models.Message.id > max_kept_id)
+                        )
+                    )
+                )
+                next_exists = bool(next_exists_check.scalar())
+                hit_batch_token_cap = bool(
+                    next_exists and total_in_range >= batch_max_tokens
+                )
+            else:
+                hit_batch_token_cap = False
 
             _detach_queue_batch_objects(db, messages_context, items_to_process)
 

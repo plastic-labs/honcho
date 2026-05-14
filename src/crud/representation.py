@@ -98,7 +98,10 @@ class RepresentationManager:
 
         observation_texts = [_observation_text(obs) for obs in all_observations]
         try:
-            with embedding_call_purpose(EmbeddingCallPurpose.CREATE_OBSERVATIONS.value):
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
+                workspace_name=self.workspace_name,
+            ):
                 embeddings = await embedding_client.simple_batch_embed(
                     observation_texts
                 )
@@ -239,7 +242,10 @@ class RepresentationManager:
             # queries, not observation creation.
             with (
                 suppress(Exception),
-                embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MEMORY.value),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.SEARCH_MEMORY.value,
+                    workspace_name=self.workspace_name,
+                ),
             ):
                 embedding = await embedding_client.embed(include_semantic_query)
 

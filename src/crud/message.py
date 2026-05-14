@@ -286,7 +286,10 @@ async def create_messages(
                 if message.content and message.content.strip()
             }
             if id_resource_dict:
-                with embedding_call_purpose(EmbeddingCallPurpose.MESSAGE_CREATE.value):
+                with embedding_call_purpose(
+                    EmbeddingCallPurpose.MESSAGE_CREATE.value,
+                    workspace_name=workspace_name,
+                ):
                     embedding_dict = await embedding_client.batch_embed(
                         id_resource_dict
                     )
@@ -901,7 +904,10 @@ async def search_messages(
         # Caller didn't precompute; tag this fallback path as search_messages.
         # Callers that have a more specific intent should set their own
         # context manager before calling and pass the precomputed embedding.
-        with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MESSAGES.value):
+        with embedding_call_purpose(
+            EmbeddingCallPurpose.SEARCH_MESSAGES.value,
+            workspace_name=workspace_name,
+        ):
             query_embedding = await embedding_client.embed(query)
     return await _semantic_search_messages(
         workspace_name,
@@ -1098,7 +1104,10 @@ async def search_messages_temporal(
         # Caller didn't precompute; tag this fallback path as search_messages.
         # Callers that have a more specific intent should set their own
         # context manager before calling and pass the precomputed embedding.
-        with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MESSAGES.value):
+        with embedding_call_purpose(
+            EmbeddingCallPurpose.SEARCH_MESSAGES.value,
+            workspace_name=workspace_name,
+        ):
             query_embedding = await embedding_client.embed(query)
     return await _semantic_search_messages(
         workspace_name,

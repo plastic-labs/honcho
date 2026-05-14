@@ -6,10 +6,12 @@ from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.llm import honcho_llm_call
+from src.llm.types import LLMTelemetryContext
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import RepresentationCompletedEvent, emit
+from src.telemetry.events.llm import CallPurpose
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.telemetry.prometheus.metrics import (
     DeriverComponents,
@@ -152,6 +154,12 @@ async def process_representation_tasks_batch(
         enable_retry=True,
         retry_attempts=3,
         trace_name="minimal_deriver",
+        telemetry=LLMTelemetryContext(
+            workspace_name=latest_message.workspace_name,
+            call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
+            parent_category="representation",
+            observed=observed,
+        ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
 

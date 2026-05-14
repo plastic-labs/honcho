@@ -830,7 +830,10 @@ async def create_observations(
     contents = [obs.content for obs in normalized_observations]
     embeddings_by_index: dict[int, list[float]] | None = None
     try:
-        with embedding_call_purpose(EmbeddingCallPurpose.CREATE_OBSERVATIONS.value):
+        with embedding_call_purpose(
+            EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
+            workspace_name=workspace_name,
+        ):
             embeddings = await embedding_client.simple_batch_embed(contents)
         embeddings_by_index = dict(
             zip(range(len(normalized_observations)), embeddings, strict=True)
@@ -851,7 +854,8 @@ async def create_observations(
         else:
             try:
                 with embedding_call_purpose(
-                    EmbeddingCallPurpose.CREATE_OBSERVATIONS.value
+                    EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
+                    workspace_name=workspace_name,
                 ):
                     embedding = await embedding_client.embed(obs.content)
             except Exception as e:
@@ -1491,7 +1495,11 @@ async def _handle_search_memory(
     top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
     query = tool_input["query"]
     try:
-        with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MEMORY.value):
+        with embedding_call_purpose(
+            EmbeddingCallPurpose.SEARCH_MEMORY.value,
+            workspace_name=ctx.workspace_name,
+            run_id=ctx.run_id,
+        ):
             query_embedding = await embedding_client.embed(query)
     except ValueError:
         return (
@@ -1595,7 +1603,11 @@ async def _handle_search_messages(
     limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call (same pattern as _handle_search_memory).
-    with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MESSAGES.value):
+    with embedding_call_purpose(
+        EmbeddingCallPurpose.SEARCH_MESSAGES.value,
+        workspace_name=ctx.workspace_name,
+        run_id=ctx.run_id,
+    ):
         query_embedding = await embedding_client.embed(query)
     snippets = await crud.search_messages(
         workspace_name=ctx.workspace_name,
@@ -1760,7 +1772,11 @@ async def _handle_search_messages_temporal(
 
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call.
-    with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MESSAGES.value):
+    with embedding_call_purpose(
+        EmbeddingCallPurpose.SEARCH_MESSAGES.value,
+        workspace_name=ctx.workspace_name,
+        run_id=ctx.run_id,
+    ):
         query_embedding = await embedding_client.embed(query)
     snippets = await crud.search_messages_temporal(
         workspace_name=ctx.workspace_name,

@@ -300,38 +300,46 @@ async def honcho_llm_call_inner(
     call_extras: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
 
     if stream:
-        # Stream path: emit a was_stream placeholder at setup time. The stream
-        # iterator drains on the caller side; we don't get back here to count
-        # tokens. The aggregate envelope (DialecticCompletedEvent etc.) carries
-        # accurate totals — calibration should source streamed totals there.
-        _emit_llm_call_completed(
-            plan=plan,
-            telemetry=telemetry,
-            provider=provider,
-            model=model,
-            max_tokens=max_tokens,
-            duration_ms=0.0,
-            has_tools=bool(tools),
-            was_stream=True,
-            outcome="success",
-            result=None,
-            error=None,
-        )
-
+        # Stream path: wrap the generator so the LLMCallCompletedEvent fires
+        # AFTER stream setup + drain (or on error). Token counts stay 0
+        # because we don't get them post-stream — the aggregate envelopes
+        # (DialecticCompletedEvent etc.) carry accurate totals — but at
+        # least outcome and duration are real. Setup or drain errors land
+        # as outcome="error" instead of being silently recorded as success.
         async def _stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
-            stream_iter = await execute_stream(
-                backend,
-                effective_config,
-                messages=messages,
-                max_tokens=max_tokens,
-                tools=tools,
-                tool_choice=tool_choice,
-                response_format=response_model,
-                cache_policy=effective_config.cache_policy,
-                extra_params=call_extras,
-            )
-            async for chunk in stream_iter:
-                yield stream_chunk_to_response_chunk(chunk)
+            stream_start = time.perf_counter()
+            stream_error: BaseException | None = None
+            try:
+                stream_iter = await execute_stream(
+                    backend,
+                    effective_config,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    response_format=response_model,
+                    cache_policy=effective_config.cache_policy,
+                    extra_params=call_extras,
+                )
+                async for chunk in stream_iter:
+                    yield stream_chunk_to_response_chunk(chunk)
+            except BaseException as exc:
+                stream_error = exc
+                raise
+            finally:
+                _emit_llm_call_completed(
+                    plan=plan,
+                    telemetry=telemetry,
+                    provider=provider,
+                    model=model,
+                    max_tokens=max_tokens,
+                    duration_ms=(time.perf_counter() - stream_start) * 1000,
+                    has_tools=bool(tools),
+                    was_stream=True,
+                    outcome="success" if stream_error is None else "error",
+                    result=None,
+                    error=stream_error,
+                )
 
         return _stream()
 

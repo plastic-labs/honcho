@@ -70,7 +70,11 @@ def _publish_embedding_event(
             EmbeddingCallPurpose,
             emit,
         )
-        from src.utils.types import get_embedding_call_purpose
+        from src.utils.types import (
+            get_embedding_call_purpose,
+            get_embedding_run_id,
+            get_embedding_workspace_name,
+        )
 
         # call_purpose travels via ContextVar so embedding callers don't have
         # to thread it through every call site. Unknown values drop to None
@@ -95,6 +99,7 @@ def _publish_embedding_event(
 
         emit(
             EmbeddingCallCompletedEvent(
+                workspace_name=get_embedding_workspace_name(),
                 call_purpose=call_purpose,
                 provider=provider,
                 model=model,
@@ -105,6 +110,7 @@ def _publish_embedding_event(
                 outcome=outcome,
                 is_final_attempt=False,  # we don't see retry context at this layer
                 error_class=type(error).__name__ if error is not None else None,
+                run_id=get_embedding_run_id(),
             )
         )
     except Exception:  # pragma: no cover - telemetry must not raise
