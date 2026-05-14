@@ -154,17 +154,21 @@ async def get_or_create_workspace(
 
 async def get_all_workspaces(
     filters: dict[str, Any] | None = None,
+    reverse: bool = False,
 ) -> Select[tuple[models.Workspace]]:
     """
     Get all workspaces.
 
     Args:
-        db: Database session
         filters: Filter the workspaces by a dictionary of metadata
+        reverse: Whether to reverse the default creation order
     """
     stmt = select(models.Workspace)
     stmt = apply_filter(stmt, models.Workspace, filters)
-    stmt: Select[tuple[models.Workspace]] = stmt.order_by(models.Workspace.created_at)
+    if reverse:
+        stmt = stmt.order_by(models.Workspace.created_at.desc())
+    else:
+        stmt = stmt.order_by(models.Workspace.created_at.asc())
     return stmt
 
 

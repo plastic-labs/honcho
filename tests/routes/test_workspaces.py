@@ -125,6 +125,45 @@ async def test_get_all_workspaces_with_null_filter(client: TestClient):
     assert isinstance(data["items"], list)
 
 
+@pytest.mark.asyncio
+async def test_get_all_workspaces_with_reverse(client: TestClient):
+    first_name = f"reverse-workspace-{generate_nanoid()}"
+    second_name = f"reverse-workspace-{generate_nanoid()}"
+
+    first_response = client.post(
+        "/v3/workspaces",
+        json={"name": first_name, "metadata": {"reverse_group": first_name}},
+    )
+    assert first_response.status_code in [200, 201]
+
+    second_response = client.post(
+        "/v3/workspaces",
+        json={"name": second_name, "metadata": {"reverse_group": first_name}},
+    )
+    assert second_response.status_code in [200, 201]
+
+    normal_response = client.post(
+        "/v3/workspaces/list",
+        json={"filters": {"metadata": {"reverse_group": first_name}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        "/v3/workspaces/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": first_name}}},
+    )
+    assert reverse_response.status_code == 200
+
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        first_name,
+        second_name,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        second_name,
+        first_name,
+    ]
+
+
 def test_update_workspace(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, _ = sample_data
     _new_name = str(generate_nanoid())

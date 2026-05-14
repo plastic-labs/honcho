@@ -223,6 +223,54 @@ def test_get_sessions_with_empty_filter(
     assert isinstance(data["items"], list)
 
 
+def test_get_sessions_with_reverse(client: TestClient, sample_data: tuple[Workspace, Peer]):
+    test_workspace, test_peer = sample_data
+    reverse_group = f"reverse-sessions-{generate_nanoid()}"
+    first_session = f"reverse-session-a-{generate_nanoid()}"
+    second_session = f"reverse-session-b-{generate_nanoid()}"
+
+    first_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": first_session,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"reverse_group": reverse_group},
+        },
+    )
+    assert first_response.status_code in [200, 201]
+
+    second_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": second_session,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"reverse_group": reverse_group},
+        },
+    )
+    assert second_response.status_code in [200, 201]
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        first_session,
+        second_session,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        second_session,
+        first_session,
+    ]
+
+
 def test_update_delete_metadata(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):

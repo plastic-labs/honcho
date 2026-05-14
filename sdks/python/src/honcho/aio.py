@@ -328,22 +328,35 @@ class HonchoAio(AsyncMetadataConfigMixin):
         return AsyncPage(data, SessionResponse, transform, fetch_next)
 
     async def workspaces(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> AsyncPage[WorkspaceResponse, str]:
         """Get all workspace IDs asynchronously."""
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
+
         data = await self._honcho._async_http_client.post(
             routes.workspaces_list(),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(workspace: WorkspaceResponse) -> str:
             return workspace.id
 
-        async def fetch_next(page: int) -> AsyncPage[WorkspaceResponse, str]:
+        async def fetch_next(next_page: int) -> AsyncPage[WorkspaceResponse, str]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = await self._honcho._async_http_client.post(
                 routes.workspaces_list(),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return AsyncPage(next_data, WorkspaceResponse, transform, fetch_next)
 

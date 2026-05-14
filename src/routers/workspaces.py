@@ -64,6 +64,9 @@ async def get_all_workspaces(
     options: schemas.WorkspaceGet | None = Body(
         None, description="Filtering and pagination options for the workspaces list"
     ),
+    reverse: bool | None = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db: AsyncSession = db,
 ):
     """Get all Workspaces, paginated with optional filters."""
@@ -75,7 +78,7 @@ async def get_all_workspaces(
 
     return await apaginate(
         db,
-        await crud.get_all_workspaces(filters=filter_param),
+        await crud.get_all_workspaces(filters=filter_param, reverse=reverse or False),
     )
 
 

@@ -243,6 +243,9 @@ async def get_sessions(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
+    reverse: bool | None = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db: AsyncSession = db,
 ):
     """Get all Sessions for a Workspace, paginated with optional filters."""
@@ -254,7 +257,12 @@ async def get_sessions(
             filter_param = None
 
     return await apaginate(
-        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
+        db,
+        await crud.get_sessions(
+            workspace_name=workspace_id,
+            filters=filter_param,
+            reverse=reverse or False,
+        ),
     )
 
 

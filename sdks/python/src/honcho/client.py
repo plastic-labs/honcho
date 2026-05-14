@@ -489,7 +489,12 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         return SyncPage(data, SessionResponse, transform, fetch_next)
 
     def workspaces(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> SyncPage[WorkspaceResponse, str]:
         """
         Get all workspace IDs from the Honcho instance.
@@ -497,22 +502,36 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
         Makes an API call to retrieve all workspace IDs that the authenticated
         user has access to.
 
+        Args:
+            filters: Optional filter criteria.
+            page: Page number (1-indexed). Default: 1.
+            size: Number of items per page. Default: 50.
+            reverse: If True, reverses the default ordering. Default: False.
+
         Returns:
             A paginated SyncPage of workspace ID strings
         """
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
+
         data = self._http.post(
             routes.workspaces_list(),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(workspace: WorkspaceResponse) -> str:
             return workspace.id
 
-        def fetch_next(page: int) -> SyncPage[WorkspaceResponse, str]:
+        def fetch_next(next_page: int) -> SyncPage[WorkspaceResponse, str]:
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = self._http.post(
                 routes.workspaces_list(),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return SyncPage(next_data, WorkspaceResponse, transform, fetch_next)
 
