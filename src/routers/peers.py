@@ -1,3 +1,5 @@
+"""FastAPI routes for peer resources and peer-scoped operations."""
+
 import json
 import logging
 from collections.abc import AsyncIterator

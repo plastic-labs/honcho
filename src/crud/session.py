@@ -1,3 +1,5 @@
+"""CRUD helpers for sessions and session-related relationship data."""
+
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any

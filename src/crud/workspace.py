@@ -1,3 +1,5 @@
+"""CRUD helpers for workspace records and workspace deletion checks."""
+
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any

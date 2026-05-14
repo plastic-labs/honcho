@@ -170,6 +170,7 @@ def test_get_peers_with_null_filter(
 
 
 def test_get_peers_with_reverse(client: TestClient, sample_data: tuple[Workspace, Peer]):
+    """Test peer listing with reverse creation-time ordering."""
     test_workspace, _ = sample_data
     reverse_group = f"reverse-peers-{generate_nanoid()}"
     first_name = f"reverse-peer-a-{generate_nanoid()}"
@@ -351,6 +352,7 @@ def test_get_sessions_for_peer_with_empty_filter(
 def test_get_sessions_for_peer_with_reverse(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
+    """Test peer session listing with reverse creation-time ordering."""
     test_workspace, test_peer = sample_data
     reverse_group = f"reverse-peer-sessions-{generate_nanoid()}"
     first_session = f"reverse-peer-session-a-{generate_nanoid()}"

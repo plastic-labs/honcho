@@ -1,3 +1,5 @@
+"""FastAPI routes for workspace resources and workspace-scoped operations."""
+
 import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response

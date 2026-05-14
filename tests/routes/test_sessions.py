@@ -224,6 +224,7 @@ def test_get_sessions_with_empty_filter(
 
 
 def test_get_sessions_with_reverse(client: TestClient, sample_data: tuple[Workspace, Peer]):
+    """Test session listing with reverse creation-time ordering."""
     test_workspace, test_peer = sample_data
     reverse_group = f"reverse-sessions-{generate_nanoid()}"
     first_session = f"reverse-session-a-{generate_nanoid()}"

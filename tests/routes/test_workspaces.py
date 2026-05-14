@@ -127,6 +127,7 @@ async def test_get_all_workspaces_with_null_filter(client: TestClient):
 
 @pytest.mark.asyncio
 async def test_get_all_workspaces_with_reverse(client: TestClient):
+    """Test workspace listing with reverse creation-time ordering."""
     first_name = f"reverse-workspace-{generate_nanoid()}"
     second_name = f"reverse-workspace-{generate_nanoid()}"
 

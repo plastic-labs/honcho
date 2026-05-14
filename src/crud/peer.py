@@ -1,3 +1,5 @@
+"""CRUD helpers for peer records and peer-scoped session queries."""
+
 from logging import getLogger
 from typing import Any
 
@@ -213,6 +215,7 @@ async def get_peers(
     filters: dict[str, Any] | None = None,
     reverse: bool = False,
 ) -> Select[tuple[models.Peer]]:
+    """Build a filtered peer list query ordered by creation time."""
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
     stmt = apply_filter(stmt, models.Peer, filters)

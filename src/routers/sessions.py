@@ -1,3 +1,5 @@
+"""FastAPI routes for session resources and session-scoped operations."""
+
 import logging
 from contextlib import suppress
 
