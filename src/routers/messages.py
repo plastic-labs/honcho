@@ -217,30 +217,33 @@ async def create_messages_with_file(
             workspace_name=workspace_id,
         )
 
-    file_metadata = all_message_data[0]["file_metadata"]
-    total_tokens = sum(message.token_count for message in created_messages)
-    emit(
-        FileUploadedEvent(
-            workspace_name=workspace_id,
-            session_name=session_id,
-            peer_name=form_data.peer_id,
-            file_id=str(file_metadata["file_id"]),
-            filename=file.filename,
-            content_type=file.content_type,
-            file_size_bytes=file.size,
-            message_count=len(created_messages),
-            total_tokens=total_tokens,
+    # An empty extracted file (no chunks) leaves both lists empty. Skip the
+    # telemetry in that case rather than indexing into [].
+    if all_message_data and created_messages:
+        file_metadata = all_message_data[0]["file_metadata"]
+        total_tokens = sum(message.token_count for message in created_messages)
+        emit(
+            FileUploadedEvent(
+                workspace_name=workspace_id,
+                session_name=session_id,
+                peer_name=form_data.peer_id,
+                file_id=str(file_metadata["file_id"]),
+                filename=file.filename,
+                content_type=file.content_type,
+                file_size_bytes=file.size,
+                message_count=len(created_messages),
+                total_tokens=total_tokens,
+            )
         )
-    )
-    emit(
-        MessageCreatedEvent(
-            workspace_name=workspace_id,
-            session_name=session_id,
-            message_count=len(created_messages),
-            total_tokens=total_tokens,
-            source="file_upload",
+        emit(
+            MessageCreatedEvent(
+                workspace_name=workspace_id,
+                session_name=session_id,
+                message_count=len(created_messages),
+                total_tokens=total_tokens,
+                source="file_upload",
+            )
         )
-    )
 
     return created_messages
 

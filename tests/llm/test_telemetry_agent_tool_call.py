@@ -1,4 +1,4 @@
-# pyright: reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false, reportArgumentType=false
+# pyright: reportPrivateUsage=false, reportUnknownLambdaType=false, reportUnknownArgumentType=false, reportArgumentType=false, reportUnusedFunction=false
 """tests for AgentToolCallCompletedEvent emission.
 
 Targets:
@@ -16,8 +16,11 @@ Targets:
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from typing import Any, final
 from unittest.mock import patch
+
+import pytest
 
 from src.telemetry.events import AgentToolCallCompletedEvent, BaseEvent
 from src.utils.agent_tools import _emit_agent_tool_call_completed
@@ -27,6 +30,22 @@ from src.utils.types import (
     get_current_tool_call_seq,
     set_current_tool_call_seq,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_tool_call_contextvars() -> Generator[None]:
+    """Restore the tool-call ContextVars after each test.
+
+    `set_current_tool_call_seq` mutates module-level state; without this
+    fixture, tests that read `get_current_tool_call_seq()` expecting the
+    default 0 become order-dependent on whichever test ran before.
+    """
+    prev_seq = get_current_tool_call_seq()
+    prev_provider_id = get_current_provider_tool_call_id()
+    try:
+        yield
+    finally:
+        set_current_tool_call_seq(prev_seq, prev_provider_id)
 
 
 @final

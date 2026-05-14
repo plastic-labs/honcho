@@ -786,6 +786,7 @@ async def create_observations(
     workspace_name: str,
     message_ids: list[int],
     message_created_at: str,
+    run_id: str | None = None,
 ) -> ObservationsCreatedResult:
     """
     Create multiple observations (documents) in the memory system in a single call.
@@ -800,6 +801,9 @@ async def create_observations(
         workspace_name: Workspace identifier
         message_ids: List of message IDs these observations are based on
         message_created_at: Timestamp of the message that triggered these observations
+        run_id: Agent run id, threaded onto the embedding-call ContextVar so
+            EmbeddingCallCompletedEvents emitted here can be joined back to
+            the originating agent run.
 
     Returns:
         ObservationsCreatedResult with created count and any per-observation failures
@@ -833,6 +837,7 @@ async def create_observations(
         with embedding_call_purpose(
             EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
             workspace_name=workspace_name,
+            run_id=run_id,
         ):
             embeddings = await embedding_client.simple_batch_embed(contents)
         embeddings_by_index = dict(
@@ -856,6 +861,7 @@ async def create_observations(
                 with embedding_call_purpose(
                     EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
                     workspace_name=workspace_name,
+                    run_id=run_id,
                 ):
                     embedding = await embedding_client.embed(obs.content)
             except Exception as e:
@@ -1282,6 +1288,7 @@ async def _handle_create_observations_impl(
             workspace_name=ctx.workspace_name,
             message_ids=message_ids,
             message_created_at=message_created_at,
+            run_id=ctx.run_id,
         )
 
     # Merge validation and embedding failures
@@ -1527,11 +1534,13 @@ async def _handle_search_memory(
     mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
-        # fallback behavior: if the memory is *empty*, that means we're quite
-        # early in a workspace/peer/session -- in order to give good answers in
-        # this stage, and be efficient with tool calls, and make sure the model
-        # doesn't short-circuit and think there's nothing here, we
-        # automatically search the message history for relevant information.
+        # Empty-memory fallback: if the memory is *empty*, that means we're
+        # quite early in a workspace/peer/session -- in order to give good
+        # answers in this stage, and be efficient with tool calls, and make
+        # sure the model doesn't short-circuit and think there's nothing
+        # here, we automatically search the message history for relevant
+        # information.
+        zero_hit_meta = {**search_meta, "results_count": 0}
         if ctx.agent_type == "dialectic":
             limit = min(_safe_int(tool_input.get("top_k"), 20), 20)
             message_output = None
@@ -1549,14 +1558,21 @@ async def _handle_search_memory(
                     snippets, f"for query '{query}'"
                 )
             if message_output:
-                return (
-                    f"No observations yet. Message search results:\n\n{message_output}"
+                return ToolResult(
+                    content=f"No observations yet. Message search results:\n\n{message_output}",
+                    metadata=zero_hit_meta,
                 )
-            return (
-                f"No observations found for query '{query}', and no messages found in "
-                "history. Try a different phrasing or use grep_messages for exact text."
+            return ToolResult(
+                content=(
+                    f"No observations found for query '{query}', and no messages found in "
+                    "history. Try a different phrasing or use grep_messages for exact text."
+                ),
+                metadata=zero_hit_meta,
             )
-        return f"No observations found for query '{query}'"
+        return ToolResult(
+            content=f"No observations found for query '{query}'",
+            metadata=zero_hit_meta,
+        )
     mem_str = mem.str_with_ids() if ctx.include_observation_ids else str(mem)
     search_meta["results_count"] = total_count
     return ToolResult(
@@ -2201,7 +2217,11 @@ async def create_tool_executor(
             set_last_tool_metadata,
         )
 
-        logger.info("[tool call] %s %s", tool_name, tool_input)
+        # Log nondisclosive call shape only. Raw `tool_input` can carry user
+        # content (search queries, peer-card text, etc.); the param keys are
+        # enough to reconstruct the call shape from telemetry without leaking
+        # content to log sinks.
+        logger.info("[tool call] %s keys=%s", tool_name, sorted(tool_input.keys()))
 
         start = time.perf_counter()
         # Defaults populated even on early returns / error paths so the
@@ -2222,7 +2242,16 @@ async def create_tool_executor(
                     metadata = handler_result.metadata
                 else:
                     result_str = handler_result
-                logger.info("[tool result] %s %s", tool_name, result_str)
+                # Log shape, not contents — `result_str` can carry retrieved
+                # observations, message snippets, peer-card text, etc. The
+                # AgentToolCallCompletedEvent telemetry captures the
+                # structured metadata for analytics.
+                logger.info(
+                    "[tool result] %s len=%d metadata_keys=%s",
+                    tool_name,
+                    len(result_str),
+                    sorted(metadata.keys()),
+                )
             else:
                 result_str = f"Unknown tool: {tool_name}"
                 is_error = True

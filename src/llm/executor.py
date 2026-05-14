@@ -271,10 +271,14 @@ async def honcho_llm_call_inner(
     The outer src/llm/api.py `honcho_llm_call` handles retry + fallback +
     tool orchestration on top of this.
 
-    emits one LLMCallCompletedEvent per call. On the stream
-    path, the event is emitted at stream-setup time with `was_stream=True` and
-    zero token counts (provider tokens aren't knowable until the stream drains
-    — see the spec §8 streaming gap).
+    Emits one LLMCallCompletedEvent per call. On the stream path, the event
+    is emitted from the wrapping generator's finally block — after stream
+    setup and after the stream drains, or on a setup/drain exception — so
+    `duration_ms` and `outcome` reflect the real lifecycle. `was_stream`
+    is True for streamed calls. Token counts are zero on the stream path
+    because provider token totals aren't surfaced post-stream at this
+    layer; aggregate envelopes (DialecticCompletedEvent etc.) carry the
+    accurate totals.
     """
     client = client_override or CLIENTS.get(provider)
     if client is None:

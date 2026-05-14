@@ -80,15 +80,17 @@ class TurbopufferVectorStore(VectorStore):
         # The dict literal carries arbitrary metadata fields, which RowParam supports
         # via extra_items=object. basedpyright can't see through the spread, so cast
         # via object per its reportInvalidCast guidance.
+        # Spread metadata first so a caller-supplied "id" or "vector" key
+        # can never clobber the required upsert fields.
         rows: list[RowParam] = [
             cast(
                 RowParam,
                 cast(
                     object,
                     {
+                        **(v.metadata or {}),
                         "id": v.id,
                         "vector": v.embedding,
-                        **(v.metadata or {}),
                     },
                 ),
             )
