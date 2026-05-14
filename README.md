@@ -253,12 +253,14 @@ What you query out of Honcho:
 - **Peer Cards** — compact identity summaries.
 - **Session context / summaries** — prompt-ready bundles for long-running conversations.
 
+<!-- markdownlint-disable MD033 -->
 <details>
 <summary>Internal storage (Collections &amp; Documents)</summary>
 
 Internally, Honcho stores peer-related observations in **collections** of vector-embedded **documents**. Collections are keyed by `(observer, observed)` peer pairs — the same mechanism powers self-representation (`observer == observed`) and cross-peer modelling (peer X's understanding of peer Y). These primitives are not exposed directly; the Conclusions API is the public surface.
 
 </details>
+<!-- markdownlint-enable MD033 -->
 
 <!-- TODO(vineeth/marketing): write the "Honcho vs RAG / vector DB / memory-only" comparison.
      Audit recommendation referenced; copy intentionally deferred to avoid inventing
@@ -289,6 +291,7 @@ honcho = Honcho(workspace_id="my-app-testing", base_url="http://localhost:8000")
 # or: export HONCHO_URL=http://localhost:8000
 ```
 
+<!-- markdownlint-disable MD033 -->
 <details>
 <summary>Local development without Docker</summary>
 
@@ -425,89 +428,15 @@ uv run python -m src.deriver
 The deriver generates representations, summaries, peer cards, and manages dreaming tasks. You can increase the number of derivers to improve runtime efficiency.
 
 </details>
+<!-- markdownlint-enable MD033 -->
 
-<details>
-<summary>Pre-commit hooks</summary>
-
-Honcho uses pre-commit hooks to ensure code quality and consistency across the project. These hooks automatically run checks on your code before each commit, including linting, formatting, type checking, and security scans.
-
-#### Installation
-
-To set up pre-commit hooks in your development environment:
-
-1. **Install pre-commit using uv**
-
-```bash
-uv add --dev pre-commit
-```
-
-2. **Install the pre-commit hooks**
-
-```bash
-uv run pre-commit install \
-    --hook-type pre-commit \
-    --hook-type commit-msg \
-    --hook-type pre-push
-```
-
-This will install hooks for `pre-commit`, `commit-msg`, and `pre-push` stages.
-
-#### What the hooks do
-
-The pre-commit configuration includes:
-
-- **Code Quality**: Python linting and formatting (ruff), TypeScript linting (biome)
-- **Type Checking**: Static type analysis with basedpyright
-- **Security**: Vulnerability scanning with bandit
-- **Documentation**: Markdown linting and license header checks
-- **Testing**: Automated test runs for Python and TypeScript code
-- **File Hygiene**: Trailing whitespace, line endings, file size checks
-- **Commit Standards**: Conventional commit message validation
-
-#### Manual execution
-
-You can run the hooks manually on all files without making a commit:
-
-```bash
-uv run pre-commit run --all-files
-```
-
-Or run specific hooks:
-
-```bash
-uv run pre-commit run ruff --all-files
-uv run pre-commit run basedpyright --all-files
-```
-
-</details>
-
-<details>
-<summary>Deploy on Fly</summary>
-
-The API can also be deployed on fly.io. Follow the [Fly.io
-Docs](https://fly.io/docs/getting-started/) to setup your environment and the
-`flyctl`.
-
-A sample `fly.toml` is included for convenience.
-
-> Note: The fly.toml does not include launching a Postgres database. This must
-> be configured separately
-
-Once `flyctl` is set up use the following commands to launch the application:
-
-```bash
-cd honcho
-flyctl launch --no-deploy # Follow the prompts and edit as you see fit
-cat .env | flyctl secrets import # Load in your secrets
-flyctl deploy # Deploy with appropriate environment variables
-```
-
-</details>
+Contributors: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for pre-commit setup. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://docs.honcho.dev/v3/contributing/self-hosting#deploying-on-fly-io).
 
 ## Configuration
 
 Honcho uses a flexible configuration system that supports both TOML files and environment variables. Configuration values are loaded in priority order: **environment variables > `.env` file > `config.toml` > defaults**.
 
+<!-- markdownlint-disable MD033 -->
 <details>
 <summary>Full configuration reference</summary>
 
@@ -575,6 +504,7 @@ export DB_CONNECTION_URI="postgresql+psycopg://prod-server/honcho_prod"
 The application will use the production connection URI while keeping the pool size from config.toml.
 
 </details>
+<!-- markdownlint-enable MD033 -->
 
 ## Architecture
 
@@ -587,6 +517,7 @@ Honcho splits into two services: **Storage** (workspaces, peers, sessions, messa
 - **Background Processing** — asynchronous processing pipeline for expensive operations like representation updates and session summarization
 - **Multi-Provider Support** — configurable LLM providers for different use cases
 
+<!-- markdownlint-disable MD033 MD001 -->
 <details>
 <summary>Storage primitives in detail</summary>
 
@@ -648,7 +579,9 @@ representations. This flexible design allows for both conversational interaction
 and broader data ingestion for personality modelling.
 
 </details>
+<!-- markdownlint-enable MD033 MD001 -->
 
+<!-- markdownlint-disable MD033 -->
 <details>
 <summary>Reasoning pipeline</summary>
 
@@ -667,7 +600,9 @@ A high level summary of the pipeline is as follows:
 4. Results are stored internally and surfaced via the Conclusions API, Representations, Peer Cards, and the Chat Endpoint.
 
 </details>
+<!-- markdownlint-enable MD033 -->
 
+<!-- markdownlint-disable MD033 MD001 -->
 <details>
 <summary>Retrieving data and insights</summary>
 
@@ -705,6 +640,7 @@ The flagship interface for using these insights is the [Chat Endpoint](https://d
 For low-latency use cases, Honcho provides access to a `representation` endpoint that returns a static document with insights about a peer in the context of a particular session. Use this to quickly add context to a prompt without having to wait for an LLM response.
 
 </details>
+<!-- markdownlint-enable MD033 MD001 -->
 
 ## SDKs
 
