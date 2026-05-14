@@ -289,11 +289,19 @@ def test_app_settings_accepts_non_1536_with_any_vector_store_configuration() -> 
         ("pgvector", False),
         ("lancedb", True),
         ("lancedb", False),
+        ("turbopuffer", True),
+        ("turbopuffer", False),
     ]
     for store_type, migrated in combos:
+        # Turbopuffer's model_validator requires TURBOPUFFER_API_KEY whenever
+        # TYPE="turbopuffer"; supply a dummy value so the test exercises the
+        # dim-acceptance path rather than the api-key guard.
+        vs_kwargs: dict[str, Any] = {"TYPE": store_type, "MIGRATED": migrated}
+        if store_type == "turbopuffer":
+            vs_kwargs["TURBOPUFFER_API_KEY"] = "test-key"
         settings = AppSettings(
             EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=768),
-            VECTOR_STORE=VectorStoreSettings(TYPE=store_type, MIGRATED=migrated),
+            VECTOR_STORE=VectorStoreSettings(**vs_kwargs),
         )
         assert settings.EMBEDDING.VECTOR_DIMENSIONS == 768
         assert store_type == settings.VECTOR_STORE.TYPE

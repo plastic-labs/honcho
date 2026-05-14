@@ -9,7 +9,7 @@ icon: "rotate"
 The embedding dimension is **machine-enforced** as immutable for the life of a deployment. The embedding model is **operator-owned** as immutable by contract. The supported way to change either is:
 
 1. Stand up a new deployment at the desired configuration.
-2. Replay or re-embed your data into it out of band.
+2. Replay or re-embed your data into it out-of-band.
 3. Cut traffic over to the new deployment.
 
 The rest of this page explains why, and what the safety boundaries actually are.

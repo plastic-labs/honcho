@@ -59,11 +59,11 @@ async def run_deriver():
     # Initialize async telemetry (CloudEvents emitter)
     await initialize_telemetry_async()
 
-    # Fail fast if the embedding schema does not match settings — same gate
-    # the API runs in its lifespan.
-    await validate_embedding_schema(engine)
-
     try:
+        # Fail fast if the embedding schema does not match settings — same
+        # gate the API runs in its lifespan. Inside the try block so the
+        # telemetry buffer is still flushed if validation raises.
+        await validate_embedding_schema(engine)
         await main()
     finally:
         # Shutdown telemetry (flush CloudEvents buffer)

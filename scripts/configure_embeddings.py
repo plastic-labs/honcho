@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass
 
@@ -48,6 +49,22 @@ from src.vector_store import VectorStore  # noqa: E402
 logger = logging.getLogger(__name__)
 
 _EMBEDDING_TABLES: tuple[str, ...] = ("documents", "message_embeddings")
+
+# Defense-in-depth for the dynamic SQL paths in this script. The values we
+# interpolate (schema from settings, index names from pg_indexes, table
+# names from a hardcoded constant) are not user input under any threat
+# model we currently care about, but validating once at the top of the
+# pipeline keeps the constraint explicit and the surface tight.
+_SAFE_IDENT_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_identifier(name: str, *, kind: str) -> None:
+    if not _SAFE_IDENT_PATTERN.fullmatch(name):
+        raise SystemExit(
+            f"error: refusing to interpolate {kind} {name!r} into SQL —"
+            + " expected a SQL identifier of the form [A-Za-z_][A-Za-z0-9_]*."
+            + " Reconfigure your environment and re-run."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +217,7 @@ async def _apply_pgvector_alter(engine: AsyncEngine, plan: _PgvectorPlan) -> Non
         # Step 3: snapshot + drop HNSW indices.
         index_defs = await _fetch_hnsw_index_defs(conn, plan.schema)
         for index_name, _ddl in index_defs:
+            _validate_identifier(index_name, kind="HNSW index name")
             logger.info("dropping HNSW index %s", index_name)
             await conn.execute(text(f'DROP INDEX "{plan.schema}"."{index_name}"'))
 
@@ -288,12 +306,20 @@ async def _probe_namespace_dim(store: VectorStore, namespace: str) -> int | None
     return await store.probe_namespace_dim(namespace)
 
 
-async def _emit_report(engine: AsyncEngine, target_dim: int) -> int:
+async def _emit_report(
+    engine: AsyncEngine, target_dim: int, *, is_report_mode: bool
+) -> int:
     """Print the per-namespace inventory and return an exit code. 0 on a
     clean report (all matching or missing); non-zero on any mismatch.
+
+    ``is_report_mode=True`` means the operator explicitly invoked ``--report``
+    — only then do we print the "no effect with pgvector" notice. Implicit
+    post-apply calls from interactive/dry-run/yes mode stay silent when the
+    deployment is on pgvector.
     """
     if settings.VECTOR_STORE.TYPE == "pgvector":
-        print("--report has no effect with VECTOR_STORE_TYPE=pgvector")
+        if is_report_mode:
+            print("--report has no effect with VECTOR_STORE_TYPE=pgvector")
         return 0
 
     inventory = await _build_external_namespace_inventory(engine)
@@ -384,11 +410,21 @@ def _confirm(prompt: str) -> bool:
 
 
 async def _async_main(args: argparse.Namespace) -> int:
+    try:
+        return await _run_pipeline(args)
+    finally:
+        # Dispose inside the same event loop so cleanup doesn't spin up a
+        # second loop just to await engine.dispose().
+        await engine.dispose()
+
+
+async def _run_pipeline(args: argparse.Namespace) -> int:
     target_dim = settings.EMBEDDING.VECTOR_DIMENSIONS
     schema = settings.DB.SCHEMA
+    _validate_identifier(schema, kind="DB.SCHEMA")
 
     if args.report:
-        return await _emit_report(engine, target_dim)
+        return await _emit_report(engine, target_dim, is_report_mode=True)
 
     plan = await _build_pgvector_plan(engine, target_dim, schema)
     if not plan.needs_alter:
@@ -397,7 +433,7 @@ async def _async_main(args: argparse.Namespace) -> int:
             + f" {schema}.message_embeddings.embedding already at dim {target_dim},"
             + " skipping ALTER"
         )
-        return await _emit_report(engine, target_dim)
+        return await _emit_report(engine, target_dim, is_report_mode=False)
 
     current_summary = ", ".join(
         f"{schema}.{t}.embedding={plan.current_dims[t]}" for t in _EMBEDDING_TABLES
@@ -425,20 +461,14 @@ async def _async_main(args: argparse.Namespace) -> int:
 
     await _apply_pgvector_alter(engine, plan)
     print(f"\npgvector schema is now at dim {target_dim}")
-    return await _emit_report(engine, target_dim)
+    return await _emit_report(engine, target_dim, is_report_mode=False)
 
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = _build_parser()
     args = parser.parse_args(argv)
-    try:
-        return asyncio.run(_async_main(args))
-    finally:
-        # Best-effort cleanup; the script is short-lived so a leak here is
-        # harmless but keeping the dispose explicit avoids "engine not
-        # disposed" warnings during tests.
-        asyncio.run(engine.dispose())
+    return asyncio.run(_async_main(args))
 
 
 if __name__ == "__main__":

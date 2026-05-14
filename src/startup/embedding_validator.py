@@ -13,15 +13,23 @@ ones. Full enumeration is available via `uv run python scripts/configure_embeddi
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    before_sleep_log,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 from src.config import AppSettings, settings
-from src.models import Workspace
+from src.exceptions import HonchoException
+from src.models import Collection, Workspace
 from src.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
@@ -38,10 +46,15 @@ _RETRY_BACKOFF_SECONDS = 1.0
 _EXTERNAL_SAMPLE_LIMIT = 10
 
 
-class StartupValidationError(RuntimeError):
+class StartupValidationError(HonchoException):
     """Raised when the embedding configuration cannot be reconciled with the
     physical schema. Always surfaced before any HTTP route is served or any
     queue task is processed.
+
+    Inherits from ``HonchoException`` (status_code=500) so the project's
+    exception handlers recognize it consistently. Startup-time failure, not
+    a per-request validation error — ``ValidationException``'s 422 semantics
+    would be misleading.
     """
 
 
@@ -76,24 +89,23 @@ async def _introspect_pgvector_dims_with_retry(
     columns. Fails closed on the last attempt — uncertainty is not a green
     light to serve traffic.
     """
-    last_exc: Exception | None = None
-    for attempt in range(_RETRY_ATTEMPTS):
-        try:
-            return await _introspect_pgvector_dims_once(engine, schema)
-        except SQLAlchemyError as e:
-            last_exc = e
-            remaining = _RETRY_ATTEMPTS - attempt - 1
-            if remaining > 0:
-                logger.warning(
-                    "Embedding schema introspection attempt %d/%d failed: %s",
-                    attempt + 1,
-                    _RETRY_ATTEMPTS,
-                    e,
-                )
-                await asyncio.sleep(_RETRY_BACKOFF_SECONDS)
-    raise StartupValidationError(
-        f"could not validate embedding schema: {last_exc}"
-    ) from last_exc
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(_RETRY_ATTEMPTS),
+            wait=wait_fixed(_RETRY_BACKOFF_SECONDS),
+            retry=retry_if_exception_type(SQLAlchemyError),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=False,
+        ):
+            with attempt:
+                return await _introspect_pgvector_dims_once(engine, schema)
+    except RetryError as e:
+        underlying = e.last_attempt.exception()
+        raise StartupValidationError(
+            f"could not validate embedding schema: {underlying}"
+        ) from underlying
+    # Unreachable: AsyncRetrying either returns from inside the loop or raises.
+    raise StartupValidationError("embedding schema introspection did not run")
 
 
 async def _introspect_pgvector_dims_once(
@@ -159,15 +171,23 @@ async def _sample_external_namespaces(engine: AsyncEngine, *, target_dim: int) -
     External stores in this codebase are per-workspace and lazy-created on
     first write (see ``src.vector_store.get_vector_namespace``), so there is
     no canonical deployment-wide namespace to introspect. We enumerate up to
-    ``_EXTERNAL_SAMPLE_LIMIT`` workspaces from the application DB and probe
-    their derived namespaces. Missing namespaces are OK; mismatched dims
-    crash startup. Run ``configure_embeddings --report`` for full
-    enumeration when a hard guarantee is needed.
+    ``_EXTERNAL_SAMPLE_LIMIT`` of each namespace category from the application
+    DB and probe each:
+
+    - Message namespaces — one per workspace.
+    - Document namespaces — one per existing ``(workspace, observer, observed)``
+      collection triple.
+
+    Missing namespaces are OK; mismatched dims crash startup. Run
+    ``configure_embeddings --report`` for full enumeration when a hard
+    guarantee is needed.
     """
     workspace_names = await _sample_workspace_names(engine, _EXTERNAL_SAMPLE_LIMIT)
-    if not workspace_names:
+    collection_keys = await _sample_collection_keys(engine, _EXTERNAL_SAMPLE_LIMIT)
+    if not workspace_names and not collection_keys:
         logger.info(
-            "External-store validator: no workspaces exist yet, skipping sample"
+            "External-store validator: no workspaces or collections exist yet,"
+            + " skipping sample"
         )
         return
 
@@ -180,9 +200,21 @@ async def _sample_external_namespaces(engine: AsyncEngine, *, target_dim: int) -
         # That is its own problem and not for this validator to swallow.
         return
 
-    mismatches: list[tuple[str, int]] = []
+    candidates: list[str] = []
     for workspace_name in workspace_names:
-        namespace = store.get_vector_namespace("message", workspace_name)
+        candidates.append(store.get_vector_namespace("message", workspace_name))
+    for workspace_name, observer, observed in collection_keys:
+        candidates.append(
+            store.get_vector_namespace(
+                "document",
+                workspace_name,
+                observer=observer,
+                observed=observed,
+            )
+        )
+
+    mismatches: list[tuple[str, int]] = []
+    for namespace in candidates:
         actual_dim = await _probe_namespace_dim(store, namespace)
         if actual_dim is not None and actual_dim != target_dim:
             mismatches.append((namespace, actual_dim))
@@ -207,6 +239,22 @@ async def _sample_workspace_names(engine: AsyncEngine, limit: int) -> list[str]:
     async with engine.connect() as conn:
         result = await conn.execute(stmt)
         return [row[0] for row in result]
+
+
+async def _sample_collection_keys(
+    engine: AsyncEngine, limit: int
+) -> list[tuple[str, str, str]]:
+    """Pull up to ``limit`` ``(workspace_name, observer, observed)`` triples,
+    one per existing collection row. Each triple corresponds to a document
+    namespace that may exist in the external store."""
+    stmt = (
+        select(Collection.workspace_name, Collection.observer, Collection.observed)
+        .order_by(Collection.created_at.desc())
+        .limit(limit)
+    )
+    async with engine.connect() as conn:
+        result = await conn.execute(stmt)
+        return [(row[0], row[1], row[2]) for row in result]
 
 
 async def _probe_namespace_dim(store: VectorStore, namespace: str) -> int | None:
