@@ -176,7 +176,7 @@ async fn dialectic_stream_cancel_via_select() {
 
     let content = item.expect("stream ended").unwrap();
     assert_eq!(content, "hello");
-    assert_eq!(ds.final_response(), "hello");
+    assert_eq!(ds.final_response().content(), "hello");
     assert!(!ds.is_complete());
 
     let before = Instant::now();

@@ -1,4 +1,3 @@
-use std::any::TypeId;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -241,24 +240,12 @@ impl HttpClient {
             }
         })?;
 
-        let is_unit = TypeId::of::<TResp>() == TypeId::of::<()>();
-
-        if is_unit {
+        if bytes.is_empty() {
             return serde_json::from_value::<TResp>(serde_json::Value::Null).map_err(|e| {
                 HonchoError::Decode {
                     path: String::new(),
                     source: e,
                 }
-            });
-        }
-
-        if bytes.is_empty() {
-            return Err(HonchoError::Decode {
-                path: String::new(),
-                source: serde_json::Error::io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "empty response body",
-                )),
             });
         }
 
@@ -331,11 +318,14 @@ impl HttpClient {
             .chain(query.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .collect();
 
+        let mut headers = self.inner.default_headers.clone();
+        headers.remove(CONTENT_TYPE);
+
         let req_builder = self
             .inner
             .client
             .request(method, url)
-            .headers(self.inner.default_headers.clone())
+            .headers(headers)
             .query(&merged_query)
             .timeout(self.inner.timeout)
             .multipart(form);
@@ -474,7 +464,9 @@ mod tests {
     use crate::types::peer::Peer;
     use crate::types::workspace::Workspace;
     use std::time::Duration;
-    use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
+    use wiremock::matchers::{
+        body_json, header, header_exists, header_regex, method, path, query_param,
+    };
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_client(server: &MockServer) -> HttpClient {
@@ -1121,6 +1113,27 @@ mod tests {
                 form,
                 &[("workspace_id".to_string(), "ws1".to_string())],
             )
+            .await
+            .unwrap();
+        assert_eq!(result.id, "ws_abc123");
+    }
+
+    #[tokio::test]
+    async fn post_multipart_content_type_is_multipart_not_json() {
+        let server = MockServer::start().await;
+        let client = make_client(&server);
+
+        Mock::given(method("POST"))
+            .and(path("/v3/upload"))
+            .and(header_regex("content-type", "multipart/form-data"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(workspace_json()))
+            .mount(&server)
+            .await;
+
+        let form = reqwest::multipart::Form::new().text("key", "value");
+
+        let result: Workspace = client
+            .post_multipart("/v3/upload", form, &[])
             .await
             .unwrap();
         assert_eq!(result.id, "ws_abc123");

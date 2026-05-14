@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-pub use super::peer::PeerCardConfiguration;
+pub use super::common::{
+    DreamConfiguration, PeerCardConfiguration, ReasoningConfiguration, SummaryConfiguration,
+};
 
 /// A workspace resource.
 #[non_exhaustive]
@@ -17,46 +19,10 @@ pub struct Workspace {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, serde_json::Value>,
     /// Workspace-level configuration overrides.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub configuration: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub configuration: WorkspaceConfiguration,
     /// When the workspace was created.
     pub created_at: DateTime<Utc>,
-}
-
-/// Configuration for reasoning functionality within a workspace.
-#[non_exhaustive]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ReasoningConfiguration {
-    /// Whether to enable reasoning functionality.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// Custom instructions to use for the reasoning system.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom_instructions: Option<String>,
-}
-
-/// Configuration for summary functionality.
-#[non_exhaustive]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SummaryConfiguration {
-    /// Whether to enable summary functionality.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// Number of messages per short summary (>= 10).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub messages_per_short_summary: Option<u64>,
-    /// Number of messages per long summary (>= 20).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub messages_per_long_summary: Option<u64>,
-}
-
-/// Configuration for dream functionality.
-#[non_exhaustive]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DreamConfiguration {
-    /// Whether to enable dream functionality.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
 }
 
 /// The set of options that can be in a workspace-level configuration dictionary.
@@ -64,7 +30,7 @@ pub struct DreamConfiguration {
 /// All fields are optional. Session-level configuration overrides workspace-level
 /// configuration, which overrides global configuration.
 #[non_exhaustive]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct WorkspaceConfiguration {
     /// Configuration for reasoning functionality.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,6 +85,32 @@ pub struct WorkspaceGet {
     /// Optional metadata filters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filters: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Request body for setting workspace metadata.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceMetadataSet {
+    /// Metadata to set.
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Request body for setting workspace configuration.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceConfigurationSet {
+    /// Configuration to set.
+    pub configuration: serde_json::Value,
+}
+
+/// Request body for workspace search.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceSearchRequest {
+    /// Search query string.
+    pub query: String,
+    /// Maximum number of results.
+    pub limit: u32,
 }
 
 /// A page of workspace results.

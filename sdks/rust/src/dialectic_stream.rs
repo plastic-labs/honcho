@@ -7,14 +7,62 @@ use futures_util::Stream;
 
 use crate::error::Result;
 
+/// A single delta in a streaming dialectic response.
+///
+/// Corresponds to `DialecticStreamDelta` in the Python SDK.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct DialecticStreamDelta {
+    /// The content string for this delta, if any.
+    pub content: Option<String>,
+}
+
+/// A chunk (SSE event) in a streaming dialectic response.
+///
+/// Corresponds to `DialecticStreamChunk` in the Python SDK.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct DialecticStreamChunk {
+    /// The delta payload within this chunk.
+    pub delta: DialecticStreamDelta,
+    /// Whether this is a terminal chunk.
+    #[serde(default)]
+    pub done: bool,
+}
+
+/// The fully-accumulated content of a completed dialectic stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinalResponse {
+    content: String,
+}
+
+impl FinalResponse {
+    /// Create a new `FinalResponse` from the accumulated content.
+    pub fn new(content: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+        }
+    }
+
+    /// Access the accumulated response text.
+    #[must_use]
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+}
+
+impl std::fmt::Display for FinalResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.content)
+    }
+}
+
 /// Stream adapter that accumulates content from a dialectic SSE stream.
 ///
-/// Wraps any `Stream<Item = Result<String>>` and builds a `final_response()`
-/// string from all yielded chunks. The stream is pass-through — callers still
+/// Wraps any `Stream<Item = Result<String>>` and builds a [`FinalResponse`]
+/// from all yielded chunks. The stream is pass-through — callers still
 /// receive each chunk individually while the adapter silently accumulates.
 pub struct DialecticStream<S> {
     inner: S,
-    accumulated: String,
+    final_response: FinalResponse,
     complete: bool,
 }
 
@@ -35,15 +83,17 @@ where
     pub fn new(stream: S) -> Self {
         Self {
             inner: stream,
-            accumulated: String::new(),
+            final_response: FinalResponse {
+                content: String::new(),
+            },
             complete: false,
         }
     }
 
-    /// Returns all content accumulated so far (partial if stream is still in progress).
+    /// Returns the accumulated response so far (partial if stream is still in progress).
     #[must_use]
-    pub fn final_response(&self) -> &str {
-        &self.accumulated
+    pub fn final_response(&self) -> &FinalResponse {
+        &self.final_response
     }
 
     /// `true` once the inner stream has returned `None` (end-of-stream).
@@ -62,7 +112,7 @@ where
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(content))) => {
-                self.accumulated.push_str(&content);
+                self.final_response.content.push_str(&content);
                 Poll::Ready(Some(Ok(content)))
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
@@ -106,7 +156,7 @@ mod tests {
         }
 
         assert_eq!(collected, vec!["hello", " ", "world"]);
-        assert_eq!(stream.final_response(), "hello world");
+        assert_eq!(stream.final_response().content(), "hello world");
     }
 
     #[tokio::test]
@@ -120,7 +170,7 @@ mod tests {
         while stream.next().await.is_some() {}
 
         assert!(stream.is_complete());
-        assert_eq!(stream.final_response(), "ab");
+        assert_eq!(stream.final_response().content(), "ab");
     }
 
     #[tokio::test]
@@ -131,7 +181,7 @@ mod tests {
 
         let first = stream.next().await.unwrap().unwrap();
         assert_eq!(first, "first");
-        assert_eq!(stream.final_response(), "first");
+        assert_eq!(stream.final_response().content(), "first");
         assert!(!stream.is_complete());
     }
 
@@ -151,7 +201,7 @@ mod tests {
 
         let err = stream.next().await.unwrap().unwrap_err();
         assert!(matches!(err, HonchoError::Connection { .. }));
-        assert_eq!(stream.final_response(), "ok");
+        assert_eq!(stream.final_response().content(), "ok");
     }
 
     #[tokio::test]
@@ -162,6 +212,29 @@ mod tests {
 
         assert!(stream.next().await.is_none());
         assert!(stream.is_complete());
-        assert_eq!(stream.final_response(), "");
+        assert_eq!(stream.final_response().content(), "");
+    }
+
+    #[tokio::test]
+    async fn dialectic_stream_final_response_display() {
+        let chunks = vec![ok_chunk("hello")];
+        let inner = futures_util::stream::iter(chunks);
+        let mut stream = DialecticStream::new(inner);
+        while stream.next().await.is_some() {}
+
+        assert_eq!(stream.final_response().to_string(), "hello");
+    }
+
+    #[tokio::test]
+    async fn dialectic_stream_final_response_eq() {
+        let chunks = vec![ok_chunk("abc")];
+        let inner = futures_util::stream::iter(chunks);
+        let mut stream = DialecticStream::new(inner);
+        while stream.next().await.is_some() {}
+
+        let expected = FinalResponse {
+            content: "abc".to_string(),
+        };
+        assert_eq!(stream.final_response(), &expected);
     }
 }

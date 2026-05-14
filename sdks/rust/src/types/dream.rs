@@ -1,5 +1,7 @@
 //! Dream API types — background memory consolidation scheduling.
 
+pub use super::common::{DreamConfiguration, ReasoningConfiguration};
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -11,33 +13,6 @@ use serde::{Deserialize, Serialize};
 pub enum DreamType {
     /// Omni dream — consolidate all observations.
     Omni,
-}
-
-/// Dream feature configuration for a workspace or session.
-///
-/// Maps `DreamConfiguration` from the `OpenAPI` spec.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct DreamConfiguration {
-    /// Whether to enable dream functionality.
-    ///
-    /// If reasoning is disabled, dreams are also disabled and this setting is ignored.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-}
-
-/// Reasoning feature configuration for a workspace, session, or message.
-///
-/// Maps `ReasoningConfiguration` from the `OpenAPI` spec.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct ReasoningConfiguration {
-    /// Whether to enable reasoning functionality.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// Custom instructions for the reasoning system.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub custom_instructions: Option<String>,
 }
 
 /// Request to schedule a dream task.

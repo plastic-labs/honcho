@@ -133,7 +133,7 @@ impl Honcho {
     pub fn peers(&self) -> Result<Vec<PeerResponse>> {
         block_on(async {
             let page = self.inner.peers().await?;
-            Ok(collect_all_pages(page).await)
+            collect_all_pages(page).await
         })
     }
 
@@ -150,7 +150,7 @@ impl Honcho {
                 .inner
                 .peers_with_filters(filters, page, size, reverse)
                 .await?;
-            Ok(collect_all_pages(page).await)
+            collect_all_pages(page).await
         })
     }
 
@@ -158,7 +158,7 @@ impl Honcho {
     pub fn sessions(&self) -> Result<Vec<SessionResponse>> {
         block_on(async {
             let page = self.inner.sessions().await?;
-            Ok(collect_all_pages(page).await)
+            collect_all_pages(page).await
         })
     }
 
@@ -175,7 +175,7 @@ impl Honcho {
                 .inner
                 .sessions_with_filters(filters, page, size, reverse)
                 .await?;
-            Ok(collect_all_pages(page).await)
+            collect_all_pages(page).await
         })
     }
 
@@ -187,7 +187,7 @@ impl Honcho {
             let mut all = Vec::with_capacity(page.total() as usize);
             let mut first_items = page.items();
             all.append(&mut first_items);
-            while let Some(next) = page.next_page().await {
+            while let Some(next) = page.next_page().await? {
                 let mut next_items = next.items();
                 all.append(&mut next_items);
                 page = next;

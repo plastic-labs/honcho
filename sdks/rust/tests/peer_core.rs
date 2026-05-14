@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use honcho_ai::Honcho;
 use honcho_ai::Peer;
+use honcho_ai::PeerConfig;
 use serde_json::{Value, json};
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -24,7 +25,7 @@ fn peer_response_json() -> Value {
         "workspace_id": "ws1",
         "created_at": "2025-01-15T10:30:00Z",
         "metadata": {"role": "admin"},
-        "configuration": {"language": "en"}
+        "configuration": {"observe_me": true}
     })
 }
 
@@ -81,7 +82,7 @@ async fn peer_refresh_updates_caches() {
 
     let updated = peer_response_with(
         json!({"role": "user", "level": 5}),
-        json!({"language": "fr"}),
+        json!({"observe_me": false, "observe_others": true}),
     );
 
     Mock::given(method("POST"))
@@ -97,7 +98,8 @@ async fn peer_refresh_updates_caches() {
     assert_eq!(meta.get("level").unwrap(), 5);
 
     let config = peer.configuration().unwrap();
-    assert_eq!(config.get("language").unwrap(), "fr");
+    assert_eq!(config.observe_me, Some(false));
+    assert_eq!(config.observe_others, Some(true));
 }
 
 #[tokio::test]
@@ -145,22 +147,21 @@ async fn peer_set_configuration_puts_to_peer_endpoint() {
     let server = MockServer::start().await;
     let peer = make_peer(&server).await;
 
-    let mut new_config = HashMap::new();
-    new_config.insert("mode".to_owned(), json!("fast"));
+    let new_config: PeerConfig = serde_json::from_value(json!({"observe_me": true})).unwrap();
 
-    let resp = peer_response_with(json!({"role": "admin"}), json!({"mode": "fast"}));
+    let resp = peer_response_with(json!({"role": "admin"}), json!({"observe_me": true}));
 
     Mock::given(method("PUT"))
         .and(path("/v3/workspaces/ws1/peers/alice"))
-        .and(body_json(&json!({"configuration": {"mode": "fast"}})))
+        .and(body_json(&json!({"configuration": {"observe_me": true}})))
         .respond_with(ResponseTemplate::new(200).set_body_json(&resp))
         .mount(&server)
         .await;
 
-    peer.set_configuration(new_config).await.unwrap();
+    peer.set_configuration(&new_config).await.unwrap();
 
     let cached = peer.configuration().unwrap();
-    assert_eq!(cached.get("mode").unwrap(), "fast");
+    assert_eq!(cached.observe_me, Some(true));
 }
 
 #[tokio::test]
@@ -168,7 +169,10 @@ async fn peer_get_configuration_returns_from_cache() {
     let server = MockServer::start().await;
     let peer = make_peer(&server).await;
 
-    let updated = peer_response_with(json!({}), json!({"theme": "dark"}));
+    let updated = peer_response_with(
+        json!({}),
+        json!({"observe_me": true, "observe_others": false}),
+    );
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/peers"))
@@ -177,7 +181,8 @@ async fn peer_get_configuration_returns_from_cache() {
         .await;
 
     let config = peer.get_configuration().await.unwrap();
-    assert_eq!(config.get("theme").unwrap(), "dark");
+    assert_eq!(config.observe_me, Some(true));
+    assert_eq!(config.observe_others, Some(false));
 }
 
 // ── F5.2: Chat (non-streaming) ────────────────────────────────────────
@@ -189,7 +194,7 @@ async fn peer_chat_basic_query() {
 
     Mock::given(method("POST"))
         .and(path("/v3/workspaces/ws1/peers/alice/chat"))
-        .and(body_json(&json!({"query": "hello", "stream": false})))
+        .and(body_json(&json!({"query": "hello"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "content": "Hi there!"
         })))

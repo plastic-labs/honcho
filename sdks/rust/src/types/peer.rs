@@ -67,17 +67,40 @@ pub struct PeerGet {
     pub filters: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Configuration for peer card behavior.
+/// Request body for setting peer metadata.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerMetadataSet {
+    /// Metadata to set.
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Typed peer configuration with known fields.
+///
+/// Used as the typed view over the peer configuration map. The server may
+/// return additional fields not captured here; use the `_raw` escape hatches
+/// on [`crate::Peer`] to access them.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct PeerCardConfiguration {
-    /// Whether to use the peer card during the reasoning process.
-    #[serde(rename = "use", default, skip_serializing_if = "Option::is_none")]
-    pub use_peer_card: Option<bool>,
-    /// Whether to generate a peer card based on content.
+#[serde(deny_unknown_fields)]
+pub struct PeerConfig {
+    /// Whether Honcho will use reasoning to form a representation of this peer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub create: Option<bool>,
+    pub observe_me: Option<bool>,
+    /// Whether this peer should form representations of other peers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observe_others: Option<bool>,
 }
+
+/// Request body for setting peer configuration.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerConfigurationSet {
+    /// Configuration to set.
+    pub configuration: PeerConfig,
+}
+
+pub use super::common::PeerCardConfiguration;
 
 /// Response from getting a peer card.
 #[non_exhaustive]

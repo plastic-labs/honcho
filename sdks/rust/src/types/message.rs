@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-pub use super::dream::ReasoningConfiguration;
+pub use super::common::ReasoningConfiguration;
 
 /// Raw API response for a message.
 ///
@@ -64,6 +64,14 @@ pub struct MessageUpdate {
     /// Updated metadata (replaces existing).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Request body for setting message metadata.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageMetadataSet {
+    /// Metadata to set.
+    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Configuration that can be attached to a message.

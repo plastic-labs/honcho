@@ -496,7 +496,7 @@ async fn blocking_peer_context_with_target() {
     let ctx = blocking(move || {
         let client = Honcho::new(&uri, "ws1").unwrap();
         let peer = client.peer("alice").unwrap();
-        peer.context_with_target("bob").unwrap()
+        peer.context_builder().target("bob").send().unwrap()
     });
     assert_eq!(ctx.target_id, "bob");
 }
@@ -707,7 +707,6 @@ async fn blocking_client_schedule_dream() {
         .and(body_json(serde_json::json!({
             "observer": "alice",
             "observed": "alice",
-            "session_id": null,
             "dream_type": "omni"
         })))
         .respond_with(ResponseTemplate::new(200))

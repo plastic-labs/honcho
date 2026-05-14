@@ -143,19 +143,22 @@ impl<TRaw: 'static, TOut: 'static> Page<TRaw, TOut> {
 
     /// Fetch the next page, if a fetcher is configured and more pages exist.
     ///
-    /// Returns `Some(..)` on success, `None` when no fetcher is set,
-    /// no more pages remain, or the fetch fails.
-    pub async fn next_page(&self) -> Option<Self> {
+    /// Returns `Ok(Some(..))` on success, `Ok(None)` when no fetcher is set
+    /// or no more pages remain, and `Err(..)` when the fetch fails.
+    pub async fn next_page(&self) -> Result<Option<Self>> {
         if !self.has_next() {
-            return None;
+            return Ok(None);
         }
-        let fetcher = Arc::clone(self.inner.next_fetcher.as_ref()?);
+        let fetcher = match self.inner.next_fetcher.as_ref() {
+            Some(f) => Arc::clone(f),
+            None => return Ok(None),
+        };
         let next_num = self.inner.page + 1;
         let transform = Arc::clone(&self.inner.transform);
         let next_fetcher = self.inner.next_fetcher.clone();
 
-        let resp = fetcher(next_num).await.ok()?;
-        Some(Self {
+        let resp = fetcher(next_num).await?;
+        Ok(Some(Self {
             inner: Arc::new(PageInner {
                 items: resp.items,
                 total: resp.total,
@@ -165,7 +168,7 @@ impl<TRaw: 'static, TOut: 'static> Page<TRaw, TOut> {
                 next_fetcher,
                 transform,
             }),
-        })
+        }))
     }
 
     /// Attach a next-page fetcher, consuming `self` and returning a new `Page`.

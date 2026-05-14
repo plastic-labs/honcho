@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
+use reqwest::header::HeaderMap;
 use serde_json::Value;
 use tokio::sync::OnceCell;
 use url::Url;
@@ -70,6 +72,14 @@ pub struct HonchoParams {
     workspace_id: Option<String>,
     /// Custom `reqwest::Client`.
     http_client: Option<reqwest::Client>,
+    /// Request timeout. Falls back to `HttpClient` default (60s).
+    timeout: Option<Duration>,
+    /// Max retries for transient errors. Falls back to `HttpClient` default (2).
+    max_retries: Option<u32>,
+    /// Extra default headers sent with every request.
+    default_headers: Option<HeaderMap>,
+    /// Extra default query parameters appended to every request.
+    default_query: Option<Vec<(String, String)>>,
 }
 
 impl Honcho {
@@ -146,6 +156,10 @@ impl Honcho {
                 .base_url(resolved_base_url)
                 .maybe_api_key(resolved_api_key)
                 .maybe_http_client(params.http_client)
+                .timeout(params.timeout.unwrap_or(Duration::from_secs(60)))
+                .max_retries(params.max_retries.unwrap_or(2))
+                .default_headers(params.default_headers.unwrap_or_default())
+                .default_query(params.default_query.unwrap_or_default())
                 .build(),
         )?;
 
@@ -164,7 +178,11 @@ impl Honcho {
         self.inner
             .ensure_workspace_once
             .get_or_try_init(|| async {
-                let body = serde_json::json!({"id": self.inner.workspace_id});
+                let body = crate::types::workspace::WorkspaceCreate {
+                    id: self.inner.workspace_id.clone(),
+                    metadata: None,
+                    configuration: None,
+                };
                 self.inner
                     .http
                     .post::<_, Workspace>(&routes::workspaces(), Some(&body), &[])
@@ -217,7 +235,11 @@ impl Honcho {
 
     /// Fetch workspace metadata from the server.
     pub async fn get_metadata(&self) -> Result<HashMap<String, Value>> {
-        let body = serde_json::json!({"id": self.workspace_id()});
+        let body = crate::types::workspace::WorkspaceCreate {
+            id: self.workspace_id().to_owned(),
+            metadata: None,
+            configuration: None,
+        };
         let ws: Workspace = self
             .inner
             .http
@@ -228,7 +250,7 @@ impl Honcho {
 
     /// Set workspace metadata on the server.
     pub async fn set_metadata(&self, metadata: HashMap<String, Value>) -> Result<()> {
-        let body = serde_json::json!({"metadata": metadata});
+        let body = crate::types::workspace::WorkspaceMetadataSet { metadata };
         let _: Workspace = self
             .inner
             .http
@@ -248,12 +270,17 @@ impl Honcho {
     /// }
     /// ```
     pub async fn get_configuration(&self) -> Result<WorkspaceConfiguration> {
-        let raw = self.get_configuration_raw().await?;
-        let value = serde_json::Value::Object(raw.into_iter().collect());
-        serde_json::from_value(value).map_err(|e| HonchoError::Decode {
-            path: "configuration".to_string(),
-            source: e,
-        })
+        let body = crate::types::workspace::WorkspaceCreate {
+            id: self.workspace_id().to_owned(),
+            metadata: None,
+            configuration: None,
+        };
+        let ws: Workspace = self
+            .inner
+            .http
+            .post(&routes::workspaces(), Some(&body), &[])
+            .await?;
+        Ok(ws.configuration)
     }
 
     /// Set workspace configuration from a typed [`WorkspaceConfiguration`].
@@ -261,13 +288,17 @@ impl Honcho {
     /// # Example
     ///
     /// ```ignore
-    /// let config = WorkspaceConfiguration::builder()
-    ///     .reasoning(ReasoningConfiguration { enabled: Some(true), custom_instructions: None })
-    ///     .build();
+    /// let config = WorkspaceConfiguration {
+    ///     reasoning: Some(ReasoningConfiguration { enabled: Some(true), custom_instructions: None, ..Default::default() }),
+    ///     ..Default::default()
+    /// };
     /// client.set_configuration(&config).await?;
     /// ```
     pub async fn set_configuration(&self, config: &WorkspaceConfiguration) -> Result<()> {
-        let body = serde_json::json!({"configuration": config});
+        let body = crate::types::workspace::WorkspaceConfigurationSet {
+            configuration: serde_json::to_value(config)
+                .map_err(|e| HonchoError::Configuration(e.to_string()))?,
+        };
         let _: Workspace = self
             .inner
             .http
@@ -282,13 +313,22 @@ impl Honcho {
     /// Use this when the server returns fields not yet represented in
     /// [`WorkspaceConfiguration`].
     pub async fn get_configuration_raw(&self) -> Result<HashMap<String, Value>> {
-        let body = serde_json::json!({"id": self.workspace_id()});
-        let ws: Workspace = self
+        let body = crate::types::workspace::WorkspaceCreate {
+            id: self.workspace_id().to_owned(),
+            metadata: None,
+            configuration: None,
+        };
+        let raw: serde_json::Value = self
             .inner
             .http
             .post(&routes::workspaces(), Some(&body), &[])
             .await?;
-        Ok(ws.configuration)
+        match raw.get("configuration") {
+            Some(serde_json::Value::Object(map)) => {
+                Ok(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            }
+            _ => Ok(HashMap::new()),
+        }
     }
 
     /// Set workspace configuration from a raw JSON map.
@@ -297,7 +337,9 @@ impl Honcho {
     /// Use this when you need to send fields not yet represented in
     /// [`WorkspaceConfiguration`].
     pub async fn set_configuration_raw(&self, configuration: HashMap<String, Value>) -> Result<()> {
-        let body = serde_json::json!({"configuration": configuration});
+        let body = crate::types::workspace::WorkspaceConfigurationSet {
+            configuration: serde_json::Value::Object(configuration.into_iter().collect()),
+        };
         let _: Workspace = self
             .inner
             .http
@@ -319,13 +361,17 @@ impl Honcho {
     /// ```
     pub async fn peer(&self, id: impl Into<String>) -> Result<Peer> {
         self.ensure_workspace().await?;
-        let body = serde_json::json!({"id": id.into()});
+        let body = crate::types::peer::PeerCreate {
+            id: id.into(),
+            metadata: None,
+            configuration: None,
+        };
         let resp: PeerResponse = self
             .inner
             .http
             .post(&routes::peers(&self.inner.workspace_id), Some(&body), &[])
             .await?;
-        Ok(Peer::from_response(self, resp))
+        Peer::from_response(self, resp)
     }
 
     /// Get or create a session by ID.
@@ -341,7 +387,12 @@ impl Honcho {
     /// ```
     pub async fn session(&self, id: impl Into<String>) -> Result<Session> {
         self.ensure_workspace().await?;
-        let body = serde_json::json!({"id": id.into()});
+        let body = crate::types::session::SessionCreate {
+            id: id.into(),
+            metadata: None,
+            peers: None,
+            configuration: None,
+        };
         let resp: SessionResponse = self
             .inner
             .http
@@ -367,7 +418,10 @@ impl Honcho {
     /// ```
     pub async fn search(&self, query: &str) -> Result<Vec<crate::Message>> {
         self.ensure_workspace().await?;
-        let body = serde_json::json!({"query": query, "limit": 10});
+        let body = crate::types::workspace::WorkspaceSearchRequest {
+            query: query.to_owned(),
+            limit: 10,
+        };
         let responses: Vec<MessageResponse> = self
             .inner
             .http
@@ -379,13 +433,7 @@ impl Honcho {
             .await?;
         Ok(responses
             .into_iter()
-            .map(|r| {
-                crate::Message::from_raw(
-                    self.inner.http.clone(),
-                    self.inner.workspace_id.clone(),
-                    r,
-                )
-            })
+            .map(|r| crate::Message::from_raw(self.inner.workspace_id.clone(), r))
             .collect())
     }
 
@@ -445,7 +493,12 @@ impl Honcho {
     ) -> Result<()> {
         self.ensure_workspace().await?;
         let observed_peer = observed_peer.unwrap_or(observer);
-        let body = serde_json::json!({"observer": observer, "observed": observed_peer, "session_id": session_id, "dream_type": "omni"});
+        let body = crate::types::dream::ScheduleDreamRequest {
+            observer: observer.to_owned(),
+            dream_type: crate::types::dream::DreamType::Omni,
+            observed: Some(observed_peer.to_owned()),
+            session_id: session_id.map(std::borrow::ToOwned::to_owned),
+        };
         self.inner
             .http
             .post(
@@ -523,11 +576,15 @@ impl Honcho {
         reverse: bool,
     ) -> Result<crate::types::pagination::Page<crate::types::peer::Peer>> {
         self.ensure_workspace().await?;
-        let body = serde_json::json!({"filters": filters});
+        let body = crate::types::peer::PeerGet {
+            filters: Some(filters),
+        };
+        let body_val =
+            serde_json::to_value(&body).map_err(|e| HonchoError::Configuration(e.to_string()))?;
         crate::types::pagination::paginate_post(
             &self.inner.http,
             &routes::peers_list(&self.inner.workspace_id),
-            Some(&body),
+            Some(&body_val),
             page,
             size,
             reverse,
@@ -587,11 +644,15 @@ impl Honcho {
         reverse: bool,
     ) -> Result<crate::types::pagination::Page<crate::types::session::Session>> {
         self.ensure_workspace().await?;
-        let body = serde_json::json!({"filters": filters});
+        let body = crate::types::session::SessionGet {
+            filters: Some(filters),
+        };
+        let body_val =
+            serde_json::to_value(&body).map_err(|e| HonchoError::Configuration(e.to_string()))?;
         crate::types::pagination::paginate_post(
             &self.inner.http,
             &routes::sessions_list(&self.inner.workspace_id),
-            Some(&body),
+            Some(&body_val),
             page,
             size,
             reverse,

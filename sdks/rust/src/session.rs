@@ -16,7 +16,9 @@ use crate::http::routes;
 use crate::message::Message;
 use crate::types::message::MessageResponse;
 use crate::types::session::Session as SessionResponse;
-use crate::types::session::SessionPeerConfig;
+use crate::types::session::{
+    SessionConfiguration, SessionConfigurationSet, SessionPeerConfig, SessionUpdate,
+};
 use crate::upload::{self, FileSource};
 
 pub(crate) struct SessionInner {
@@ -25,7 +27,7 @@ pub(crate) struct SessionInner {
     id: String,
     is_active: AtomicBool,
     metadata: RwLock<Option<HashMap<String, Value>>>,
-    configuration: RwLock<Option<HashMap<String, Value>>>,
+    configuration: RwLock<Option<SessionConfiguration>>,
 }
 
 /// A session in a Honcho workspace.
@@ -264,13 +266,7 @@ impl UploadFileBuilder<'_> {
 
         Ok(responses
             .into_iter()
-            .map(|r| {
-                crate::Message::from_raw(
-                    self.session.inner.http.clone(),
-                    self.session.inner.workspace_id.clone(),
-                    r,
-                )
-            })
+            .map(|r| crate::Message::from_raw(self.session.inner.workspace_id.clone(), r))
             .collect())
     }
 }
@@ -363,7 +359,7 @@ impl Session {
     /// # }
     /// ```
     #[must_use]
-    pub fn configuration(&self) -> Option<HashMap<String, Value>> {
+    pub fn configuration(&self) -> Option<SessionConfiguration> {
         self.inner
             .configuration
             .read()
@@ -384,7 +380,12 @@ impl Session {
     /// # }
     /// ```
     pub async fn refresh(&self) -> Result<()> {
-        let body = serde_json::json!({"id": self.inner.id});
+        let body = crate::types::session::SessionCreate {
+            id: self.inner.id.clone(),
+            metadata: None,
+            peers: None,
+            configuration: None,
+        };
         let resp: SessionResponse = self
             .inner
             .http
@@ -444,7 +445,7 @@ impl Session {
     /// # }
     /// ```
     pub async fn set_metadata(&self, metadata: HashMap<String, Value>) -> Result<()> {
-        let body = serde_json::json!({"metadata": metadata});
+        let body = crate::types::session::SessionMetadataSet { metadata };
         let resp: SessionResponse = self
             .inner
             .http
@@ -472,7 +473,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn get_configuration(&self) -> Result<HashMap<String, Value>> {
+    pub async fn get_configuration(&self) -> Result<SessionConfiguration> {
         self.refresh().await?;
         Ok(self
             .inner
@@ -489,14 +490,70 @@ impl Session {
     ///
     /// ```no_run
     /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
-    /// let mut config = std::collections::HashMap::new();
-    /// config.insert("model".into(), "gpt-4".into());
-    /// session.set_configuration(config).await?;
+    /// use honcho_ai::types::session::SessionConfiguration;
+    /// let config = SessionConfiguration::default();
+    /// session.set_configuration(&config).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn set_configuration(&self, configuration: HashMap<String, Value>) -> Result<()> {
-        let body = serde_json::json!({"configuration": configuration});
+    pub async fn set_configuration(&self, configuration: &SessionConfiguration) -> Result<()> {
+        let body = SessionUpdate {
+            metadata: None,
+            configuration: Some(configuration.clone()),
+        };
+        let resp: SessionResponse = self
+            .inner
+            .http
+            .put(
+                &routes::session(&self.inner.workspace_id, &self.inner.id),
+                Some(&body),
+                &[],
+            )
+            .await?;
+        *self
+            .inner
+            .configuration
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(resp.configuration);
+        Ok(())
+    }
+
+    /// Fetch session configuration as a raw JSON map.
+    ///
+    /// Prefer [`get_configuration`](Self::get_configuration) for typed access.
+    /// Use this when the server returns fields not yet represented in
+    /// [`SessionConfiguration`].
+    pub async fn get_configuration_raw(&self) -> Result<HashMap<String, Value>> {
+        let body = crate::types::session::SessionCreate {
+            id: self.inner.id.clone(),
+            metadata: None,
+            peers: None,
+            configuration: None,
+        };
+        let raw: serde_json::Value = self
+            .inner
+            .http
+            .post(
+                &routes::sessions(&self.inner.workspace_id),
+                Some(&body),
+                &[],
+            )
+            .await?;
+        match raw.get("configuration") {
+            Some(serde_json::Value::Object(map)) => {
+                Ok(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            }
+            _ => Ok(HashMap::new()),
+        }
+    }
+
+    /// Set session configuration from a raw JSON map.
+    ///
+    /// Prefer [`set_configuration`](Self::set_configuration) for typed access.
+    /// Use this when you need to send fields not yet represented in
+    /// [`SessionConfiguration`].
+    pub async fn set_configuration_raw(&self, configuration: HashMap<String, Value>) -> Result<()> {
+        let body = SessionConfigurationSet { configuration };
         let resp: SessionResponse = self
             .inner
             .http
@@ -607,8 +664,7 @@ impl Session {
     pub async fn peers(&self) -> Result<Vec<crate::Peer>> {
         let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
         let page: PeersPageResponse = self.inner.http.get(&route, &[]).await?;
-        Ok(page
-            .items
+        page.items
             .into_iter()
             .map(|resp| {
                 crate::Peer::from_parts(
@@ -617,7 +673,7 @@ impl Session {
                     resp,
                 )
             })
-            .collect())
+            .collect()
     }
 
     // ── F6.3: Per-peer configuration ───────────────────────────────────
@@ -687,22 +743,23 @@ impl Session {
         let route = routes::messages(&self.inner.workspace_id, &self.inner.id);
 
         let responses: Vec<MessageResponse> = if messages.len() <= 100 {
-            let body = serde_json::json!({"messages": messages});
+            let body = crate::types::message::MessageBatchCreate { messages };
             self.inner.http.post(&route, Some(&body), &[]).await?
         } else {
             let mut all = Vec::with_capacity(messages.len());
             for chunk in messages.chunks(100) {
-                let body = serde_json::json!({"messages": chunk});
-                let batch: Vec<MessageResponse> =
+                let batch = chunk.to_vec();
+                let body = crate::types::message::MessageBatchCreate { messages: batch };
+                let batch_responses: Vec<MessageResponse> =
                     self.inner.http.post(&route, Some(&body), &[]).await?;
-                all.extend(batch);
+                all.extend(batch_responses);
             }
             all
         };
 
         Ok(responses
             .into_iter()
-            .map(|r| Message::from_raw(self.inner.http.clone(), self.inner.workspace_id.clone(), r))
+            .map(|r| Message::from_raw(self.inner.workspace_id.clone(), r))
             .collect())
     }
 
@@ -724,12 +781,11 @@ impl Session {
         let page: crate::types::pagination::Page<MessageResponse> =
             crate::types::pagination::paginate_post(&self.inner.http, &route, None, 1, 50, false)
                 .await?;
-        let http = self.inner.http.clone();
         let ws = self.inner.workspace_id.clone();
         let messages: Vec<Message> = page
             .items()
             .into_iter()
-            .map(|r| Message::from_raw(http.clone(), ws.clone(), r))
+            .map(|r| Message::from_raw(ws.clone(), r))
             .collect();
         Ok(crate::types::pagination::Page::new(
             messages,
@@ -875,11 +931,7 @@ impl Session {
     pub async fn get_message(&self, id: &str) -> Result<Message> {
         let route = routes::message(&self.inner.workspace_id, &self.inner.id, id);
         let resp: MessageResponse = self.inner.http.get(&route, &[]).await?;
-        Ok(Message::from_raw(
-            self.inner.http.clone(),
-            self.inner.workspace_id.clone(),
-            resp,
-        ))
+        Ok(Message::from_raw(self.inner.workspace_id.clone(), resp))
     }
 
     /// Update a message's metadata.
@@ -901,13 +953,9 @@ impl Session {
         metadata: HashMap<String, Value>,
     ) -> Result<Message> {
         let route = routes::message(&self.inner.workspace_id, &self.inner.id, id);
-        let body = serde_json::json!({"metadata": metadata});
+        let body = crate::types::message::MessageMetadataSet { metadata };
         let resp: MessageResponse = self.inner.http.put(&route, Some(&body), &[]).await?;
-        Ok(Message::from_raw(
-            self.inner.http.clone(),
-            self.inner.workspace_id.clone(),
-            resp,
-        ))
+        Ok(Message::from_raw(self.inner.workspace_id.clone(), resp))
     }
 
     // ── F6.6: Context ───────────────────────────────────────────────────
@@ -930,6 +978,7 @@ impl Session {
             .summary(true)
             .limit_to_session(false)
             .build();
+        opts.validate()?;
         self.context_with_options(&opts).await
     }
 
@@ -950,6 +999,7 @@ impl Session {
         &self,
         options: &crate::types::session::SessionContextOptions,
     ) -> Result<crate::types::session::SessionContext> {
+        options.validate()?;
         let route = routes::session_context(&self.inner.workspace_id, &self.inner.id);
         let mut params: Vec<(&str, String)> = vec![
             (
@@ -1074,7 +1124,7 @@ impl Session {
             self.inner.http.post(&route, Some(&options), &[]).await?;
         Ok(responses
             .into_iter()
-            .map(|r| Message::from_raw(self.inner.http.clone(), self.inner.workspace_id.clone(), r))
+            .map(|r| Message::from_raw(self.inner.workspace_id.clone(), r))
             .collect())
     }
 
@@ -1093,13 +1143,40 @@ impl Session {
     /// ```
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn representation(&self, peer_id: &str) -> Result<String> {
-        let route = routes::peer_representation(&self.inner.workspace_id, peer_id);
-        let body = serde_json::json!({
-            "session_id": self.inner.id,
-        });
-        let resp: crate::types::dialectic::RepresentationResponse =
-            self.inner.http.post(&route, Some(&body), &[]).await?;
-        Ok(resp.representation)
+        self.representation_builder(peer_id).send().await
+    }
+
+    /// Create a builder for fine-grained representation requests scoped to this session.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let rep = session.representation_builder("alice")
+    ///     .search_query("hobbies")
+    ///     .search_top_k(10)
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn representation_builder(
+        &self,
+        peer_id: impl Into<String>,
+    ) -> SessionRepresentationBuilder {
+        SessionRepresentationBuilder {
+            http: self.inner.http.clone(),
+            workspace_id: self.inner.workspace_id.clone(),
+            session_id: self.inner.id.clone(),
+            peer_id: peer_id.into(),
+            target: None,
+            search_query: None,
+            search_top_k: None,
+            search_max_distance: None,
+            include_most_frequent: None,
+            max_conclusions: None,
+        }
     }
 
     /// Get the processing queue status for this session.
@@ -1130,6 +1207,171 @@ impl Session {
     }
 }
 
+/// Builder for fine-grained representation requests scoped to a session.
+pub struct SessionRepresentationBuilder {
+    http: HttpClient,
+    workspace_id: String,
+    session_id: String,
+    peer_id: String,
+    target: Option<String>,
+    search_query: Option<String>,
+    search_top_k: Option<u32>,
+    search_max_distance: Option<f64>,
+    include_most_frequent: Option<bool>,
+    max_conclusions: Option<u32>,
+}
+
+impl SessionRepresentationBuilder {
+    /// Get the representation for a specific target peer.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.representation_builder("alice").target("bob");
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn target(mut self, val: impl Into<String>) -> Self {
+        self.target = Some(val.into());
+        self
+    }
+
+    /// Semantic search query to curate the representation.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.representation_builder("alice").search_query("hobbies");
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn search_query(mut self, val: impl Into<String>) -> Self {
+        self.search_query = Some(val.into());
+        self
+    }
+
+    /// Number of semantic-search-retrieved conclusions (1–100).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.representation_builder("alice").search_top_k(20);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn search_top_k(mut self, val: u32) -> Self {
+        self.search_top_k = Some(val);
+        self
+    }
+
+    /// Maximum distance for semantically relevant conclusions (0.0–1.0).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.representation_builder("alice").search_max_distance(0.5);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn search_max_distance(mut self, val: f64) -> Self {
+        self.search_max_distance = Some(val);
+        self
+    }
+
+    /// Whether to include the most frequent conclusions.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.representation_builder("alice").include_most_frequent(true);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn include_most_frequent(mut self, val: bool) -> Self {
+        self.include_most_frequent = Some(val);
+        self
+    }
+
+    /// Maximum number of conclusions to include (1–100).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// let _builder = session.representation_builder("alice").max_conclusions(25);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn max_conclusions(mut self, val: u32) -> Self {
+        self.max_conclusions = Some(val);
+        self
+    }
+
+    /// Send the representation request with the configured parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let rep = session.representation_builder("alice")
+    ///     .search_query("hobbies")
+    ///     .search_top_k(10)
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `HonchoError::Validation` if `search_top_k`, `search_max_distance`,
+    /// or `max_conclusions` are out of range.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.session_id.as_str(), peer_id = self.peer_id.as_str())))]
+    pub async fn send(self) -> Result<String> {
+        if let Some(k) = self.search_top_k
+            && !(1..=100).contains(&k)
+        {
+            return Err(HonchoError::Validation(format!(
+                "search_top_k must be between 1 and 100, got {k}"
+            )));
+        }
+        if let Some(d) = self.search_max_distance
+            && !(0.0..=1.0).contains(&d)
+        {
+            return Err(HonchoError::Validation(format!(
+                "search_max_distance must be between 0.0 and 1.0, got {d}"
+            )));
+        }
+        if let Some(c) = self.max_conclusions
+            && !(1..=100).contains(&c)
+        {
+            return Err(HonchoError::Validation(format!(
+                "max_conclusions must be between 1 and 100, got {c}"
+            )));
+        }
+
+        let params = crate::types::peer::PeerRepresentationGet {
+            session_id: Some(self.session_id),
+            target: self.target,
+            search_query: self.search_query,
+            search_top_k: self.search_top_k,
+            search_max_distance: self.search_max_distance,
+            include_most_frequent: self.include_most_frequent,
+            max_conclusions: self.max_conclusions,
+        };
+
+        let route = routes::peer_representation(&self.workspace_id, &self.peer_id);
+        let resp: crate::types::dialectic::RepresentationResponse =
+            self.http.post(&route, Some(&params), &[]).await?;
+        Ok(resp.representation)
+    }
+}
+
 fn normalize_peers(
     specs: impl IntoIterator<Item = impl Into<PeerSpec>>,
 ) -> Result<serde_json::Value> {
@@ -1138,7 +1380,16 @@ fn normalize_peers(
         .map(|s| {
             let spec = s.into();
             let val = match &spec {
-                PeerSpec::Id(_) => serde_json::json!({}),
+                PeerSpec::Id(_) => serde_json::to_value(SessionPeerConfig {
+                    observe_me: None,
+                    observe_others: None,
+                })
+                .map_err(|e| {
+                    HonchoError::Configuration(format!(
+                        "failed to serialize peer config for {}: {e}",
+                        spec.id()
+                    ))
+                })?,
                 PeerSpec::WithConfig(_, cfg) => serde_json::to_value(cfg).map_err(|e| {
                     HonchoError::Configuration(format!(
                         "failed to serialize peer config for {}: {e}",

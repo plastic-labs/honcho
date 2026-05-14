@@ -316,3 +316,31 @@ async fn session_context_with_options_sends_only_set_params() {
     let ctx = session.context_with_options(&opts).await.unwrap();
     assert_eq!(ctx.id, "sess1");
 }
+
+// ── T3.4: Cross-field validation ────────────────────────────────────
+
+#[test]
+fn session_context_options_peer_perspective_requires_peer_target() {
+    let opts = SessionContextOptions::builder()
+        .peer_perspective("alice")
+        .build();
+    let err = opts.validate().unwrap_err();
+    assert_eq!(err.code(), "validation_error");
+}
+
+#[test]
+fn session_context_options_both_set_succeeds() {
+    let opts = SessionContextOptions::builder()
+        .peer_perspective("alice")
+        .peer_target("bob")
+        .build();
+    assert_eq!(opts.peer_perspective.as_deref(), Some("alice"));
+    assert_eq!(opts.peer_target.as_deref(), Some("bob"));
+}
+
+#[test]
+fn session_context_options_no_perspective_no_target_succeeds() {
+    let opts = SessionContextOptions::builder().build();
+    assert!(opts.peer_perspective.is_none());
+    assert!(opts.peer_target.is_none());
+}

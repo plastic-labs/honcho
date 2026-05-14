@@ -128,7 +128,6 @@ async fn schedule_dream_posts_correct_body() {
     let expected_body = serde_json::json!({
         "observer": "alice",
         "observed": "alice",
-        "session_id": null,
         "dream_type": "omni"
     });
 

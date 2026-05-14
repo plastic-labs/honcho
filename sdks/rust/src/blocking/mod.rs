@@ -12,4 +12,4 @@ mod session;
 pub use client::Honcho;
 pub use conclusion::{Conclusion, ConclusionScope};
 pub use peer::{ChatStreamIterator, Peer};
-pub use session::Session;
+pub use session::{BlockingSessionRepresentationBuilder, BlockingUploadFileBuilder, Session};

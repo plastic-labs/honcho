@@ -26,6 +26,7 @@ fn main() -> honcho_ai::error::Result<()> {
     let opts = honcho_ai::types::session::SessionContextOptions::builder()
         .summary(true)
         .build();
+    opts.validate()?;
     let ctx = session.context_with_options(&opts)?;
     println!("Context has {} messages", ctx.messages.len());
 

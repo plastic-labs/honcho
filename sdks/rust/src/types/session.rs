@@ -5,7 +5,10 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-pub use super::dream::{DreamConfiguration, ReasoningConfiguration, SessionQueueStatus};
+pub use super::common::{
+    DreamConfiguration, PeerCardConfiguration, ReasoningConfiguration, SummaryConfiguration,
+};
+pub use super::dream::SessionQueueStatus;
 
 /// A conversation session containing messages between peers.
 #[non_exhaustive]
@@ -21,8 +24,8 @@ pub struct Session {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, serde_json::Value>,
     /// Session-level configuration overrides.
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub configuration: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub configuration: SessionConfiguration,
     /// When the session was created.
     pub created_at: DateTime<Utc>,
 }
@@ -71,12 +74,28 @@ pub struct SessionGet {
     pub filters: Option<HashMap<String, serde_json::Value>>,
 }
 
+/// Request body for setting session metadata.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionMetadataSet {
+    /// Metadata to set.
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Request body for setting session configuration.
+#[non_exhaustive]
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionConfigurationSet {
+    /// Configuration to set.
+    pub configuration: HashMap<String, serde_json::Value>,
+}
+
 /// Session-level configuration overrides.
 ///
 /// All fields are optional. Session-level configuration overrides
 /// workspace-level configuration, which overrides global configuration.
 #[non_exhaustive]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SessionConfiguration {
     /// Configuration for reasoning functionality.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -98,36 +117,10 @@ pub struct SessionConfiguration {
     pub dream: Option<DreamConfiguration>,
 }
 
-/// Configuration for peer card generation and usage.
-#[non_exhaustive]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct PeerCardConfiguration {
-    /// Whether to use peer card during the reasoning process.
-    #[serde(rename = "use", skip_serializing_if = "Option::is_none")]
-    pub use_peer_card: Option<bool>,
-    /// Whether to generate a peer card based on content.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub create: Option<bool>,
-}
-
-/// Configuration for automatic session summarization.
-#[non_exhaustive]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SummaryConfiguration {
-    /// Whether to enable summary functionality.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-    /// Number of messages per short summary (minimum 10).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub messages_per_short_summary: Option<u32>,
-    /// Number of messages per long summary (minimum 20).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub messages_per_long_summary: Option<u32>,
-}
-
 /// Per-peer observation settings within a session.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SessionPeerConfig {
     /// Whether Honcho will use reasoning to form a representation of this peer.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,6 +168,39 @@ pub struct SessionContextOptions {
     /// Maximum number of conclusions to include.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_conclusions: Option<u32>,
+}
+
+impl SessionContextOptions {
+    /// Validate cross-field constraints.
+    pub fn validate(&self) -> std::result::Result<(), crate::error::HonchoError> {
+        if self.peer_perspective.is_some() && self.peer_target.is_none() {
+            return Err(crate::error::HonchoError::Validation(
+                "peer_perspective requires peer_target to be set".into(),
+            ));
+        }
+        if let Some(k) = self.search_top_k
+            && !(1..=100).contains(&k)
+        {
+            return Err(crate::error::HonchoError::Validation(
+                "search_top_k must be between 1 and 100".into(),
+            ));
+        }
+        if let Some(d) = self.search_max_distance
+            && !(0.0..=1.0).contains(&d)
+        {
+            return Err(crate::error::HonchoError::Validation(
+                "search_max_distance must be between 0.0 and 1.0".into(),
+            ));
+        }
+        if let Some(m) = self.max_conclusions
+            && !(1..=100).contains(&m)
+        {
+            return Err(crate::error::HonchoError::Validation(
+                "max_conclusions must be between 1 and 100".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn default_true() -> bool {
@@ -275,14 +301,56 @@ fn default_size() -> u64 {
 /// A paginated list of sessions.
 pub type SessionPage = super::pagination::Page<Session>;
 
+/// Resolves an assistant name from various reference types.
+///
+/// Implemented for `&str`, `String`, and `&Peer` so that
+/// [`SessionContext::to_openai`] and [`SessionContext::to_anthropic`]
+/// can accept any of these without extra boilerplate.
+pub trait IntoAssistantRef {
+    /// Return the string name/id to use as the assistant.
+    fn as_assistant_name(&self) -> &str;
+}
+
+impl IntoAssistantRef for &str {
+    fn as_assistant_name(&self) -> &str {
+        self
+    }
+}
+
+impl IntoAssistantRef for String {
+    fn as_assistant_name(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl IntoAssistantRef for &crate::Peer {
+    fn as_assistant_name(&self) -> &str {
+        self.id()
+    }
+}
+
 impl SessionContext {
     /// Convert the context to OpenAI-compatible message format.
     ///
     /// System messages (`peer_representation`, `peer_card`, summary) are prepended.
     /// Assistant messages get `role: "assistant"`, all others get `role: "user"`.
     /// Each message also includes a `"name"` field set to the peer ID.
+    ///
+    /// `assistant` can be a `&str`, `String`, or `&Peer`.
+    ///
+    /// ```
+    /// use honcho_ai::types::session::SessionContext;
+    /// let ctx: SessionContext = serde_json::from_value(serde_json::json!({
+    ///     "id": "s1",
+    ///     "messages": [],
+    /// })).unwrap();
+    /// let messages = ctx.to_openai("assistant-1");
+    /// assert!(messages.is_empty());
+    /// ```
     #[must_use]
-    pub fn to_openai(&self, assistant: &str) -> Vec<serde_json::Value> {
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn to_openai(&self, assistant: impl IntoAssistantRef) -> Vec<serde_json::Value> {
+        let assistant = assistant.as_assistant_name();
         let mut result: Vec<serde_json::Value> = Vec::new();
 
         if let Some(ref rep) = self.peer_representation {
@@ -331,8 +399,12 @@ impl SessionContext {
     /// since Anthropic uses a separate `system` parameter.
     /// Assistant messages get `role: "assistant"`, others get `role: "user"` with
     /// `PEER_ID: CONTENT` format.
+    ///
+    /// `assistant` can be a `&str`, `String`, or `&Peer`.
     #[must_use]
-    pub fn to_anthropic(&self, assistant: &str) -> Vec<serde_json::Value> {
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn to_anthropic(&self, assistant: impl IntoAssistantRef) -> Vec<serde_json::Value> {
+        let assistant = assistant.as_assistant_name();
         let mut result: Vec<serde_json::Value> = Vec::new();
 
         if let Some(ref rep) = self.peer_representation {

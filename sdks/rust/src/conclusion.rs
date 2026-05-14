@@ -16,8 +16,6 @@ use crate::types::dialectic::RepresentationResponse;
 use crate::types::pagination::paginate_post;
 
 pub(crate) struct ConclusionInner {
-    #[expect(dead_code)]
-    http: HttpClient,
     workspace_id: String,
     id: String,
     content: String,
@@ -36,10 +34,10 @@ pub struct Conclusion {
 }
 
 impl Conclusion {
-    pub(crate) fn from_parts(http: HttpClient, workspace_id: String, resp: ConclusionData) -> Self {
+    #[allow(clippy::needless_pass_by_value)]
+    pub(crate) fn from_parts(workspace_id: String, resp: ConclusionData) -> Self {
         Self {
             inner: Arc::new(ConclusionInner {
-                http,
                 workspace_id,
                 id: resp.id,
                 content: resp.content,
@@ -49,15 +47,6 @@ impl Conclusion {
                 created_at: resp.created_at,
             }),
         }
-    }
-
-    #[expect(dead_code)]
-    pub(crate) fn from_response(honcho: &crate::Honcho, resp: ConclusionData) -> Self {
-        Self::from_parts(
-            honcho.http().clone(),
-            honcho.workspace_id().to_owned(),
-            resp,
-        )
     }
 
     /// The conclusion's unique identifier.
@@ -334,9 +323,11 @@ impl ConclusionScope {
                 conclusions: chunk.to_vec(),
             };
             let batch: Vec<ConclusionData> = self.inner.http.post(&route, Some(&body), &[]).await?;
-            all.extend(batch.into_iter().map(|d| {
-                Conclusion::from_parts(self.inner.http.clone(), self.inner.workspace_id.clone(), d)
-            }));
+            all.extend(
+                batch
+                    .into_iter()
+                    .map(|d| Conclusion::from_parts(self.inner.workspace_id.clone(), d)),
+            );
         }
 
         Ok(all)
@@ -871,7 +862,7 @@ mod tests {
     #[test]
     fn debug_truncates_long_content() {
         let data = make_conclusion_data("a".repeat(80), None);
-        let conc = Conclusion::from_parts(test_http(), "ws".to_owned(), data);
+        let conc = Conclusion::from_parts("ws".to_owned(), data);
         let dbg = format!("{conc:?}");
         assert!(dbg.contains("Conclusion { id: \"c1\", content: \""));
         assert!(!dbg.contains(&"a".repeat(80)));
@@ -880,7 +871,7 @@ mod tests {
     #[test]
     fn debug_truncation_multibyte_utf8() {
         let data = make_conclusion_data("\u{4e00}".repeat(60), None);
-        let conc = Conclusion::from_parts(test_http(), "ws".to_owned(), data);
+        let conc = Conclusion::from_parts("ws".to_owned(), data);
         let dbg = format!("{conc:?}");
         assert!(!dbg.contains(&"\u{4e00}".repeat(60)));
     }
@@ -889,14 +880,14 @@ mod tests {
     fn display_returns_full_content() {
         let long = "x".repeat(200);
         let data = make_conclusion_data(long.clone(), None);
-        let conc = Conclusion::from_parts(test_http(), "ws".to_owned(), data);
+        let conc = Conclusion::from_parts("ws".to_owned(), data);
         assert_eq!(format!("{conc}"), long);
     }
 
     #[test]
     fn getters_return_correct_values() {
         let data = make_conclusion_data("content here".to_owned(), Some("sess-1".to_owned()));
-        let conc = Conclusion::from_parts(test_http(), "ws-1".to_owned(), data);
+        let conc = Conclusion::from_parts("ws-1".to_owned(), data);
         assert_eq!(conc.id(), "c1");
         assert_eq!(conc.content(), "content here");
         assert_eq!(conc.observer_id(), "obs");

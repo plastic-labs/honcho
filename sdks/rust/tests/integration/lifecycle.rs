@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use honcho_ai::session::PeerSpec;
-use honcho_ai::types::session::SessionPeerConfig;
+use honcho_ai::types::session::{SessionConfiguration, SessionPeerConfig};
 use serde_json::json;
 
 use crate::common::try_client;
@@ -141,10 +141,10 @@ async fn peer_metadata_and_configuration_crud() {
 
     let mut config = HashMap::new();
     config.insert("language".to_owned(), json!("en"));
-    peer.set_configuration(config).await.unwrap();
+    peer.set_configuration_raw(config).await.unwrap();
 
-    let fetched_config = peer.get_configuration().await.unwrap();
-    assert_eq!(fetched_config.get("language").unwrap(), &json!("en"));
+    let fetched_config_raw = peer.get_configuration_raw().await.unwrap();
+    assert_eq!(fetched_config_raw.get("language").unwrap(), &json!("en"));
 
     let mut patch_meta = HashMap::new();
     patch_meta.insert("patched".to_owned(), json!(true));
@@ -205,12 +205,15 @@ async fn session_metadata_and_configuration() {
     let fetched_meta = session.get_metadata().await.unwrap();
     assert_eq!(fetched_meta.get("topic").unwrap(), &json!("integration"));
 
-    let mut config = HashMap::new();
-    config.insert("mode".to_owned(), json!("test"));
-    session.set_configuration(config).await.unwrap();
+    let config: SessionConfiguration = serde_json::from_value(json!({
+        "summary": {"enabled": true}
+    }))
+    .unwrap();
+    session.set_configuration(&config).await.unwrap();
 
     let fetched_config = session.get_configuration().await.unwrap();
-    assert_eq!(fetched_config.get("mode").unwrap(), &json!("test"));
+    assert!(fetched_config.summary.is_some());
+    assert_eq!(fetched_config.summary.unwrap().enabled, Some(true));
 
     session.delete().await.unwrap();
     drop(guard);

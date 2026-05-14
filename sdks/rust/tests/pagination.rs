@@ -130,7 +130,11 @@ async fn page_next_page_returns_page_2() {
     assert_eq!(page1.page(), 1);
     assert!(page1.has_next());
 
-    let page2 = page1.next_page().await.expect("page 2 should exist");
+    let page2 = page1
+        .next_page()
+        .await
+        .unwrap()
+        .expect("page 2 should exist");
     assert_eq!(page2.items().len(), 2);
     assert_eq!(page2.page(), 2);
     assert_eq!(page2.items()[0].id, "carol");
@@ -171,7 +175,7 @@ async fn page_next_page_returns_none_when_no_more() {
 
     assert_eq!(page.items().len(), 1);
     assert!(!page.has_next());
-    assert!(page.next_page().await.is_none());
+    assert!(page.next_page().await.unwrap().is_none());
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -240,7 +244,11 @@ async fn page_propagates_filters_on_subsequent_pages() {
         })
     });
 
-    let page2 = page1.next_page().await.expect("page 2 should exist");
+    let page2 = page1
+        .next_page()
+        .await
+        .unwrap()
+        .expect("page 2 should exist");
     assert_eq!(page2.items().len(), 1);
     assert_eq!(page2.page(), 2);
     assert_eq!(page2.items()[0].id, "bob");
@@ -310,7 +318,11 @@ async fn page_propagates_reverse_query_on_subsequent_pages() {
         })
     });
 
-    let page2 = page1.next_page().await.expect("page 2 should exist");
+    let page2 = page1
+        .next_page()
+        .await
+        .unwrap()
+        .expect("page 2 should exist");
     assert_eq!(page2.items().len(), 1);
     assert_eq!(page2.page(), 2);
     assert_eq!(page2.items()[0].id, "alice");
@@ -609,7 +621,11 @@ async fn paginate_post_next_page_auto_fetches() {
 
     assert_eq!(page1.items()[0].id, "alice");
 
-    let page2 = page1.next_page().await.expect("page 2 should exist");
+    let page2 = page1
+        .next_page()
+        .await
+        .unwrap()
+        .expect("page 2 should exist");
     assert_eq!(page2.items().len(), 2);
     assert_eq!(page2.page(), 2);
     assert_eq!(page2.items()[0].id, "carol");
@@ -650,6 +666,144 @@ async fn paginate_post_with_reverse_param() {
 
     assert_eq!(page.items()[0].id, "zoe");
     assert!(!page.has_next());
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// P1.8 — Error propagation when page 2 returns HTTP 500
+// ═══════════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn page_next_page_returns_err_on_http_500() {
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v3/workspaces/ws1/peers/list"))
+        .and(query_param("page", "2"))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(serde_json::json!({"error": "internal"})),
+        )
+        .mount(&server)
+        .await;
+
+    let page1_resp = PageResponse::<Peer>::new(
+        vec![
+            serde_json::from_value(peer_json("alice")).unwrap(),
+            serde_json::from_value(peer_json("bob")).unwrap(),
+        ],
+        4,
+        1,
+        2,
+        2,
+    );
+    let server_uri = server.uri();
+
+    let page1 = Page::from_page_response(page1_resp).with_fetcher(move |page_num: u64| {
+        let uri = server_uri.clone();
+        Box::pin(async move {
+            let response = reqwest::Client::new()
+                .post(format!("{}{}", uri, "/v3/workspaces/ws1/peers/list"))
+                .query(&[("page", page_num)])
+                .query(&[("size", 2u64)])
+                .header("content-type", "application/json")
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .map_err(HonchoError::Transport)?;
+            if !response.status().is_success() {
+                return Err(HonchoError::Server {
+                    status: response.status().as_u16(),
+                    message: "server error".into(),
+                });
+            }
+            let pr: PageResponse<Peer> = response.json().await.map_err(HonchoError::Transport)?;
+            Ok(pr)
+        })
+    });
+
+    assert!(page1.has_next());
+    let result = page1.next_page().await;
+    assert!(
+        result.is_err(),
+        "next_page should return Err on HTTP 500, not Ok(None)"
+    );
+}
+
+#[tokio::test]
+async fn page_collect_all_returns_err_on_http_500() {
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v3/workspaces/ws1/peers/list"))
+        .and(query_param("page", "2"))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(serde_json::json!({"error": "internal"})),
+        )
+        .mount(&server)
+        .await;
+
+    let page1_resp = PageResponse::<Peer>::new(
+        vec![
+            serde_json::from_value(peer_json("alice")).unwrap(),
+            serde_json::from_value(peer_json("bob")).unwrap(),
+        ],
+        4,
+        1,
+        2,
+        2,
+    );
+    let server_uri = server.uri();
+
+    let page1 = Page::from_page_response(page1_resp).with_fetcher(move |page_num: u64| {
+        let uri = server_uri.clone();
+        Box::pin(async move {
+            let response = reqwest::Client::new()
+                .post(format!("{}{}", uri, "/v3/workspaces/ws1/peers/list"))
+                .query(&[("page", page_num)])
+                .query(&[("size", 2u64)])
+                .header("content-type", "application/json")
+                .json(&serde_json::json!({}))
+                .send()
+                .await
+                .map_err(HonchoError::Transport)?;
+            if !response.status().is_success() {
+                return Err(HonchoError::Server {
+                    status: response.status().as_u16(),
+                    message: "server error".into(),
+                });
+            }
+            let pr: PageResponse<Peer> = response.json().await.map_err(HonchoError::Transport)?;
+            Ok(pr)
+        })
+    });
+
+    let mut all = Vec::new();
+    let mut current = page1;
+    all.append(&mut current.items());
+    let result: Result<Vec<Peer>, _> = {
+        let mut collected = all;
+        loop {
+            match current.next_page().await {
+                Ok(Some(next)) => {
+                    let mut items = next.items();
+                    collected.append(&mut items);
+                    current = next;
+                }
+                Ok(None) => break Ok(collected),
+                Err(e) => break Err(e),
+            }
+        }
+    };
+
+    assert!(
+        result.is_err(),
+        "collect-all loop should return Err on HTTP 500, not Ok(partial_vec)"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════

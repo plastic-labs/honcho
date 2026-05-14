@@ -10,7 +10,7 @@
 
 use futures_util::StreamExt;
 use honcho_ai::Honcho;
-use honcho_ai::types::peer::PeerContextOptions;
+
 use wiremock::matchers::{body_json, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -272,7 +272,7 @@ async fn peer_context_with_target_sends_query() {
         .await;
 
     let peer = honcho.peer("alice").await.unwrap();
-    let ctx = peer.context_with_target("bob").await.unwrap();
+    let ctx = peer.context_builder().target("bob").send().await.unwrap();
     assert_eq!(ctx.peer_id, "alice");
     assert_eq!(ctx.target_id, "bob");
     assert_eq!(ctx.representation.as_deref(), Some("Bob is helpful."));
@@ -304,15 +304,17 @@ async fn peer_context_with_options_sends_all_query_params() {
         .await;
 
     let peer = honcho.peer("alice").await.unwrap();
-    let opts = PeerContextOptions::builder()
+    let ctx = peer
+        .context_builder()
         .target("bob")
         .search_query("preferences")
         .search_top_k(10)
         .search_max_distance(0.5)
         .include_most_frequent(true)
         .max_conclusions(20)
-        .build();
-    let ctx = peer.context_with_options(&opts).await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(ctx.peer_id, "alice");
     assert_eq!(ctx.target_id, "bob");
     assert_eq!(ctx.representation.as_deref(), Some("curated context"));
@@ -337,8 +339,7 @@ async fn peer_context_with_options_sends_only_set_params() {
         .await;
 
     let peer = honcho.peer("alice").await.unwrap();
-    let opts = PeerContextOptions::builder().build();
-    let ctx = peer.context_with_options(&opts).await.unwrap();
+    let ctx = peer.context_builder().send().await.unwrap();
     assert_eq!(ctx.peer_id, "alice");
     assert_eq!(ctx.representation.as_deref(), Some("self context"));
 }
