@@ -585,7 +585,7 @@ export class Session {
    *
    * @param options - Either a legacy raw filter object or an options object with
    *                  `filters`, `page`, `size`, and `reverse`. See
-   *                  [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   *                  [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a paginated Page of Message objects
    */
   async messages(
@@ -843,7 +843,7 @@ export class Session {
    * @param query - The search query to use
    * @param options - Search options
    * @param options.filters - Optional filters to scope the search. See
-   *                          [search filters documentation](https://docs.honcho.dev/v3/documentation/core-concepts/features/using-filters).
+   *                          [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @param options.limit - Number of results to return (1-100, default: 10)
    * @returns Promise resolving to an array of Message objects matching the query
    */

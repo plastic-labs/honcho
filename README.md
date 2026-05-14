@@ -19,7 +19,7 @@ Store messages and events, let Honcho reason in the background, then query peer 
 
 Using Honcho as your memory system will earn your agents higher retention, more trust, and help you build data moats to out-compete incumbents.
 
-> Honcho has defined the Pareto Frontier of Agent Memory. Watch the [video](https://x.com/honchodotdev/status/2002090546521911703?s=20), check out our [evals page](https://evals.honcho.dev/), and read the [blog post](https://blog.plasticlabs.ai/research/Benchmarking-Honcho) for more detail.
+> Honcho has defined the Pareto Frontier of Agent Memory. Watch the [video](https://x.com/honchodotdev/status/2002090546521911703?s=20), check out our [evals page](https://honcho.dev/evals/), and read the [blog post](https://blog.plasticlabs.ai/research/Benchmarking-Honcho) for more detail.
 
 ## Contents
 
@@ -66,7 +66,7 @@ The Honcho project is split between several repositories, with this one hosting 
 3. **Query** — ask Honcho for context, search results, peer representations, or a natural-language answer.
 4. **Inject** — drop the result into any LLM call or agent framework.
 
-Concretely: workspaces hold peers, peers participate in sessions, messages live on sessions, and Honcho builds a per-peer representation that you query through the [Chat Endpoint](https://docs.honcho.dev/v3/documentation/features/chat) or directly.
+Concretely: workspaces hold peers, peers participate in sessions, messages live on sessions, and Honcho builds a per-peer representation that you query through the [Chat Endpoint](https://honcho.dev/docs/v3/documentation/features/chat) or directly.
 
 ## Quickstart
 
@@ -149,7 +149,7 @@ const completion = await openai.chat.completions.create({
 });
 ```
 
-> **Note:** background reasoning is asynchronous. Newly-added messages may take a moment to be reflected in chat/representation responses; for low-latency reads, use the [`representation`](https://docs.honcho.dev/v3/documentation/features/representation) endpoint.
+> **Note:** background reasoning is asynchronous. Newly-added messages may take a moment to be reflected in chat/representation responses; for low-latency reads, use the [`representation`](https://honcho.dev/docs/v3/documentation/features/representation) endpoint.
 
 ## What Honcho Gives You
 
@@ -163,7 +163,7 @@ const completion = await openai.chat.completions.create({
 | Import documents | `session.upload_file(...)` |
 | Inspect background processing | `honcho.queue_status(...)` |
 
-See the full [SDK Reference](https://docs.honcho.dev/v3/documentation/reference/sdk) and [API Reference](https://docs.honcho.dev/v3/api-reference/introduction).
+See the full [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) and [API Reference](https://honcho.dev/docs/v3/api-reference/introduction).
 
 ## Integrations
 
@@ -188,7 +188,7 @@ claude mcp add honcho \
   --header "X-Honcho-User-Name: YourName"
 ```
 
-Details: [Claude Code guide](https://docs.honcho.dev/v3/guides/integrations/claude-code) · [MCP guide](https://docs.honcho.dev/v3/guides/integrations/mcp).
+Details: [Claude Code guide](https://honcho.dev/docs/v3/guides/integrations/claude-code) · [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp).
 
 ### OpenCode
 
@@ -196,7 +196,7 @@ Details: [Claude Code guide](https://docs.honcho.dev/v3/guides/integrations/clau
 opencode plugin "@honcho-ai/opencode-honcho" --global
 ```
 
-Details: [OpenCode guide](https://docs.honcho.dev/v3/guides/integrations/opencode).
+Details: [OpenCode guide](https://honcho.dev/docs/v3/guides/integrations/opencode).
 
 ### OpenClaw
 
@@ -206,7 +206,7 @@ openclaw honcho setup
 openclaw gateway --force
 ```
 
-`openclaw honcho setup` prompts for your API key, writes the config, and optionally migrates legacy `MEMORY.md` / `USER.md` / `IDENTITY.md` files into Honcho (non-destructive — originals are never deleted). Details: [OpenClaw guide](https://docs.honcho.dev/v3/guides/integrations/openclaw).
+`openclaw honcho setup` prompts for your API key, writes the config, and optionally migrates legacy `MEMORY.md` / `USER.md` / `IDENTITY.md` files into Honcho (non-destructive — originals are never deleted). Details: [OpenClaw guide](https://honcho.dev/docs/v3/guides/integrations/openclaw).
 
 ### Hermes
 
@@ -214,7 +214,7 @@ openclaw gateway --force
 hermes memory setup   # select "honcho", point at api.honcho.dev or your local server
 ```
 
-Details: [Hermes guide](https://docs.honcho.dev/v3/guides/integrations/hermes).
+Details: [Hermes guide](https://honcho.dev/docs/v3/guides/integrations/hermes).
 
 ### Add Honcho to your own codebase (agent skill)
 
@@ -224,11 +224,11 @@ For wiring the Honcho SDK into an existing application, install the integration 
 npx skills add plastic-labs/honcho
 ```
 
-Then invoke `/honcho-integration` in Claude Code (or `/honcho-dev:integrate` via the plugin marketplace). Details: [agentic development guide](https://docs.honcho.dev/v3/documentation/introduction/vibecoding).
+Then invoke `/honcho-integration` in Claude Code (or `/honcho-dev:integrate` via the plugin marketplace). Details: [agentic development guide](https://honcho.dev/docs/v3/documentation/introduction/vibecoding).
 
 ### Other MCP clients
 
-The same `claude mcp add` form (or its client-specific equivalent) works in any MCP-compatible client. See [MCP guide](https://docs.honcho.dev/v3/guides/integrations/mcp).
+The same `claude mcp add` form (or its client-specific equivalent) works in any MCP-compatible client. See [MCP guide](https://honcho.dev/docs/v3/guides/integrations/mcp).
 
 ## Core Concepts
 
@@ -248,7 +248,7 @@ Peers exchange messages within sessions; Honcho reasons over those messages to b
 
 What you query out of Honcho:
 
-- **Conclusions** — what Honcho has extracted about a peer (deductive and inductive). Exposed via the [conclusions API](https://docs.honcho.dev/v3/api-reference/introduction).
+- **Conclusions** — what Honcho has extracted about a peer (deductive and inductive). Exposed via the [conclusions API](https://honcho.dev/docs/v3/api-reference/introduction).
 - **Representations** — static, low-latency snapshots of what Honcho knows about a peer (optionally session-scoped).
 - **Peer Cards** — compact identity summaries.
 - **Session context / summaries** — prompt-ready bundles for long-running conversations.
@@ -268,7 +268,7 @@ Internally, Honcho stores peer-related observations in **collections** of vector
 
 ## Benchmarks &amp; Evals
 
-Honcho's evals span LongMemEval, LoCoMo, and other long-conversation benchmarks. See the [evals page](https://evals.honcho.dev/), the [research blog post](https://blog.plasticlabs.ai/research/Benchmarking-Honcho), and the [Pareto-frontier announcement video](https://x.com/honchodotdev/status/2002090546521911703?s=20) for methodology and reproducible results.
+Honcho's evals span LongMemEval, LoCoMo, and other long-conversation benchmarks. See the [evals page](https://honcho.dev/evals/), the [research blog post](https://blog.plasticlabs.ai/research/Benchmarking-Honcho), and the [Pareto-frontier announcement video](https://x.com/honchodotdev/status/2002090546521911703?s=20) for methodology and reproducible results.
 
 ## Self-hosting
 
@@ -430,7 +430,7 @@ The deriver generates representations, summaries, peer cards, and manages dreami
 </details>
 <!-- markdownlint-enable MD033 -->
 
-Contributors: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for pre-commit setup. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://docs.honcho.dev/v3/contributing/self-hosting#deploying-on-fly-io).
+Contributors: see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for pre-commit setup. Deploying to Fly.io: see [Self-hosting docs → Deploying on Fly.io](https://honcho.dev/docs/v3/contributing/self-hosting#deploying-on-fly-io).
 
 ## Configuration
 
@@ -628,7 +628,7 @@ the results.
 
 #### Chat API
 
-The flagship interface for using these insights is the [Chat Endpoint](https://docs.honcho.dev/v3/documentation/features/chat) (`POST /peers/{peer_id}/chat`). It takes natural-language requests to get data about a peer and returns reasoning-grounded responses. Examples:
+The flagship interface for using these insights is the [Chat Endpoint](https://honcho.dev/docs/v3/documentation/features/chat) (`POST /peers/{peer_id}/chat`). It takes natural-language requests to get data about a peer and returns reasoning-grounded responses. Examples:
 
 - Asking Honcho for a generic or specific insight about the peer.
 - Asking Honcho to hydrate a prompt with data about the peer's behaviour.
@@ -649,11 +649,11 @@ For low-latency use cases, Honcho provides access to a `representation` endpoint
 
 SDKs are versioned independently of the server. Current SDK versions track each other; the server badge above reflects the deployed server version.
 
-See the [SDK Reference](https://docs.honcho.dev/v3/documentation/reference/sdk) for full API surface, the [API Reference](https://docs.honcho.dev/v3/api-reference/introduction) for the raw HTTP API, and per-SDK example folders for runnable demos.
+See the [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) for full API surface, the [API Reference](https://honcho.dev/docs/v3/api-reference/introduction) for the raw HTTP API, and per-SDK example folders for runnable demos.
 
 ## Learn More
 
-- [Developer documentation](https://docs.honcho.dev/) — full API surface, guides, integrations.
+- [Developer documentation](https://honcho.dev/docs/) — full API surface, guides, integrations.
 - [Plastic Labs blog](https://blog.plasticlabs.ai/) — design philosophy and history of the project.
 
 ## Contributing

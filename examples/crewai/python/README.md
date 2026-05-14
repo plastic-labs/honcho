@@ -45,7 +45,7 @@ crew = Crew(
 ## Documentation
 
 For comprehensive guides, examples, and API reference, visit:
-**[https://docs.honcho.dev/v3/integrations/crewai](https://docs.honcho.dev/v3/integrations/crewai)**
+**[https://honcho.dev/docs/v3/integrations/crewai](https://honcho.dev/docs/v3/integrations/crewai)**
 
 ## Examples
 
@@ -58,5 +58,5 @@ AGPL-3.0-or-later
 ## Support
 
 - Report issues: [GitHub Issues](https://github.com/plastic-labs/honcho/issues)
-- Documentation: [docs.honcho.dev](https://docs.honcho.dev)
+- Documentation: [honcho.dev/docs](https://honcho.dev/docs)
 - Website: [honcho.dev](https://honcho.dev)
