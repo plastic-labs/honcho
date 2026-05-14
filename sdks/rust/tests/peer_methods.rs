@@ -80,7 +80,7 @@ async fn peer_representation_basic() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let repr = peer.representation().await.unwrap();
     assert_eq!(repr, "Alice likes cats and Rust.");
 }
@@ -108,7 +108,7 @@ async fn peer_representation_with_options() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let repr = peer
         .representation_builder()
         .session_id("sess1")
@@ -130,7 +130,7 @@ async fn peer_representation_validates_search_top_k() {
     let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
 
     let err = peer
         .representation_builder()
@@ -163,7 +163,7 @@ async fn peer_representation_validates_search_max_distance() {
     let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
 
     let err = peer
         .representation_builder()
@@ -196,7 +196,7 @@ async fn peer_representation_validates_max_conclusions() {
     let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
 
     let err = peer
         .representation_builder()
@@ -242,7 +242,7 @@ async fn peer_context_returns_peer_context() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let ctx = peer.context().await.unwrap();
     assert_eq!(ctx.peer_id, "alice");
     assert_eq!(ctx.target_id, "alice");
@@ -271,7 +271,7 @@ async fn peer_context_with_target_sends_query() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let ctx = peer.context_builder().target("bob").send().await.unwrap();
     assert_eq!(ctx.peer_id, "alice");
     assert_eq!(ctx.target_id, "bob");
@@ -303,7 +303,7 @@ async fn peer_context_with_options_sends_all_query_params() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let ctx = peer
         .context_builder()
         .target("bob")
@@ -338,7 +338,7 @@ async fn peer_context_with_options_sends_only_set_params() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let ctx = peer.context_builder().send().await.unwrap();
     assert_eq!(ctx.peer_id, "alice");
     assert_eq!(ctx.representation.as_deref(), Some("self context"));
@@ -381,7 +381,7 @@ async fn peer_sessions_returns_paginated() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let page = peer.sessions().await.unwrap();
     assert_eq!(page.total(), 2);
     assert_eq!(page.pages(), 1);
@@ -426,7 +426,7 @@ async fn chat_stream_basic() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let mut stream = peer.chat_stream("hi").send().await.unwrap();
 
     let mut chunks = Vec::new();
@@ -464,7 +464,7 @@ async fn chat_stream_with_target_session_reasoning_level() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let mut stream = peer
         .chat_stream("deep thought")
         .target("bob")
@@ -493,7 +493,7 @@ async fn chat_stream_error_before_first_byte_returns_err() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let result = peer.chat_stream("hi").send().await;
     assert!(result.is_err(), "expected error for 500 response");
     let err = result.err().unwrap();
@@ -512,7 +512,7 @@ async fn chat_stream_validates_non_empty_query() {
     let honcho = make_honcho(&server);
     mount_peer_create(&server).await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let result = peer.chat_stream("").send().await;
     assert!(result.is_err(), "expected error for empty query");
     let err = result.err().unwrap();

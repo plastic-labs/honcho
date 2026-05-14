@@ -14,8 +14,8 @@ async fn main() -> honcho_ai::error::Result<()> {
             .build(),
     )?;
 
-    let peer = honcho.peer("user-1").await?;
-    let session = honcho.session("sess-1").await?;
+    let peer = honcho.peer("user-1", None, None).await?;
+    let session = honcho.session("sess-1", None, None, None).await?;
 
     session
         .add_messages(vec![peer.message("Hello, Honcho!").build()?])

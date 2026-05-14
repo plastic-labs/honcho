@@ -13,7 +13,7 @@ use crate::error::{HonchoError, Result};
 use crate::http::client::HttpClient;
 use crate::http::routes;
 use crate::peer::Peer;
-use crate::session::Session;
+use crate::session::{PeerSpec, Session};
 use crate::types::dream::QueueStatus;
 use crate::types::message::MessageResponse;
 use crate::types::peer::Peer as PeerResponse;
@@ -355,16 +355,21 @@ impl Honcho {
     /// ```no_run
     /// # async fn example() -> honcho_ai::error::Result<()> {
     /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
-    /// let peer = client.peer("alice").await?;
+    ///     let peer = client.peer("alice", None, None).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn peer(&self, id: impl Into<String>) -> Result<Peer> {
+    pub async fn peer(
+        &self,
+        id: impl Into<String>,
+        metadata: Option<HashMap<String, Value>>,
+        configuration: Option<HashMap<String, Value>>,
+    ) -> Result<Peer> {
         self.ensure_workspace().await?;
         let body = crate::types::peer::PeerCreate {
             id: id.into(),
-            metadata: None,
-            configuration: None,
+            metadata,
+            configuration,
         };
         let resp: PeerResponse = self
             .inner
@@ -381,17 +386,41 @@ impl Honcho {
     /// ```no_run
     /// # async fn example() -> honcho_ai::error::Result<()> {
     /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
-    /// let session = client.session("s-42").await?;
+    ///     let session = client.session("s-42", None, None, None).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn session(&self, id: impl Into<String>) -> Result<Session> {
+    pub async fn session(
+        &self,
+        id: impl Into<String>,
+        metadata: Option<HashMap<String, Value>>,
+        peers: Option<Vec<PeerSpec>>,
+        configuration: Option<crate::SessionConfiguration>,
+    ) -> Result<Session> {
         self.ensure_workspace().await?;
+        let peers_map = peers.map(|specs| {
+            specs
+                .into_iter()
+                .map(|s| {
+                    let (sid, cfg) = match s {
+                        PeerSpec::Id(id) => (
+                            id,
+                            crate::SessionPeerConfig {
+                                observe_me: None,
+                                observe_others: None,
+                            },
+                        ),
+                        PeerSpec::WithConfig(id, cfg) => (id, cfg),
+                    };
+                    (sid, cfg)
+                })
+                .collect()
+        });
         let body = crate::types::session::SessionCreate {
             id: id.into(),
-            metadata: None,
-            peers: None,
-            configuration: None,
+            metadata,
+            peers: peers_map,
+            configuration,
         };
         let resp: SessionResponse = self
             .inner
@@ -405,6 +434,23 @@ impl Honcho {
         Ok(Session::from_response(self, resp))
     }
 
+    /// Refresh workspace state by re-fetching metadata and configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example() -> honcho_ai::error::Result<()> {
+    /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
+    /// client.refresh().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn refresh(&self) -> Result<()> {
+        let _ = self.get_metadata().await?;
+        let _ = self.get_configuration().await?;
+        Ok(())
+    }
+
     /// Search messages across the workspace.
     ///
     /// # Examples
@@ -412,15 +458,21 @@ impl Honcho {
     /// ```no_run
     /// # async fn example() -> honcho_ai::error::Result<()> {
     /// let client = honcho_ai::Honcho::new("http://localhost:8000", "ws-1")?;
-    /// let results = client.search("important topic").await?;
+    /// let results = client.search("important topic", None, None).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn search(&self, query: &str) -> Result<Vec<crate::Message>> {
+    pub async fn search(
+        &self,
+        query: &str,
+        limit: Option<u32>,
+        filters: Option<HashMap<String, Value>>,
+    ) -> Result<Vec<crate::Message>> {
         self.ensure_workspace().await?;
         let body = crate::types::workspace::WorkspaceSearchRequest {
             query: query.to_owned(),
-            limit: 10,
+            limit: limit.unwrap_or(10),
+            filters,
         };
         let responses: Vec<MessageResponse> = self
             .inner

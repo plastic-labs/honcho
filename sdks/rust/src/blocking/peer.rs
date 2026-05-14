@@ -8,8 +8,9 @@ use crate::dialectic_stream::DialecticStream;
 use crate::error::Result;
 use crate::types::dialectic::{DialecticOptions, ReasoningLevel};
 use crate::types::message::MessageSearchOptions;
+use crate::types::pagination::Page;
 use crate::types::peer::{PeerConfig, PeerContext};
-use crate::types::session::Session;
+use crate::types::session::{Session, SessionListOptions};
 
 use super::conclusion::ConclusionScope;
 use super::iter::{BlockingIter, collect_all_pages};
@@ -151,6 +152,11 @@ impl Peer {
             let page = self.inner.sessions().await?;
             collect_all_pages(page).await
         })
+    }
+
+    /// List sessions with filters and pagination options. Returns a [`Page`].
+    pub fn sessions_with_options(&self, options: &SessionListOptions) -> Result<Page<Session>> {
+        block_on(self.inner.sessions_with_options(options))
     }
 
     /// Search messages for this peer.

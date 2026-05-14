@@ -228,12 +228,13 @@ pub fn from_response(
         }
         s if s >= 500 => HonchoError::Server { status: s, message },
         s if (400..500).contains(&s) => HonchoError::Client { status: s, message },
-        _ => HonchoError::Decode {
-            path: String::new(),
-            source: serde_json::Error::io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("from_response called with non-error status {status}"),
-            )),
+        s if (300..400).contains(&s) => HonchoError::Client {
+            status: s,
+            message: format!("unexpected redirect status {s}"),
+        },
+        _ => HonchoError::Client {
+            status: status.as_u16(),
+            message: format!("unexpected response status {status}"),
         },
     }
 }

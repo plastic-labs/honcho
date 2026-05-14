@@ -87,7 +87,7 @@ fn to_openai_with_peer_card() {
 
     assert_eq!(result.len(), 4);
     assert_eq!(result[0]["role"], "system");
-    assert_eq!(result[0]["content"], r#"<peer_card>["a","b"]</peer_card>"#);
+    assert_eq!(result[0]["content"], "<peer_card>['a', 'b']</peer_card>");
 }
 
 #[test]

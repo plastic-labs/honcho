@@ -52,13 +52,16 @@ async fn full_lifecycle() {
     let guard = WorkspaceGuard::new(client);
     let client = guard.inner();
 
-    let peer_a = client.peer("lifecycle-alice").await.unwrap();
+    let peer_a = client.peer("lifecycle-alice", None, None).await.unwrap();
     assert_eq!(peer_a.id(), "lifecycle-alice");
 
-    let peer_b = client.peer("lifecycle-bob").await.unwrap();
+    let peer_b = client.peer("lifecycle-bob", None, None).await.unwrap();
     assert_eq!(peer_b.id(), "lifecycle-bob");
 
-    let session = client.session("lifecycle-session").await.unwrap();
+    let session = client
+        .session("lifecycle-session", None, None, None)
+        .await
+        .unwrap();
     assert_eq!(session.id(), "lifecycle-session");
     assert!(session.is_active());
 
@@ -129,7 +132,7 @@ async fn peer_metadata_and_configuration_crud() {
     let guard = WorkspaceGuard::new(client);
     let client = guard.inner();
 
-    let peer = client.peer("meta-test-peer").await.unwrap();
+    let peer = client.peer("meta-test-peer", None, None).await.unwrap();
 
     let mut meta = HashMap::new();
     meta.insert("role".to_owned(), json!("tester"));
@@ -163,8 +166,11 @@ async fn session_clone_and_summaries() {
     let guard = WorkspaceGuard::new(client);
     let client = guard.inner();
 
-    let peer = client.peer("clone-test-peer").await.unwrap();
-    let session = client.session("clone-test-session").await.unwrap();
+    let peer = client.peer("clone-test-peer", None, None).await.unwrap();
+    let session = client
+        .session("clone-test-session", None, None, None)
+        .await
+        .unwrap();
     session.add_peer("clone-test-peer").await.unwrap();
 
     let msg = peer.message("message before clone").build().unwrap();
@@ -196,7 +202,10 @@ async fn session_metadata_and_configuration() {
     let guard = WorkspaceGuard::new(client);
     let client = guard.inner();
 
-    let session = client.session("meta-test-session").await.unwrap();
+    let session = client
+        .session("meta-test-session", None, None, None)
+        .await
+        .unwrap();
 
     let mut meta = HashMap::new();
     meta.insert("topic".to_owned(), json!("integration"));
@@ -227,8 +236,11 @@ async fn peer_representation_and_context() {
     let guard = WorkspaceGuard::new(client);
     let client = guard.inner();
 
-    let peer = client.peer("repr-test-peer").await.unwrap();
-    let session = client.session("repr-test-session").await.unwrap();
+    let peer = client.peer("repr-test-peer", None, None).await.unwrap();
+    let session = client
+        .session("repr-test-session", None, None, None)
+        .await
+        .unwrap();
     session.add_peer("repr-test-peer").await.unwrap();
 
     let msg = peer
@@ -287,7 +299,10 @@ async fn session_per_peer_configuration() {
         return;
     };
 
-    let session = client.session("peer-cfg-session").await.unwrap();
+    let session = client
+        .session("peer-cfg-session", None, None, None)
+        .await
+        .unwrap();
     session.add_peer("peer-cfg-a").await.unwrap();
 
     let cfg: SessionPeerConfig =

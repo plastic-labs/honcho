@@ -48,9 +48,12 @@ where
 }
 
 #[allow(clippy::cast_possible_truncation)]
-pub(crate) async fn collect_all_pages<T: Clone + Send + 'static>(
-    first_page: crate::types::pagination::Page<T>,
-) -> crate::error::Result<Vec<T>> {
+pub(crate) async fn collect_all_pages<
+    TRaw: Clone + Send + 'static,
+    TOut: Clone + Send + 'static,
+>(
+    first_page: crate::types::pagination::Page<TRaw, TOut>,
+) -> crate::error::Result<Vec<TOut>> {
     let mut all = Vec::with_capacity(first_page.total() as usize);
     let mut first_items = first_page.items();
     all.append(&mut first_items);

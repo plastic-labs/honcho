@@ -79,7 +79,7 @@ async fn peer_makes_get_or_create_post_returns_peer() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     assert_eq!(peer.id(), "alice");
     let meta = peer.metadata().unwrap();
     assert_eq!(meta["role"], "admin");
@@ -102,7 +102,7 @@ async fn peer_calls_ensure_workspace_first() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     assert_eq!(peer.id(), "alice");
 }
 
@@ -124,7 +124,7 @@ async fn session_makes_get_or_create_post() {
         .mount(&server)
         .await;
 
-    let session = honcho.session("sess1").await.unwrap();
+    let session = honcho.session("sess1", None, None, None).await.unwrap();
     assert_eq!(session.id(), "sess1");
     assert!(session.is_active());
     let meta = session.metadata().unwrap();

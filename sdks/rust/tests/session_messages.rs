@@ -82,7 +82,7 @@ async fn make_session(server: &MockServer) -> Session {
         .await;
 
     let honcho = make_honcho(server);
-    honcho.session("sess1").await.unwrap()
+    honcho.session("sess1", None, None, None).await.unwrap()
 }
 
 // ── F6.4: add_messages ─────────────────────────────────────────────────

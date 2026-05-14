@@ -178,6 +178,11 @@ impl SessionContextOptions {
                 "peer_perspective requires peer_target to be set".into(),
             ));
         }
+        if self.search_query.is_some() && self.peer_target.is_none() {
+            return Err(crate::error::HonchoError::Validation(
+                "search_query requires peer_target to be set".into(),
+            ));
+        }
         if let Some(k) = self.search_top_k
             && !(1..=100).contains(&k)
         {
@@ -363,7 +368,7 @@ impl SessionContext {
         if let Some(ref card) = self.peer_card {
             result.push(serde_json::json!({
                 "role": "system",
-                "content": format!("<peer_card>{}</peer_card>", serde_json::to_string(card).unwrap_or_default()),
+                "content": format!("<peer_card>[{}]</peer_card>", card.iter().map(|s| format!("'{}'", s.replace('\'', "\\'"))).collect::<Vec<_>>().join(", ")),
             }));
         }
 
@@ -417,7 +422,7 @@ impl SessionContext {
         if let Some(ref card) = self.peer_card {
             result.push(serde_json::json!({
                 "role": "user",
-                "content": format!("<peer_card>{}</peer_card>", serde_json::to_string(card).unwrap_or_default()),
+                "content": format!("<peer_card>[{}]</peer_card>", card.iter().map(|s| format!("'{}'", s.replace('\'', "\\'"))).collect::<Vec<_>>().join(", ")),
             }));
         }
 

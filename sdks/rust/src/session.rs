@@ -28,6 +28,7 @@ pub(crate) struct SessionInner {
     is_active: AtomicBool,
     metadata: RwLock<Option<HashMap<String, Value>>>,
     configuration: RwLock<Option<SessionConfiguration>>,
+    created_at: DateTime<Utc>,
 }
 
 /// A session in a Honcho workspace.
@@ -285,6 +286,7 @@ impl Session {
                 is_active: AtomicBool::new(resp.is_active),
                 metadata: RwLock::new(Some(resp.metadata)),
                 configuration: RwLock::new(Some(resp.configuration)),
+                created_at: resp.created_at,
             }),
         }
     }
@@ -365,6 +367,20 @@ impl Session {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// When the session was created.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(session: &honcho_ai::Session) {
+    /// println!("{}", session.created_at());
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn created_at(&self) -> &DateTime<Utc> {
+        &self.inner.created_at
     }
 
     // ── F6.1: Refresh / Metadata / Configuration CRUD ──────────────────
@@ -726,7 +742,7 @@ impl Session {
     ///
     /// ```no_run
     /// # async fn example(client: &honcho_ai::Honcho, session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
-    /// let peer = client.peer("alice").await?;
+    /// let peer = client.peer("alice", None, None).await?;
     /// let msg = peer.message("Hello!").build()?;
     /// let messages = session.add_messages(vec![msg]).await?;
     /// # Ok(())
@@ -763,7 +779,7 @@ impl Session {
             .collect())
     }
 
-    /// List messages in this session (paginated).
+    /// List messages in this session with default pagination (no filters, page 1, size 50).
     ///
     /// # Examples
     ///
@@ -776,24 +792,51 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn messages(&self) -> Result<crate::types::pagination::Page<Message>> {
+    pub async fn messages(
+        &self,
+    ) -> Result<crate::types::pagination::Page<MessageResponse, Message>> {
+        self.messages_with_options(None, 1, 50, false).await
+    }
+
+    /// List messages in this session with optional filters, page, size, and reverse.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # async fn example(session: &honcho_ai::Session) -> honcho_ai::error::Result<()> {
+    /// let page = session.messages_with_options(None, 1, 25, false).await?;
+    /// for msg in page.items() {
+    ///     println!("{}", msg.content());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn messages_with_options(
+        &self,
+        filters: Option<HashMap<String, Value>>,
+        page: u64,
+        size: u64,
+        reverse: bool,
+    ) -> Result<crate::types::pagination::Page<MessageResponse, Message>> {
         let route = routes::messages_list(&self.inner.workspace_id, &self.inner.id);
-        let page: crate::types::pagination::Page<MessageResponse> =
-            crate::types::pagination::paginate_post(&self.inner.http, &route, None, 1, 50, false)
-                .await?;
+        let body = filters
+            .map(|f| {
+                serde_json::to_value(f)
+                    .map_err(|e| HonchoError::Configuration(format!("filters: {e}")))
+            })
+            .transpose()?;
+        let result: crate::types::pagination::Page<MessageResponse> =
+            crate::types::pagination::paginate_post(
+                &self.inner.http,
+                &route,
+                body.as_ref(),
+                page,
+                size,
+                reverse,
+            )
+            .await?;
         let ws = self.inner.workspace_id.clone();
-        let messages: Vec<Message> = page
-            .items()
-            .into_iter()
-            .map(|r| Message::from_raw(ws.clone(), r))
-            .collect();
-        Ok(crate::types::pagination::Page::new(
-            messages,
-            page.total(),
-            page.page(),
-            page.size(),
-            page.pages(),
-        ))
+        Ok(result.map(move |r| Message::from_raw(ws.clone(), r)))
     }
 
     // ── F7.3: File upload ───────────────────────────────────────────────

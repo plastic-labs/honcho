@@ -111,6 +111,9 @@ pub struct WorkspaceSearchRequest {
     pub query: String,
     /// Maximum number of results.
     pub limit: u32,
+    /// Optional metadata-based filters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filters: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// A page of workspace results.

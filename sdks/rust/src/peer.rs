@@ -1403,6 +1403,8 @@ impl ContextBuilder {
 
 /// Synchronous builder for [`MessageCreate`] params.
 ///
+const MAX_MESSAGE_CONTENT_LENGTH: usize = 25_000;
+
 /// Created via [`Peer::message()`]. Does **not** send any API request.
 pub struct MessageBuilder {
     peer_id: String,
@@ -1477,6 +1479,16 @@ impl MessageBuilder {
     /// # }
     /// ```
     pub fn build(self) -> Result<MessageCreate> {
+        if self.content.trim().is_empty() {
+            return Err(HonchoError::Validation("content must not be empty".into()));
+        }
+        if self.content.len() > MAX_MESSAGE_CONTENT_LENGTH {
+            return Err(HonchoError::Validation(format!(
+                "content must be at most {} characters, got {}",
+                MAX_MESSAGE_CONTENT_LENGTH,
+                self.content.len(),
+            )));
+        }
         Ok(MessageCreate {
             peer_id: self.peer_id,
             content: self.content,

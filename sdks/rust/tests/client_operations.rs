@@ -75,7 +75,7 @@ async fn search_returns_messages() {
         .mount(&server)
         .await;
 
-    let results = honcho.search("hello").await.unwrap();
+    let results = honcho.search("hello", None, None).await.unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(results[0].id(), "m1");
     assert_eq!(results[1].id(), "m2");

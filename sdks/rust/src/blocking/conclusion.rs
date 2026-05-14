@@ -1,6 +1,6 @@
 use crate::conclusion::{ConclusionCreateParams, ConclusionScope as AsyncConclusionScope};
 use crate::error::Result;
-use crate::types::conclusion::{Conclusion as ConclusionData, ConclusionPage};
+use crate::types::conclusion::ConclusionPage;
 
 use super::runtime::block_on;
 
@@ -244,7 +244,7 @@ impl BlockingQueryConclusionsBuilder {
     }
 
     /// Send the query.
-    pub fn send(self) -> Result<Vec<ConclusionData>> {
-        block_on(self.inner.send())
+    pub fn send(self) -> Result<Vec<Conclusion>> {
+        block_on(self.inner.send()).map(|v| v.into_iter().map(Conclusion::new).collect())
     }
 }

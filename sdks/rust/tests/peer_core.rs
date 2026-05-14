@@ -70,7 +70,7 @@ async fn make_peer(server: &MockServer) -> Peer {
         .await;
 
     let honcho = make_honcho(server);
-    honcho.peer("alice").await.unwrap()
+    honcho.peer("alice", None, None).await.unwrap()
 }
 
 // ── F5.1: Construction + Metadata ──────────────────────────────────────
@@ -450,19 +450,19 @@ async fn peer_message_builder_fields() {
 }
 
 #[tokio::test]
-async fn peer_message_whitespace_only_is_ok() {
+async fn peer_message_whitespace_only_is_rejected() {
     let server = MockServer::start().await;
     let peer = make_peer(&server).await;
 
-    let msg = peer.message("   ").build().unwrap();
-    assert_eq!(msg.content, "   ");
+    let err = peer.message("   ").build().unwrap_err();
+    assert!(matches!(err, honcho_ai::error::HonchoError::Validation(_)));
 }
 
 #[tokio::test]
-async fn peer_message_empty_string_is_ok() {
+async fn peer_message_empty_string_is_rejected() {
     let server = MockServer::start().await;
     let peer = make_peer(&server).await;
 
-    let msg = peer.message("").build().unwrap();
-    assert_eq!(msg.content, "");
+    let err = peer.message("").build().unwrap_err();
+    assert!(matches!(err, honcho_ai::error::HonchoError::Validation(_)));
 }

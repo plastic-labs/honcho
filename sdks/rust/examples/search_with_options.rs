@@ -17,8 +17,8 @@ async fn main() -> honcho_ai::error::Result<()> {
             .build(),
     )?;
 
-    let peer = honcho.peer("user-1").await?;
-    let session = honcho.session("sess-1").await?;
+    let peer = honcho.peer("user-1", None, None).await?;
+    let session = honcho.session("sess-1", None, None, None).await?;
 
     session
         .add_messages(vec![
@@ -30,7 +30,7 @@ async fn main() -> honcho_ai::error::Result<()> {
         ])
         .await?;
 
-    let ws_results = honcho.search("Rust programming").await?;
+    let ws_results = honcho.search("Rust programming", None, None).await?;
     println!("Workspace search: {} result(s)", ws_results.len());
 
     let sess_results = session.search("hiking").await?;

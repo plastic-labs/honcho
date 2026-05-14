@@ -15,7 +15,7 @@ async fn main() -> honcho_ai::error::Result<()> {
             .build(),
     )?;
 
-    let peer = honcho.peer("alice").await?;
+    let peer = honcho.peer("alice", None, None).await?;
 
     // Self-scoped conclusions (observer = observed = alice)
     let scope = peer.conclusions();

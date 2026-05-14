@@ -18,11 +18,11 @@ async fn main() -> honcho_ai::error::Result<()> {
             .build(),
     )?;
 
-    let alice = honcho.peer("alice").await?;
-    let bob = honcho.peer("bob").await?;
-    let carol = honcho.peer("carol").await?;
+    let alice = honcho.peer("alice", None, None).await?;
+    let bob = honcho.peer("bob", None, None).await?;
+    let carol = honcho.peer("carol", None, None).await?;
 
-    let session = honcho.session("group-chat").await?;
+    let session = honcho.session("group-chat", None, None, None).await?;
 
     session.set_peers([&alice, &bob, &carol]).await?;
 

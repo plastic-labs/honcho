@@ -277,10 +277,8 @@ impl ConclusionScope {
     /// Create one or more conclusions in this scope.
     ///
     /// Auto-injects `observer_id` and `observed_id` from the scope. If more
-    /// than 100 conclusions are provided they are automatically chunked into
-    /// batches of 100 (D24). Each chunk is a separate HTTP request; if any
-    /// chunk fails the error is returned immediately (previously created
-    /// conclusions from earlier chunks are not rolled back).
+    /// than 100 conclusions are provided they are sent in a single request.
+    /// If the server enforces a limit, the request will fail.
     ///
     /// # Examples
     ///
@@ -316,21 +314,14 @@ impl ConclusionScope {
             .collect();
 
         let route = routes::conclusions(&self.inner.workspace_id);
-        let mut all = Vec::with_capacity(creates.len());
-
-        for chunk in creates.chunks(100) {
-            let body = ConclusionBatchCreate {
-                conclusions: chunk.to_vec(),
-            };
-            let batch: Vec<ConclusionData> = self.inner.http.post(&route, Some(&body), &[]).await?;
-            all.extend(
-                batch
-                    .into_iter()
-                    .map(|d| Conclusion::from_parts(self.inner.workspace_id.clone(), d)),
-            );
-        }
-
-        Ok(all)
+        let body = ConclusionBatchCreate {
+            conclusions: creates,
+        };
+        let batch: Vec<ConclusionData> = self.inner.http.post(&route, Some(&body), &[]).await?;
+        Ok(batch
+            .into_iter()
+            .map(|d| Conclusion::from_parts(self.inner.workspace_id.clone(), d))
+            .collect())
     }
 
     /// Return a builder for fetching the scoped representation.
@@ -411,7 +402,7 @@ impl ConclusionScope {
     /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
     /// let results = scope.query("hobbies").top_k(5).send().await?;
     /// for c in &results {
-    ///     println!("{}", c.content);
+    ///     println!("{}", c.content());
     /// }
     /// # Ok(())
     /// # }
@@ -752,7 +743,7 @@ impl QueryConclusionsBuilder {
     /// # async fn example(scope: &honcho_ai::ConclusionScope) -> honcho_ai::error::Result<()> {
     /// let results = scope.query("preferences").top_k(5).distance(0.8).send().await?;
     /// for c in &results {
-    ///     println!("{}", c.content);
+    ///     println!("{}", c.content());
     /// }
     /// # Ok(())
     /// # }
@@ -762,7 +753,7 @@ impl QueryConclusionsBuilder {
     ///
     /// Returns [`HonchoError::Validation`] if `top_k` ∉ [1, 100]
     /// or `distance` ∉ [0.0, 1.0].
-    pub async fn send(self) -> Result<Vec<ConclusionData>> {
+    pub async fn send(self) -> Result<Vec<Conclusion>> {
         if !(1..=100).contains(&self.top_k) {
             return Err(HonchoError::Validation(format!(
                 "top_k must be between 1 and 100, got {}",
@@ -789,7 +780,13 @@ impl QueryConclusionsBuilder {
             body["distance"] = serde_json::Value::from(d);
         }
         let route = routes::conclusions_query(&self.scope.inner.workspace_id);
-        self.scope.inner.http.post(&route, Some(&body), &[]).await
+        let data: Vec<ConclusionData> =
+            self.scope.inner.http.post(&route, Some(&body), &[]).await?;
+        let ws = self.scope.inner.workspace_id.clone();
+        Ok(data
+            .into_iter()
+            .map(|d| Conclusion::from_parts(ws.clone(), d))
+            .collect())
     }
 }
 
@@ -1044,28 +1041,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_batch_over_100_chunks() {
+    async fn create_batch_single_request() {
         let server = MockServer::start().await;
         let scope = make_scope(&server);
 
-        let responses_chunk1: Vec<serde_json::Value> = (0..100)
-            .map(|i| conclusion_json(&format!("c-{i}"), &format!("id-{i}")))
-            .collect();
-        let responses_chunk2: Vec<serde_json::Value> = (100..150)
+        let all_responses: Vec<serde_json::Value> = (0..150)
             .map(|i| conclusion_json(&format!("c-{i}"), &format!("id-{i}")))
             .collect();
 
         Mock::given(method("POST"))
             .and(path("/v3/workspaces/ws1/conclusions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&responses_chunk1))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-
-        Mock::given(method("POST"))
-            .and(path("/v3/workspaces/ws1/conclusions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&responses_chunk2))
-            .up_to_n_times(1)
+            .respond_with(ResponseTemplate::new(200).set_body_json(&all_responses))
             .mount(&server)
             .await;
 
@@ -1074,40 +1060,6 @@ mod tests {
             .collect();
         let results = scope.create(params).await.unwrap();
         assert_eq!(results.len(), 150);
-    }
-
-    #[tokio::test]
-    async fn create_chunk_failure_returns_error() {
-        let server = MockServer::start().await;
-        let scope = make_scope(&server);
-
-        let responses_ok: Vec<serde_json::Value> = (0..100)
-            .map(|i| conclusion_json(&format!("c-{i}"), &format!("id-{i}")))
-            .collect();
-
-        Mock::given(method("POST"))
-            .and(path("/v3/workspaces/ws1/conclusions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&responses_ok))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-
-        Mock::given(method("POST"))
-            .and(path("/v3/workspaces/ws1/conclusions"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_json(serde_json::json!({"detail": "boom"})),
-            )
-            .mount(&server)
-            .await;
-
-        let params: Vec<ConclusionCreateParams> = (0..150)
-            .map(|i| ConclusionCreateParams::new(format!("c-{i}")))
-            .collect();
-        let err = scope.create(params).await.unwrap_err();
-        assert!(matches!(
-            err,
-            crate::error::HonchoError::Server { status: 500, .. }
-        ));
     }
 
     // ── F9.7: ConclusionScope::representation tests ──────────────────────
@@ -1298,8 +1250,8 @@ mod tests {
 
         let results = scope.query("preferences").send().await.unwrap();
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].id, "c1");
-        assert_eq!(results[1].id, "c2");
+        assert_eq!(results[0].id(), "c1");
+        assert_eq!(results[1].id(), "c2");
     }
 
     #[tokio::test]
@@ -1451,7 +1403,7 @@ mod tests {
 
         let queried = scope.query("preferences").send().await.unwrap();
         assert_eq!(queried.len(), 1);
-        assert_eq!(queried[0].id, "c1");
+        assert_eq!(queried[0].id(), "c1");
 
         // Step 4: Delete
         Mock::given(method("DELETE"))

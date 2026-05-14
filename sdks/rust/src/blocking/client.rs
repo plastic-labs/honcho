@@ -5,6 +5,7 @@ use url::Url;
 
 use crate::client::HonchoParams;
 use crate::error::Result;
+use crate::session::PeerSpec;
 use crate::types::dream::QueueStatus;
 use crate::types::peer::Peer as PeerResponse;
 use crate::types::session::Session as SessionResponse;
@@ -57,18 +58,39 @@ impl Honcho {
     }
 
     /// Get or create a peer by ID.
-    pub fn peer(&self, id: impl Into<String>) -> Result<BlockingPeer> {
-        block_on(self.inner.peer(id)).map(BlockingPeer::new)
+    pub fn peer(
+        &self,
+        id: impl Into<String>,
+        metadata: Option<HashMap<String, Value>>,
+        configuration: Option<HashMap<String, Value>>,
+    ) -> Result<BlockingPeer> {
+        block_on(self.inner.peer(id, metadata, configuration)).map(BlockingPeer::new)
     }
 
     /// Get or create a session by ID.
-    pub fn session(&self, id: impl Into<String>) -> Result<BlockingSession> {
-        block_on(self.inner.session(id)).map(BlockingSession::new)
+    pub fn session(
+        &self,
+        id: impl Into<String>,
+        metadata: Option<HashMap<String, Value>>,
+        peers: Option<Vec<PeerSpec>>,
+        configuration: Option<crate::SessionConfiguration>,
+    ) -> Result<BlockingSession> {
+        block_on(self.inner.session(id, metadata, peers, configuration)).map(BlockingSession::new)
     }
 
     /// Search messages across the workspace.
-    pub fn search(&self, query: &str) -> Result<Vec<crate::Message>> {
-        block_on(self.inner.search(query))
+    pub fn search(
+        &self,
+        query: &str,
+        limit: Option<u32>,
+        filters: Option<HashMap<String, Value>>,
+    ) -> Result<Vec<crate::Message>> {
+        block_on(self.inner.search(query, limit, filters))
+    }
+
+    /// Refresh workspace state.
+    pub fn refresh(&self) -> Result<()> {
+        block_on(self.inner.refresh())
     }
 
     /// Get queue processing status.

@@ -102,7 +102,7 @@ async fn peer_sessions_defaults_no_body() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let page: Page<Session> = peer.sessions().await.unwrap();
     assert_eq!(page.items().len(), 1);
     assert_eq!(page.items()[0].id, "s1");
@@ -128,7 +128,7 @@ async fn peer_sessions_with_options_sends_filters_and_pagination() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let opts = SessionListOptions::builder()
         .filters(std::collections::HashMap::from([(
             "is_active".to_string(),
@@ -159,7 +159,7 @@ async fn peer_sessions_with_options_minimal_body() {
         .mount(&server)
         .await;
 
-    let peer = honcho.peer("alice").await.unwrap();
+    let peer = honcho.peer("alice", None, None).await.unwrap();
     let opts = SessionListOptions::builder().build();
     let page: Page<Session> = peer.sessions_with_options(&opts).await.unwrap();
     assert_eq!(page.items().len(), 0);

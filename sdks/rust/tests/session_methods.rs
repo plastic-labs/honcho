@@ -52,7 +52,7 @@ async fn make_session(server: &MockServer) -> Session {
         .await;
 
     let honcho = Honcho::new(&server.uri(), "ws1").unwrap();
-    honcho.session("sess1").await.unwrap()
+    honcho.session("sess1", None, None, None).await.unwrap()
 }
 
 fn context_response_json() -> Value {

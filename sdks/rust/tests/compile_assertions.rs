@@ -24,7 +24,7 @@ fn _honcho_peers_future_is_send(h: &Honcho) {
 }
 
 fn _honcho_search_future_is_send(h: &Honcho) {
-    _assert_future_send(h.search("q"));
+    _assert_future_send(h.search("q", None, None));
 }
 
 fn _peer_chat_stream_future_is_send(p: &Peer) {

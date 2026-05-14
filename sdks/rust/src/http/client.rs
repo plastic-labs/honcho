@@ -14,7 +14,6 @@ use crate::http::decode;
 const DEFAULT_MAX_RETRIES: u32 = 2;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
-const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 struct Inner {
     client: reqwest::Client,
@@ -163,7 +162,7 @@ impl HttpClient {
                         HonchoError::Timeout {
                             message: e.to_string(),
                         }
-                    } else if e.is_connect() {
+                    } else if e.is_connect() || e.is_request() {
                         HonchoError::Connection {
                             message: e.to_string(),
                         }
@@ -175,8 +174,8 @@ impl HttpClient {
                         && attempt < self.inner.max_retries;
 
                     if should_retry {
-                        attempt += 1;
                         tokio::time::sleep(delay_for_attempt(attempt)).await;
+                        attempt += 1;
                         continue;
                     }
 
@@ -213,12 +212,12 @@ impl HttpClient {
             let is_retryable = matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504);
 
             if is_retryable && attempt < self.inner.max_retries {
-                attempt += 1;
                 let retry_after = headers
                     .get("retry-after")
                     .and_then(|v| error::parse_retry_after(v, Utc::now()));
                 let delay = retry_after.unwrap_or_else(|| delay_for_attempt(attempt));
                 tokio::time::sleep(delay).await;
+                attempt += 1;
                 continue;
             }
 
@@ -442,9 +441,7 @@ impl HttpClient {
 #[must_use]
 pub fn delay_for_attempt(attempt: u32) -> Duration {
     let shift = attempt.min(31);
-    INITIAL_RETRY_DELAY
-        .saturating_mul(1u32 << shift)
-        .min(MAX_RETRY_DELAY)
+    INITIAL_RETRY_DELAY.saturating_mul(1u32 << shift)
 }
 
 #[cfg(test)]
@@ -958,6 +955,7 @@ mod tests {
 
     #[test]
     fn delay_for_attempt_sequence() {
+        // First retry passes attempt=0 → 500ms, second retry passes attempt=1 → 1s, etc.
         assert_eq!(delay_for_attempt(0), Duration::from_millis(500));
         assert_eq!(delay_for_attempt(1), Duration::from_secs(1));
         assert_eq!(delay_for_attempt(2), Duration::from_secs(2));
@@ -965,9 +963,9 @@ mod tests {
     }
 
     #[test]
-    fn delay_for_attempt_capped_at_30s() {
-        assert_eq!(delay_for_attempt(100), Duration::from_secs(30));
-        assert_eq!(delay_for_attempt(31), Duration::from_secs(30));
+    fn delay_for_attempt_large_values_no_cap() {
+        // No upper cap — matches Python which also has no cap
+        assert_eq!(delay_for_attempt(10), Duration::from_secs(512));
     }
 
     #[tokio::test]
