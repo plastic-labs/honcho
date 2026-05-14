@@ -441,7 +441,7 @@ class TestDreamRunEvent:
 
     def test_schema_version(self):
         """schema_version() returns correct value."""
-        assert DreamRunEvent.schema_version() == 1
+        assert DreamRunEvent.schema_version() == 2
 
     def test_category(self):
         """category() returns correct value."""
@@ -477,7 +477,7 @@ class TestDreamSpecialistEvent:
 
     def test_schema_version(self):
         """schema_version() returns correct value."""
-        assert DreamSpecialistEvent.schema_version() == 1
+        assert DreamSpecialistEvent.schema_version() == 2
 
     def test_category(self):
         """category() returns correct value."""

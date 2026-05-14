@@ -186,6 +186,13 @@ def sample_dream_run_event(fixed_timestamp: datetime) -> DreamRunEvent:
         total_input_tokens=25000,
         total_output_tokens=3000,
         total_duration_ms=45000.0,
+        # Phase 5 additive fields
+        dream_type="omni",
+        enabled_types_count=1,
+        threshold_reason="document_threshold",
+        delay_reason="idle_timeout",
+        documents_since_last_dream_at_schedule=55,
+        document_threshold=50,
     )
 
 
@@ -205,6 +212,11 @@ def sample_dream_specialist_event(fixed_timestamp: datetime) -> DreamSpecialistE
         output_tokens=2000,
         duration_ms=25000.0,
         success=True,
+        # Phase 5 additive rollups
+        created_observation_count=7,
+        deleted_observation_count=2,
+        peer_card_updated=True,
+        search_tool_calls_count=4,
     )
 
 

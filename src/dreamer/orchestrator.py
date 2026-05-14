@@ -69,6 +69,12 @@ async def run_dream(
     observer: str,
     observed: str,
     session_name: str | None = None,
+    *,
+    dream_type: str | None = None,
+    threshold_reason: str | None = None,
+    delay_reason: str | None = None,
+    documents_since_last_dream_at_schedule: int | None = None,
+    document_threshold: int | None = None,
 ) -> DreamResult | None:
     """
     Run a full dream cycle with optional surprisal-based sampling.
@@ -248,6 +254,14 @@ async def run_dream(
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,
             total_duration_ms=duration_ms,
+            # Phase 5 additions — scheduling context threaded through the
+            # queue payload by check_and_schedule_dream.
+            dream_type=dream_type,
+            enabled_types_count=len(settings.DREAM.ENABLED_TYPES),
+            threshold_reason=threshold_reason,
+            delay_reason=delay_reason,
+            documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+            document_threshold=document_threshold,
         )
     )
 
@@ -315,6 +329,12 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                     observer=payload.observer,
                     observed=payload.observed,
                     session_name=payload.session_name,
+                    # Phase 5 scheduling context — propagated to DreamRunEvent.
+                    dream_type=payload.dream_type.value,
+                    threshold_reason=payload.threshold_reason,
+                    delay_reason=payload.delay_reason,
+                    documents_since_last_dream_at_schedule=payload.documents_since_last_dream_at_schedule,
+                    document_threshold=payload.document_threshold,
                 )
 
                 # Log completion (telemetry event already emitted in run_dream)

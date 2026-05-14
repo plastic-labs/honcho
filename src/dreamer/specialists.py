@@ -16,7 +16,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from src import crud, schemas
 from src.config import ConfiguredModelSettings, settings
@@ -287,6 +287,38 @@ If you update it, send the full deduplicated list and remove stale entries.
 
         log_performance_metrics(f"dreamer_{self.name}", run_id)
 
+        # Phase 5 rollups: count actual observations created/deleted from the
+        # ToolResult.metadata that Phase 3 stashed on `all_tool_calls[i]`.
+        # Counting tool-name occurrences would mis-attribute: a single
+        # create_observations call can produce N (or zero) observations. The
+        # truth lives in the handler's returned metadata.
+        created_observation_count = 0
+        deleted_observation_count = 0
+        peer_card_updated = False
+        search_tool_calls_count = 0
+        _search_tools = {
+            "search_memory",
+            "search_messages",
+            "search_messages_temporal",
+        }
+        for tc in response.tool_calls_made:
+            tool_name_any: Any = tc.get("tool_name") or tc.get("name")
+            meta_any: Any = tc.get("tool_result_metadata") or {}
+            if tool_name_any in _search_tools:
+                search_tool_calls_count += 1
+            if isinstance(meta_any, dict):
+                # `meta_any` is `dict[Unknown, Unknown]` after the isinstance
+                # narrow because tool_calls_made is typed list[dict[str, Any]].
+                # Cast to the expected dict shape to silence the partial-known
+                # warning without losing runtime safety.
+                meta_dict = cast(dict[str, Any], meta_any)
+                created_val: Any = meta_dict.get("created_count") or 0
+                deleted_val: Any = meta_dict.get("deleted_count") or 0
+                created_observation_count += int(created_val)
+                deleted_observation_count += int(deleted_val)
+                if meta_dict.get("peer_card_updated"):
+                    peer_card_updated = True
+
         # Emit telemetry event
         emit(
             DreamSpecialistEvent(
@@ -301,6 +333,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                 output_tokens=response.output_tokens,
                 duration_ms=duration_ms,
                 success=True,
+                # Phase 5 denormalized rollups
+                created_observation_count=created_observation_count,
+                deleted_observation_count=deleted_observation_count,
+                peer_card_updated=peer_card_updated,
+                search_tool_calls_count=search_tool_calls_count,
             )
         )
 
