@@ -220,8 +220,14 @@ class LanceDBVectorStore(VectorStore):
             return []
 
         try:
-            # Build query
             query = table.vector_search(embedding).distance_type("cosine").limit(top_k)
+
+            if include_attributes is False:
+                # Caller only needs id/score. Don't fetch any metadata or the vector.
+                query = query.select(["id"])
+            elif isinstance(include_attributes, list):
+                projection = ["id", *(c for c in include_attributes if c != "id")]
+                query = query.select(projection)
 
             # Apply filters if provided
             if filters:
@@ -242,21 +248,12 @@ class LanceDBVectorStore(VectorStore):
                 if max_distance is not None and dist > max_distance:
                     continue
 
-                # Extract requested metadata (everything except internal fields by default).
-                if include_attributes is False:
-                    metadata: dict[str, Any] = {}
-                else:
-                    metadata_keys = (
-                        set(include_attributes)
-                        if isinstance(include_attributes, list)
-                        else None
-                    )
-                    metadata = {
-                        k: v
-                        for k, v in row.items()
-                        if k not in ("id", "vector", "_distance")
-                        and (metadata_keys is None or k in metadata_keys)
-                    }
+                # Extract metadata (everything except id, vector, _distance)
+                metadata: dict[str, Any] = {
+                    k: v
+                    for k, v in row.items()
+                    if k not in ("id", "vector", "_distance")
+                }
 
                 query_results.append(
                     VectorQueryResult(
