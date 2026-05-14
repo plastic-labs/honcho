@@ -145,7 +145,7 @@ The Deriver processes batches of incoming messages and extracts conclusions abou
 
 **Role**: Analysis and recall for answering queries.
 
-The Dialectic answers questions about peers by strategically gathering context from memory. This is the only true tool-using agent in the system — it loops over `DIALECTIC_TOOLS` until it has enough context to answer.
+The Dialectic answers questions about peers by strategically gathering context from memory. It is the only tool-using agent on the synchronous request path — it loops over `DIALECTIC_TOOLS` until it has enough context to answer. (The Dreamer specialists also use tools, but run off the queue.)
 
 - **Trigger**: API call to `POST /v3/.../peers/{peer_id}/chat`.
 - **Tools** (see `DIALECTIC_TOOLS` in `src/utils/agent_tools.py`): `search_memory`, `search_messages`, `get_observation_context`, `grep_messages`, `get_messages_by_date_range`, `search_messages_temporal`, `get_reasoning_chain`. At the `minimal` reasoning level, a reduced set (`DIALECTIC_TOOLS_MINIMAL`) is used: just `search_memory` + `search_messages`.
@@ -165,7 +165,7 @@ The Dreamer is an orchestrated multi-specialist system that runs during schedule
   2. **InductionSpecialist** — produces inductive conclusions from explicit + deductive conclusions. Tools: same discovery set + `create_observations_inductive`, `update_peer_card`.
 - **Reasoning trees** (`src/dreamer/trees/`, migration `f1a2b3c4d5e6_add_reasoning_tree_columns`): each conclusion links to its premises and downstream conclusions, enabling `get_reasoning_chain` traversal at recall time.
 - **Output**: Deductive/inductive conclusions, consolidated redundancies, updated peer cards.
-- **Entry point**: `src/dreamer/orchestrator.py` → `run_dream()` / `process_dream()`.
+- **Entry point**: `src/dreamer/orchestrator.py` → `process_dream()` (the package-level export from `src/dreamer/__init__.py`), which wraps `run_dream()`.
 
 #### 4. Summarizer (`src/utils/summarizer.py`)
 
