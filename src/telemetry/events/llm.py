@@ -146,4 +146,109 @@ class LLMCallCompletedEvent(BaseEvent):
         return f"{run}:{iteration}:{self.attempt}:{self.transport}:{self.model}"
 
 
-__all__ = ["CallPurpose", "LLMCallCompletedEvent"]
+class EmbeddingCallPurpose(str, Enum):
+    """Closed taxonomy for embedding call purposes.
+
+    Mirrors `CallPurpose` for LLM calls. Adding a new embedding call site
+    requires adding a value here first — keeps the analytics taxonomy stable
+    and prevents free-form `track_name` drift from leaking into queries.
+    """
+
+    SEARCH_MEMORY = "search_memory"
+    SEARCH_MESSAGES = "search_messages"
+    CREATE_OBSERVATIONS = "create_observations"
+    VECTOR_SYNC = "vector_sync"
+    SUMMARY = "summary"
+    MESSAGE_CREATE = "message_create"
+
+
+class EmbeddingCallCompletedEvent(BaseEvent):
+    """Emitted once per embedding-provider call.
+
+    Embedding calls are real provider spend (per-token like LLM calls) but
+    were invisible before Phase 7. Search tools, observation creation, the
+    message-embedding sync, and the deriver/summarizer paths all hit the
+    embedding API; this event captures cost-attribution context for all of
+    them.
+
+    Volume note: this event is high-volume. Interactive paths
+    (`search_memory` / `search_messages`) emit one event per query, so under
+    a search-heavy dialectic load this can match or exceed the LLM call
+    rate. The shared `HIGH_VOLUME_SAMPLE_RATE` covers both.
+    """
+
+    _event_type: ClassVar[str] = "embedding.call.completed"
+    _schema_version: ClassVar[int] = 1
+    _category: ClassVar[str] = "llm"
+    _volume_class: ClassVar[str] = "high_volume"
+
+    workspace_name: str | None = Field(default=None, description="Workspace name")
+    call_purpose: EmbeddingCallPurpose | None = Field(
+        default=None,
+        description=(
+            "Closed enum identifying the call site. Set by callers via the "
+            "`embedding_call_purpose` ContextVar; None when the call originated "
+            "outside an instrumented path."
+        ),
+    )
+    parent_category: str | None = Field(
+        default=None,
+        description="Parent category for analytics joins (e.g. 'dialectic', 'representation')",
+    )
+
+    provider: str = Field(..., description="'openai' | 'gemini'")
+    model: str = Field(..., description="Model identifier")
+    input_count: int = Field(
+        ..., description="Number of texts embedded in this call (batch size)"
+    )
+    input_tokens_estimate: int = Field(
+        default=0,
+        description=(
+            "tiktoken-based size proxy for the embedded text. ESTIMATE only — "
+            "the embedding client uses encoding_for_model() with a cl100k_base "
+            "fallback (see embedding_client.py:68-71), which is exact for "
+            "older OpenAI models, an approximation for newer ones, and a "
+            "rough proxy for Gemini (which has its own tokenizer)."
+        ),
+    )
+    batch_size: int = Field(
+        default=0, description="The provider call's batch size (= input_count today)"
+    )
+    duration_ms: float = Field(
+        ..., description="Wall-clock duration of the provider call"
+    )
+
+    outcome: Literal["success", "error"] = Field(
+        ..., description="Whether the provider returned a result or raised"
+    )
+    is_final_attempt: bool = Field(
+        default=False,
+        description=(
+            "True on the last retry attempt. Mirrors LLMCallCompletedEvent's "
+            "convention: combine with outcome='error' to identify exhausted "
+            "embedding calls."
+        ),
+    )
+    error_class: str | None = Field(
+        default=None, description="Exception class name when outcome='error'"
+    )
+
+    run_id: str | None = Field(
+        default=None,
+        description="Agent run id when called from an agentic loop; None for sync/CRUD paths",
+    )
+
+    def get_resource_id(self) -> str:
+        """Resource id includes timestamp-derived components implicitly via
+        generate_id(); we just stake out a non-empty identifier scope."""
+        run = self.run_id or "none"
+        purpose = self.call_purpose.value if self.call_purpose else "unknown"
+        return f"{run}:{purpose}:{self.provider}:{self.model}:{self.input_count}"
+
+
+__all__ = [
+    "CallPurpose",
+    "EmbeddingCallCompletedEvent",
+    "EmbeddingCallPurpose",
+    "LLMCallCompletedEvent",
+]

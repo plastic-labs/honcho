@@ -15,6 +15,7 @@ from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
 from src.schemas import ResolvedConfiguration
+from src.telemetry.events import EmbeddingCallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
 from src.utils.representation import (
@@ -22,6 +23,7 @@ from src.utils.representation import (
     ExplicitObservation,
     Representation,
 )
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,10 @@ class RepresentationManager:
 
         observation_texts = [_observation_text(obs) for obs in all_observations]
         try:
-            embeddings = await embedding_client.simple_batch_embed(observation_texts)
+            with embedding_call_purpose(EmbeddingCallPurpose.CREATE_OBSERVATIONS.value):
+                embeddings = await embedding_client.simple_batch_embed(
+                    observation_texts
+                )
         except ValueError as e:
             raise exceptions.ValidationException(
                 "Observation content exceeds maximum token limit of "
@@ -229,8 +234,13 @@ class RepresentationManager:
             Representation combining various query strategies
         """
         if include_semantic_query and embedding is None:
-            with suppress(Exception):
-                # Best-effort precompute
+            # Best-effort precompute. Tag as search_memory — this is the
+            # representation-fetch path used by working-representation
+            # queries, not observation creation.
+            with (
+                suppress(Exception),
+                embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MEMORY.value),
+            ):
                 embedding = await embedding_client.embed(include_semantic_query)
 
         if db is not None:

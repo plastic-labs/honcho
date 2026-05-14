@@ -12,8 +12,10 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
+from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, get_external_vector_store
 
 from .session import get_or_create_session
@@ -283,11 +285,13 @@ async def create_messages(
                 for message in message_objects
                 if message.content and message.content.strip()
             }
-            embedding_dict = (
-                await embedding_client.batch_embed(id_resource_dict)
-                if id_resource_dict
-                else {}
-            )
+            if id_resource_dict:
+                with embedding_call_purpose(EmbeddingCallPurpose.MESSAGE_CREATE.value):
+                    embedding_dict = await embedding_client.batch_embed(
+                        id_resource_dict
+                    )
+            else:
+                embedding_dict = {}
 
             external_vector_store = get_external_vector_store()
 
@@ -890,9 +894,14 @@ async def search_messages(
         Each snippet may contain multiple matches if they were close together.
         Context messages are ordered chronologically and include the matched messages.
     """
-    query_embedding = (
-        embedding if embedding is not None else await embedding_client.embed(query)
-    )
+    if embedding is not None:
+        query_embedding = embedding
+    else:
+        # Caller didn't precompute; tag this fallback path as search_messages.
+        # Callers that have a more specific intent should set their own
+        # context manager before calling and pass the precomputed embedding.
+        with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MESSAGES.value):
+            query_embedding = await embedding_client.embed(query)
     return await _semantic_search_messages(
         workspace_name,
         session_name,
@@ -1082,9 +1091,14 @@ async def search_messages_temporal(
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
-    query_embedding = (
-        embedding if embedding is not None else await embedding_client.embed(query)
-    )
+    if embedding is not None:
+        query_embedding = embedding
+    else:
+        # Caller didn't precompute; tag this fallback path as search_messages.
+        # Callers that have a more specific intent should set their own
+        # context manager before calling and pass the precomputed embedding.
+        with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MESSAGES.value):
+            query_embedding = await embedding_client.embed(query)
     return await _semantic_search_messages(
         workspace_name,
         session_name,

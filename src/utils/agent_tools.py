@@ -20,12 +20,13 @@ from src.telemetry.events import (
     AgentToolConclusionsCreatedEvent,
     AgentToolConclusionsDeletedEvent,
     AgentToolPeerCardUpdatedEvent,
+    EmbeddingCallPurpose,
     emit,
 )
 from src.utils import summarizer
 from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
 from src.utils.representation import Representation
-from src.utils.types import ToolResult, get_current_iteration
+from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
 
 logger = logging.getLogger(__name__)
 
@@ -829,7 +830,8 @@ async def create_observations(
     contents = [obs.content for obs in normalized_observations]
     embeddings_by_index: dict[int, list[float]] | None = None
     try:
-        embeddings = await embedding_client.simple_batch_embed(contents)
+        with embedding_call_purpose(EmbeddingCallPurpose.CREATE_OBSERVATIONS.value):
+            embeddings = await embedding_client.simple_batch_embed(contents)
         embeddings_by_index = dict(
             zip(range(len(normalized_observations)), embeddings, strict=True)
         )
@@ -848,7 +850,10 @@ async def create_observations(
             embedding = embeddings_by_index[i]
         else:
             try:
-                embedding = await embedding_client.embed(obs.content)
+                with embedding_call_purpose(
+                    EmbeddingCallPurpose.CREATE_OBSERVATIONS.value
+                ):
+                    embedding = await embedding_client.embed(obs.content)
             except Exception as e:
                 logger.warning(
                     "Error embedding observation content for level '%s': %s",
@@ -1486,7 +1491,8 @@ async def _handle_search_memory(
     top_k = min(_safe_int(tool_input.get("top_k"), 20), 40)
     query = tool_input["query"]
     try:
-        query_embedding = await embedding_client.embed(query)
+        with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MEMORY.value):
+            query_embedding = await embedding_client.embed(query)
     except ValueError:
         return (
             "ERROR: Query exceeds maximum token limit of "
@@ -1589,7 +1595,8 @@ async def _handle_search_messages(
     limit = min(_safe_int(tool_input.get("limit"), 10), 20)  # Cap at 20
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call (same pattern as _handle_search_memory).
-    query_embedding = await embedding_client.embed(query)
+    with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MESSAGES.value):
+        query_embedding = await embedding_client.embed(query)
     snippets = await crud.search_messages(
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,
@@ -1753,7 +1760,8 @@ async def _handle_search_messages_temporal(
 
     # Pre-compute embedding outside DB session to avoid holding a connection
     # during the external API call.
-    query_embedding = await embedding_client.embed(query)
+    with embedding_call_purpose(EmbeddingCallPurpose.SEARCH_MESSAGES.value):
+        query_embedding = await embedding_client.embed(query)
     snippets = await crud.search_messages_temporal(
         workspace_name=ctx.workspace_name,
         session_name=ctx.session_name,

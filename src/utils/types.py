@@ -1,4 +1,5 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Generator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, TypeVar
@@ -67,6 +68,36 @@ def set_last_tool_metadata(metadata: dict[str, Any]) -> None:
 def get_last_tool_metadata() -> dict[str, Any]:
     """Read the last tool call's metadata. Returns {} when no ToolResult was returned."""
     return _last_tool_metadata.get() or {}
+
+
+# Phase 7: embedding-call purpose ContextVar. Callers wrap embedding-driving
+# operations in `with embedding_call_purpose("search_memory"): ...` so the
+# embedding client can stamp every provider call with the originating intent
+# without changing the call signature. None = caller didn't instrument; the
+# event still emits but with call_purpose unset.
+_embedding_call_purpose: ContextVar[str | None] = ContextVar(
+    "embedding_call_purpose", default=None
+)
+
+
+def get_embedding_call_purpose() -> str | None:
+    """Read the current embedding call purpose. None when uninstrumented."""
+    return _embedding_call_purpose.get()
+
+
+@contextmanager
+def embedding_call_purpose(purpose: str) -> Generator[None]:
+    """Tag any embedding calls made inside this `with` block with `purpose`.
+
+    `purpose` should match an `EmbeddingCallPurpose` enum value (see
+    src/telemetry/events/llm.py). Unknown values pass through silently and
+    land as None on the event — the emitter validates against the enum.
+    """
+    token = _embedding_call_purpose.set(purpose)
+    try:
+        yield
+    finally:
+        _embedding_call_purpose.reset(token)
 
 
 @dataclass
