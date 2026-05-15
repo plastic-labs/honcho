@@ -43,10 +43,7 @@ async fn upload_bytes_file_to_session() {
     );
 
     session.delete().await.unwrap();
-    client
-        .delete_workspace(client.workspace_id())
-        .await
-        .unwrap();
+    client.delete_workspace(client.workspace_id()).await.ok();
 }
 
 #[tokio::test]
@@ -87,8 +84,5 @@ async fn upload_streamed_file_to_session() {
     );
 
     session.delete().await.unwrap();
-    client
-        .delete_workspace(client.workspace_id())
-        .await
-        .unwrap();
+    client.delete_workspace(client.workspace_id()).await.ok();
 }

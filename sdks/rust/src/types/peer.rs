@@ -82,7 +82,6 @@ pub struct PeerMetadataSet {
 /// on [`crate::Peer`] to access them.
 #[non_exhaustive]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(deny_unknown_fields)]
 pub struct PeerConfig {
     /// Whether Honcho will use reasoning to form a representation of this peer.
     #[serde(default, skip_serializing_if = "Option::is_none")]

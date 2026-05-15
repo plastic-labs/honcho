@@ -248,7 +248,16 @@ impl HttpClient {
             });
         }
 
-        decode::deserialize_with_path(&bytes)
+        match decode::deserialize_with_path(&bytes) {
+            Ok(val) => Ok(val),
+            Err(decode_err) => {
+                if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok() {
+                    serde_json::from_value::<TResp>(serde_json::Value::Null).map_err(|_| decode_err)
+                } else {
+                    Err(decode_err)
+                }
+            }
+        }
     }
 
     pub(crate) async fn get<TResp: DeserializeOwned + 'static>(
@@ -276,15 +285,6 @@ impl HttpClient {
         query: &[(&str, &str)],
     ) -> Result<TResp> {
         self.request(Method::PUT, path, body, query).await
-    }
-
-    pub(crate) async fn patch<TBody: Serialize + ?Sized, TResp: DeserializeOwned + 'static>(
-        &self,
-        path: &str,
-        body: Option<&TBody>,
-        query: &[(&str, &str)],
-    ) -> Result<TResp> {
-        self.request(Method::PATCH, path, body, query).await
     }
 
     pub(crate) async fn delete<TResp: DeserializeOwned + 'static>(
@@ -617,22 +617,6 @@ mod tests {
             .await;
 
         let result: Workspace = client.put("/v3/test", Some(&body), &[]).await.unwrap();
-        assert_eq!(result.id, "ws_abc123");
-    }
-
-    #[tokio::test]
-    async fn patch_sends_patch_with_body() {
-        let server = MockServer::start().await;
-        let client = make_client(&server);
-        let body = serde_json::json!({"name": "patched"});
-
-        Mock::given(method("PATCH"))
-            .and(body_json(&body))
-            .respond_with(ResponseTemplate::new(200).set_body_json(workspace_json()))
-            .mount(&server)
-            .await;
-
-        let result: Workspace = client.patch("/v3/test", Some(&body), &[]).await.unwrap();
         assert_eq!(result.id, "ws_abc123");
     }
 

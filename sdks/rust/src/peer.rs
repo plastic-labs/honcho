@@ -361,7 +361,7 @@ impl Peer {
         let resp: PeerResponse = self
             .inner
             .http
-            .patch(
+            .put(
                 &routes::peer(&self.inner.workspace_id, &self.inner.id),
                 Some(&body),
                 &[],

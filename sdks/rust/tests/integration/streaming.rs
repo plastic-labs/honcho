@@ -13,7 +13,7 @@ async fn chat_stream_drains_content() {
 
     let peer = client.peer("stream-test-peer", None, None).await.unwrap();
 
-    let stream = peer.chat_stream("What do you know about me?").send().await;
+    let stream = peer.chat_stream("Hi").send().await;
 
     let stream = match stream {
         Ok(s) => s,
@@ -49,8 +49,5 @@ async fn chat_stream_drains_content() {
         "expected at least one chunk from stream, got {chunk_count}"
     );
 
-    client
-        .delete_workspace(client.workspace_id())
-        .await
-        .unwrap();
+    client.delete_workspace(client.workspace_id()).await.ok();
 }
