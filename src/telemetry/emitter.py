@@ -206,6 +206,13 @@ class TelemetryEmitter:
         # Sampling is deterministic on run_id when available so an entire
         # agentic trace is either fully kept or fully dropped — never a
         # half-sampled run that breaks join queries downstream.
+        #
+        # Trade-off: at rate < 1.0, ground_truth aggregates still emit but
+        # their high-volume children get sampled out. Downstream JOIN ... ON
+        # run_id sees orphaned parents; aggregates carry totals so this is
+        # intentional, but per-call analytics rebuilt from the sampled
+        # children alone will undercount. See HIGH_VOLUME_SAMPLE_RATE
+        # docstring in src/config.py for the full implications.
         if event.volume_class() == "high_volume" and not _should_sample(
             event, settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE
         ):

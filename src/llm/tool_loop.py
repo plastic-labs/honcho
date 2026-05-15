@@ -11,9 +11,10 @@
 
 from __future__ import annotations
 
+import functools
 import logging
-from collections.abc import AsyncIterator, Callable
-from typing import Any
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -22,6 +23,7 @@ from src.config import ModelTransport
 from src.exceptions import ValidationException
 from src.utils.types import (
     get_last_tool_metadata,
+    iteration_scope,
     set_current_iteration,
     set_current_tool_call_seq,
     set_last_tool_metadata,
@@ -43,6 +45,26 @@ from .types import (
     StreamingResponseWithMetadata,
     VerbosityType,
 )
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _with_iteration_scope(
+    fn: Callable[_P, Awaitable[_R]],
+) -> Callable[_P, Awaitable[_R]]:
+    """Wrap an async tool-loop entry point in `iteration_scope()` so the
+    per-iteration ContextVars (iteration, tool_call_seq, provider id, last
+    tool metadata) are reset to their pre-call values on exit. Defensive
+    against subsequent loops in the same asyncio Task observing stale state.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with iteration_scope():
+            return await fn(*args, **kwargs)
+
+    return wrapper
 
 
 def _telemetry_for_iteration(
@@ -229,6 +251,7 @@ async def stream_final_response(
         yield chunk
 
 
+@_with_iteration_scope
 async def execute_tool_loop(
     *,
     prompt: str,

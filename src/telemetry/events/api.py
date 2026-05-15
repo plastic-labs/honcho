@@ -16,10 +16,15 @@ class MessageCreatedEvent(BaseEvent):
 
     This is the canonical API event for counting created messages, including
     messages created from file uploads.
+
+    Schema v2: replaced `message_count` with `last_message_id` (public nanoid
+    of the trailing message) in the resource_id, so two batches of the same
+    size in the same session+source no longer collide. `message_count`
+    remains on the event body for analytics.
     """
 
     _event_type: ClassVar[str] = "message.created"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "api"
 
     workspace_name: str = Field(..., description="Workspace name")
@@ -29,12 +34,18 @@ class MessageCreatedEvent(BaseEvent):
     source: Literal["api", "file_upload"] = Field(
         default="api", description="Source of the created messages"
     )
+    last_message_id: str = Field(
+        ...,
+        description="public_id (nanoid) of the trailing message in the batch — used as the stable unique key for this emission",
+    )
 
     def get_resource_id(self) -> str:
-        """Resource ID includes workspace, session, source, and count."""
+        """Resource ID keys on the trailing message's public_id so two batches
+        of the same size in the same session+source produce distinct event ids.
+        """
         return (
             f"{self.workspace_name}:{self.session_name}:"
-            f"{self.source}:{self.message_count}"
+            f"{self.source}:{self.last_message_id}"
         )
 
 

@@ -4,7 +4,7 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from typing import Any, NamedTuple, TypeVar
+from typing import Any, Literal, NamedTuple, TypeVar
 
 import tiktoken
 from google import genai
@@ -42,13 +42,19 @@ async def _emit_embedding_call(
         error = exc
         raise
     finally:
+        if error is None:
+            outcome: Literal["success", "error", "cancelled"] = "success"
+        elif isinstance(error, asyncio.CancelledError):
+            outcome = "cancelled"
+        else:
+            outcome = "error"
         _publish_embedding_event(
             provider=provider,
             model=model,
             input_count=len(texts),
             input_tokens_estimate=input_tokens_estimate,
             duration_ms=(time.perf_counter() - start) * 1000,
-            outcome="success" if error is None else "error",
+            outcome=outcome,
             error=error,
         )
 
@@ -60,7 +66,7 @@ def _publish_embedding_event(
     input_count: int,
     input_tokens_estimate: int,
     duration_ms: float,
-    outcome: str,
+    outcome: Literal["success", "error", "cancelled"],
     error: BaseException | None,
 ) -> None:
     """Build and emit the EmbeddingCallCompletedEvent. Best-effort."""
@@ -89,13 +95,6 @@ def _publish_embedding_event(
                     "Unknown embedding_call_purpose=%r; emitting without",
                     purpose_slug,
                 )
-
-        # outcome is constrained to "success"|"error" by the only caller
-        # (_emit_embedding_call). Runtime guard keeps the Literal narrow honest
-        # without relying on `assert` (bandit B101) — pyright narrows after
-        # this check, so no explicit cast is needed.
-        if outcome not in ("success", "error"):
-            raise ValueError(f"invalid outcome: {outcome!r}")
 
         emit(
             EmbeddingCallCompletedEvent(

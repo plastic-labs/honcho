@@ -166,6 +166,38 @@ class TestEmitEmbeddingCallWrapper:
         assert ev.input_count == 2
 
     @pytest.mark.asyncio
+    async def test_cancellation_emits_cancelled_outcome(self):
+        """asyncio.CancelledError surfaces as outcome='cancelled', not 'error'
+        — client disconnects / shutdowns must not pollute error rates."""
+        import asyncio
+
+        emitted: list[BaseEvent] = []
+
+        async def _cancel() -> list[float]:
+            raise asyncio.CancelledError()
+
+        with (
+            patch(
+                "src.telemetry.events.emit",
+                side_effect=lambda event: emitted.append(event),
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await _emit_embedding_call(
+                provider="openai",
+                model="text-embedding-3-small",
+                texts=["a"],
+                input_tokens_estimate=4,
+                fn=_cancel,
+            )
+
+        assert len(emitted) == 1
+        ev = emitted[0]
+        assert isinstance(ev, EmbeddingCallCompletedEvent)
+        assert ev.outcome == "cancelled"
+        assert ev.error_class == "CancelledError"
+
+    @pytest.mark.asyncio
     async def test_unknown_purpose_drops_to_none(self):
         """Unknown call_purpose ContextVar strings shouldn't crash the
         emitter — they fall through to call_purpose=None on the event."""

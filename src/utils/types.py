@@ -70,6 +70,30 @@ def get_last_tool_metadata() -> dict[str, Any]:
     return _last_tool_metadata.get() or {}
 
 
+@contextmanager
+def iteration_scope() -> Generator[None]:
+    """Reset per-tool-loop ContextVars on exit.
+
+    Wrap the body of `tool_loop.run_tool_loop` so a subsequent loop in the
+    same asyncio Task (worker batches, tests using TestClient) starts with
+    fresh iteration / tool-call state instead of inheriting stale values
+    from a prior loop. ContextVars are per-Task in asyncio, so cross-request
+    leakage is unlikely under normal FastAPI use — but this is defensive and
+    cheap.
+    """
+    iter_token = _current_iteration.set(0)
+    seq_token = _current_tool_call_seq.set(0)
+    pid_token = _current_provider_tool_call_id.set(None)
+    meta_token = _last_tool_metadata.set(None)
+    try:
+        yield
+    finally:
+        _current_iteration.reset(iter_token)
+        _current_tool_call_seq.reset(seq_token)
+        _current_provider_tool_call_id.reset(pid_token)
+        _last_tool_metadata.reset(meta_token)
+
+
 # embedding-call purpose ContextVar. Callers wrap embedding-driving
 # operations in `with embedding_call_purpose("search_memory"): ...` so the
 # embedding client can stamp every provider call with the originating intent

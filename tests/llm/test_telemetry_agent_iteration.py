@@ -219,3 +219,77 @@ def test_volume_class_is_high_volume():
     """emission targets a high-volume event class so the sampler
     can throttle iteration events independently of aggregates."""
     assert AgentIterationEvent.volume_class() == "high_volume"
+
+
+class TestIterationScope:
+    """`iteration_scope()` in src/utils/types.py captures Tokens for the
+    per-loop ContextVars and resets them on exit. Defensive against a
+    subsequent tool loop in the same asyncio Task seeing stale state from
+    a previous loop (worker batches, tests using TestClient).
+    """
+
+    def test_resets_iteration_and_tool_call_state_on_exit(self):
+        from src.utils.types import (
+            get_current_iteration,
+            get_current_provider_tool_call_id,
+            get_current_tool_call_seq,
+            get_last_tool_metadata,
+            iteration_scope,
+            set_current_iteration,
+            set_current_tool_call_seq,
+            set_last_tool_metadata,
+        )
+
+        # Pre-scope: defaults.
+        assert get_current_iteration() == 0
+        assert get_current_tool_call_seq() == 0
+        assert get_current_provider_tool_call_id() is None
+        assert get_last_tool_metadata() == {}
+
+        with iteration_scope():
+            set_current_iteration(7)
+            set_current_tool_call_seq(3, "toolu_abc")
+            set_last_tool_metadata({"k": "v"})
+            assert get_current_iteration() == 7
+            assert get_current_tool_call_seq() == 3
+            assert get_current_provider_tool_call_id() == "toolu_abc"
+            assert get_last_tool_metadata() == {"k": "v"}
+
+        # Post-scope: every ContextVar reset to pre-scope state.
+        assert get_current_iteration() == 0
+        assert get_current_tool_call_seq() == 0
+        assert get_current_provider_tool_call_id() is None
+        assert get_last_tool_metadata() == {}
+
+    def test_resets_on_exception(self):
+        """Exception inside the block still triggers the reset path."""
+        import pytest
+
+        from src.utils.types import (
+            get_current_iteration,
+            iteration_scope,
+            set_current_iteration,
+        )
+
+        with pytest.raises(RuntimeError, match="boom"), iteration_scope():
+            set_current_iteration(5)
+            raise RuntimeError("boom")
+
+        assert get_current_iteration() == 0
+
+    def test_sequential_scopes_do_not_leak(self):
+        """Two back-to-back scopes (mimicking sequential tool loops) — the
+        second sees a clean baseline, not stale values from the first."""
+        from src.utils.types import (
+            get_current_iteration,
+            iteration_scope,
+            set_current_iteration,
+        )
+
+        with iteration_scope():
+            set_current_iteration(9)
+
+        with iteration_scope():
+            # Inside scope #2: iteration starts at 0 (the scope reset it),
+            # not at 9 from the prior scope.
+            assert get_current_iteration() == 0

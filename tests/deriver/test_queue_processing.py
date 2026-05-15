@@ -395,6 +395,104 @@ class TestQueueProcessing:
         assert all(b["task_type"] == "representation" for b in processed_batches)
 
     @pytest.mark.asyncio
+    async def test_hit_batch_token_cap_reflects_post_filter_batch(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: `hit_batch_token_cap` must reflect the actually-returned
+        batch (post config-filter), not the pre-filter superset. Previously
+        the flag used pre-filter `messages_context[-1].id`, which inflated
+        the range queried for cap detection and produced false positives
+        when the config-filter trimmed the trailing item from the batch.
+        """
+        from src.deriver import queue_manager as qm_module
+
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+        cap = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
+        # M1 + M2 sum to exactly the cap; M3 pushes over it. After SQL,
+        # messages_context = [M1, M2]; the cap is genuinely binding *on the
+        # pre-filter batch*. items_to_process = [QI(M1), QI(M2)]. We then
+        # simulate a config-filter trim that keeps only QI(M1). The
+        # actually-returned batch is [M1] alone — sum=400 < cap — so the
+        # cap-flag must report False.
+        token_counts = [400, cap - 400, 300]
+        messages: list[models.Message] = []
+        for i, tc in enumerate(token_counts):
+            m = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"cap-test message {i}",
+                token_count=tc,
+                seq_in_session=i + 1,
+            )
+            db_session.add(m)
+            messages.append(m)
+        await db_session.commit()
+        for m in messages:
+            await db_session.refresh(m)
+
+        queue_items: list[models.QueueItem] = []
+        for m in messages:
+            payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=m,
+                task_type="representation",
+                observed=peer.name,
+                observer=peer.name,
+            )
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+            qi = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=m.id,
+            )
+            db_session.add(qi)
+            queue_items.append(qi)
+        await db_session.commit()
+        for qi in queue_items:
+            await db_session.refresh(qi)
+
+        # Trim items_to_process down to the first queue item — mimics
+        # `_resolve_batch_configuration` cutting at a configuration boundary.
+        real_resolve = qm_module._resolve_batch_configuration  # pyright: ignore[reportPrivateUsage]
+
+        def fake_resolve(
+            items: list[models.QueueItem],
+        ) -> tuple[list[models.QueueItem], Any]:
+            _kept, cfg = real_resolve(items)
+            return (items[:1] if items else []), cfg
+
+        monkeypatch.setattr(qm_module, "_resolve_batch_configuration", fake_resolve)
+
+        qm = qm_module.QueueManager()
+        work_unit_key = queue_items[0].work_unit_key
+        claimed = await qm.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        await db_session.commit()
+
+        result = await qm.get_queue_item_batch(
+            task_type="representation",
+            work_unit_key=work_unit_key,
+            aqs_id=aqs_id,
+        )
+
+        # Returned batch is [M1] alone (config-filter trimmed M2). The cap
+        # wasn't binding on this batch — sum=400 < cap. Pre-fix code reported
+        # True (false positive) because it used pre-filter max_kept_id=M2.
+        assert len(result.messages_context) == 1
+        assert result.messages_context[0].id == messages[0].id
+        assert result.hit_batch_token_cap is False
+
+    @pytest.mark.asyncio
     async def test_token_batching_filters_by_work_unit(
         self,
         db_session: AsyncSession,

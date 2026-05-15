@@ -11,6 +11,7 @@ Used by:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -39,6 +40,21 @@ logger = logging.getLogger(__name__)
 M = TypeVar("M", bound=BaseModel)
 
 
+def _outcome_from_error(
+    err: BaseException | None,
+) -> Literal["success", "error", "cancelled"]:
+    """Map a finally-block error into the telemetry outcome literal.
+
+    CancelledError is a normal control-flow event (client disconnect, server
+    shutdown) — surface it distinctly so it doesn't pollute error-rate alerts.
+    """
+    if err is None:
+        return "success"
+    if isinstance(err, asyncio.CancelledError):
+        return "cancelled"
+    return "error"
+
+
 def _tool_call_result_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
     result = {
         "id": tool_call.id,
@@ -60,7 +76,7 @@ def _emit_llm_call_completed(
     duration_ms: float,
     has_tools: bool,
     was_stream: bool,
-    outcome: Literal["success", "error"],
+    outcome: Literal["success", "error", "cancelled"],
     result: BackendCompletionResult | None,
     error: BaseException | None,
 ) -> None:
@@ -340,7 +356,7 @@ async def honcho_llm_call_inner(
                     duration_ms=(time.perf_counter() - stream_start) * 1000,
                     has_tools=bool(tools),
                     was_stream=True,
-                    outcome="success" if stream_error is None else "error",
+                    outcome=_outcome_from_error(stream_error),
                     result=None,
                     error=stream_error,
                 )
@@ -376,7 +392,7 @@ async def honcho_llm_call_inner(
             duration_ms=(time.perf_counter() - start) * 1000,
             has_tools=bool(tools),
             was_stream=False,
-            outcome="success" if error is None else "error",
+            outcome=_outcome_from_error(error),
             result=backend_result,
             error=error,
         )

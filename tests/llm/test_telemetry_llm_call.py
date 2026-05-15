@@ -321,6 +321,95 @@ class TestExecutorEndToEnd:
         assert ev.provider_output_tokens == 2
 
     @pytest.mark.asyncio
+    async def test_cancelled_path_emits_cancelled_outcome(self):
+        """asyncio.CancelledError mid-call surfaces as outcome='cancelled', not
+        'error' — client disconnects / shutdowns must not pollute error rates."""
+        import asyncio
+
+        from src.llm import executor
+
+        emitted: list[BaseEvent] = []
+
+        async def _cancel(*_args: Any, **_kwargs: Any) -> Any:
+            raise asyncio.CancelledError()
+
+        with (
+            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(executor, "backend_for_provider", return_value=object()),
+            patch.object(executor, "execute_completion", new=_cancel),
+            patch(
+                "src.telemetry.events.emit",
+                side_effect=lambda event: emitted.append(event),
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await executor.honcho_llm_call_inner(
+                "anthropic",
+                "claude-sonnet-4-5",
+                "hello",
+                max_tokens=128,
+                plan=_make_plan(),
+                telemetry=None,
+            )
+
+        assert len(emitted) == 1
+        ev = emitted[0]
+        assert isinstance(ev, LLMCallCompletedEvent)
+        assert ev.outcome == "cancelled"
+        assert ev.error_class == "CancelledError"
+
+    @pytest.mark.asyncio
+    async def test_stream_cancelled_emits_cancelled_outcome(self):
+        """Stream path: mid-iteration CancelledError surfaces as 'cancelled'."""
+        import asyncio
+        from collections.abc import AsyncIterator
+
+        from src.llm import executor
+
+        emitted: list[BaseEvent] = []
+
+        async def _cancelling_stream() -> AsyncIterator[Any]:
+            # one chunk then cancel — simulates a client disconnect mid-stream.
+            yield object()  # caller's `async for` consumes this
+            raise asyncio.CancelledError()
+
+        async def _setup_stream(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
+            return _cancelling_stream()
+
+        with (
+            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(executor, "backend_for_provider", return_value=object()),
+            patch.object(executor, "execute_stream", new=_setup_stream),
+            patch.object(
+                executor,
+                "stream_chunk_to_response_chunk",
+                side_effect=lambda chunk: chunk,
+            ),
+            patch(
+                "src.telemetry.events.emit",
+                side_effect=lambda event: emitted.append(event),
+            ),
+        ):
+            stream = await executor.honcho_llm_call_inner(
+                "anthropic",
+                "claude-sonnet-4-5",
+                "hello",
+                max_tokens=128,
+                plan=_make_plan(),
+                telemetry=None,
+                stream=True,
+            )
+            with pytest.raises(asyncio.CancelledError):
+                async for _ in stream:
+                    pass
+
+        assert len(emitted) == 1
+        ev = emitted[0]
+        assert isinstance(ev, LLMCallCompletedEvent)
+        assert ev.outcome == "cancelled"
+        assert ev.was_stream is True
+
+    @pytest.mark.asyncio
     async def test_error_path_still_emits_via_finally(self):
         from src.llm import executor
 

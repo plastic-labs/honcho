@@ -282,18 +282,18 @@ class TestMessageCreatedEvent:
         assert MessageCreatedEvent.event_type() == "message.created"
 
     def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert MessageCreatedEvent.schema_version() == 1
+        """schema_version() returns correct value (v2 after last_message_id)."""
+        assert MessageCreatedEvent.schema_version() == 2
 
     def test_category(self):
         """category() returns correct value."""
         assert MessageCreatedEvent.category() == "api"
 
     def test_get_resource_id(self, sample_message_created_event: MessageCreatedEvent):
-        """get_resource_id() returns workspace:session:source:count format."""
+        """get_resource_id() keys on workspace:session:source:last_message_id."""
         assert (
             sample_message_created_event.get_resource_id()
-            == "test_workspace:test_session:api:2"
+            == "test_workspace:test_session:api:msg_abc123_fixture_____"
         )
 
     def test_source_defaults_to_api(self, fixed_timestamp: datetime):
@@ -304,8 +304,33 @@ class TestMessageCreatedEvent:
             session_name="test_session",
             message_count=1,
             total_tokens=100,
+            last_message_id="msg_default_source_____",
         )
         assert event.source == "api"
+
+    def test_distinct_batches_get_distinct_ids(self, fixed_timestamp: datetime):
+        """Two batches of the same size in the same session+source must produce
+        different event ids — the previous (v1) key collided here."""
+        e1 = MessageCreatedEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="ws",
+            session_name="sess",
+            message_count=5,
+            total_tokens=500,
+            source="api",
+            last_message_id="msg_first_batch________",
+        )
+        e2 = MessageCreatedEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="ws",
+            session_name="sess",
+            message_count=5,
+            total_tokens=500,
+            source="api",
+            last_message_id="msg_second_batch_______",
+        )
+        assert e1.generate_id() != e2.generate_id()
+        assert e1.get_resource_id() != e2.get_resource_id()
 
 
 # =============================================================================

@@ -115,6 +115,7 @@ async def create_messages_for_session(
                 message_count=len(created_messages),
                 total_tokens=sum(message.token_count for message in created_messages),
                 source="api",
+                last_message_id=created_messages[-1].public_id,
             )
         )
 
@@ -242,6 +243,7 @@ async def create_messages_with_file(
                 message_count=len(created_messages),
                 total_tokens=total_tokens,
                 source="file_upload",
+                last_message_id=created_messages[-1].public_id,
             )
         )
 

@@ -261,6 +261,26 @@ async def process_representation_tasks_batch(
     extra_context_message_count = max(prompt_message_count - queued_message_count, 0)
     extra_context_tokens = max(prompt_message_tokens - messages_tokens, 0)
 
+    # Data-quality invariants. Best-effort — telemetry never bleeds into the
+    # deriver path — but log loudly when violated so analytics alerting catches
+    # silent estimator failures (provider tokenization drift, scaffold helper
+    # returning 0) at the source instead of as drift in BigQuery later.
+    if response.input_tokens < messages_tokens:
+        logger.warning(
+            "token-breakdown invariant violated: response.input_tokens (%d) < messages_tokens (%d) for observed=%s, latest=%s — provider tokenization drift or wrong messages_tokens computation?",
+            response.input_tokens,
+            messages_tokens,
+            observed,
+            latest_message.public_id,
+        )
+    if prompt_tokens <= 0:
+        logger.warning(
+            "prompt_scaffold_tokens estimated as %d for observed=%s, latest=%s — estimate_deriver_prompt_tokens may have failed silently",
+            prompt_tokens,
+            observed,
+            latest_message.public_id,
+        )
+
     # Emit telemetry event
     emit(
         RepresentationCompletedEvent(

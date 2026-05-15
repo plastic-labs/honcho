@@ -97,6 +97,7 @@ def sample_message_created_event(fixed_timestamp: datetime) -> MessageCreatedEve
         session_name="test_session",
         message_count=2,
         total_tokens=250,
+        last_message_id="msg_abc123_fixture_____",
     )
 
 

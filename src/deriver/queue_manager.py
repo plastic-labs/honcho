@@ -799,17 +799,42 @@ class QueueManager:
                 if qi is not None:
                     items_to_process.append(qi)
 
-            # detect if `batch_max_tokens` clipped the batch. The
-            # `allowed_condition` SQL keeps rows with `cumulative_token_count
-            # <= cap` (plus an always-included first-unprocessed escape
-            # hatch), so summing the kept rows' token_count and checking
-            # against the cap won't fire — kept rows are by definition under
-            # the cap. The real signal is "did the source range have at
-            # least one row whose cumulative count exceeded the cap?"
+            # Detach BEFORE config-filter — `_resolve_batch_configuration` is
+            # sync and doesn't need the session; `messages_context` is a plain
+            # Python list after detach and survives the rest of this block.
+            _detach_queue_batch_objects(db, messages_context, items_to_process)
+
+            # Apply the config-filter while still inside the `async with` so
+            # post-filter cap-detection runs on the **actual returned batch**.
+            # Without this ordering, `hit_batch_token_cap` reflects the
+            # pre-filter superset and can false-positive when the config-trim
+            # removes the trailing message that pushed the source range past
+            # the cap.
+            items_to_process, resolved_config = _resolve_batch_configuration(
+                items_to_process
+            )
+            if items_to_process:
+                max_queue_item_message_id = max(
+                    qi.message_id
+                    for qi in items_to_process
+                    if qi.message_id is not None
+                )
+                messages_context = [
+                    m for m in messages_context if m.id <= max_queue_item_message_id
+                ]
+
+            # detect if `batch_max_tokens` clipped the **returned** batch.
+            # The `allowed_condition` SQL keeps rows with
+            # `cumulative_token_count <= cap` (plus an always-included
+            # first-unprocessed escape hatch), so summing the kept rows'
+            # token_count and checking against the cap won't fire — kept
+            # rows are by definition under the cap. The real signal is
+            # "did the source range have at least one row whose cumulative
+            # count exceeded the cap?"
             #
             # We answer with a single `SELECT EXISTS` against the same row
-            # set the original CTE built. Bounded by the kept-row max id so
-            # we don't scan the whole session forward.
+            # set the original CTE built. Bounded by the (post-filter)
+            # kept-row max id so we don't scan the whole session forward.
             if batch_max_tokens > 0 and messages_context:
                 max_kept_id = messages_context[-1].id
                 cap_hit_check = await db.execute(
@@ -847,20 +872,6 @@ class QueueManager:
                 )
             else:
                 hit_batch_token_cap = False
-
-            _detach_queue_batch_objects(db, messages_context, items_to_process)
-
-        items_to_process, resolved_config = _resolve_batch_configuration(
-            items_to_process
-        )
-
-        if items_to_process:
-            max_queue_item_message_id = max(
-                qi.message_id for qi in items_to_process if qi.message_id is not None
-            )
-            messages_context = [
-                m for m in messages_context if m.id <= max_queue_item_message_id
-            ]
 
         return QueueBatchResult(
             messages_context=messages_context,

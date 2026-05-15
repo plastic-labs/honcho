@@ -41,9 +41,12 @@ class CallPurpose(str, Enum):
 class LLMCallCompletedEvent(BaseEvent):
     """Emitted once per provider hit by `honcho_llm_call_inner`.
 
-    Covers success and failure via `outcome`. The last attempt of a tenacity
-    retry chain is flagged with `is_final_attempt=True` regardless of outcome
-    — calibration queries for "exhausted" use `outcome='error' AND is_final_attempt`.
+    Covers success, failure, and cancellation via `outcome`. The last attempt
+    of a tenacity retry chain is flagged with `is_final_attempt=True` regardless
+    of outcome — calibration queries for "exhausted" use
+    `outcome='error' AND is_final_attempt`. Cancellations (typically client
+    disconnect mid-stream or server shutdown) are distinct from errors and
+    should not feed error-rate alerting.
 
     Streaming note: when `was_stream=True`, the token counts are placeholders
     (0) because token totals aren't knowable until the stream drains. Use the
@@ -95,15 +98,17 @@ class LLMCallCompletedEvent(BaseEvent):
         default=None,
         description="First finish reason from the response (None on error)",
     )
-    outcome: Literal["success", "error"] = Field(
-        ..., description="Whether the provider returned a result or raised"
+    outcome: Literal["success", "error", "cancelled"] = Field(
+        ...,
+        description="'success' when the provider returned a result, 'error' when it raised, 'cancelled' when the awaitable was cancelled (client disconnect, server shutdown). Cancellations should be excluded from error-rate alerting.",
     )
     is_final_attempt: bool = Field(
         ...,
-        description="True when this is the last allowed attempt (attempt == retry_attempts). Combine with outcome='error' to identify retry-exhausted calls.",
+        description="True when this is the last allowed attempt (attempt == retry_attempts). Combine with outcome='error' to identify retry-exhausted calls. Cancellations are not retried so this reflects the attempt at cancellation time.",
     )
     error_class: str | None = Field(
-        default=None, description="Exception class name when outcome='error'"
+        default=None,
+        description="Exception class name when outcome is 'error' or 'cancelled' (e.g. 'CancelledError')",
     )
 
     # Retry/fallback state
@@ -217,19 +222,21 @@ class EmbeddingCallCompletedEvent(BaseEvent):
         ..., description="Wall-clock duration of the provider call"
     )
 
-    outcome: Literal["success", "error"] = Field(
-        ..., description="Whether the provider returned a result or raised"
+    outcome: Literal["success", "error", "cancelled"] = Field(
+        ...,
+        description="'success' when the provider returned a result, 'error' when it raised, 'cancelled' when the awaitable was cancelled. Cancellations should be excluded from error-rate alerting.",
     )
     is_final_attempt: bool = Field(
         default=False,
         description=(
             "True on the last retry attempt. Mirrors LLMCallCompletedEvent's "
             "convention: combine with outcome='error' to identify exhausted "
-            "embedding calls."
+            "embedding calls. Cancellations are not retried."
         ),
     )
     error_class: str | None = Field(
-        default=None, description="Exception class name when outcome='error'"
+        default=None,
+        description="Exception class name when outcome is 'error' or 'cancelled'",
     )
 
     run_id: str | None = Field(
