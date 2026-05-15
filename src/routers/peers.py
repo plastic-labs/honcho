@@ -37,7 +37,7 @@ async def get_peers(
     options: schemas.PeerGet | None = Body(
         None, description="Filtering options for the peers list"
     ),
-    reverse: bool | None = Query(
+    reverse: bool = Query(
         False, description="Whether to reverse the order of results"
     ),
     db: AsyncSession = db,
@@ -54,7 +54,7 @@ async def get_peers(
         await crud.get_peers(
             workspace_name=workspace_id,
             filters=filter_param,
-            reverse=reverse or False,
+            reverse=reverse,
         ),
     )
 
@@ -130,7 +130,7 @@ async def get_sessions_for_peer(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering options for the sessions list"
     ),
-    reverse: bool | None = Query(
+    reverse: bool = Query(
         False, description="Whether to reverse the order of results"
     ),
     db: AsyncSession = db,
@@ -149,7 +149,7 @@ async def get_sessions_for_peer(
             workspace_name=workspace_id,
             peer_name=peer_id,
             filters=filter_param,
-            reverse=reverse or False,
+            reverse=reverse,
         ),
     )
 
