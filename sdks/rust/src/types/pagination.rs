@@ -235,7 +235,6 @@ impl<TRaw: 'static, TOut: 'static> Page<TRaw, TOut> {
         let has_next = self.has_next();
         let next_page_num = self.inner.page + 1;
         let fetcher = self.inner.next_fetcher.clone();
-        let total_pages = self.inner.pages;
         let transform = self.inner.transform.clone();
 
         async_stream::try_stream! {
@@ -247,18 +246,20 @@ impl<TRaw: 'static, TOut: 'static> Page<TRaw, TOut> {
                 && has_next
             {
                 let mut current_page = next_page_num;
-                let mut pages = total_pages;
-                while current_page <= pages {
+                loop {
                     let resp = (fetcher)(current_page).await?;
-                    pages = resp.pages;
-                    let is_last = resp.page >= pages;
+                    let is_last = resp.page >= resp.pages;
                     for item in resp.items {
                         yield transform(item);
                     }
                     if is_last {
                         break;
                     }
-                    current_page = resp.page + 1;
+                    let next = resp.page + 1;
+                    if next <= current_page {
+                        break;
+                    }
+                    current_page = next;
                 }
             }
         }

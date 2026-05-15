@@ -3,6 +3,7 @@ use std::io::Read;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use tokio::io::AsyncWriteExt;
 
 use crate::FileSource;
 use crate::error::Result;
@@ -232,27 +233,48 @@ impl Session {
 
     /// Begin a file upload from a synchronous reader.
     ///
-    /// The reader is fully consumed into memory before the builder is returned,
-    /// so this is not truly streaming — but it provides the same builder API as
-    /// the async counterpart for convenience.
+    /// The reader is consumed in a background thread and piped to the async
+    /// multipart stream **without buffering the entire file in memory**.
     ///
     /// # Errors
     ///
     /// Returns [`HonchoError::Io`](crate::error::HonchoError::Io) if reading
-    /// from `reader` fails.
+    /// from `reader` fails during upload.
     pub fn upload_file_streamed(
         &self,
         filename: impl Into<String>,
-        mut reader: impl Read + Send + 'static,
+        reader: impl Read + Send + 'static,
         content_type: impl Into<String>,
-    ) -> Result<BlockingUploadFileBuilder<'_>> {
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
-        Ok(BlockingUploadFileBuilder {
-            inner: self
-                .inner
-                .upload_file(FileSource::bytes(filename, bytes, content_type)),
-        })
+    ) -> BlockingUploadFileBuilder<'_> {
+        let (mut tx, rx) = tokio::io::duplex(8192);
+        let filename_owned = filename.into();
+        let content_type_owned = content_type.into();
+        let handle = super::runtime::handle();
+
+        tokio::task::spawn_blocking(move || {
+            let mut reader = reader;
+            handle.block_on(async {
+                let mut buf = [0u8; 8192];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => {
+                            if tx.write_all(&buf[..n]).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        });
+
+        BlockingUploadFileBuilder {
+            inner: self.inner.upload_file(FileSource::stream(
+                filename_owned,
+                rx,
+                content_type_owned,
+            )),
+        }
     }
 }
 

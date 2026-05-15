@@ -92,6 +92,11 @@ impl Honcho {
     /// # Ok::<(), honcho_ai::error::HonchoError>(())
     /// ```
     pub fn new(base_url: &str, workspace_id: &str) -> Result<Self> {
+        if workspace_id.is_empty() {
+            return Err(HonchoError::Configuration(
+                "workspace_id must not be empty".into(),
+            ));
+        }
         let http =
             HttpClient::from_params(HttpClient::builder().base_url(base_url.to_string()).build())?;
         let url = Url::parse(base_url)
@@ -147,6 +152,12 @@ impl Honcho {
             .workspace_id
             .or_else(|| std::env::var("HONCHO_WORKSPACE_ID").ok())
             .unwrap_or_else(|| "default".to_owned());
+
+        if resolved_workspace_id.is_empty() {
+            return Err(HonchoError::Configuration(
+                "workspace_id must not be empty".into(),
+            ));
+        }
 
         let base_url = Url::parse(&resolved_base_url)
             .map_err(|e| HonchoError::Configuration(format!("invalid base_url: {e}")))?;
@@ -365,9 +376,15 @@ impl Honcho {
         metadata: Option<HashMap<String, Value>>,
         configuration: Option<HashMap<String, Value>>,
     ) -> Result<Peer> {
+        let peer_id: String = id.into();
+        if peer_id.is_empty() {
+            return Err(HonchoError::Configuration(
+                "peer_id must not be empty".into(),
+            ));
+        }
         self.ensure_workspace().await?;
         let body = crate::types::peer::PeerCreate {
-            id: id.into(),
+            id: peer_id,
             metadata,
             configuration,
         };
@@ -397,6 +414,12 @@ impl Honcho {
         peers: Option<Vec<PeerSpec>>,
         configuration: Option<crate::SessionConfiguration>,
     ) -> Result<Session> {
+        let session_id: String = id.into();
+        if session_id.is_empty() {
+            return Err(HonchoError::Configuration(
+                "session_id must not be empty".into(),
+            ));
+        }
         self.ensure_workspace().await?;
         let peers_map = peers.map(|specs| {
             specs
@@ -417,7 +440,7 @@ impl Honcho {
                 .collect()
         });
         let body = crate::types::session::SessionCreate {
-            id: id.into(),
+            id: session_id,
             metadata,
             peers: peers_map,
             configuration,

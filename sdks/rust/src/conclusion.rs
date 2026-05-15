@@ -313,12 +313,31 @@ impl ConclusionScope {
             })
             .collect();
 
+        if creates.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let route = routes::conclusions(&self.inner.workspace_id);
-        let body = ConclusionBatchCreate {
-            conclusions: creates,
+
+        let all_data: Vec<ConclusionData> = if creates.len() <= 100 {
+            let body = ConclusionBatchCreate {
+                conclusions: creates,
+            };
+            self.inner.http.post(&route, Some(&body), &[]).await?
+        } else {
+            let mut all = Vec::with_capacity(creates.len());
+            for chunk in creates.chunks(100) {
+                let body = ConclusionBatchCreate {
+                    conclusions: chunk.to_vec(),
+                };
+                let batch: Vec<ConclusionData> =
+                    self.inner.http.post(&route, Some(&body), &[]).await?;
+                all.extend(batch);
+            }
+            all
         };
-        let batch: Vec<ConclusionData> = self.inner.http.post(&route, Some(&body), &[]).await?;
-        Ok(batch
+
+        Ok(all_data
             .into_iter()
             .map(|d| Conclusion::from_parts(self.inner.workspace_id.clone(), d))
             .collect())
@@ -1041,17 +1060,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_batch_single_request() {
+    async fn create_batch_over_100_chunks_requests() {
         let server = MockServer::start().await;
         let scope = make_scope(&server);
 
-        let all_responses: Vec<serde_json::Value> = (0..150)
-            .map(|i| conclusion_json(&format!("c-{i}"), &format!("id-{i}")))
-            .collect();
-
         Mock::given(method("POST"))
             .and(path("/v3/workspaces/ws1/conclusions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&all_responses))
+            .respond_with(|req: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let count = body["conclusions"].as_array().unwrap().len();
+                let items: Vec<serde_json::Value> = (0..count)
+                    .map(|i| conclusion_json(&format!("c-{i}"), &format!("id-{i}")))
+                    .collect();
+                ResponseTemplate::new(200).set_body_json(&items)
+            })
+            .expect(2)
             .mount(&server)
             .await;
 

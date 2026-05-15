@@ -14,6 +14,10 @@ fn get_or_create_runtime() -> &'static Runtime {
     })
 }
 
+pub(crate) fn handle() -> Handle {
+    get_or_create_runtime().handle().clone()
+}
+
 #[expect(clippy::panic)]
 pub(crate) fn block_on<F: Future>(future: F) -> F::Output {
     match Handle::try_current() {

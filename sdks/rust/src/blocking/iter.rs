@@ -54,7 +54,8 @@ pub(crate) async fn collect_all_pages<
 >(
     first_page: crate::types::pagination::Page<TRaw, TOut>,
 ) -> crate::error::Result<Vec<TOut>> {
-    let mut all = Vec::with_capacity(first_page.total() as usize);
+    let cap = usize::try_from(first_page.total()).unwrap_or(usize::MAX);
+    let mut all = Vec::with_capacity(cap.min(10_000));
     let mut first_items = first_page.items();
     all.append(&mut first_items);
     let mut current = first_page;
