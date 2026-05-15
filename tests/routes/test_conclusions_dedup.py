@@ -17,7 +17,14 @@ class TestConclusionDedupRoutes:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test that creating duplicate conclusions with deduplicate=True works"""
+        """Test that creating duplicate conclusions with deduplicate=True works.
+
+        When deduplicate=True:
+        - Identical content: the new document replaces the old one (soft-delete old,
+          insert new). This is the "replace" path in is_rejected_duplicate().
+        - New content is more informative: same replace behavior.
+        - Existing content is more informative: the new content is rejected/skipped.
+        """
         test_workspace, test_peer = sample_data
 
         # Create another peer
@@ -64,12 +71,13 @@ class TestConclusionDedupRoutes:
         )
         assert response2.status_code == 201
         data2 = response2.json()
-        
-        # In Honcho, if content is identical, the new one replaces the old one
-        # so data2 should have 1 item (the new one).
+
+        # Identical content triggers the "replace" path: new document replaces old.
+        # is_rejected_duplicate sees equal scores -> soft-deletes old, returns False
+        # (don't reject new). So we get a new id, and only the active count is 1.
         assert len(data2) == 1
         id2 = data2[0]["id"]
-        assert id1 != id2
+        assert id1 != id2  # New id != old id (replacement)
 
         # Verify only one exists in DB (active)
         list_response = client.post(
