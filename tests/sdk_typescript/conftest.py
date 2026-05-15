@@ -96,16 +96,29 @@ def ts_test_server(
 
     app.dependency_overrides[get_db] = override_get_db
 
+    # No-op the lifespan's startup embedding-schema validator — same
+    # reasoning as the `client` fixture in tests/conftest.py: the module-
+    # level `engine` it inspects points to an unmigrated DB in CI, and the
+    # validator has dedicated coverage in tests/startup/. Use a manual
+    # MonkeyPatch since this fixture is module-scoped (the built-in
+    # `monkeypatch` fixture is function-scoped only).
+    async def _skip_validate(_engine: object) -> None:
+        return None
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr("src.main.validate_embedding_schema", _skip_validate)
+
     # Start the server
     server = TestServer(app, port)
-    server.start()
-
-    yield f"http://127.0.0.1:{port}"
-
-    # Cleanup
-    server.stop()
-    app.dependency_overrides.clear()
-    _ts_session_factory = None
+    try:
+        server.start()
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        # Cleanup
+        server.stop()
+        app.dependency_overrides.clear()
+        _ts_session_factory = None
+        mp.undo()
 
 
 @pytest.fixture(autouse=True)

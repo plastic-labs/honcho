@@ -321,6 +321,7 @@ async def fake_cache(fake_cache_session: FakeAsyncRedis):
 async def client(
     db_session: AsyncSession,
     fake_cache_session: FakeAsyncRedis,  # pyright: ignore[reportUnusedParameter]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[TestClient, Any]:
     """Create a FastAPI TestClient for the scope of a single test function"""
 
@@ -338,6 +339,18 @@ async def client(
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+
+    # No-op the startup embedding-schema validator inside the lifespan. The
+    # global `engine` it would inspect points to a DB that isn't migrated in
+    # CI (per-worker test DBs are migrated separately by db_engine), and we
+    # don't want the validator to dispose the test engine via the lifespan
+    # finally block either. The validator has its own dedicated coverage in
+    # tests/startup/test_embedding_validator.py against db_engine directly.
+    async def _skip_validate(_engine: object) -> None:
+        return None
+
+    monkeypatch.setattr("src.main.validate_embedding_schema", _skip_validate)
+
     with TestClient(app) as c:
         if settings.AUTH.USE_AUTH:
             # give the test client the admin JWT
@@ -509,7 +522,7 @@ def mock_vector_store(request: pytest.FixtureRequest):
     from src.vector_store import (
         VectorQueryResult,
         VectorRecord,
-        _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+        _hash_namespace_components,
     )
 
     # Create a mock vector store that stores vectors in memory

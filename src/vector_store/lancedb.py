@@ -99,7 +99,7 @@ class LanceDBVectorStore(VectorStore):
         fields.extend(self._metadata_fields_for_namespace(namespace))
         schema = pa.schema(fields)
         try:
-            table = await db.create_table(namespace, schema=schema)  # pyright: ignore[reportUnknownArgumentType]
+            table = await db.create_table(namespace, schema=schema)
             return table
         except Exception:
             # Table may have been created by another worker, try to open it
@@ -378,3 +378,28 @@ class LanceDBVectorStore(VectorStore):
             self._db.close()
             self._db = None
             logger.debug("LanceDB connection closed")
+
+    async def probe_namespace_dim(self, namespace: str) -> int | None:
+        """Inspect a LanceDB table's vector column to recover its declared dim.
+
+        Returns ``None`` only when the table does not exist (lazy-create
+        model, expected case). When the table exists but its schema does
+        not include a ``vector`` field with a fixed ``list_size``, raises
+        ``VectorStoreError`` — that is a malformed table, not a missing one,
+        and silently bucketing it as "missing" would let real corruption
+        through the startup validator.
+        """
+        db = await self._get_db()
+        table_names = await db.table_names()
+        if namespace not in table_names:
+            return None
+        table = await db.open_table(namespace)
+        schema = await table.schema()
+        for field in schema:
+            if field.name == "vector" and hasattr(field.type, "list_size"):
+                return int(field.type.list_size)
+        raise VectorStoreError(
+            f"LanceDB table {namespace!r} exists but has no 'vector' field"
+            + " with a fixed dimension; cannot probe dim. Schema may be"
+            + " corrupted — inspect with `lancedb` CLI before retrying."
+        )
