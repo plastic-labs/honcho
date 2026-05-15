@@ -1,5 +1,4 @@
 import os
-import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -251,14 +250,14 @@ def test_app_settings_propagate_embedding_dimensions_to_vector_store() -> None:
     assert settings.VECTOR_STORE.DIMENSIONS == 2048
 
 
-def test_app_settings_require_matching_embedding_and_vector_store_dimensions() -> None:
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            "VECTOR_STORE.DIMENSIONS must match EMBEDDING.VECTOR_DIMENSIONS"
-        ),
-    ):
-        AppSettings(
+def test_app_settings_explicit_vector_store_dimensions_warns_and_overrides() -> None:
+    """VECTOR_STORE.DIMENSIONS is deprecated: EMBEDDING.VECTOR_DIMENSIONS wins
+    and the operator gets a DeprecationWarning if they set it explicitly."""
+    import warnings
+
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        settings = AppSettings(
             EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
             VECTOR_STORE=VectorStoreSettings(
                 TYPE="lancedb",
@@ -266,28 +265,47 @@ def test_app_settings_require_matching_embedding_and_vector_store_dimensions() -
                 DIMENSIONS=1536,
             ),
         )
+    messages = [
+        str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)
+    ]
+    assert any(
+        "VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages
+    ), f"expected deprecation warning, got {messages!r}"
+    assert settings.EMBEDDING.VECTOR_DIMENSIONS == 2048
+    assert settings.VECTOR_STORE.DIMENSIONS == 2048, (
+        "EMBEDDING.VECTOR_DIMENSIONS should always overwrite the operator-supplied "
+        "VECTOR_STORE.DIMENSIONS value"
+    )
 
 
-def test_app_settings_reject_non_1536_dimensions_while_pgvector_or_dual_write_active() -> (
-    None
-):
-    with pytest.raises(
-        ValueError,
-        match=re.escape("EMBEDDING.VECTOR_DIMENSIONS must remain 1536"),
-    ):
-        AppSettings(
-            EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
-            VECTOR_STORE=VectorStoreSettings(TYPE="pgvector", MIGRATED=True),
+def test_app_settings_accepts_non_1536_with_any_vector_store_configuration() -> None:
+    """The dim-vs-MIGRATED guard was removed; the runtime startup schema
+    validator (src/startup/embedding_validator.py) is the new safety net.
+    Construction must succeed for every combination at config time."""
+    from typing import Literal
+
+    combos: list[tuple[Literal["pgvector", "turbopuffer", "lancedb"], bool]] = [
+        ("pgvector", True),
+        ("pgvector", False),
+        ("lancedb", True),
+        ("lancedb", False),
+        ("turbopuffer", True),
+        ("turbopuffer", False),
+    ]
+    for store_type, migrated in combos:
+        # Turbopuffer's model_validator requires TURBOPUFFER_API_KEY whenever
+        # TYPE="turbopuffer"; supply a dummy value so the test exercises the
+        # dim-acceptance path rather than the api-key guard.
+        vs_kwargs: dict[str, Any] = {"TYPE": store_type, "MIGRATED": migrated}
+        if store_type == "turbopuffer":
+            vs_kwargs["TURBOPUFFER_API_KEY"] = "test-key"
+        settings = AppSettings(
+            EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=768),
+            VECTOR_STORE=VectorStoreSettings(**vs_kwargs),
         )
-
-    with pytest.raises(
-        ValueError,
-        match=re.escape("EMBEDDING.VECTOR_DIMENSIONS must remain 1536"),
-    ):
-        AppSettings(
-            EMBEDDING=EmbeddingSettings(VECTOR_DIMENSIONS=2048),
-            VECTOR_STORE=VectorStoreSettings(TYPE="lancedb", MIGRATED=False),
-        )
+        assert settings.EMBEDDING.VECTOR_DIMENSIONS == 768
+        assert store_type == settings.VECTOR_STORE.TYPE
+        assert settings.VECTOR_STORE.MIGRATED is migrated
 
 
 def test_config_toml_example_uses_nested_model_config_sections() -> None:

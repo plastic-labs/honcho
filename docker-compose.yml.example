@@ -67,6 +67,10 @@ services:
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+      # Allow passwordless connections from the host (port is bound to 127.0.0.1).
+      # Lets the local test suite and ad-hoc tools connect without supplying a
+      # password. Do NOT use this in production.
+      - POSTGRES_HOST_AUTH_METHOD=trust
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql

@@ -28,7 +28,7 @@ from src.reconciler.sync_vectors import (
 from src.vector_store import (
     VectorRecord,
     VectorStore,
-    _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+    _hash_namespace_components,
 )
 
 

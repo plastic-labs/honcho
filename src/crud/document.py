@@ -242,6 +242,7 @@ async def query_external_vector_document_ids(
         top_k=top_k,
         max_distance=max_distance,
         filters=vector_filters if vector_filters else None,
+        include_attributes=False,
     )
 
     if not vector_results:

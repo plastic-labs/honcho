@@ -30,7 +30,7 @@ class TestWorkspaceValidations:
 
     def test_app_name_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
-            WorkspaceCreate(name="a" * 101, metadata={})
+            WorkspaceCreate(name="a" * 513, metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
 
@@ -64,7 +64,7 @@ class TestPeerValidations:
 
     def test_peer_name_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
-            PeerCreate(name="a" * 101, metadata={})
+            PeerCreate(name="a" * 513, metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
 
