@@ -29,6 +29,7 @@ from .runtime import (
     AttemptPlan,
     current_attempt,
     effective_temperature,
+    force_fallback,
     plan_attempt,
     resolve_runtime_model_config,
     update_current_langfuse_observation,
@@ -197,6 +198,7 @@ async def honcho_llm_call(
 
     # tenacity uses 1-indexed attempts.
     current_attempt.set(1)
+    force_fallback.set(False)
 
     def _get_attempt_plan() -> AttemptPlan:
         plan = plan_attempt(
@@ -205,11 +207,14 @@ async def honcho_llm_call(
             retry_attempts=retry_attempts,
             call_thinking_budget_tokens=thinking_budget_tokens,
             call_reasoning_effort=reasoning_effort,
+            force_fallback=force_fallback.get(),
         )
+        is_fallback = plan.selected_config is not runtime_model_config
         update_current_langfuse_observation(
             plan.provider,
             plan.model,
             name=track_name,
+            is_fallback=is_fallback,
         )
         return plan
 
@@ -270,11 +275,29 @@ async def honcho_llm_call(
     if track_name:
         decorated = ai_track(track_name)(decorated)
 
+    def _is_retryable_error(exc: BaseException) -> bool:
+        """Check if an error should trigger fast fallback to secondary model."""
+        # HTTP status code errors (429 rate limit, 5xx server errors)
+        status = getattr(exc, "status_code", None)
+        if status is not None:
+            return status == 429 or (500 <= status < 600)
+        # Timeout / connection errors
+        if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+            return True
+        # OpenAI/Anthropic SDK specific retryable errors
+        return type(exc).__name__ in (
+            "APIConnectionError",
+            "APITimeoutError",
+            "InternalServerError",
+            "ServiceUnavailableError",
+            "RateLimitError",
+        )
+
     def before_retry_callback(retry_state: Any) -> None:
         """Update attempt counter before each retry + log transient failures.
 
-        tenacity's before_sleep fires AFTER an attempt fails, BEFORE sleeping,
-        so we increment to the next attempt number here.
+        On first retryable failure, set force_fallback to True so the next
+        attempt uses the fallback model immediately.
         """
         next_attempt = retry_state.attempt_number + 1
         current_attempt.set(next_attempt)
@@ -284,7 +307,19 @@ async def honcho_llm_call(
                 f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
                 + f"{runtime_model_config.transport}/{runtime_model_config.model}: {exc}"
             )
-            logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
+            if (
+                not force_fallback.get()
+                and runtime_model_config.fallback is not None
+                and _is_retryable_error(exc)
+            ):
+                force_fallback.set(True)
+                logger.warning(
+                    f"Fast fallback triggered: will use fallback model "
+                    + f"{runtime_model_config.fallback.transport}/{runtime_model_config.fallback.model} "
+                    + f"on attempt {next_attempt}/{retry_attempts}"
+                )
+            else:
+                logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
     if enable_retry:
         decorated = retry(

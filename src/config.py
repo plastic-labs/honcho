@@ -668,6 +668,11 @@ class LLMSettings(HonchoSettings):
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
+    # Default timeout in seconds for all LLM provider HTTP clients.
+    # Raised from SDK default (~60s) to accommodate slower local models (e.g.
+    # LMStudio fallback) without hardcoding in registry.py.
+    DEFAULT_TIMEOUT: Annotated[float, Field(default=180.0, gt=0)] = 180.0
+
     # Maximum characters for tool output to prevent token explosion.
     # Set to 10,000 chars (~2,500 tokens at 4 chars/token) to stay well under
     # typical context limits while providing substantial tool output.

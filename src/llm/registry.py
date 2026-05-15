@@ -39,7 +39,7 @@ def get_anthropic_client() -> AsyncAnthropic:
     return AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
         base_url=settings.LLM.ANTHROPIC_BASE_URL,
-        timeout=600.0,
+        timeout=settings.LLM.DEFAULT_TIMEOUT,
     )
 
 
@@ -49,6 +49,7 @@ def get_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
+        timeout=settings.LLM.DEFAULT_TIMEOUT,
     )
 
 
@@ -70,7 +71,7 @@ def get_openai_override_client(
     base_url: str | None, api_key: str | None
 ) -> AsyncOpenAI:
     """OpenAI client for a specific (base_url, api_key) pair. Cached by key."""
-    return AsyncOpenAI(api_key=api_key, base_url=base_url)
+    return AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=settings.LLM.DEFAULT_TIMEOUT)
 
 
 @lru_cache(maxsize=128)
@@ -79,7 +80,7 @@ def get_anthropic_override_client(
     api_key: str | None,
 ) -> AsyncAnthropic:
     """Anthropic client for a specific (base_url, api_key) pair. Cached by key."""
-    return AsyncAnthropic(api_key=api_key, base_url=base_url, timeout=600.0)
+    return AsyncAnthropic(api_key=api_key, base_url=base_url, timeout=settings.LLM.DEFAULT_TIMEOUT)
 
 
 @lru_cache(maxsize=128)
@@ -99,13 +100,14 @@ if settings.LLM.ANTHROPIC_API_KEY:
     CLIENTS["anthropic"] = AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
         base_url=settings.LLM.ANTHROPIC_BASE_URL,
-        timeout=600.0,
+        timeout=settings.LLM.DEFAULT_TIMEOUT,
     )
 
 if settings.LLM.OPENAI_API_KEY:
     CLIENTS["openai"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
+        timeout=settings.LLM.DEFAULT_TIMEOUT,
     )
 
 if settings.LLM.GEMINI_API_KEY:
@@ -123,12 +125,14 @@ if settings.LLM.LMSTUDIO_API_KEY:
     CLIENTS["lmstudio"] = AsyncOpenAI(
         api_key=settings.LLM.LMSTUDIO_API_KEY,
         base_url=settings.LLM.LMSTUDIO_BASE_URL,
+        timeout=settings.LLM.DEFAULT_TIMEOUT,
     )
 
 if settings.LLM.NOUS_API_KEY:
     CLIENTS["nous"] = AsyncOpenAI(
         api_key=settings.LLM.NOUS_API_KEY,
         base_url=settings.LLM.NOUS_BASE_URL,
+        timeout=settings.LLM.DEFAULT_TIMEOUT,
     )
 
 
