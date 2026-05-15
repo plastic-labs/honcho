@@ -41,6 +41,7 @@ async def create_conclusions(
         db,
         observations=body.conclusions,
         workspace_name=workspace_id,
+        deduplicate=body.deduplicate,
     )
 
     logger.debug(
