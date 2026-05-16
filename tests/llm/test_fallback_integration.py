@@ -6,8 +6,9 @@ Tests the full honcho_llm_call() flow with mocked backends to verify:
 - Both fail → error raised
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 from src.config import (
     ConfiguredModelSettings,
@@ -15,7 +16,6 @@ from src.config import (
 )
 from src.llm.api import honcho_llm_call
 from src.llm.backend import CompletionResult
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -99,7 +99,9 @@ async def test_primary_fails_fallback_succeeds():
 
     with (
         patch("src.llm.runtime.client_for_model_config", return_value=mock_client),
-        patch.object(executor_mod, "backend_for_provider", side_effect=mock_backend_for_provider),
+        patch.object(
+            executor_mod, "backend_for_provider", side_effect=mock_backend_for_provider
+        ),
     ):
         result = await honcho_llm_call(
             model_config=config,
@@ -143,7 +145,9 @@ async def test_fallback_triggers_on_first_failure():
 
     with (
         patch("src.llm.runtime.client_for_model_config", return_value=mock_client),
-        patch.object(executor_mod, "backend_for_provider", side_effect=mock_backend_for_provider),
+        patch.object(
+            executor_mod, "backend_for_provider", side_effect=mock_backend_for_provider
+        ),
     ):
         result = await honcho_llm_call(
             model_config=config,
@@ -186,9 +190,11 @@ async def test_both_primary_and_fallback_fail():
 
     with (
         patch("src.llm.runtime.client_for_model_config", return_value=mock_client),
-        patch.object(executor_mod, "backend_for_provider", side_effect=mock_backend_for_provider),
+        patch.object(
+            executor_mod, "backend_for_provider", side_effect=mock_backend_for_provider
+        ),
     ):
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             await honcho_llm_call(
                 model_config=config,
                 prompt="test prompt",
@@ -196,3 +202,13 @@ async def test_both_primary_and_fallback_fail():
                 enable_retry=True,
                 retry_attempts=2,
             )
+        # Verify the exception originates from the fallback path
+        # tenacity wraps the final exception in RetryError after all retries
+        inner_exc = exc_info.value
+        if hasattr(inner_exc, "last_attempt") and hasattr(
+            inner_exc.last_attempt, "exception"
+        ):
+            inner_exc = inner_exc.last_attempt.exception()
+        assert getattr(inner_exc, "status_code", None) or isinstance(
+            inner_exc, (ConnectionError, TimeoutError)
+        ), f"Expected a retryable HTTP/network error, got {type(inner_exc).__name__}"

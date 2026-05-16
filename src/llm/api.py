@@ -197,8 +197,12 @@ async def honcho_llm_call(
         )
 
     # tenacity uses 1-indexed attempts.
-    current_attempt.set(1)
-    force_fallback.set(False)
+    _current_attempt_token = current_attempt.set(1)
+    _force_fallback_token = force_fallback.set(False)
+
+    def _restore_contextvars() -> None:
+        current_attempt.reset(_current_attempt_token)
+        force_fallback.reset(_force_fallback_token)
 
     def _get_attempt_plan() -> AttemptPlan:
         plan = plan_attempt(
@@ -280,7 +284,7 @@ async def honcho_llm_call(
         # HTTP status code errors (429 rate limit, 5xx server errors)
         status = getattr(exc, "status_code", None)
         if status is not None:
-            return status == 429 or (500 <= status < 600)
+            return status in (408, 429) or (500 <= status < 600)
         # Timeout / connection errors
         if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
             return True
@@ -314,7 +318,7 @@ async def honcho_llm_call(
             ):
                 force_fallback.set(True)
                 logger.warning(
-                    f"Fast fallback triggered: will use fallback model "
+                    "Fast fallback triggered: will use fallback model "
                     + f"{runtime_model_config.fallback.transport}/{runtime_model_config.fallback.model} "
                     + f"on attempt {next_attempt}/{retry_attempts}"
                 )
@@ -452,6 +456,7 @@ async def honcho_llm_call(
         if isinstance(result, HonchoLLMCallResponse) and settings.LANGFUSE_PUBLIC_KEY:
             try:
                 from langfuse import get_client
+
                 usage = {}
                 if result.input_tokens is not None:
                     usage["input"] = result.input_tokens
@@ -475,6 +480,7 @@ async def honcho_llm_call(
                 stop_seqs=_trace_stop_seqs(),
                 messages=messages,
             )
+        _restore_contextvars()
         return result
 
     # execute_tool_loop raises ValidationException on out-of-range
@@ -504,6 +510,7 @@ async def honcho_llm_call(
     if isinstance(result, HonchoLLMCallResponse) and settings.LANGFUSE_PUBLIC_KEY:
         try:
             from langfuse import get_client
+
             usage = {}
             if result.input_tokens is not None:
                 usage["input"] = result.input_tokens
@@ -527,6 +534,7 @@ async def honcho_llm_call(
             stop_seqs=_trace_stop_seqs(),
             messages=messages,
         )
+    _restore_contextvars()
     return result
 
 

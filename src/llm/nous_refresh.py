@@ -14,11 +14,10 @@ The flow:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +41,7 @@ STATE_FILE = Path(
 
 
 # ── State management ────────────────────────────────────────────────────────
+
 
 def load_state() -> dict[str, Any]:
     """Load persisted OAuth state from disk, with Hermes auth.json and .env fallbacks."""
@@ -82,6 +82,7 @@ def save_state(**fields: Any) -> None:
 
 # ── Environment file update ─────────────────────────────────────────────────
 
+
 def _load_from_hermes_auth() -> dict[str, Any] | None:
     """Bootstrap refresh_token from Hermes auth.json if state file is empty."""
     auth_path = Path.home() / ".hermes" / "auth.json"
@@ -97,6 +98,7 @@ def _load_from_hermes_auth() -> dict[str, Any] | None:
         logger.debug("Failed to read Hermes auth.json: %s", exc)
     return None
 
+
 def _read_refresh_from_env() -> str | None:
     """Read NOUS_REFRESH_TOKEN from project .env (backward compatibility)."""
     env_path = _find_project_root() / ".env"
@@ -108,13 +110,14 @@ def _read_refresh_from_env() -> str | None:
             if stripped.startswith("NOUS_REFRESH_TOKEN="):
                 val = stripped.split("=", 1)[1].strip()
                 # Strip surrounding quotes if present
-                if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                if (val.startswith('"') and val.endswith('"')) or (
+                    val.startswith("'") and val.endswith("'")
+                ):
                     val = val[1:-1]
                 return val if val else None
     except Exception as exc:
         logger.debug("Failed to read .env for refresh token: %s", exc)
     return None
-
 
 
 def _find_project_root(start: Path | None = None) -> Path:
@@ -139,16 +142,17 @@ def update_env_key(env_path: Path, new_key: str) -> None:
         stripped = line.strip()
         if stripped.startswith("LLM_NOUS_API_KEY="):
             # Preserve any surrounding quotes/whitespace
-            lines[i] = f'LLM_NOUS_API_KEY={new_key}\n'
+            lines[i] = f"LLM_NOUS_API_KEY={new_key}\n"
             updated = True
             break
     if not updated:
-        lines.append(f'\nLLM_NOUS_API_KEY={new_key}\n')
+        lines.append(f"\nLLM_NOUS_API_KEY={new_key}\n")
     env_path.write_text("".join(lines))
     logger.info("Updated .env with new Nous API key")
 
 
 # ── HTTP helpers (httpx) ─────────────────────────────────────────────────────
+
 
 async def refresh_access_token(refresh_token: str) -> tuple[str, str]:
     """Exchange refresh_token for a new access_token and refresh_token."""
@@ -163,9 +167,7 @@ async def refresh_access_token(refresh_token: str) -> tuple[str, str]:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
     if resp.status_code != 200:
-        raise RuntimeError(
-            f"Token refresh failed {resp.status_code}: {resp.text}"
-        )
+        raise RuntimeError(f"Token refresh failed {resp.status_code}: {resp.text}")
     data = resp.json()
     return data["access_token"], data["refresh_token"]
 
@@ -182,14 +184,13 @@ async def mint_agent_key(access_token: str) -> str:
             },
         )
     if resp.status_code != 200:
-        raise RuntimeError(
-            f"Agent key mint failed {resp.status_code}: {resp.text}"
-        )
+        raise RuntimeError(f"Agent key mint failed {resp.status_code}: {resp.text}")
     data = resp.json()
     return data["api_key"]
 
 
 # ── Public orchestrator ──────────────────────────────────────────────────────
+
 
 async def refresh_nous_credentials() -> str | None:
     """Full refresh+mint flow; returns new agent_key or None on failure."""
@@ -209,7 +210,9 @@ async def refresh_nous_credentials() -> str | None:
         agent_key = await mint_agent_key(access_token)
 
         # 3. Compute expiry timestamp (UTC ISO 8601)
-        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=MIN_TTL_SECONDS)).isoformat()
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(seconds=MIN_TTL_SECONDS)
+        ).isoformat()
 
         # 4. Persist state
         save_state(
@@ -226,6 +229,7 @@ async def refresh_nous_credentials() -> str | None:
         # 6. Update in-memory settings globally (if Honcho is running)
         try:
             from honcho.config import settings
+
             settings.LLM.NOUS_API_KEY = agent_key
             logger.info("In-memory settings.LLM.NOUS_API_KEY updated")
         except Exception:
