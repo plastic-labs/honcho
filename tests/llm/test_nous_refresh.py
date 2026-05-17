@@ -3,7 +3,7 @@
 import json
 import os
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -107,6 +107,9 @@ async def test_refresh_nous_credentials_success(
     def fake_save_state(**kw):
         saved_state.update(kw)
 
+    # Import module first so we can patch httpx.AsyncClient in it
+    import src.llm.nous_refresh as refresh_mod
+
     # Mock httpx.AsyncClient
     mock_client = AsyncMock()
     mock_resp_token = SimpleNamespace(
@@ -124,8 +127,10 @@ async def test_refresh_nous_credentials_success(
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.post = AsyncMock(side_effect=[mock_resp_token, mock_resp_key])
 
-    # Patch imports
-    import src.llm.nous_refresh as refresh_mod
+    # Patch httpx.AsyncClient in the refresh module so both
+    # refresh_access_token() and mint_agent_key() use the mock.
+    monkeypatch.setattr(refresh_mod, "httpx", MagicMock())
+    refresh_mod.httpx.AsyncClient = lambda *a, **kw: mock_client
 
     original_save = refresh_mod.save_state
     original_update_env = refresh_mod.update_env_key

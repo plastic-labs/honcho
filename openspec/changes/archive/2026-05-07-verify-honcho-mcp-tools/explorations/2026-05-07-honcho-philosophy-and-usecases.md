@@ -239,7 +239,7 @@ The Atomic Communication Unit. Uses a dual ID strategy: Internal `id` (bigint) f
 
 #### `collections`
 The Observer/Observed Knowledge Container. Contains `observer` and `observed` columns.
-> **Key Insight**: Collections are created bi-directionally. When `hermes` and `phuong_lambert` interact, 4 collections are created: each peer observing the other, plus each peer's self-reflection.
+> **Key Insight**: Collections are created bi-directionally. When `<agent>` and `<user>` interact, 4 collections are created: each peer observing the other, plus each peer's self-reflection.
 
 #### `documents`
 The Knowledge Atoms. Contains `embedding` (vector), `level` (explicit/deductive/inductive), and `source_ids` (lineage tracking).
@@ -318,17 +318,17 @@ Querying the `documents` table reveals a complex, evolving knowledge graph rathe
 **Conclusion**: Honcho's reasoning engine does not use a strict `Explicit -> Deductive -> Inductive` pipeline. Instead, it continuously cross-pollinates raw facts and higher-level abstractions to form new, richer conclusions.
 
 ### 5.2 The Subjectivity Engine
-This is where the `peer_id` vs `target_peer_id` paradigm materializes. Live data shows that a single chat session between `hermes` and `phuong_lambert` generates **4 distinct collections**:
-1. `hermes` observing `hermes` (self-reflection)
-2. `hermes` observing `phuong_lambert` (AI's view of User)
-3. `phuong_lambert` observing `hermes` (User's view of AI)
-4. `phuong_lambert` observing `phuong_lambert` (self-reflection)
+This is where the `peer_id` vs `target_peer_id` paradigm materializes. Live data shows that a single chat session between `<agent>` and `<user>` generates **4 distinct collections**:
+1. `<agent>` observing `<agent>` (self-reflection)
+2. `<agent>` observing `<user>` (AI's view of User)
+3. `<user>` observing `<agent>` (User's view of AI)
+4. `<user>` observing `<user>` (self-reflection)
 The database physically separates these perspectives, preventing context pollution.
 
 ### 5.3 Derived Insight Examples
 When querying for `inductive` documents, the results are highly synthesized "Behavioral Profiles":
-*   *"hermes shows strong WSL2-specific operational awareness, especially around Docker management limitations..."* (Derived from 4 explicit facts)
-*   *"hermes prefers `.env`-based launcher configuration and tends to keep Claude Code startup settings in lightweight environment files..."* (Derived from 4 explicit facts)
+*   *"<agent> shows strong WSL2-specific operational awareness, especially around Docker management limitations..."* (Derived from 4 explicit facts)
+*   *"<agent> prefers `.env`-based launcher configuration and tends to keep Claude Code startup settings in lightweight environment files..."* (Derived from 4 explicit facts)
 
 ---
 

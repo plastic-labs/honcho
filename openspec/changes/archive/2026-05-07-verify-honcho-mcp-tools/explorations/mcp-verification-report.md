@@ -20,17 +20,17 @@ This document provides a detailed breakdown of the End-to-End verification perfo
       "configuration": {},
       "peer_count": 16,
       "peers": [
-        {"id": "phuong_lambert"}, {"id": "hermes"}, {"id": "-phuongvominh-matrix-org"}, 
-        {"id": "1970177716"}, {"id": "165712924557331-lid"}, {"id": "test_peer"}, 
-        {"id": "hermes_agent"}, {"id": "webhook-paperclip"}, {"id": "webhook-swarmclaw"}, 
-        {"id": "fd3fdd74-1ba4-4df1-a5ea-55b35de08c5f"}, {"id": "14793c39-3f63-44b6-9c36-499bae249b7e"}, 
-        {"id": "hao-nguyen"}, {"id": "aziz"}, {"id": "some-random-id-123"}, 
+        {"id": "test-user-1"}, {"id": "test-agent-1"}, {"id": "test-user-2"},
+        {"id": "1970177716"}, {"id": "165712924557331-lid"}, {"id": "test_peer"},
+        {"id": "hermes_agent"}, {"id": "webhook-paperclip"}, {"id": "webhook-swarmclaw"},
+        {"id": "fd3fdd74-1ba4-4df1-a5ea-55b35de08c5f"}, {"id": "14793c39-3f63-44b6-9c36-499bae249b7e"},
+        {"id": "hao-nguyen"}, {"id": "aziz"}, {"id": "some-random-id-123"},
         {"id": "test_peer_nous"}, {"id": "test_mcp_tool_user"}
       ],
       "session_count": 82,
       "sessions": [
-        {"id": "hermes-agent"}, {"id": "Waiting-for-model-response"}, 
-        {"id": "hermes-gateway-process-is-running-and-active"}, {"id": "workspaces"}
+        {"id": "test-session-1"}, {"id": "test-session-2"},
+        {"id": "test-session-3"}, {"id": "test-session-4"}
       ]
     }
     ```
@@ -73,7 +73,7 @@ This document provides a detailed breakdown of the End-to-End verification perfo
     ```json
     {
       "peers": [
-        {"id":"phuong_lambert"},{"id":"hermes"},{"id":"-phuongvominh-matrix-org"},
+        {"id":"test-user-1"},{"id":"test-agent-1"},{"id":"test-user-2"},
         {"id":"1970177716"},{"id":"165712924557331-lid"},{"id":"test_peer"},
         {"id":"hermes_agent"},{"id":"webhook-paperclip"},{"id":"webhook-swarmclaw"},
         {"id":"fd3fdd74-1ba4-4df1-a5ea-55b35de08c5f"},{"id":"14793c39-3f63-44b6-9c36-499bae249b7e"},

@@ -939,13 +939,18 @@ class TestMainLLMCallFunction:
             )
 
             assert response.content == "Named response"
-            mock_langfuse_client.update_current_generation.assert_called_once_with(
+            assert mock_langfuse_client.update_current_generation.call_count == 2
+            mock_langfuse_client.update_current_generation.assert_any_call(
                 name="Dialectic Agent",
                 model="claude-4-sonnet",
                 metadata={
                     "namespace": settings.NAMESPACE,
                     "provider": "anthropic",
+                    "is_fallback": False,
                 },
+            )
+            mock_langfuse_client.update_current_generation.assert_any_call(
+                usage_details={"input": 5, "output": 5},
             )
 
 

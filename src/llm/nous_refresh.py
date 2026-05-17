@@ -23,6 +23,8 @@ from typing import Any
 
 import httpx
 
+from src.exceptions import NousAuthError
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
@@ -77,7 +79,9 @@ def save_state(**fields: Any) -> None:
     # Atomic write via temp file + rename
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2))
+    os.chmod(tmp, 0o600)
     tmp.replace(STATE_FILE)
+    os.chmod(STATE_FILE, 0o600)
 
 
 # ── Environment file update ─────────────────────────────────────────────────
@@ -131,9 +135,10 @@ def _find_project_root(start: Path | None = None) -> Path:
 
 
 def update_env_key(env_path: Path, new_key: str) -> None:
-    """Update LLM_NOUS_API_KEY in the given .env file."""
+    """Update LLM_NOUS_API_KEY in the given .env file, creating it if missing."""
     if not env_path.exists():
-        logger.warning(".env not found at %s — skipping env update", env_path)
+        env_path.write_text(f"LLM_NOUS_API_KEY={new_key}\n")
+        logger.info("Created .env with new Nous API key at %s", env_path)
         return
 
     lines = env_path.read_text().splitlines(keepends=True)
@@ -167,7 +172,7 @@ async def refresh_access_token(refresh_token: str) -> tuple[str, str]:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
     if resp.status_code != 200:
-        raise RuntimeError(f"Token refresh failed {resp.status_code}: {resp.text}")
+        raise NousAuthError(f"Token refresh failed {resp.status_code}: {resp.text}")
     data = resp.json()
     return data["access_token"], data["refresh_token"]
 
@@ -184,7 +189,7 @@ async def mint_agent_key(access_token: str) -> str:
             },
         )
     if resp.status_code != 200:
-        raise RuntimeError(f"Agent key mint failed {resp.status_code}: {resp.text}")
+        raise NousAuthError(f"Agent key mint failed {resp.status_code}: {resp.text}")
     data = resp.json()
     return data["api_key"]
 
