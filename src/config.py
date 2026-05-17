@@ -1196,6 +1196,8 @@ class DreamSettings(HonchoSettings):
 
 
 class CORSSettings(HonchoSettings):
+    """Settings for the FastAPI CORS middleware (allowed origins)."""
+
     model_config = SettingsConfigDict(env_prefix="CORS_", extra="ignore")  # pyright: ignore
 
     ORIGINS: list[str] = [
