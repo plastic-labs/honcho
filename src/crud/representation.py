@@ -102,6 +102,15 @@ class RepresentationManager:
                 "Observation content exceeds maximum token limit of "
                 + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
+        except Exception as e:
+            # Embedding API failure (e.g. Gemini daily quota exhausted) —
+            # save observations without embeddings; the reconciler will backfill
+            # after quota resets at midnight Pacific.
+            logger.warning(
+                f"Embedding API rate limited, saving {len(all_observations)} "
+                f"observations without embeddings (reconciler will backfill): {e}"
+            )
+            embeddings = None
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
         accumulate_metric(
@@ -138,7 +147,7 @@ class RepresentationManager:
         self,
         db: AsyncSession,
         all_observations: list[ExplicitObservation | DeductiveObservation],
-        embeddings: list[list[float]],
+        embeddings: list[list[float]] | None,
         message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
@@ -154,7 +163,7 @@ class RepresentationManager:
 
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
-        for obs, embedding in zip(all_observations, embeddings, strict=True):
+        for i, obs in enumerate(all_observations):
             # NOTE: will add additional levels of reasoning in the future
             if isinstance(obs, DeductiveObservation):
                 obs_level = "deductive"
@@ -177,7 +186,7 @@ class RepresentationManager:
                     session_name=session_name,
                     level=obs_level,
                     metadata=metadata,
-                    embedding=embedding,
+                    embedding=embeddings[i] if embeddings is not None else None,
                 )
             )
 
