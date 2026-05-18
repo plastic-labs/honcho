@@ -17,11 +17,13 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import sentry_sdk
+from sqlalchemy import func, select
 
-from src import crud
+from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.specialists import SPECIALISTS, SpecialistResult
@@ -322,6 +324,34 @@ DREAM: {payload.dream_type} documents for {workspace_name}/{payload.observer}/{p
                         + f"iterations={result.total_iterations}, "
                         + f"duration={result.total_duration_ms:.0f}ms"
                     )
+
+                    # Both guard fields advance together only on successful consolidation.
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    async with tracked_db("dream.guard_pair_write") as db:
+                        collection = await crud.get_collection(
+                            db,
+                            workspace_name,
+                            observer=payload.observer,
+                            observed=payload.observed,
+                            with_for_update=True,
+                        )
+                        count_stmt = select(func.count(models.Document.id)).where(
+                            models.Document.workspace_name == workspace_name,
+                            models.Document.observer == payload.observer,
+                            models.Document.observed == payload.observed,
+                            models.Document.level == "explicit",
+                        )
+                        current_explicit_count = int(await db.scalar(count_stmt) or 0)
+                        dream_meta = dict(collection.internal_metadata.get("dream", {}))
+                        dream_meta["last_dream_at"] = now_iso
+                        dream_meta["last_dream_document_count"] = current_explicit_count
+                        await crud.update_collection_internal_metadata(
+                            db,
+                            workspace_name,
+                            payload.observer,
+                            payload.observed,
+                            update_data={"dream": dream_meta},
+                        )
 
     except Exception as e:
         logger.error(

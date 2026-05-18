@@ -64,8 +64,19 @@ print(result.raw)
 
 ## Documentation
 
-For guides and API reference, visit [docs.honcho.dev](https://docs.honcho.dev/v3/guides/integrations/crewai).
+For comprehensive guides, examples, and API reference, visit:
+**[https://honcho.dev/docs/v3/integrations/crewai](https://honcho.dev/docs/v3/integrations/crewai)**
+
+## Examples
+
+Check out complete examples in the [GitHub repository](https://github.com/plastic-labs/honcho/tree/main/examples/crewai/python/examples).
 
 ## License
 
 AGPL-3.0-or-later
+
+## Support
+
+- Report issues: [GitHub Issues](https://github.com/plastic-labs/honcho/issues)
+- Documentation: [honcho.dev/docs](https://honcho.dev/docs)
+- Website: [honcho.dev](https://honcho.dev)

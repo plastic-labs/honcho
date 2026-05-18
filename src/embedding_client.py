@@ -2,7 +2,7 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import tiktoken
 from google import genai
@@ -34,10 +34,12 @@ class _EmbeddingClient:
         vector_dimensions: int,
         max_input_tokens: int,
         max_tokens_per_request: int,
+        send_dimensions: bool,
     ):
         self.transport: str = config.transport
         self.model: str = config.model
         self.vector_dimensions: int = vector_dimensions
+        self.send_dimensions: bool = send_dimensions
 
         if self.transport == "gemini":
             if not config.api_key:
@@ -65,7 +67,10 @@ class _EmbeddingClient:
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048  # OpenAI batch limit
 
-        self.encoding: tiktoken.Encoding = tiktoken.get_encoding("o200k_base")
+        try:
+            self.encoding: tiktoken.Encoding = tiktoken.encoding_for_model(self.model)
+        except KeyError:
+            self.encoding = tiktoken.get_encoding("cl100k_base")
         self.max_embedding_tokens_per_request: int = max_tokens_per_request
 
     @property
@@ -98,9 +103,10 @@ class _EmbeddingClient:
                 raise ValueError("No embedding returned from Gemini API")
             return self._validate_embedding_dimensions(response.embeddings[0].values)
         else:  # openai
-            response = await self.client.embeddings.create(
-                model=self.model, input=[query]
-            )
+            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            if self.send_dimensions:
+                openai_kwargs["dimensions"] = self.vector_dimensions
+            response = await self.client.embeddings.create(**openai_kwargs)
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
     async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
@@ -135,10 +141,13 @@ class _EmbeddingClient:
                                     self._validate_embedding_dimensions(emb.values)
                                 )
                 else:  # openai
-                    response = await self.client.embeddings.create(
-                        input=batch,
-                        model=self.model,
-                    )
+                    openai_kwargs: dict[str, Any] = {
+                        "input": batch,
+                        "model": self.model,
+                    }
+                    if self.send_dimensions:
+                        openai_kwargs["dimensions"] = self.vector_dimensions
+                    response = await self.client.embeddings.create(**openai_kwargs)
                     embeddings.extend(
                         [
                             self._validate_embedding_dimensions(data.embedding)
@@ -156,13 +165,13 @@ class _EmbeddingClient:
         return embeddings
 
     async def batch_embed(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[list[float]]]:
         """
         Embed multiple texts, chunking long ones and batching API calls.
 
         Args:
-            id_resource_dict: Maps text IDs to (text, encoded_tokens) tuples
+            id_resource_dict: Maps text IDs to text content
 
         Returns:
             Maps text IDs to lists of embedding vectors (one per chunk)
@@ -185,27 +194,29 @@ class _EmbeddingClient:
         return self._accumulate_embeddings(batch_results)
 
     def _prepare_chunks(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[tuple[str, int]]]:
         """
         Chunk texts that exceed token limits.
 
         Args:
-            id_resource_dict: Maps text IDs to (text, encoded_tokens) tuples
+            id_resource_dict: Maps text IDs to text content. We tokenize with
+                the embedding client's own encoding so token IDs match the
+                decoder vocabulary used by the target embedding API.
 
         Returns:
             Maps text IDs to lists of (chunk_text, token_count) tuples
         """
-        return {
-            text_id: (
-                _chunk_text_with_tokens(
-                    text, encoded_tokens, self.max_embedding_tokens, self.encoding
+        out: dict[str, list[tuple[str, int]]] = {}
+        for text_id, text in id_resource_dict.items():
+            tokens = self.encoding.encode(text)
+            if len(tokens) > self.max_embedding_tokens:
+                out[text_id] = _chunk_text_with_tokens(
+                    text, tokens, self.max_embedding_tokens, self.encoding
                 )
-                if len(encoded_tokens) > self.max_embedding_tokens
-                else [(text, len(encoded_tokens))]
-            )
-            for text_id, (text, encoded_tokens) in id_resource_dict.items()
-        }
+            else:
+                out[text_id] = [(text, len(tokens))]
+        return out
 
     def _create_batches(
         self, text_chunks: dict[str, list[tuple[str, int]]]
@@ -282,9 +293,13 @@ class _EmbeddingClient:
                                     )
                                 )
                 else:  # openai
-                    response = await self.client.embeddings.create(
-                        model=self.model, input=[item.text for item in batch]
-                    )
+                    openai_kwargs: dict[str, Any] = {
+                        "model": self.model,
+                        "input": [item.text for item in batch],
+                    }
+                    if self.send_dimensions:
+                        openai_kwargs["dimensions"] = self.vector_dimensions
+                    response = await self.client.embeddings.create(**openai_kwargs)
                     for item, embedding_data in zip(batch, response.data, strict=True):
                         result[item.text_id][item.chunk_index] = (
                             self._validate_embedding_dimensions(
@@ -406,6 +421,7 @@ class EmbeddingClient:
                         vector_dimensions=settings.EMBEDDING.VECTOR_DIMENSIONS,
                         max_input_tokens=settings.EMBEDDING.MAX_INPUT_TOKENS,
                         max_tokens_per_request=settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
+                        send_dimensions=settings.EMBEDDING.resolve_send_dimensions(),
                     )
                     self._instance_signature = signature
                     logger.debug(
@@ -429,6 +445,7 @@ class EmbeddingClient:
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
+            settings.EMBEDDING.resolve_send_dimensions(),
         )
 
     async def embed(self, query: str) -> list[float]:
@@ -440,7 +457,7 @@ class EmbeddingClient:
         return await self._get_client().simple_batch_embed(texts)
 
     async def batch_embed(
-        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+        self, id_resource_dict: dict[str, str]
     ) -> dict[str, list[list[float]]]:
         """Embed multiple texts, chunking long ones and batching API calls."""
         return await self._get_client().batch_embed(id_resource_dict)

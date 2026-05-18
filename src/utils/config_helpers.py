@@ -101,7 +101,10 @@ def get_configuration(
     """
     # Start with defaults
     config_dict: dict[str, Any] = {
-        "reasoning": {"enabled": settings.DERIVER.ENABLED},
+        "reasoning": {
+            "enabled": settings.DERIVER.ENABLED,
+            "custom_instructions": None,
+        },
         "peer_card": {
             "use": settings.PEER_CARD.ENABLED,
             "create": settings.PEER_CARD.ENABLED,

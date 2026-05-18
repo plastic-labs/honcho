@@ -422,7 +422,7 @@ class TestAgentToolConclusionsDeletedEvent:
 
     def test_schema_version(self):
         """schema_version() returns correct value."""
-        assert AgentToolConclusionsDeletedEvent.schema_version() == 1
+        assert AgentToolConclusionsDeletedEvent.schema_version() == 2
 
     def test_category(self):
         """category() returns correct value."""

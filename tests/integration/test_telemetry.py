@@ -246,6 +246,7 @@ def create_conclusions_deleted_event(
         observer="assistant",
         observed="user_peer",
         conclusion_count=3,
+        levels=["explicit", "deductive", "explicit"],
     )
 
 
@@ -651,6 +652,7 @@ class TestAllEventTypes:
         received = mock_transport.received_events[0]
         assert received["type"] == "agent.tool.conclusions.deleted"
         assert received["data"]["conclusion_count"] == 3
+        assert received["data"]["levels"] == ["explicit", "deductive", "explicit"]
 
     @pytest.mark.asyncio
     async def test_peer_card_updated_event(

@@ -9,6 +9,7 @@ from .document import (
     create_observations,
     delete_document,
     delete_document_by_id,
+    delete_documents,
     fetch_documents_by_ids,
     get_all_documents,
     get_child_observations,
@@ -95,6 +96,7 @@ __all__ = [
     "query_external_vector_document_ids",
     "delete_document",
     "delete_document_by_id",
+    "delete_documents",
     # Message
     "create_messages",
     "get_messages",

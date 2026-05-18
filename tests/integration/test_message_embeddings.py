@@ -17,9 +17,48 @@ from src import models
 from src.config import settings
 from src.crud import create_messages
 from src.crud import message as message_crud
-from src.models import Peer, Workspace
+from src.models import Message, Peer, Workspace
 from src.schemas import MessageCreate
 from src.utils.search import search
+
+
+class _FakeScalarResult:
+    def __init__(self, rows: list[models.Message]):
+        self._rows: list[Message] = rows
+
+    def all(self) -> list[models.Message]:
+        return self._rows
+
+
+class _FakeResult:
+    def __init__(self, rows: list[models.Message]):
+        self._rows: list[Message] = rows
+
+    def scalars(self) -> _FakeScalarResult:
+        return _FakeScalarResult(self._rows)
+
+
+class _CountingDb:
+    def __init__(self, rows: list[models.Message]):
+        self._rows: list[Message] = rows
+        self.execute_count: int = 0
+
+    async def execute(self, _stmt: Any) -> _FakeResult:
+        self.execute_count += 1
+        return _FakeResult(self._rows)
+
+
+def _message(session_name: str, seq_in_session: int) -> models.Message:
+    return models.Message(
+        workspace_name="workspace",
+        session_name=session_name,
+        peer_name="peer",
+        content=f"{session_name}:{seq_in_session}",
+        public_id=generate_nanoid(),
+        seq_in_session=seq_in_session,
+        token_count=1,
+        created_at=datetime.now(timezone.utc),
+    )
 
 
 @pytest.mark.asyncio
@@ -75,6 +114,68 @@ async def test_message_embedding_created_when_setting_enabled(
     assert embedding_record.workspace_name == test_workspace.name
     assert embedding_record.session_name == test_session.name
     assert embedding_record.peer_name == test_peer.name
+
+
+@pytest.mark.asyncio
+async def test_blank_messages_are_not_sent_for_embedding(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+    mock_openai_embeddings: dict[str, Any],
+):
+    """Blank messages should be persisted but excluded from embedding batches."""
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", True)
+
+    test_workspace, test_peer = sample_data
+
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    blank_content = "   "
+    nonblank_content = "This message should be embedded"
+    messages = [
+        MessageCreate(
+            content=blank_content,
+            peer_id=test_peer.name,
+            metadata={"test": "blank_embedding"},
+        ),
+        MessageCreate(
+            content=nonblank_content,
+            peer_id=test_peer.name,
+            metadata={"test": "blank_embedding"},
+        ),
+    ]
+
+    created_messages = await create_messages(
+        db=db_session,
+        messages=messages,
+        workspace_name=test_workspace.name,
+        session_name=test_session.name,
+    )
+
+    assert [message.content for message in created_messages] == [
+        blank_content,
+        nonblank_content,
+    ]
+
+    mock_openai_embeddings["batch_embed"].assert_awaited_once()
+    batch_arg = mock_openai_embeddings["batch_embed"].await_args.args[0]
+    assert batch_arg == {created_messages[1].public_id: nonblank_content}
+
+    stmt = select(models.MessageEmbedding).where(
+        models.MessageEmbedding.message_id.in_(
+            [message.public_id for message in created_messages]
+        )
+    )
+    result = await db_session.execute(stmt)
+    embedding_records = list(result.scalars().all())
+
+    assert len(embedding_records) == 1
+    assert embedding_records[0].message_id == created_messages[1].public_id
+    assert embedding_records[0].content == nonblank_content
 
 
 @pytest.mark.asyncio
@@ -258,6 +359,46 @@ async def test_semantic_search_when_embeddings_enabled(
     assert len(search_results) > 0
     found_message_ids = [msg.public_id for msg in search_results]
     assert created_message.public_id in found_message_ids
+
+
+@pytest.mark.asyncio
+async def test_build_merged_snippets_batches_context_query_across_sessions():
+    """Context expansion should not issue one DB query per matched session."""
+    matched_messages = [
+        _message("session_a", 10),
+        _message("session_b", 20),
+        _message("session_c", 30),
+    ]
+    context_messages = [
+        _message("session_a", 9),
+        _message("session_a", 10),
+        _message("session_a", 11),
+        _message("session_a", 99),
+        _message("session_b", 19),
+        _message("session_b", 20),
+        _message("session_b", 21),
+        _message("session_c", 29),
+        _message("session_c", 30),
+        _message("session_c", 31),
+    ]
+    db = _CountingDb(context_messages)
+
+    snippets = await message_crud._build_merged_snippets(  # pyright: ignore[reportPrivateUsage]
+        db,  # pyright: ignore[reportArgumentType]
+        workspace_name="workspace",
+        matched_messages=matched_messages,
+        context_window=1,
+    )
+
+    assert db.execute_count == 1
+    assert [len(matches) for matches, _ in snippets] == [1, 1, 1]
+    assert [
+        [msg.content for msg in context_messages] for _, context_messages in snippets
+    ] == [
+        ["session_a:9", "session_a:10", "session_a:11"],
+        ["session_b:19", "session_b:20", "session_b:21"],
+        ["session_c:29", "session_c:30", "session_c:31"],
+    ]
 
 
 @pytest.mark.asyncio
@@ -492,7 +633,7 @@ async def test_message_chunking_creates_multiple_embeddings(
     test_message_content = "This is a very long message that should be chunked into multiple pieces because it exceeds the token limit that we set for testing purposes. This message contains many words and should definitely be split into multiple chunks."
 
     def mock_batch_embed_chunked(
-        id_resource_dict: dict[str, tuple[str, list[int]]],
+        id_resource_dict: dict[str, str],
     ) -> dict[str, list[list[float]]]:
         return {
             text_id: [[0.1] * 1536, [0.2] * 1536, [0.3] * 1536]  # 3 chunks per message

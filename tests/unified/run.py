@@ -12,13 +12,13 @@ from tests.unified.runner import UnifiedTestRunner
 
 async def main():
     parser = argparse.ArgumentParser(description="Run Unified Honcho Tests")
-    parser.add_argument(
+    target_group = parser.add_mutually_exclusive_group()
+    target_group.add_argument(
         "--test-dir",
         type=str,
-        default="tests/unified/test_cases",
         help="Directory containing JSON test files",
     )
-    parser.add_argument(
+    target_group.add_argument(
         "--test-file",
         type=str,
         help="Path to a single JSON test file to run",
@@ -32,10 +32,8 @@ async def main():
 
     args = parser.parse_args()
 
-    # Validate mutually exclusive args
-    if args.test_file and args.test_dir != "tests/unified/test_cases":
-        print("Error: Cannot specify both --test-file and --test-dir")
-        sys.exit(1)
+    if args.test_file is None and args.test_dir is None:
+        args.test_dir = "tests/unified/test_cases"
 
     if args.test_file:
         test_path = Path(args.test_file)

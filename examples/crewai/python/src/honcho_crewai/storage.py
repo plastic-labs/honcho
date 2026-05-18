@@ -464,7 +464,30 @@ class HonchoStorage(LegacyStorage):
         score_threshold: float = 0.5,
         filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Search session messages and return CrewAI external-memory records."""
+        """
+        Search for relevant messages using semantic search.
+
+        This method uses Honcho's semantic vector search to find messages most
+        relevant to the query.
+
+        Args:
+            query: Search query used for semantic matching
+            limit: Maximum number of messages to retrieve
+            score_threshold: Minimum relevance score (not currently used by Honcho API)
+            filters: Optional filters to scope the search. Supports Honcho's filter syntax
+                including logical operators (AND, OR, NOT), comparison operators
+                (gt, gte, lt, lte, eq, ne), and metadata filtering.
+                Example: {"peer_id": "user123"} or {"metadata": {"type": "important"}}
+                See: https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters
+
+        Returns:
+            List of message dictionaries in CrewAI expected format.
+            Each dict contains:
+                - content: The message content
+                - memory: The message content (required by CrewAI)
+                - context: The message content (for compatibility)
+                - metadata: Message metadata including peer_id, created_at, and custom metadata
+        """
         try:
             _ = score_threshold
             messages = self.session.search(query=query, filters=filters, limit=limit)

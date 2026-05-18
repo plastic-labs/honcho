@@ -18,32 +18,26 @@ Give OpenCode long-term memory that survives context wipes, session restarts, an
 ### Step 2: Install the Plugin
 
 <Note>
-This plugin requires [Bun](https://bun.sh) and the [OpenCode CLI](https://opencode.ai). If `opencode` isn't on your `PATH`, install it first, then restart your shell.
+This plugin requires the [OpenCode CLI](https://opencode.ai). If `opencode` isn't on your `PATH`, install it first, then restart your shell.
 </Note>
 
-Run the installer:
+Install the plugin:
 
 ```bash
-bunx @honcho-ai/opencode-honcho install
+opencode plugin "@honcho-ai/opencode-honcho" --global
 ```
 
-<Accordion title="Windows install">
+To update an existing plugin install:
 
-Windows Command Prompt:
-
-```cmd
-git clone --branch main https://github.com/plastic-labs/opencode-honcho.git
-cd opencode-honcho
-bun install && bun run build && bun .\dist\cli.js install --plugin-spec "%CD%" --force
+```bash
+opencode plugin "@honcho-ai/opencode-honcho" --force
 ```
 
-</Accordion>
-
-The installer:
+OpenCode:
 
 - registers `@honcho-ai/opencode-honcho` with OpenCode
-- enables both the native server and TUI plugin targets
-- writes the Honcho command templates into your global OpenCode config
+- resolves the package's native server and TUI plugin targets
+- updates plugin entries in your global OpenCode config
 - activates the plugin globally for every OpenCode project
 
 ### Step 3: Run Setup in OpenCode
