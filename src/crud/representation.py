@@ -97,18 +97,17 @@ class RepresentationManager:
         observation_texts = [_observation_text(obs) for obs in all_observations]
         try:
             embeddings = await embedding_client.simple_batch_embed(observation_texts)
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             raise exceptions.ValidationException(
                 "Observation content exceeds maximum token limit of "
                 + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
-        except Exception as e:
-            # Embedding API failure (e.g. Gemini daily quota exhausted) —
-            # save observations without embeddings; the reconciler will backfill
-            # after quota resets at midnight Pacific.
+
+        # Guard against partial batch results (provider may return fewer vectors than texts)
+        if embeddings is not None and len(embeddings) != len(all_observations):
             logger.warning(
-                f"Embedding API rate limited, saving {len(all_observations)} "
-                f"observations without embeddings (reconciler will backfill): {e}"
+                f"Embedding batch returned {len(embeddings)} vectors for "
+                f"{len(all_observations)} observations; saving without embeddings"
             )
             embeddings = None
 
