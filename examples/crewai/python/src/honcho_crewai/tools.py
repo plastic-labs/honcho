@@ -6,7 +6,7 @@ session context, dialectic API, and semantic search capabilities.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from crewai.tools import BaseTool
 from honcho import Honcho
@@ -19,38 +19,49 @@ logger = logging.getLogger(__name__)
 class GetContextInput(BaseModel):
     """Input schema for context tool."""
 
-    tokens: Optional[int] = Field(
-        default=None, gt=0, description="Maximum number of tokens to include in the context"
+    tokens: int | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum number of tokens to include in the context",
     )
-    peer_target: Optional[str] = Field(
-        default=None, description="A peer ID to get context for (retrieves representation and peer card)"
+    peer_target: str | None = Field(
+        default=None,
+        description="A peer ID to get context for (retrieves representation and peer card)",
     )
     summary: bool = Field(
         default=True, description="Whether to include session summary in the context"
     )
-    peer_perspective: Optional[str] = Field(
-        default=None, description="Peer ID to use as the perspective for context retrieval"
+    peer_perspective: str | None = Field(
+        default=None,
+        description="Peer ID to use as the perspective for context retrieval",
     )
 
 
 class DialecticInput(BaseModel):
     """Input schema for dialectic (chat) tool."""
 
-    query: str = Field(..., min_length=1, description="Natural language question to ask")
-    target: Optional[str] = Field(
+    query: str = Field(
+        ..., min_length=1, description="Natural language question to ask"
+    )
+    target: str | None = Field(
         default=None, description="Optional target peer for local representation query"
     )
-    session_id: Optional[str] = Field(
-        default=None, description="Optional session ID to scope query to specific session"
+    session_id: str | None = Field(
+        default=None,
+        description="Optional session ID to scope query to specific session",
     )
 
 
 class SearchInput(BaseModel):
     """Input schema for search tool."""
 
-    query: str = Field(..., min_length=1, description="Search query for semantic matching")
-    limit: int = Field(default=10, ge=1, le=100, description="Number of results to return (1-100)")
-    filters: Optional[dict[str, Any]] = Field(
+    query: str = Field(
+        ..., min_length=1, description="Search query for semantic matching"
+    )
+    limit: int = Field(
+        default=10, ge=1, le=100, description="Number of results to return (1-100)"
+    )
+    filters: dict[str, Any] | None = Field(
         default=None,
         description=(
             "Optional filters to scope the search. Supports Honcho's filter syntax including "
@@ -81,6 +92,7 @@ class HonchoGetContextTool(BaseTool):
     _honcho: Honcho = PrivateAttr()
     _session_id: str = PrivateAttr()
     _peer_id: str = PrivateAttr()
+    _session: Any = PrivateAttr(default=None)
 
     def __init__(self, honcho: Honcho, session_id: str, peer_id: str) -> None:
         """
@@ -96,13 +108,19 @@ class HonchoGetContextTool(BaseTool):
         self._session_id = session_id
         self._peer_id = peer_id
 
+    @property
+    def _honcho_session(self) -> Any:
+        if self._session is None:
+            self._session = self._honcho.session(self._session_id)
+        return self._session
+
     def _run(
         self,
-        tokens: Optional[int] = None,
-        peer_target: Optional[str] = None,
+        tokens: int | None = None,
+        peer_target: str | None = None,
         *,
         summary: bool = True,
-        peer_perspective: Optional[str] = None,
+        peer_perspective: str | None = None,
     ) -> str:
         """
         Execute context retrieval and format results.
@@ -117,8 +135,7 @@ class HonchoGetContextTool(BaseTool):
             Formatted string containing context information
         """
         try:
-            session = self._honcho.session(self._session_id)
-            context = session.context(
+            context = self._honcho_session.context(
                 summary=summary,
                 tokens=tokens,
                 peer_target=peer_target,
@@ -179,6 +196,7 @@ class HonchoDialecticTool(BaseTool):
     _honcho: Honcho = PrivateAttr()
     _session_id: str = PrivateAttr()
     _peer_id: str = PrivateAttr()
+    _peer: Any = PrivateAttr(default=None)
 
     def __init__(self, honcho: Honcho, session_id: str, peer_id: str) -> None:
         """
@@ -194,11 +212,17 @@ class HonchoDialecticTool(BaseTool):
         self._session_id = session_id
         self._peer_id = peer_id
 
+    @property
+    def _honcho_peer(self) -> Any:
+        if self._peer is None:
+            self._peer = self._honcho.peer(self._peer_id)
+        return self._peer
+
     def _run(
         self,
         query: str,
-        target: Optional[str] = None,
-        session_id: Optional[str] = None,
+        target: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """
         Execute dialectic query.
@@ -212,13 +236,11 @@ class HonchoDialecticTool(BaseTool):
             String response from the dialectic API
         """
         try:
-            peer = self._honcho.peer(self._peer_id)
-
             # Use provided session_id or fall back to default
             scope_session_id = session_id or self._session_id
 
             # Query the dialectic API (non-streaming)
-            response = peer.chat(
+            response = self._honcho_peer.chat(
                 query=query,
                 target=target,
                 session=scope_session_id,
@@ -254,6 +276,7 @@ class HonchoSearchTool(BaseTool):
 
     _honcho: Honcho = PrivateAttr()
     _session_id: str = PrivateAttr()
+    _session: Any = PrivateAttr(default=None)
 
     def __init__(self, honcho: Honcho, session_id: str) -> None:
         """
@@ -267,7 +290,15 @@ class HonchoSearchTool(BaseTool):
         self._honcho = honcho
         self._session_id = session_id
 
-    def _run(self, query: str, limit: int = 10, filters: Optional[dict[str, Any]] = None) -> str:
+    @property
+    def _honcho_session(self) -> Any:
+        if self._session is None:
+            self._session = self._honcho.session(self._session_id)
+        return self._session
+
+    def _run(
+        self, query: str, limit: int = 10, filters: dict[str, Any] | None = None
+    ) -> str:
         """
         Execute semantic search.
 
@@ -280,10 +311,10 @@ class HonchoSearchTool(BaseTool):
             Formatted string with search results
         """
         try:
-            session = self._honcho.session(self._session_id)
-
             # Perform semantic search
-            messages = session.search(query=query, limit=limit, filters=filters)
+            messages = self._honcho_session.search(
+                query=query, limit=limit, filters=filters
+            )
 
             if not messages:
                 return f"No messages found matching '{query}'"
