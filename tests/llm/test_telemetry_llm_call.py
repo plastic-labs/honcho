@@ -495,14 +495,19 @@ class TestExecutorEndToEnd:
 
 def test_ground_truth_event_skips_sampler():
     """DialecticCompletedEvent declares _volume_class='ground_truth' (default
-    on BaseEvent) so the sampler should never gate it, even at rate 0.0."""
-    from src.telemetry.emitter import _should_sample
+    on BaseEvent) so the sampler should never gate it, even at rate 0.0.
 
-    # The sampler is only consulted by emit() when volume_class == 'high_volume'.
-    # Verify the class declaration directly so future refactors of emit() can't
-    # silently start sampling ground-truth events.
+    Drives the real emitter under a zero-rate config and asserts the
+    ground-truth event still lands in the buffer — the actual bypass
+    behavior in emit() — not just the helper-function semantics in
+    _should_sample. Regression guard for a future refactor that pushes
+    ground_truth events through the sampling decision.
+    """
+    from src.telemetry.emitter import TelemetryEmitter, _should_sample
+
+    # The volume_class declaration is the gate emit() consults.
     assert DialecticCompletedEvent.volume_class() == "ground_truth"
-    # And the sampler itself, while we're here, must be deterministic 1.0 → True.
+
     event = DialecticCompletedEvent(
         run_id="r",
         workspace_name="ws",
@@ -512,7 +517,47 @@ def test_ground_truth_event_skips_sampler():
         input_tokens=1,
         output_tokens=1,
     )
+    # Sampler is deterministic 1.0 → True for any event (sanity).
     assert _should_sample(event, 1.0) is True
+
+    # Drive the emitter directly under rate=0.0. enabled=True requires a
+    # non-None endpoint; we use a placeholder URL — the emitter buffers but
+    # we never flush, so no HTTP traffic is generated. The buffer growing
+    # proves the ground_truth event bypassed the sampler.
+    emitter = TelemetryEmitter(endpoint="http://test/events", enabled=True)
+    with patch("src.config.settings") as mock_settings:
+        mock_settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE = 0.0
+        mock_settings.TELEMETRY.NAMESPACE = "test"
+        mock_settings.TELEMETRY.HONCHO_VERSION = None
+        emitter.emit(event)
+    assert emitter.buffer_size == 1  # ground_truth survived the sampler
+
+    # Sanity check: a high-volume event under rate=0.0 DOES get dropped,
+    # proving the test setup actually exercises the sampling code path.
+    from src.telemetry.events import LLMCallCompletedEvent
+
+    sampled_event = LLMCallCompletedEvent(
+        transport="anthropic",
+        model="m",
+        effective_max_output_tokens=1,
+        finish_reason="stop",
+        outcome="success",
+        is_final_attempt=True,
+        attempt=1,
+        retry_attempts=1,
+        was_fallback=False,
+        duration_ms=1.0,
+        has_tools=False,
+        was_stream=False,
+    )
+    assert sampled_event.volume_class() == "high_volume"
+    with patch("src.config.settings") as mock_settings:
+        mock_settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE = 0.0
+        mock_settings.TELEMETRY.NAMESPACE = "test"
+        mock_settings.TELEMETRY.HONCHO_VERSION = None
+        emitter.emit(sampled_event)
+    # Buffer still 1 — high_volume event was sampled out.
+    assert emitter.buffer_size == 1
 
 
 class TestStreamFinalResponseRetryAttempt:

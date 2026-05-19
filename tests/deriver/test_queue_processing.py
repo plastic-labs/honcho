@@ -493,6 +493,105 @@ class TestQueueProcessing:
         assert result.hit_batch_token_cap is False
 
     @pytest.mark.asyncio
+    async def test_hit_batch_token_cap_fires_when_trailing_context_trimmed(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Regression: when SQL kept trailing NON-QUEUE context past the last
+        queued item, and the config filter trims that context away, the cap
+        check must still recognize that the SQL cap clamped queue work.
+
+        Pre-fix used `messages_context[-1].id == sql_max_kept_id` which goes
+        False whenever trailing context is dropped — producing a false
+        negative for the very case the cap-hit flag exists to report.
+        Post-fix keys on the queue-item boundary, which is unaffected by
+        trailing-context trimming.
+        """
+        from src.deriver import queue_manager as qm_module
+
+        session, peers = sample_session_with_peers
+        peer_a = peers[0]
+        peer_b = peers[1] if len(peers) > 1 else peers[0]
+        cap = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
+        # Layout: 4 messages, ordered.
+        #   M1 (peer_a, queue, 200)
+        #   M2 (peer_a, queue, 200)
+        #   M3 (peer_b, NON-queue context, cap - 300)
+        #   M4 (peer_a, queue, 400)
+        # Cumulative tokens: M1=200, M2=400, M3=cap+100, M4=cap+500.
+        # SQL keeps M1+M2 (cumulative <= cap), excludes M3 onwards (over cap).
+        # Wait — we want SQL to keep through M3 (trailing context) but exclude
+        # M4 (queue). Adjust so M3 fits but M4 doesn't.
+        token_counts: list[tuple[models.Peer, int]] = [
+            (peer_a, 200),  # M1 — queue
+            (peer_a, 200),  # M2 — queue
+            (peer_b, cap - 700),  # M3 — non-queue context; cumulative = cap-300
+            (peer_a, 400),  # M4 — queue; cumulative cap+100 > cap → excluded
+        ]
+        messages: list[models.Message] = []
+        for i, (msg_peer, tc) in enumerate(token_counts):
+            m = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=msg_peer.name,
+                content=f"cap-test message {i}",
+                token_count=tc,
+                seq_in_session=i + 1,
+            )
+            db_session.add(m)
+            messages.append(m)
+        await db_session.commit()
+        for m in messages:
+            await db_session.refresh(m)
+
+        # Queue items for M1, M2, M4 only — M3 is non-queue context (peer_b).
+        # observed = peer_a, so the deriver's representation work unit covers
+        # peer_a messages; peer_b is treated as conversational context.
+        queue_items: list[models.QueueItem] = []
+        for m in [messages[0], messages[1], messages[3]]:
+            payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=m,
+                task_type="representation",
+                observed=peer_a.name,
+                observer=peer_a.name,
+            )
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+            qi = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=m.id,
+            )
+            db_session.add(qi)
+            queue_items.append(qi)
+        await db_session.commit()
+        for qi in queue_items:
+            await db_session.refresh(qi)
+
+        qm = qm_module.QueueManager()
+        work_unit_key = queue_items[0].work_unit_key
+        claimed = await qm.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        await db_session.commit()
+
+        result = await qm.get_queue_item_batch(
+            task_type="representation",
+            work_unit_key=work_unit_key,
+            aqs_id=aqs_id,
+        )
+
+        # Cap fired: SQL stopped at M3 (cap budget exhausted), excluding the
+        # queue item M4. Config filter doesn't touch queue items here. The
+        # flag must report True.
+        assert result.hit_batch_token_cap is True
+
+    @pytest.mark.asyncio
     async def test_token_batching_filters_by_work_unit(
         self,
         db_session: AsyncSession,

@@ -87,7 +87,7 @@ class TestStateTransitions:
         mock_vector_store.upsert_many = AsyncMock(return_value=None)
 
         # Run sync
-        synced, failed = await _sync_documents(db_session, docs, mock_vector_store)
+        synced, failed = await _sync_documents(docs, mock_vector_store)
 
         # Verify results
         assert synced == 3
@@ -149,7 +149,7 @@ class TestStateTransitions:
         )
 
         # Run sync
-        synced, failed = await _sync_documents(db_session, [doc], mock_vector_store)
+        synced, failed = await _sync_documents([doc], mock_vector_store)
 
         # Verify failure recorded
         assert synced == 0
@@ -210,7 +210,7 @@ class TestStateTransitions:
         )
 
         # Run sync - this should be the final attempt
-        synced, failed = await _sync_documents(db_session, [doc], mock_vector_store)
+        synced, failed = await _sync_documents([doc], mock_vector_store)
 
         # Verify marked as failed
         assert synced == 0
@@ -317,7 +317,7 @@ class TestBatchProcessing:
         mock_vector_store.upsert_many = mock_upsert
 
         # Run sync
-        synced, failed = await _sync_documents(db_session, docs, mock_vector_store)
+        synced, failed = await _sync_documents(docs, mock_vector_store)
 
         # Verify all synced
         assert synced == 3
@@ -493,7 +493,7 @@ class TestReEmbedding:
             mock_vector_store.upsert_many = AsyncMock(return_value=None)
 
             # Run sync
-            synced, failed = await _sync_documents(db_session, docs, mock_vector_store)
+            synced, failed = await _sync_documents(docs, mock_vector_store)
 
             # Verify embedding was called
             mock_embed_client.simple_batch_embed.assert_called_once()
@@ -563,7 +563,7 @@ class TestReEmbedding:
             mock_vector_store.upsert_many = AsyncMock(return_value=None)
 
             # Run sync
-            await _sync_documents(db_session, docs, mock_vector_store)
+            await _sync_documents(docs, mock_vector_store)
 
             # Verify single batch call (no sub-batching)
             assert batch_call_count == 1
@@ -800,7 +800,7 @@ class TestMessageEmbeddings:
         )
 
         synced, failed = await _sync_message_embeddings(
-            db_session, [pending_emb], mock_vector_store
+            [pending_emb], mock_vector_store
         )
 
         await db_session.refresh(pending_emb)
@@ -836,7 +836,7 @@ class TestMessageEmbeddings:
         upsert_mock.side_effect = Exception("boom")
 
         synced, failed = await _sync_message_embeddings(
-            db_session, [pending_emb], mock_vector_store
+            [pending_emb], mock_vector_store
         )
 
         await db_session.refresh(pending_emb)

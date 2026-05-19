@@ -999,6 +999,8 @@ class TestCleanupStaleItemsCompletedEvent:
         # Serialize → deserialize to ensure the field crosses the wire.
         data = event.model_dump(mode="json")
         assert data["queue_items_cleaned"] == 42
+        round_tripped = CleanupStaleItemsCompletedEvent.model_validate(data)
+        assert round_tripped.queue_items_cleaned == 42
 
 
 # =============================================================================

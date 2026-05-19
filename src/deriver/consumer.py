@@ -9,7 +9,7 @@ from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.dreamer import process_dream
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ResourceNotFoundException, ValidationException
 from src.models import Message
 from src.reconciler.queue_cleanup import cleanup_queue_items
 from src.reconciler.sync_vectors import run_vector_reconciliation_cycle
@@ -304,7 +304,7 @@ async def process_deletion(
             else:
                 success = False
                 error_message = f"Unsupported deletion type: {deletion_type}"
-                raise ValueError(error_message)
+                raise ValidationException(error_message)
     except Exception as e:
         # Catch anything that survived the per-branch `ResourceNotFoundException`
         # handling above (incl. the ValueError from the unsupported-type branch).

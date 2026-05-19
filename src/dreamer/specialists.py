@@ -347,10 +347,12 @@ If you update it, send the full deduplicated list and remove stale entries.
                 success=True,
                 content=response.content,
             )
-        except Exception as e:
+        except BaseException as e:
+            # BaseException (not Exception) — asyncio.CancelledError doesn't
+            # inherit from Exception in py3.8+, and we want the failure
+            # telemetry populated for cancellations too (worker shutdown,
+            # client disconnect). `raise` preserves cancellation semantics.
             specialist_error_class = type(e).__name__
-            # capture duration on the failure path too — useful for analytics
-            # ("specialist failures average X ms before crashing").
             if duration_ms == 0.0:
                 duration_ms = (time.perf_counter() - start_time) * 1000
             raise

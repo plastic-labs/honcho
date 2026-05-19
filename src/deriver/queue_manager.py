@@ -805,11 +805,28 @@ class QueueManager:
             _detach_queue_batch_objects(db, messages_context, items_to_process)
 
             # Snapshot the PRE-filter SQL kept-range max id. Cap detection
-            # below compares this against the post-filter tail to decide
-            # whether the cap was binding on the actually-returned batch
-            # (vs. the config filter doing the trimming).
+            # below compares queue-item boundaries before and after the
+            # config filter to decide whether the cap was binding on the
+            # actually-returned batch.
             sql_max_kept_id: int | None = (
                 messages_context[-1].id if messages_context else None
+            )
+            # The QUEUE-ITEM boundary (not the messages_context tail) is
+            # what matters for cap detection. messages_context includes
+            # non-queue interleaving context messages — if SQL kept some
+            # trailing context past the last queued item, the config
+            # filter trims that context but doesn't touch the queue
+            # items. Using messages_context[-1].id as a "did config
+            # filter shrink the batch" signal produced false negatives
+            # for that case.
+            last_queued_id_before: int | None = (
+                max(
+                    qi.message_id
+                    for qi in items_to_process
+                    if qi.message_id is not None
+                )
+                if items_to_process
+                else None
             )
 
             items_to_process, resolved_config = _resolve_batch_configuration(
@@ -825,31 +842,42 @@ class QueueManager:
                     m for m in messages_context if m.id <= max_queue_item_message_id
                 ]
 
+            last_queued_id_after: int | None = (
+                max(
+                    qi.message_id
+                    for qi in items_to_process
+                    if qi.message_id is not None
+                )
+                if items_to_process
+                else None
+            )
+
             # detect if `batch_max_tokens` clamped this returned batch.
             #
             # The `allowed_condition` SQL keeps rows whose CUMULATIVE token
             # sum is `<= cap` (with an always-included first-unprocessed
             # escape hatch). The cap is binding on the returned batch iff:
-            #   1. Config filter didn't shrink the batch past SQL's tail
-            #      (`messages_context[-1].id == sql_max_kept_id`) — i.e.
-            #      SQL is what drew the trailing boundary, not config; AND
+            #   1. Config filter didn't shrink the QUEUE-ITEM boundary
+            #      (`last_queued_id_before == last_queued_id_after`) —
+            #      i.e. SQL chose the trailing queue item, not config; AND
             #   2. There's at least one unprocessed message strictly past
-            #      that boundary in the same session — i.e. SQL had a
-            #      reason to stop there.
+            #      `sql_max_kept_id` (the SQL's true kept-range tail,
+            #      which may extend into non-queue context past the last
+            #      queued item) — i.e. SQL had a reason to stop there.
             # Both conditions must hold; otherwise the cap wasn't the
             # constraint on this specific returned batch.
             #
-            # Previously the rule was `next_exists AND total_in_range >=
-            # cap`, which produced false negatives whenever the kept range
-            # didn't fully exhaust the budget (e.g. kept=900 of 1000 cap,
-            # next message's 300 tokens would have busted it). The new
-            # rule replaces the budget-exhaustion proxy with a direct
-            # check.
+            # Previously we keyed on `messages_context[-1].id ==
+            # sql_max_kept_id` which produced false negatives when SQL
+            # kept trailing non-queue context past the last queued item
+            # (config filter would trim that context, making the check
+            # fire even though queue work was untouched). Queue-boundary
+            # comparison is the right invariant.
             if (
                 batch_max_tokens > 0
-                and messages_context
                 and sql_max_kept_id is not None
-                and messages_context[-1].id == sql_max_kept_id
+                and last_queued_id_before is not None
+                and last_queued_id_before == last_queued_id_after
             ):
                 next_exists_check = await db.execute(
                     select(
