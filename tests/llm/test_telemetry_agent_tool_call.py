@@ -281,3 +281,75 @@ class TestEmitAgentToolCallCompleted:
 def test_volume_class_is_high_volume():
     """event is high-volume — sampled alongside llm.call.completed."""
     assert AgentToolCallCompletedEvent.volume_class() == "high_volume"
+
+
+class TestMaybeTruncatedResult:
+    """`_maybe_truncated_result` should wrap in ToolResult only when the
+    helper actually clamps the output, and the wrapping must surface
+    the fields the AgentToolCallCompletedEvent reads from metadata.
+
+    These tests guard against the regression where the truncation signal
+    used to be discarded by `_truncate_tool_output` returning bare str —
+    leaving `was_truncated` / `result_chars_before_truncation` as dead
+    fields on the event.
+    """
+
+    def test_under_cap_returns_bare_string(self):
+        """No-cap path keeps the bare-str contract — no metadata wrapping."""
+        from src.utils.agent_tools import _maybe_truncated_result
+
+        out = _maybe_truncated_result("hello")
+        assert out == "hello"
+        assert not isinstance(out, ToolResult)
+
+    def test_over_cap_returns_tool_result_with_metadata(self):
+        """Truncated path wraps in ToolResult carrying the original size."""
+        from src.config import settings
+        from src.utils.agent_tools import _maybe_truncated_result
+
+        original = "x" * 5000
+        with patch.object(settings.LLM, "MAX_TOOL_OUTPUT_CHARS", 100):
+            out = _maybe_truncated_result(original)
+        assert isinstance(out, ToolResult)
+        assert out.metadata["was_truncated"] is True
+        assert out.metadata["result_chars_before_truncation"] == 5000
+        # Content carries the truncation marker so the LLM knows it was clamped.
+        assert "OUTPUT TRUNCATED" in out.content
+
+    def test_end_to_end_truncation_event(self):
+        """Wired path: truncated handler output reaches the event with
+        was_truncated=True. This is the regression check for the
+        previously-dead `was_truncated` / `result_chars_before_truncation`
+        fields on AgentToolCallCompletedEvent.
+        """
+        from src.config import settings
+        from src.utils.agent_tools import _maybe_truncated_result
+
+        emitted: list[BaseEvent] = []
+        ctx = _StubToolContext()
+
+        original = "y" * 10_000
+        with patch.object(settings.LLM, "MAX_TOOL_OUTPUT_CHARS", 200):
+            wrapped = _maybe_truncated_result(original)
+        assert isinstance(wrapped, ToolResult)
+
+        with patch(
+            "src.telemetry.events.emit",
+            side_effect=lambda event: emitted.append(event),
+        ):
+            _emit_agent_tool_call_completed(
+                ctx=ctx,
+                tool_name="get_recent_history",
+                duration_ms=1.0,
+                result_str=wrapped.content,
+                metadata=wrapped.metadata,
+                is_error=False,
+                iteration=1,
+                tool_call_seq=0,
+                provider_tool_call_id=None,
+            )
+
+        ev = emitted[0]
+        assert isinstance(ev, AgentToolCallCompletedEvent)
+        assert ev.was_truncated is True
+        assert ev.result_chars_before_truncation == 10_000

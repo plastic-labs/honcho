@@ -18,21 +18,28 @@ def generate_event_id(
     event_type: str,
     timestamp: datetime,
     resource_id: str,
+    honcho_version: str | None = None,
 ) -> str:
     """Generate a deterministic event ID for idempotency.
 
     Same inputs always produce the same ID, so retries are automatically
-    deduplicated on the receiving end.
+    deduplicated on the receiving end. `honcho_version` is folded into the
+    payload so two deploys emitting the same logical event produce distinct
+    IDs — protects against silently merging events whose payload shape may
+    have shifted between versions.
 
     Args:
         event_type: The CloudEvents type (e.g., "honcho.work.representation.completed")
         timestamp: When the event occurred
         resource_id: A unique identifier for the resource (can include workspace_id if relevant)
+        honcho_version: The honcho package version emitting the event;
+            included in the hash so cross-deploy events don't dedupe.
 
     Returns:
         A deterministic event ID in the format "evt_{base64_hash}"
     """
-    payload = f"{event_type}:{resource_id}:{timestamp.isoformat()}"
+    version_segment = honcho_version or ""
+    payload = f"{event_type}:{resource_id}:{timestamp.isoformat()}:{version_segment}"
     hash_bytes = hashlib.sha256(payload.encode()).digest()[:16]
     # Use URL-safe base64 encoding, strip padding
     encoded = base64.urlsafe_b64encode(hash_bytes).decode().rstrip("=")
@@ -100,9 +107,31 @@ class BaseEvent(BaseModel):
         raise NotImplementedError("Subclasses must implement get_resource_id()")
 
     def generate_id(self) -> str:
-        """Generate a deterministic event ID for this event instance."""
+        """Generate a deterministic event ID for this event instance.
+
+        Folds in the honcho package version so the same logical event from
+        two different deploys produces distinct ids — downstream dedupe by
+        id won't silently merge events whose body shape may have shifted.
+        Reads version from settings first (allows tests to override) and
+        falls back to the installed package metadata.
+        """
+        # Local imports to avoid circulars at module import time (this file
+        # is imported by tools that don't have settings loaded yet, e.g.
+        # schema-export scripts).
+        from src._version import honcho_version as _resolve_honcho_version
+
+        try:
+            from src.config import settings
+
+            version = settings.TELEMETRY.HONCHO_VERSION
+            if not isinstance(version, str) or not version:
+                version = _resolve_honcho_version()
+        except Exception:
+            version = _resolve_honcho_version()
+
         return generate_event_id(
             event_type=self.event_type(),
             timestamp=self.timestamp,
             resource_id=self.get_resource_id(),
+            honcho_version=version,
         )

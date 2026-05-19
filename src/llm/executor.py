@@ -287,14 +287,14 @@ async def honcho_llm_call_inner(
     The outer src/llm/api.py `honcho_llm_call` handles retry + fallback +
     tool orchestration on top of this.
 
-    Emits one LLMCallCompletedEvent per call. On the stream path, the event
-    is emitted from the wrapping generator's finally block — after stream
-    setup and after the stream drains, or on a setup/drain exception — so
-    `duration_ms` and `outcome` reflect the real lifecycle. `was_stream`
-    is True for streamed calls. Token counts are zero on the stream path
-    because provider token totals aren't surfaced post-stream at this
-    layer; aggregate envelopes (DialecticCompletedEvent etc.) carry the
-    accurate totals.
+    Emits one LLMCallCompletedEvent per call. On the stream path, setup
+    runs inside the awaited coroutine (so it sits inside any outer retry
+    wrapper) and emits its own event on failure; the wrapping generator
+    emits a second event from its finally block after drain completes or
+    raises. `was_stream` is True for streamed calls. Token counts are
+    zero on the stream path because provider token totals aren't surfaced
+    post-stream at this layer; aggregate envelopes (DialecticCompletedEvent
+    etc.) carry the accurate totals.
     """
     client = client_override or CLIENTS.get(provider)
     if client is None:
@@ -320,27 +320,48 @@ async def honcho_llm_call_inner(
     call_extras: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
 
     if stream:
-        # Stream path: wrap the generator so the LLMCallCompletedEvent fires
-        # AFTER stream setup + drain (or on error). Token counts stay 0
-        # because we don't get them post-stream — the aggregate envelopes
-        # (DialecticCompletedEvent etc.) carry accurate totals — but at
-        # least outcome and duration are real. Setup or drain errors land
-        # as outcome="error" instead of being silently recorded as success.
-        async def _stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
-            stream_start = time.perf_counter()
+        # Stream path: setup must run inside the awaited coroutine so it
+        # sits inside the outer retry wrapper (tool_loop.stream_final_response
+        # wraps `await honcho_llm_call_inner(stream=True)` with tenacity).
+        # If we deferred `execute_stream` into the generator body, a transient
+        # setup failure (rate-limit, auth, network) would surface at first
+        # iteration — outside retry — and crash the request.
+        #
+        # Drain failures stay unretried by design (chunks may have already
+        # been sent to the client) and report via the wrapper's finally.
+        # Token counts are 0 on this path; aggregate envelopes carry totals.
+        stream_start = time.perf_counter()
+        try:
+            stream_iter = await execute_stream(
+                backend,
+                effective_config,
+                messages=messages,
+                max_tokens=max_tokens,
+                tools=tools,
+                tool_choice=tool_choice,
+                response_format=response_model,
+                cache_policy=effective_config.cache_policy,
+                extra_params=call_extras,
+            )
+        except BaseException as exc:
+            _emit_llm_call_completed(
+                plan=plan,
+                telemetry=telemetry,
+                provider=provider,
+                model=model,
+                max_tokens=max_tokens,
+                duration_ms=(time.perf_counter() - stream_start) * 1000,
+                has_tools=bool(tools),
+                was_stream=True,
+                outcome=_outcome_from_error(exc),
+                result=None,
+                error=exc,
+            )
+            raise
+
+        async def _wrap_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
             stream_error: BaseException | None = None
             try:
-                stream_iter = await execute_stream(
-                    backend,
-                    effective_config,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    response_format=response_model,
-                    cache_policy=effective_config.cache_policy,
-                    extra_params=call_extras,
-                )
                 async for chunk in stream_iter:
                     yield stream_chunk_to_response_chunk(chunk)
             except BaseException as exc:
@@ -361,7 +382,7 @@ async def honcho_llm_call_inner(
                     error=stream_error,
                 )
 
-        return _stream()
+        return _wrap_stream()
 
     start = time.perf_counter()
     backend_result: BackendCompletionResult | None = None

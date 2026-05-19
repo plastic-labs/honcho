@@ -245,3 +245,89 @@ class TestEmitEmbeddingCallWrapper:
                 fn=_fake_call,
             )
         assert result == "ok"
+
+
+class TestIsFinalAttempt:
+    """`is_final_attempt` must reflect real retry state — one-shot callers
+    report True (no further attempt), retry-loop callers thread the real
+    index. Previously hardcoded to False; that conflated one-shot success,
+    mid-retry failure, and exhausted retry on dashboards.
+    """
+
+    @pytest.mark.asyncio
+    async def test_oneshot_default_is_true(self):
+        emitted: list[BaseEvent] = []
+
+        async def _fake_call() -> list[float]:
+            return [0.1]
+
+        with patch(
+            "src.telemetry.events.emit",
+            side_effect=lambda event: emitted.append(event),
+        ):
+            await _emit_embedding_call(
+                provider="openai",
+                model="x",
+                texts=["q"],
+                input_tokens_estimate=1,
+                fn=_fake_call,
+            )
+
+        ev = emitted[0]
+        assert isinstance(ev, EmbeddingCallCompletedEvent)
+        assert ev.is_final_attempt is True
+
+    @pytest.mark.asyncio
+    async def test_mid_retry_is_false(self):
+        emitted: list[BaseEvent] = []
+
+        async def _boom() -> list[float]:
+            raise RuntimeError("transient")
+
+        with (
+            patch(
+                "src.telemetry.events.emit",
+                side_effect=lambda event: emitted.append(event),
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            await _emit_embedding_call(
+                provider="openai",
+                model="x",
+                texts=["q"],
+                input_tokens_estimate=1,
+                fn=_boom,
+                is_final_attempt=False,
+            )
+
+        ev = emitted[0]
+        assert isinstance(ev, EmbeddingCallCompletedEvent)
+        assert ev.is_final_attempt is False
+
+    @pytest.mark.asyncio
+    async def test_exhausted_retry_is_true(self):
+        emitted: list[BaseEvent] = []
+
+        async def _boom() -> list[float]:
+            raise RuntimeError("permanent")
+
+        with (
+            patch(
+                "src.telemetry.events.emit",
+                side_effect=lambda event: emitted.append(event),
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            await _emit_embedding_call(
+                provider="openai",
+                model="x",
+                texts=["q"],
+                input_tokens_estimate=1,
+                fn=_boom,
+                is_final_attempt=True,
+            )
+
+        ev = emitted[0]
+        assert isinstance(ev, EmbeddingCallCompletedEvent)
+        assert ev.is_final_attempt is True
+        assert ev.outcome == "error"

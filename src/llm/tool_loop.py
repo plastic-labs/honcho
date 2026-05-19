@@ -307,6 +307,11 @@ async def execute_tool_loop(
     total_cache_creation_tokens = 0
     total_cache_read_tokens = 0
     empty_response_retries = 0
+    # Latch — set when any iteration clamps the message list. Stamped onto
+    # the final response so RepresentationCompletedEvent.hit_input_token_cap
+    # and DialecticCompletedEvent reflect tool-loop truncations (the
+    # toolless path tracks this in src/llm/api.py:325-335).
+    any_iteration_truncated = False
     # Track effective tool_choice — switches from "required"/"any" to "auto" after iter 1.
     effective_tool_choice = tool_choice
 
@@ -316,9 +321,12 @@ async def execute_tool_loop(
         logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
 
         if max_input_tokens is not None:
-            conversation_messages = truncate_messages_to_fit(
+            truncated = truncate_messages_to_fit(
                 conversation_messages, max_input_tokens
             )
+            if len(truncated) != len(conversation_messages):
+                any_iteration_truncated = True
+            conversation_messages = truncated
 
         async def _call_with_messages(
             effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
@@ -420,6 +428,7 @@ async def execute_tool_loop(
                     cache_read_input_tokens=total_cache_read_tokens,
                     thinking_content=response.thinking_content,
                     iterations=iteration + 1,
+                    input_was_truncated=any_iteration_truncated,
                 )
 
             response.tool_calls_made = all_tool_calls
@@ -428,6 +437,9 @@ async def execute_tool_loop(
             response.cache_creation_input_tokens = total_cache_creation_tokens
             response.cache_read_input_tokens = total_cache_read_tokens
             response.iterations = iteration + 1
+            response.input_was_truncated = (
+                response.input_was_truncated or any_iteration_truncated
+            )
             return response
 
         current_provider = get_attempt_plan().provider
@@ -567,6 +579,7 @@ async def execute_tool_loop(
             cache_read_input_tokens=total_cache_read_tokens,
             thinking_content=None,
             iterations=iteration + 1,
+            input_was_truncated=any_iteration_truncated,
         )
 
     current_attempt.set(1)
@@ -624,6 +637,9 @@ async def execute_tool_loop(
     )
     final_response.cache_read_input_tokens = (
         total_cache_read_tokens + final_response.cache_read_input_tokens
+    )
+    final_response.input_was_truncated = (
+        final_response.input_was_truncated or any_iteration_truncated
     )
     return final_response
 

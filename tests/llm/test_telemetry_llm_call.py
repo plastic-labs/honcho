@@ -410,6 +410,50 @@ class TestExecutorEndToEnd:
         assert ev.was_stream is True
 
     @pytest.mark.asyncio
+    async def test_stream_setup_failure_emits_and_propagates(self):
+        """Stream-setup errors must propagate out of the AWAITED
+        `honcho_llm_call_inner` call (not deferred until first iteration),
+        so the outer retry wrapper in tool_loop.stream_final_response sees
+        them. Regression check for the bug where `_stream()` returned a
+        generator without awaiting `execute_stream`, hiding setup failures
+        from tenacity.
+        """
+        from src.llm import executor
+
+        emitted: list[BaseEvent] = []
+
+        async def _setup_explodes(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("rate limited")
+
+        with (
+            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(executor, "backend_for_provider", return_value=object()),
+            patch.object(executor, "execute_stream", new=_setup_explodes),
+            patch(
+                "src.telemetry.events.emit",
+                side_effect=lambda event: emitted.append(event),
+            ),
+            pytest.raises(RuntimeError, match="rate limited"),
+        ):
+            # The await itself must raise — that's how tenacity sees it.
+            await executor.honcho_llm_call_inner(
+                "anthropic",
+                "claude-sonnet-4-5",
+                "hello",
+                max_tokens=128,
+                plan=_make_plan(),
+                telemetry=None,
+                stream=True,
+            )
+
+        assert len(emitted) == 1
+        ev = emitted[0]
+        assert isinstance(ev, LLMCallCompletedEvent)
+        assert ev.outcome == "error"
+        assert ev.was_stream is True
+        assert ev.error_class == "RuntimeError"
+
+    @pytest.mark.asyncio
     async def test_error_path_still_emits_via_finally(self):
         from src.llm import executor
 

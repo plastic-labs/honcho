@@ -902,7 +902,7 @@ class TestGetRecentHistory:
         result = await _handle_get_recent_history(ctx, {})
 
         assert "Conversation history" in result
-        assert "messages" in result.lower()
+        assert "messages" in str(result).lower()
 
     async def test_without_session_uses_observed(
         self,

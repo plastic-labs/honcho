@@ -97,6 +97,27 @@ class TestGenerateEventId:
         # Base64url encoded 16 bytes = 22 chars (without padding)
         assert len(event_id) == 4 + 22  # "evt_" + 22 chars
 
+    def test_honcho_version_changes_id(self, fixed_timestamp: datetime):
+        """Same event from different deploys must produce distinct IDs so
+        downstream dedupe doesn't silently merge events whose payload shape
+        may have shifted between versions."""
+        id_a = generate_event_id(
+            "test.event", fixed_timestamp, "resource_1", honcho_version="2.0.0"
+        )
+        id_b = generate_event_id(
+            "test.event", fixed_timestamp, "resource_1", honcho_version="2.0.1"
+        )
+        assert id_a != id_b
+
+    def test_honcho_version_none_matches_empty(self, fixed_timestamp: datetime):
+        """None and unset version segments are equivalent — backwards-
+        compatible with callers that don't pass the new kwarg yet."""
+        id_default = generate_event_id("test.event", fixed_timestamp, "resource_1")
+        id_explicit_none = generate_event_id(
+            "test.event", fixed_timestamp, "resource_1", honcho_version=None
+        )
+        assert id_default == id_explicit_none
+
 
 # =============================================================================
 # Tests for BaseEvent class
@@ -397,11 +418,37 @@ class TestGetContextEvent:
         assert GetContextEvent.category() == "api"
 
     def test_get_resource_id_session(self, sample_get_context_event: GetContextEvent):
-        """session context resource ID includes workspace and session."""
+        """session context resource ID includes workspace and session.
+
+        Uses empty-string sentinel for unset peer/target so that a peer
+        literally named "none" can't collide with the absent-peer case.
+        """
         assert (
             sample_get_context_event.get_resource_id()
-            == "test_workspace:session:test_session:none:none"
+            == "test_workspace:session:test_session::"
         )
+
+    def test_get_resource_id_disambiguates_peer_named_none(
+        self, fixed_timestamp: datetime
+    ):
+        """Regression: a peer literally named "none" must NOT collide with
+        absent-peer resource ids. Empty-string sentinel guards this.
+        """
+        absent = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="ws",
+            context_scope="peer",
+            total_duration_ms=1.0,
+        )
+        literal_none = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="ws",
+            context_scope="peer",
+            peer_name="none",
+            target_name="none",
+            total_duration_ms=1.0,
+        )
+        assert absent.get_resource_id() != literal_none.get_resource_id()
 
     def test_get_resource_id_peer(self, fixed_timestamp: datetime):
         """peer context resource ID includes observer and observed peers."""

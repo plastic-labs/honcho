@@ -147,9 +147,14 @@ class GetContextEvent(BaseEvent):
     total_duration_ms: float = Field(..., description="Total processing time")
 
     def get_resource_id(self) -> str:
-        """Resource ID identifies the requested context scope."""
-        peer_name = self.peer_name or "none"
-        target_name = self.target_name or "none"
+        """Resource ID identifies the requested context scope.
+
+        Uses empty string (illegal in peer names — nanoid-derived) as the
+        absent-peer sentinel so that a peer literally named "none" does not
+        collide with the absent-peer case.
+        """
+        peer_name = self.peer_name if self.peer_name is not None else ""
+        target_name = self.target_name if self.target_name is not None else ""
         if self.context_scope == "session":
             return (
                 f"{self.workspace_name}:session:{self.session_name}:"

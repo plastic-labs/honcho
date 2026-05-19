@@ -25,6 +25,7 @@ async def _emit_embedding_call(
     texts: list[str],
     input_tokens_estimate: int,
     fn: Callable[[], Awaitable[_T]],
+    is_final_attempt: bool = True,
 ) -> _T:
     """time a single embedding-provider call, emit
     `embedding.call.completed` on both success and exception, and return the
@@ -33,6 +34,11 @@ async def _emit_embedding_call(
 
     Caller-supplied `texts` is used only for `input_count`; we don't keep the
     list around for the event to avoid leaking content into telemetry.
+
+    `is_final_attempt` defaults to True so one-shot callers (`embed`,
+    `simple_batch_embed`) get correct semantics without changes. Retry-loop
+    callers (`_process_batch`) pass the real attempt index so dashboards
+    can distinguish exhausted retries from mid-retry failures.
     """
     start = time.perf_counter()
     error: BaseException | None = None
@@ -56,6 +62,7 @@ async def _emit_embedding_call(
             duration_ms=(time.perf_counter() - start) * 1000,
             outcome=outcome,
             error=error,
+            is_final_attempt=is_final_attempt,
         )
 
 
@@ -68,6 +75,7 @@ def _publish_embedding_event(
     duration_ms: float,
     outcome: Literal["success", "error", "cancelled"],
     error: BaseException | None,
+    is_final_attempt: bool,
 ) -> None:
     """Build and emit the EmbeddingCallCompletedEvent. Best-effort."""
     try:
@@ -107,7 +115,7 @@ def _publish_embedding_event(
                 batch_size=input_count,
                 duration_ms=duration_ms,
                 outcome=outcome,
-                is_final_attempt=False,  # we don't see retry context at this layer
+                is_final_attempt=is_final_attempt,
                 error_class=type(error).__name__ if error is not None else None,
                 run_id=get_embedding_run_id(),
             )
@@ -464,6 +472,7 @@ class _EmbeddingClient:
                     texts=batch_texts,
                     input_tokens_estimate=batch_tokens_estimate,
                     fn=_call_provider,
+                    is_final_attempt=(attempt >= max_retries - 1),
                 )
                 return dict(result)
 

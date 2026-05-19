@@ -314,16 +314,46 @@ class ObservationsCreatedResult:
     failed: list[ObservationFailure]
 
 
-def _truncate_tool_output(output: str, max_chars: int | None = None) -> str:
-    """Truncate tool output to prevent token explosion."""
+def _truncate_tool_output(
+    output: str, max_chars: int | None = None
+) -> tuple[str, int, bool]:
+    """Truncate tool output to prevent token explosion.
+
+    Returns (text, original_chars, was_truncated). Callers thread the
+    truncation signal into `ToolResult.metadata` so
+    `AgentToolCallCompletedEvent` can report `was_truncated` and
+    `result_chars_before_truncation` instead of always emitting them as
+    None/False.
+    """
     if max_chars is None:
         max_chars = settings.LLM.MAX_TOOL_OUTPUT_CHARS
-    if len(output) <= max_chars:
-        return output
-    truncated = output[:max_chars]
-    return (
-        truncated
-        + f"\n\n[OUTPUT TRUNCATED - showing {max_chars:,} of {len(output):,} characters]"
+    original_chars = len(output)
+    if original_chars <= max_chars:
+        return output, original_chars, False
+    truncated = (
+        output[:max_chars]
+        + f"\n\n[OUTPUT TRUNCATED - showing {max_chars:,} of {original_chars:,} characters]"
+    )
+    return truncated, original_chars, True
+
+
+def _maybe_truncated_result(output: str) -> "str | ToolResult":
+    """Run `_truncate_tool_output` and wrap in `ToolResult` only when the
+    output was actually clamped, so the truncation signal reaches the
+    `AgentToolCallCompletedEvent` emitter (which reads `was_truncated` /
+    `result_chars_before_truncation` from `ToolResult.metadata`). Returns a
+    bare `str` in the common no-truncation case to keep the handler
+    contract unchanged.
+    """
+    content, original_chars, was_truncated = _truncate_tool_output(output)
+    if not was_truncated:
+        return content
+    return ToolResult(
+        content=content,
+        metadata={
+            "was_truncated": True,
+            "result_chars_before_truncation": original_chars,
+        },
     )
 
 
@@ -1468,7 +1498,7 @@ async def _handle_update_peer_card(
 
 async def _handle_get_recent_history(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     """Handle get_recent_history tool."""
     _ = tool_input
     async with tracked_db("tool.get_recent_history") as db:
@@ -1490,7 +1520,7 @@ async def _handle_get_recent_history(
         else f"from {ctx.observed} across sessions"
     )
     output = f"Conversation history ({len(history)} messages {scope}):\n{history_text}"
-    return _truncate_tool_output(output)
+    return _maybe_truncated_result(output)
 
 
 async def _handle_search_memory(
@@ -1583,7 +1613,7 @@ async def _handle_search_memory(
 
 async def _handle_get_observation_context(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     """Handle get_observation_context tool."""
     async with tracked_db("tool.get_observation_context") as db:
         messages = await get_observation_context(
@@ -1606,7 +1636,7 @@ async def _handle_get_observation_context(
             ]
         )
     output = f"Retrieved {len(messages)} messages with context:\n{messages_text}"
-    return _truncate_tool_output(output)
+    return _maybe_truncated_result(output)
 
 
 async def _handle_search_messages(
@@ -1650,7 +1680,9 @@ async def _handle_search_messages(
     return ToolResult(content=formatted, metadata=search_meta)
 
 
-async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
+async def _handle_grep_messages(
+    ctx: ToolContext, tool_input: dict[str, Any]
+) -> "str | ToolResult":
     """Handle grep_messages tool."""
     text = tool_input.get("text", "")
     if not text:
@@ -1691,7 +1723,7 @@ async def _handle_grep_messages(ctx: ToolContext, tool_input: dict[str, Any]) ->
         f"Found {total_matches} messages containing '{text}' in {len(snippets)} conversation snippets:\n\n"
         + "\n\n".join(snippet_texts)
     )
-    return _truncate_tool_output(output)
+    return _maybe_truncated_result(output)
 
 
 def _parse_date(date_str: str | None, param_name: str) -> datetime | None | str:
@@ -1706,7 +1738,7 @@ def _parse_date(date_str: str | None, param_name: str) -> datetime | None | str:
 
 async def _handle_get_messages_by_date_range(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     """Handle get_messages_by_date_range tool."""
     after_date_str = tool_input.get("after_date")
     before_date_str = tool_input.get("before_date")
@@ -1762,12 +1794,12 @@ async def _handle_get_messages_by_date_range(
     output = (
         f"Found {msg_count} messages ({range_desc}, {order_desc}):\n\n{messages_text}"
     )
-    return _truncate_tool_output(output)
+    return _maybe_truncated_result(output)
 
 
 async def _handle_search_messages_temporal(
     ctx: ToolContext, tool_input: dict[str, Any]
-) -> str:
+) -> "str | ToolResult":
     """Handle search_messages_temporal tool."""
     query = tool_input.get("query", "")
     if not query:
@@ -2000,7 +2032,13 @@ async def _handle_extract_preferences(
 def _format_message_snippets(
     snippets: list[tuple[list[models.Message], list[models.Message]]], desc: str
 ) -> str:
-    """Format message snippets for output."""
+    """Format message snippets for output.
+
+    Returns bare `str` because callers concatenate it into other strings
+    or place it into `ToolResult.content`. Callers that need the
+    truncation telemetry signal route their own output through
+    `_maybe_truncated_result` themselves.
+    """
     snippet_texts: list[str] = []
     total_matches = sum(len(matches) for matches, _ in snippets)
     for i, (matches, context) in enumerate(snippets, 1):
@@ -2020,7 +2058,10 @@ def _format_message_snippets(
         f"Found {total_matches} matching messages in {len(snippets)} conversation snippets {desc}:\n\n"
         + "\n\n".join(snippet_texts)
     )
-    return _truncate_tool_output(output)
+    # `[0]` extracts the truncated text — telemetry signal is discarded here
+    # because callers wrap the result into ToolResult themselves (and so any
+    # downstream truncation telemetry should come from the caller's path).
+    return _truncate_tool_output(output)[0]
 
 
 async def _handle_get_reasoning_chain(

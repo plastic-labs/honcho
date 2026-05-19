@@ -134,6 +134,7 @@ class StreamingResponseWithMetadata:
     cache_read_input_tokens: int
     thinking_content: str | None
     iterations: int
+    input_was_truncated: bool
 
     def __init__(
         self,
@@ -145,6 +146,7 @@ class StreamingResponseWithMetadata:
         cache_read_input_tokens: int,
         thinking_content: str | None = None,
         iterations: int = 0,
+        input_was_truncated: bool = False,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -154,6 +156,7 @@ class StreamingResponseWithMetadata:
         self.cache_read_input_tokens = cache_read_input_tokens
         self.thinking_content = thinking_content
         self.iterations = iterations
+        self.input_was_truncated = input_was_truncated
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
         return self._stream.__aiter__()
