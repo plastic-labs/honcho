@@ -7,15 +7,15 @@ Demonstrates how to equip CrewAI agents with Honcho's memory tools:
 - HonchoSearchTool: Perform semantic search across session messages
 
 These tools give agents explicit control over memory retrieval, beyond the
-automatic memory provided by ExternalMemory.
+automatic memory provided by CrewAI's unified Memory API.
 """
 
+from crewai import Agent, Crew, Process, Task
 from dotenv import load_dotenv
-from crewai import Agent, Task, Crew, Process
 from honcho import Honcho
 from honcho_crewai import (
-    HonchoGetContextTool,
     HonchoDialecticTool,
+    HonchoGetContextTool,
     HonchoSearchTool,
 )
 
@@ -81,7 +81,7 @@ def main():
         ),
         tools=[context_tool, dialectic_tool, search_tool],
         verbose=True,
-        allow_delegation=False
+        allow_delegation=False,
     )
     print("   ✓ Agent created with 3 Honcho tools\n")
 
@@ -104,7 +104,7 @@ def main():
             "  • Accommodation suggestions\n"
             "  • Budget considerations"
         ),
-        agent=travel_agent
+        agent=travel_agent,
     )
     print("   ✓ Task created\n")
 
@@ -116,10 +116,11 @@ def main():
         agents=[travel_agent],
         tasks=[task],
         process=Process.sequential,
-        verbose=True
+        verbose=True,
     )
 
     crew.kickoff()
+
 
 if __name__ == "__main__":
     main()

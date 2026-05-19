@@ -100,6 +100,7 @@ async def query_external_vector_message_ids(
         embedding_query,
         top_k=limit * 3,
         filters=vector_filters if vector_filters else None,
+        include_attributes=["message_id"],
     )
 
     if not vector_results:

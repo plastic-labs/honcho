@@ -497,7 +497,7 @@ class TestErrorHandlingAndRecovery:
             # parse_datetime_iso should raise appropriate errors
             if error_case is None or not isinstance(error_case, str):
                 with pytest.raises(ValueError):
-                    parse_datetime_iso(error_case)
+                    parse_datetime_iso(error_case)  # pyright: ignore[reportArgumentType]
 
             # Filter validation should return None for invalid types
             if isinstance(error_case, str) or error_case is None:
