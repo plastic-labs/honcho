@@ -234,124 +234,161 @@ If you update it, send the full deduplicated list and remove stale entries.
         # closed CallPurpose enum slugs without importing the enum here.
         call_purpose_slug = f"dream.{self.name}"
 
-        # Run the agent loop
-        response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            model_config=model_config,
-            prompt="",  # Ignored since we pass messages
-            max_tokens=effective_max_tokens,
-            tools=self.get_tools(peer_card_enabled=peer_card_enabled),
-            tool_choice=None,
-            tool_executor=tool_executor,
-            max_tool_iterations=self.get_max_iterations(),
-            messages=messages,
-            track_name=f"Dreamer/{self.name}",
-            iteration_callback=iteration_callback,
-            telemetry=LLMTelemetryContext(
-                workspace_name=workspace_name,
-                call_purpose=call_purpose_slug,
-                parent_category="dream",
-                agent_type=self.name,
-                run_id=run_id,
-                observer=observer,
-                observed=observed,
-            ),
-        )
+        # Telemetry state — populated in the try block, emitted in the
+        # finally block so DreamSpecialistEvent ALWAYS fires (success and
+        # failure). Without this, the success=False path of the schema is
+        # dead and dashboards see only succeeded runs.
+        specialist_success = False
+        specialist_error_class: str | None = None
+        response: HonchoLLMCallResponse[str] | None = None
 
-        # Log metrics
-        duration_ms = (time.perf_counter() - start_time) * 1000
-        accumulate_metric(task_name, "total_duration", duration_ms, "ms")
-        accumulate_metric(
-            task_name, "tool_calls", len(response.tool_calls_made), "count"
-        )
-        accumulate_metric(task_name, "input_tokens", response.input_tokens, "count")
-        accumulate_metric(task_name, "output_tokens", response.output_tokens, "count")
-
-        # Prometheus metrics
-        if settings.METRICS.ENABLED:
-            prometheus_metrics.record_dreamer_tokens(
-                count=response.input_tokens,
-                specialist_name=self.name,
-                token_type=TokenTypes.INPUT.value,
-            )
-            prometheus_metrics.record_dreamer_tokens(
-                count=response.output_tokens,
-                specialist_name=self.name,
-                token_type=TokenTypes.OUTPUT.value,
-            )
-
-        logger.info(
-            f"{self.name}: Completed in {duration_ms:.0f}ms, "
-            + f"{len(response.tool_calls_made)} tool calls, "
-            + f"{response.input_tokens} in / {response.output_tokens} out"
-        )
-
-        log_performance_metrics(f"dreamer_{self.name}", run_id)
-
-        # count actual observations created/deleted from the
-        # ToolResult.metadata that stashed on `all_tool_calls[i]`.
-        # Counting tool-name occurrences would mis-attribute: a single
-        # create_observations call can produce N (or zero) observations. The
-        # truth lives in the handler's returned metadata.
+        # Rollups initialized here so they're accessible from the finally
+        # block on the failure path (where they stay at defaults).
         created_observation_count = 0
         deleted_observation_count = 0
         peer_card_updated = False
         search_tool_calls_count = 0
-        _search_tools = {
-            "search_memory",
-            "search_messages",
-            "search_messages_temporal",
-        }
-        for tc in response.tool_calls_made:
-            tool_name_any: Any = tc.get("tool_name") or tc.get("name")
-            meta_any: Any = tc.get("tool_result_metadata") or {}
-            if tool_name_any in _search_tools:
-                search_tool_calls_count += 1
-            if isinstance(meta_any, dict):
-                # `meta_any` is `dict[Unknown, Unknown]` after the isinstance
-                # narrow because tool_calls_made is typed list[dict[str, Any]].
-                # Cast to the expected dict shape to silence the partial-known
-                # warning without losing runtime safety.
-                meta_dict = cast(dict[str, Any], meta_any)
-                created_val: Any = meta_dict.get("created_count") or 0
-                deleted_val: Any = meta_dict.get("deleted_count") or 0
-                created_observation_count += int(created_val)
-                deleted_observation_count += int(deleted_val)
-                if meta_dict.get("peer_card_updated"):
-                    peer_card_updated = True
+        duration_ms = 0.0
 
-        # Emit telemetry event
-        emit(
-            DreamSpecialistEvent(
+        try:
+            # Run the agent loop
+            response = await honcho_llm_call(
+                model_config=model_config,
+                prompt="",  # Ignored since we pass messages
+                max_tokens=effective_max_tokens,
+                tools=self.get_tools(peer_card_enabled=peer_card_enabled),
+                tool_choice=None,
+                tool_executor=tool_executor,
+                max_tool_iterations=self.get_max_iterations(),
+                messages=messages,
+                track_name=f"Dreamer/{self.name}",
+                iteration_callback=iteration_callback,
+                telemetry=LLMTelemetryContext(
+                    workspace_name=workspace_name,
+                    call_purpose=call_purpose_slug,
+                    parent_category="dream",
+                    agent_type=self.name,
+                    run_id=run_id,
+                    observer=observer,
+                    observed=observed,
+                ),
+            )
+
+            # Log metrics
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            accumulate_metric(task_name, "total_duration", duration_ms, "ms")
+            accumulate_metric(
+                task_name, "tool_calls", len(response.tool_calls_made), "count"
+            )
+            accumulate_metric(task_name, "input_tokens", response.input_tokens, "count")
+            accumulate_metric(
+                task_name, "output_tokens", response.output_tokens, "count"
+            )
+
+            # Prometheus metrics
+            if settings.METRICS.ENABLED:
+                prometheus_metrics.record_dreamer_tokens(
+                    count=response.input_tokens,
+                    specialist_name=self.name,
+                    token_type=TokenTypes.INPUT.value,
+                )
+                prometheus_metrics.record_dreamer_tokens(
+                    count=response.output_tokens,
+                    specialist_name=self.name,
+                    token_type=TokenTypes.OUTPUT.value,
+                )
+
+            logger.info(
+                f"{self.name}: Completed in {duration_ms:.0f}ms, "
+                + f"{len(response.tool_calls_made)} tool calls, "
+                + f"{response.input_tokens} in / {response.output_tokens} out"
+            )
+
+            log_performance_metrics(f"dreamer_{self.name}", run_id)
+
+            # count actual observations created/deleted from the
+            # ToolResult.metadata that stashed on `all_tool_calls[i]`.
+            # Counting tool-name occurrences would mis-attribute: a single
+            # create_observations call can produce N (or zero) observations. The
+            # truth lives in the handler's returned metadata.
+            _search_tools = {
+                "search_memory",
+                "search_messages",
+                "search_messages_temporal",
+            }
+            for tc in response.tool_calls_made:
+                tool_name_any: Any = tc.get("tool_name") or tc.get("name")
+                meta_any: Any = tc.get("tool_result_metadata") or {}
+                if tool_name_any in _search_tools:
+                    search_tool_calls_count += 1
+                if isinstance(meta_any, dict):
+                    # `meta_any` is `dict[Unknown, Unknown]` after the isinstance
+                    # narrow because tool_calls_made is typed list[dict[str, Any]].
+                    # Cast to the expected dict shape to silence the partial-known
+                    # warning without losing runtime safety.
+                    meta_dict = cast(dict[str, Any], meta_any)
+                    created_val: Any = meta_dict.get("created_count") or 0
+                    deleted_val: Any = meta_dict.get("deleted_count") or 0
+                    created_observation_count += int(created_val)
+                    deleted_observation_count += int(deleted_val)
+                    if meta_dict.get("peer_card_updated"):
+                        peer_card_updated = True
+
+            specialist_success = True
+
+            return SpecialistResult(
                 run_id=run_id,
                 specialist_type=self.name,
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
                 iterations=iteration_count,
                 tool_calls_count=len(response.tool_calls_made),
                 input_tokens=response.input_tokens,
                 output_tokens=response.output_tokens,
                 duration_ms=duration_ms,
                 success=True,
-                # denormalized rollups
-                created_observation_count=created_observation_count,
-                deleted_observation_count=deleted_observation_count,
-                peer_card_updated=peer_card_updated,
-                search_tool_calls_count=search_tool_calls_count,
+                content=response.content,
             )
-        )
-
-        return SpecialistResult(
-            run_id=run_id,
-            specialist_type=self.name,
-            iterations=iteration_count,
-            tool_calls_count=len(response.tool_calls_made),
-            input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
-            duration_ms=duration_ms,
-            success=True,
-            content=response.content,
-        )
+        except Exception as e:
+            specialist_error_class = type(e).__name__
+            # capture duration on the failure path too — useful for analytics
+            # ("specialist failures average X ms before crashing").
+            if duration_ms == 0.0:
+                duration_ms = (time.perf_counter() - start_time) * 1000
+            raise
+        finally:
+            # Emit DreamSpecialistEvent unconditionally so the success=False
+            # path of the schema is actually populated. Telemetry must not
+            # raise from inside finally during exception propagation; the
+            # emitter itself swallows errors but we add a defensive try
+            # in case event construction fails (e.g. schema validation).
+            try:
+                tool_calls_count = (
+                    len(response.tool_calls_made) if response is not None else 0
+                )
+                input_tokens = response.input_tokens if response is not None else 0
+                output_tokens = response.output_tokens if response is not None else 0
+                emit(
+                    DreamSpecialistEvent(
+                        run_id=run_id,
+                        specialist_type=self.name,
+                        workspace_name=workspace_name,
+                        observer=observer,
+                        observed=observed,
+                        iterations=iteration_count,
+                        tool_calls_count=tool_calls_count,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        duration_ms=duration_ms,
+                        success=specialist_success,
+                        error_class=specialist_error_class,
+                        # denormalized rollups (all 0 on the failure path)
+                        created_observation_count=created_observation_count,
+                        deleted_observation_count=deleted_observation_count,
+                        peer_card_updated=peer_card_updated,
+                        search_tool_calls_count=search_tool_calls_count,
+                    )
+                )
+            except Exception:  # pragma: no cover - telemetry must not raise
+                logger.debug("Failed to emit DreamSpecialistEvent", exc_info=True)
 
 
 class DeductionSpecialist(BaseSpecialist):

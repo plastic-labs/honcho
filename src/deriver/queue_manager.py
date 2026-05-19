@@ -804,12 +804,14 @@ class QueueManager:
             # Python list after detach and survives the rest of this block.
             _detach_queue_batch_objects(db, messages_context, items_to_process)
 
-            # Apply the config-filter while still inside the `async with` so
-            # post-filter cap-detection runs on the **actual returned batch**.
-            # Without this ordering, `hit_batch_token_cap` reflects the
-            # pre-filter superset and can false-positive when the config-trim
-            # removes the trailing message that pushed the source range past
-            # the cap.
+            # Snapshot the PRE-filter SQL kept-range max id. Cap detection
+            # below compares this against the post-filter tail to decide
+            # whether the cap was binding on the actually-returned batch
+            # (vs. the config filter doing the trimming).
+            sql_max_kept_id: int | None = (
+                messages_context[-1].id if messages_context else None
+            )
+
             items_to_process, resolved_config = _resolve_batch_configuration(
                 items_to_process
             )
@@ -823,34 +825,32 @@ class QueueManager:
                     m for m in messages_context if m.id <= max_queue_item_message_id
                 ]
 
-            # detect if `batch_max_tokens` clipped the **returned** batch.
-            # The `allowed_condition` SQL keeps rows with
-            # `cumulative_token_count <= cap` (plus an always-included
-            # first-unprocessed escape hatch), so summing the kept rows'
-            # token_count and checking against the cap won't fire — kept
-            # rows are by definition under the cap. The real signal is
-            # "did the source range have at least one row whose cumulative
-            # count exceeded the cap?"
+            # detect if `batch_max_tokens` clamped this returned batch.
             #
-            # We answer with a single `SELECT EXISTS` against the same row
-            # set the original CTE built. Bounded by the (post-filter)
-            # kept-row max id so we don't scan the whole session forward.
-            if batch_max_tokens > 0 and messages_context:
-                max_kept_id = messages_context[-1].id
-                cap_hit_check = await db.execute(
-                    select(
-                        func.coalesce(func.sum(models.Message.token_count), 0).label(
-                            "total_in_range"
-                        )
-                    )
-                    .where(models.Message.session_name == parsed_key.session_name)
-                    .where(models.Message.workspace_name == parsed_key.workspace_name)
-                    .where(models.Message.id >= effective_start_id)
-                    .where(models.Message.id <= max_kept_id)
-                )
-                total_in_range = cap_hit_check.scalar() or 0
-                # Then: is there at least one more message past max_kept_id
-                # in the same session? If so, the cap stopped us before it.
+            # The `allowed_condition` SQL keeps rows whose CUMULATIVE token
+            # sum is `<= cap` (with an always-included first-unprocessed
+            # escape hatch). The cap is binding on the returned batch iff:
+            #   1. Config filter didn't shrink the batch past SQL's tail
+            #      (`messages_context[-1].id == sql_max_kept_id`) — i.e.
+            #      SQL is what drew the trailing boundary, not config; AND
+            #   2. There's at least one unprocessed message strictly past
+            #      that boundary in the same session — i.e. SQL had a
+            #      reason to stop there.
+            # Both conditions must hold; otherwise the cap wasn't the
+            # constraint on this specific returned batch.
+            #
+            # Previously the rule was `next_exists AND total_in_range >=
+            # cap`, which produced false negatives whenever the kept range
+            # didn't fully exhaust the budget (e.g. kept=900 of 1000 cap,
+            # next message's 300 tokens would have busted it). The new
+            # rule replaces the budget-exhaustion proxy with a direct
+            # check.
+            if (
+                batch_max_tokens > 0
+                and messages_context
+                and sql_max_kept_id is not None
+                and messages_context[-1].id == sql_max_kept_id
+            ):
                 next_exists_check = await db.execute(
                     select(
                         exists(
@@ -862,14 +862,11 @@ class QueueManager:
                                 models.Message.workspace_name
                                 == parsed_key.workspace_name
                             )
-                            .where(models.Message.id > max_kept_id)
+                            .where(models.Message.id > sql_max_kept_id)
                         )
                     )
                 )
-                next_exists = bool(next_exists_check.scalar())
-                hit_batch_token_cap = bool(
-                    next_exists and total_in_range >= batch_max_tokens
-                )
+                hit_batch_token_cap = bool(next_exists_check.scalar())
             else:
                 hit_batch_token_cap = False
 

@@ -23,7 +23,7 @@ from src.llm import (
 )
 from src.llm.types import LLMTelemetryContext
 from src.telemetry import prometheus_metrics
-from src.telemetry.events import DialecticCompletedEvent, emit
+from src.telemetry.events import DialecticCompletedEvent, EmbeddingCallPurpose, emit
 from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -37,6 +37,7 @@ from src.utils.agent_tools import (
     search_memory,
 )
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,13 @@ class DialecticAgent:
 
         try:
             # Pre-compute embedding once for both searches (no DB needed)
-            query_embedding = await embedding_client.embed(query)
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.DIALECTIC_PREFETCH.value,
+                workspace_name=self.workspace_name,
+                run_id=self._run_id,
+                parent_category="dialectic",
+            ):
+                query_embedding = await embedding_client.embed(query)
 
             # search_memory manages its own short-lived DB sessions so no
             # connection is held during external vector-store calls.
@@ -201,10 +208,11 @@ class DialecticAgent:
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
 
-            # Count prefetched conclusions for telemetry
-            explicit_count = len(explicit_repr.explicit) + len(explicit_repr.deductive)
-            derived_count = len(derived_repr.explicit) + len(derived_repr.deductive)
-            self._prefetched_conclusion_count = explicit_count + derived_count
+            # Count prefetched conclusions for telemetry. `Representation.len()`
+            # sums all four levels (explicit/deductive/inductive/contradiction);
+            # the previous hand-sum dropped inductive + contradiction even
+            # though prefetch explicitly requests them.
+            self._prefetched_conclusion_count = explicit_repr.len() + derived_repr.len()
 
             # Format as two separate sections
             parts: list[str] = []
@@ -324,6 +332,7 @@ class DialecticAgent:
         tool_calls_count: int,
         thinking_content: str | None,
         iterations: int,
+        hit_input_token_cap: bool = False,
     ) -> None:
         """
         Log metrics common to both streaming and non-streaming responses.
@@ -392,6 +401,7 @@ class DialecticAgent:
                 output_tokens=output_tokens,
                 cache_read_tokens=cache_read_input_tokens or 0,
                 cache_creation_tokens=cache_creation_input_tokens or 0,
+                hit_input_token_cap=hit_input_token_cap,
             )
         )
 
@@ -455,6 +465,7 @@ class DialecticAgent:
             tool_calls_count=len(response.tool_calls_made),
             thinking_content=response.thinking_content,
             iterations=response.iterations,
+            hit_input_token_cap=response.hit_input_token_cap,
         )
 
         return response.content
@@ -530,4 +541,5 @@ class DialecticAgent:
             tool_calls_count=len(response.tool_calls_made),
             thinking_content=response.thinking_content,
             iterations=response.iterations,
+            hit_input_token_cap=response.hit_input_token_cap,
         )

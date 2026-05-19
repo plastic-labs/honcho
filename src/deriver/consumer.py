@@ -227,92 +227,107 @@ async def process_deletion(
         workspace_name,
     )
 
-    async with tracked_db("process_deletion") as db:
-        if deletion_type == "session":
-            try:
-                result = await crud.delete_session(
-                    db, workspace_name=workspace_name, session_name=resource_id
-                )
-                messages_deleted = result.messages_deleted
-                conclusions_deleted = result.conclusions_deleted
-                logger.info(
-                    "Successfully deleted session %s in workspace %s "
-                    + "(messages=%d, conclusions=%d)",
-                    resource_id,
-                    workspace_name,
-                    messages_deleted,
-                    conclusions_deleted,
-                )
-            except ResourceNotFoundException as e:
-                # Session not found - may have already been deleted, treat as success
-                logger.warning(
-                    "Session %s not found during deletion (may already be deleted): %s",
-                    resource_id,
-                    str(e),
-                )
+    # try/except/finally so the event ALWAYS fires — both success and
+    # failure (unsupported type, unexpected CRUD error). Previously the
+    # unsupported-type branch raised before the emit ran, and unexpected
+    # CRUD errors bubbled up without telemetry.
+    try:
+        async with tracked_db("process_deletion") as db:
+            if deletion_type == "session":
+                try:
+                    result = await crud.delete_session(
+                        db, workspace_name=workspace_name, session_name=resource_id
+                    )
+                    messages_deleted = result.messages_deleted
+                    conclusions_deleted = result.conclusions_deleted
+                    logger.info(
+                        "Successfully deleted session %s in workspace %s "
+                        + "(messages=%d, conclusions=%d)",
+                        resource_id,
+                        workspace_name,
+                        messages_deleted,
+                        conclusions_deleted,
+                    )
+                except ResourceNotFoundException as e:
+                    # Session not found - may have already been deleted, treat as success
+                    logger.warning(
+                        "Session %s not found during deletion (may already be deleted): %s",
+                        resource_id,
+                        str(e),
+                    )
 
-        elif deletion_type == "observation":
-            try:
-                await crud.delete_document_by_id(
-                    db, workspace_name=workspace_name, document_id=resource_id
-                )
-                conclusions_deleted = 1  # Single observation deleted
-                logger.info(
-                    "Successfully deleted observation %s in workspace %s",
-                    resource_id,
-                    workspace_name,
-                )
-            except ResourceNotFoundException as e:
-                # Document not found - may have already been deleted, treat as success
-                logger.warning(
-                    "Observation %s not found during deletion (may already be deleted): %s",
-                    resource_id,
-                    str(e),
-                )
+            elif deletion_type == "observation":
+                try:
+                    await crud.delete_document_by_id(
+                        db, workspace_name=workspace_name, document_id=resource_id
+                    )
+                    conclusions_deleted = 1  # Single observation deleted
+                    logger.info(
+                        "Successfully deleted observation %s in workspace %s",
+                        resource_id,
+                        workspace_name,
+                    )
+                except ResourceNotFoundException as e:
+                    # Document not found - may have already been deleted, treat as success
+                    logger.warning(
+                        "Observation %s not found during deletion (may already be deleted): %s",
+                        resource_id,
+                        str(e),
+                    )
 
-        elif deletion_type == "workspace":
-            try:
-                result = await crud.delete_workspace(db, workspace_name=workspace_name)
-                peers_deleted = result.peers_deleted
-                sessions_deleted = result.sessions_deleted
-                messages_deleted = result.messages_deleted
-                conclusions_deleted = result.conclusions_deleted
-                logger.info(
-                    "Successfully deleted workspace %s "
-                    + "(peers=%d, sessions=%d, messages=%d, conclusions=%d)",
-                    workspace_name,
-                    peers_deleted,
-                    sessions_deleted,
-                    messages_deleted,
-                    conclusions_deleted,
-                )
-            except ResourceNotFoundException as e:
-                # Workspace not found - may have already been deleted, treat as success
-                logger.warning(
-                    "Workspace %s not found during deletion (may already be deleted): %s",
-                    workspace_name,
-                    str(e),
-                )
+            elif deletion_type == "workspace":
+                try:
+                    result = await crud.delete_workspace(
+                        db, workspace_name=workspace_name
+                    )
+                    peers_deleted = result.peers_deleted
+                    sessions_deleted = result.sessions_deleted
+                    messages_deleted = result.messages_deleted
+                    conclusions_deleted = result.conclusions_deleted
+                    logger.info(
+                        "Successfully deleted workspace %s "
+                        + "(peers=%d, sessions=%d, messages=%d, conclusions=%d)",
+                        workspace_name,
+                        peers_deleted,
+                        sessions_deleted,
+                        messages_deleted,
+                        conclusions_deleted,
+                    )
+                except ResourceNotFoundException as e:
+                    # Workspace not found - may have already been deleted, treat as success
+                    logger.warning(
+                        "Workspace %s not found during deletion (may already be deleted): %s",
+                        workspace_name,
+                        str(e),
+                    )
 
-        else:
-            success = False
-            error_message = f"Unsupported deletion type: {deletion_type}"
-            raise ValueError(error_message)
-
-    # Emit telemetry event
-    emit(
-        DeletionCompletedEvent(
-            workspace_name=workspace_name,
-            deletion_type=deletion_type,
-            resource_id=resource_id,
-            success=success,
-            peers_deleted=peers_deleted,
-            sessions_deleted=sessions_deleted,
-            messages_deleted=messages_deleted,
-            conclusions_deleted=conclusions_deleted,
-            error_message=error_message,
+            else:
+                success = False
+                error_message = f"Unsupported deletion type: {deletion_type}"
+                raise ValueError(error_message)
+    except Exception as e:
+        # Catch anything that survived the per-branch `ResourceNotFoundException`
+        # handling above (incl. the ValueError from the unsupported-type branch).
+        # Record telemetry, then re-raise so the queue worker still surfaces
+        # the failure to its caller.
+        success = False
+        if error_message is None:
+            error_message = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        emit(
+            DeletionCompletedEvent(
+                workspace_name=workspace_name,
+                deletion_type=deletion_type,
+                resource_id=resource_id,
+                success=success,
+                peers_deleted=peers_deleted,
+                sessions_deleted=sessions_deleted,
+                messages_deleted=messages_deleted,
+                conclusions_deleted=conclusions_deleted,
+                error_message=error_message,
+            )
         )
-    )
 
 
 async def process_reconciler(payload: ReconcilerPayload) -> None:
@@ -372,6 +387,7 @@ async def process_reconciler(payload: ReconcilerPayload) -> None:
             # Emit telemetry event for cleanup stale items
             emit(
                 CleanupStaleItemsCompletedEvent(
+                    queue_items_cleaned=deleted_count,
                     total_duration_ms=duration_ms,
                 )
             )

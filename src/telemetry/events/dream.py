@@ -167,6 +167,10 @@ class DreamSpecialistEvent(BaseEvent):
         default=0,
         description="Number of search_memory / search_messages / search_messages_temporal invocations",
     )
+    error_class: str | None = Field(
+        default=None,
+        description="Exception class name when success=False; None on success.",
+    )
 
     def get_resource_id(self) -> str:
         """Resource ID includes run_id and specialist type for uniqueness."""

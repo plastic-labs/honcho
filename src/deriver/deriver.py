@@ -309,7 +309,7 @@ async def process_representation_tasks_batch(
             max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
             was_flush_enabled=was_flush_enabled,
             hit_batch_token_cap=hit_batch_token_cap,
-            hit_input_token_cap=response.input_was_truncated,
+            hit_input_token_cap=response.hit_input_token_cap,
             observer_count=len(observers),
         )
     )

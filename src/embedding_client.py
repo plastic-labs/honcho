@@ -86,6 +86,7 @@ def _publish_embedding_event(
         )
         from src.utils.types import (
             get_embedding_call_purpose,
+            get_embedding_parent_category,
             get_embedding_run_id,
             get_embedding_workspace_name,
         )
@@ -108,6 +109,7 @@ def _publish_embedding_event(
             EmbeddingCallCompletedEvent(
                 workspace_name=get_embedding_workspace_name(),
                 call_purpose=call_purpose,
+                parent_category=get_embedding_parent_category(),
                 provider=provider,
                 model=model,
                 input_count=input_count,

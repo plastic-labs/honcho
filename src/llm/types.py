@@ -103,11 +103,12 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     thinking_blocks: list[dict[str, Any]] = Field(default_factory=list)
     # OpenRouter reasoning_details for Gemini models — must be preserved across turns.
     reasoning_details: list[dict[str, Any]] = Field(default_factory=list)
-    # True when honcho_llm_call truncated the input messages to fit
-    # `max_input_tokens` before dispatching to the provider. Lets the deriver
-    # populate `hit_input_token_cap` on RepresentationCompletedEvent with a
-    # real measurement (not just the configured cap).
-    input_was_truncated: bool = False
+    # True when the original input exceeded `max_input_tokens` — covers
+    # both "messages were dropped" and "couldn't drop the last unit and
+    # remaining tokens still exceeded the cap" (the deriver's prompt-only
+    # case). Maps 1:1 to `RepresentationCompletedEvent.hit_input_token_cap`
+    # and `DialecticCompletedEvent.hit_input_token_cap`.
+    hit_input_token_cap: bool = False
 
 
 class HonchoLLMCallStreamChunk(BaseModel):
@@ -124,6 +125,15 @@ class StreamingResponseWithMetadata:
 
     Lets callers read tool_calls_made / token counts / thinking_content from
     the tool-execution phase while still iterating the final streamed answer.
+
+    `output_tokens` is updated AS THE STREAM DRAINS — `__aiter__` wraps the
+    underlying iterator and accumulates the latest non-None `output_tokens`
+    value reported by chunk usage. Providers like OpenAI (with
+    `stream_options.include_usage`) and Anthropic emit a final usage chunk
+    with the cumulative count, so the post-drain `output_tokens` value
+    reflects tool-loop output + final-stream output. Callers that read
+    `output_tokens` AFTER fully iterating the stream get the true total;
+    callers that read it before drain see only the tool-loop portion.
     """
 
     _stream: AsyncIterator[HonchoLLMCallStreamChunk]
@@ -134,7 +144,7 @@ class StreamingResponseWithMetadata:
     cache_read_input_tokens: int
     thinking_content: str | None
     iterations: int
-    input_was_truncated: bool
+    hit_input_token_cap: bool
 
     def __init__(
         self,
@@ -146,7 +156,7 @@ class StreamingResponseWithMetadata:
         cache_read_input_tokens: int,
         thinking_content: str | None = None,
         iterations: int = 0,
-        input_was_truncated: bool = False,
+        hit_input_token_cap: bool = False,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -156,10 +166,31 @@ class StreamingResponseWithMetadata:
         self.cache_read_input_tokens = cache_read_input_tokens
         self.thinking_content = thinking_content
         self.iterations = iterations
-        self.input_was_truncated = input_was_truncated
+        self.hit_input_token_cap = hit_input_token_cap
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
-        return self._stream.__aiter__()
+        # Wrap the underlying iterator to capture final-stream output_tokens
+        # from chunks as they arrive. Providers emit a usage chunk at end-of-
+        # stream with the cumulative output_tokens count; we fold it into
+        # self.output_tokens (which carries the tool-loop running total at
+        # construction) so the post-drain value reflects the true cost.
+        return self._iterate_with_usage_capture()
+
+    async def _iterate_with_usage_capture(
+        self,
+    ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
+        final_stream_output_tokens = 0
+        async for chunk in self._stream:
+            if chunk.output_tokens is not None:
+                # Take the LATEST value, not the sum — providers report
+                # the cumulative usage in the final chunk, not deltas.
+                final_stream_output_tokens = chunk.output_tokens
+            yield chunk
+        # Stream drained — fold the final-stream output tokens into the
+        # tool-loop totals so DialecticCompletedEvent / downstream readers
+        # see the true cost.
+        if final_stream_output_tokens > 0:
+            self.output_tokens += final_stream_output_tokens
 
     async def __anext__(self) -> HonchoLLMCallStreamChunk:
         return await self._stream.__anext__()

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -214,7 +215,24 @@ async def stream_final_response(
     streaming call against the same pinned model for transient errors.
     """
 
+    # Bump the per-retry attempt index inside `_setup_stream`. The pinned
+    # `winning_plan.attempt` is frozen from before retries started; without
+    # this counter, every retried stream-setup emit reports the same attempt
+    # value — telemetry can't tell the retry sequence apart.
+    stream_attempt = 0
+
     async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
+        nonlocal stream_attempt
+        stream_attempt += 1
+        # `dataclasses.replace` produces a per-attempt plan with the bumped
+        # `attempt` and the real `retry_attempts` budget so the executor's
+        # LLMCallCompletedEvent reports attempt=1/2/3 and is_final_attempt
+        # correctly across the retry sequence.
+        plan_for_attempt = dataclasses.replace(
+            winning_plan,
+            attempt=stream_attempt,
+            retry_attempts=retry_attempts,
+        )
         return await honcho_llm_call_inner(
             winning_plan.provider,
             winning_plan.model,
@@ -233,7 +251,7 @@ async def stream_final_response(
             tool_choice=None,
             messages=conversation_messages,
             selected_config=winning_plan.selected_config,
-            plan=winning_plan,
+            plan=plan_for_attempt,
             telemetry=telemetry,
         )
 
@@ -287,7 +305,7 @@ async def execute_tool_loop(
         Final HonchoLLMCallResponse with accumulated token counts and tool call
         history, or a StreamingResponseWithMetadata if stream_final=True.
     """
-    from .conversation import truncate_messages_to_fit
+    from .conversation import count_message_tokens, truncate_messages_to_fit
 
     if not MIN_TOOL_ITERATIONS <= max_tool_iterations <= MAX_TOOL_ITERATIONS:
         raise ValidationException(
@@ -307,11 +325,14 @@ async def execute_tool_loop(
     total_cache_creation_tokens = 0
     total_cache_read_tokens = 0
     empty_response_retries = 0
-    # Latch — set when any iteration clamps the message list. Stamped onto
-    # the final response so RepresentationCompletedEvent.hit_input_token_cap
-    # and DialecticCompletedEvent reflect tool-loop truncations (the
-    # toolless path tracks this in src/llm/api.py:325-335).
-    any_iteration_truncated = False
+    # Latch — set when any iteration's input exceeded `max_input_tokens`.
+    # Token-based rather than message-count-based: catches both "messages
+    # got dropped" and "couldn't drop the last unit but still over cap."
+    # Stamped onto the final response so
+    # RepresentationCompletedEvent.hit_input_token_cap and
+    # DialecticCompletedEvent.hit_input_token_cap reflect the cap hit
+    # (the toolless path tracks this in src/llm/api.py:325-340).
+    hit_input_token_cap = False
     # Track effective tool_choice — switches from "required"/"any" to "auto" after iter 1.
     effective_tool_choice = tool_choice
 
@@ -321,12 +342,11 @@ async def execute_tool_loop(
         logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
 
         if max_input_tokens is not None:
-            truncated = truncate_messages_to_fit(
+            if count_message_tokens(conversation_messages) > max_input_tokens:
+                hit_input_token_cap = True
+            conversation_messages = truncate_messages_to_fit(
                 conversation_messages, max_input_tokens
             )
-            if len(truncated) != len(conversation_messages):
-                any_iteration_truncated = True
-            conversation_messages = truncated
 
         async def _call_with_messages(
             effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
@@ -428,7 +448,7 @@ async def execute_tool_loop(
                     cache_read_input_tokens=total_cache_read_tokens,
                     thinking_content=response.thinking_content,
                     iterations=iteration + 1,
-                    input_was_truncated=any_iteration_truncated,
+                    hit_input_token_cap=hit_input_token_cap,
                 )
 
             response.tool_calls_made = all_tool_calls
@@ -437,8 +457,8 @@ async def execute_tool_loop(
             response.cache_creation_input_tokens = total_cache_creation_tokens
             response.cache_read_input_tokens = total_cache_read_tokens
             response.iterations = iteration + 1
-            response.input_was_truncated = (
-                response.input_was_truncated or any_iteration_truncated
+            response.hit_input_token_cap = (
+                response.hit_input_token_cap or hit_input_token_cap
             )
             return response
 
@@ -547,6 +567,8 @@ async def execute_tool_loop(
     # Truncate again — the per-iteration truncate ran before the last tool
     # call, so appending synthesis_prompt could nudge us back over the cap.
     if max_input_tokens is not None:
+        if count_message_tokens(conversation_messages) > max_input_tokens:
+            hit_input_token_cap = True
         conversation_messages = truncate_messages_to_fit(
             conversation_messages, max_input_tokens
         )
@@ -579,7 +601,7 @@ async def execute_tool_loop(
             cache_read_input_tokens=total_cache_read_tokens,
             thinking_content=None,
             iterations=iteration + 1,
-            input_was_truncated=any_iteration_truncated,
+            hit_input_token_cap=hit_input_token_cap,
         )
 
     current_attempt.set(1)
@@ -638,8 +660,8 @@ async def execute_tool_loop(
     final_response.cache_read_input_tokens = (
         total_cache_read_tokens + final_response.cache_read_input_tokens
     )
-    final_response.input_was_truncated = (
-        final_response.input_was_truncated or any_iteration_truncated
+    final_response.hit_input_token_cap = (
+        final_response.hit_input_token_cap or hit_input_token_cap
     )
     return final_response
 

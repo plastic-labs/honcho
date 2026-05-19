@@ -1844,11 +1844,25 @@ async def _handle_search_messages_temporal(
         date_filter.append(f"before {before_date_str}")
     filter_desc = f" ({' and '.join(date_filter)})" if date_filter else ""
 
+    # Matches the search_messages metadata shape so analytics can filter
+    # AgentToolCallCompletedEvent uniformly across all embedding-backed
+    # search tools (search_memory / search_messages / search_messages_temporal).
+    search_meta: dict[str, Any] = {
+        "top_k": limit,
+        "used_embedding": True,
+        "embedding_query_count": 1,
+        "query_tokens": _estimate_tokens_safe(query),
+        "results_count": len(snippets),
+    }
+
     if not snippets:
-        return f"No messages found for query '{query}'{filter_desc}"
+        return ToolResult(
+            content=f"No messages found for query '{query}'{filter_desc}",
+            metadata=search_meta,
+        )
 
     formatted = _format_message_snippets(snippets, f"for query '{query}'{filter_desc}")
-    return formatted
+    return ToolResult(content=formatted, metadata=search_meta)
 
 
 async def _handle_get_recent_observations(
@@ -2007,12 +2021,20 @@ async def _handle_extract_preferences(
 ) -> str:
     """Handle extract_preferences tool."""
     _ = tool_input
-    results = await extract_preferences(
+    # Wrap so the batch-embed + downstream search_messages embedding calls
+    # all carry preference-extraction attribution.
+    with embedding_call_purpose(
+        EmbeddingCallPurpose.PREFERENCE_EXTRACTION.value,
         workspace_name=ctx.workspace_name,
-        session_name=ctx.session_name,
-        observed=ctx.observed,
-        observer=ctx.observer,
-    )
+        run_id=ctx.run_id,
+        parent_category=ctx.parent_category,
+    ):
+        results = await extract_preferences(
+            workspace_name=ctx.workspace_name,
+            session_name=ctx.session_name,
+            observed=ctx.observed,
+            observer=ctx.observer,
+        )
 
     messages = results.get("messages", [])
 

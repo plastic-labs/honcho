@@ -6,8 +6,8 @@ Targets:
   unchanged.
 - fields are defaultable (no breakage for callers that ignore them)
   and round-trip through Pydantic serialization.
-- `HonchoLLMCallResponse.input_was_truncated` defaults to False but can be
-  flipped by the tool-less truncation path in `src/llm/api.py`.
+- `HonchoLLMCallResponse.hit_input_token_cap` defaults to False but can be
+  flipped by the tool-less cap-detection path in `src/llm/api.py`.
 """
 
 from __future__ import annotations
@@ -163,10 +163,15 @@ class TestRepresentationV2AdditiveFields:
         assert data["hit_batch_token_cap"] is True
 
 
-class TestInputWasTruncatedFlag:
-    """`HonchoLLMCallResponse.input_was_truncated` is the bridge between the
-    tool-less truncation path in src/llm/api.py and the deriver's
-    `hit_input_token_cap` flag on RepresentationCompletedEvent."""
+class TestHitInputTokenCapFlag:
+    """`HonchoLLMCallResponse.hit_input_token_cap` is the bridge between the
+    tool-less cap-detection path in src/llm/api.py and the deriver's
+    `hit_input_token_cap` field on RepresentationCompletedEvent.
+
+    The flag is token-based — it fires whenever the original input exceeded
+    `max_input_tokens`, whether or not message truncation could actually
+    shrink the input below cap (the deriver's single-prompt case can't).
+    """
 
     def test_defaults_to_false(self):
         response = HonchoLLMCallResponse(
@@ -175,7 +180,7 @@ class TestInputWasTruncatedFlag:
             output_tokens=5,
             finish_reasons=["stop"],
         )
-        assert response.input_was_truncated is False
+        assert response.hit_input_token_cap is False
 
     def test_can_be_flipped(self):
         response = HonchoLLMCallResponse(
@@ -184,5 +189,5 @@ class TestInputWasTruncatedFlag:
             output_tokens=5,
             finish_reasons=["stop"],
         )
-        response.input_was_truncated = True
-        assert response.input_was_truncated is True
+        response.hit_input_token_cap = True
+        assert response.hit_input_token_cap is True

@@ -165,6 +165,13 @@ class EmbeddingCallPurpose(str, Enum):
     VECTOR_SYNC = "vector_sync"
     SUMMARY = "summary"
     MESSAGE_CREATE = "message_create"
+    # Added so previously-unattributed call sites land on a distinct slug
+    # instead of None. Closed taxonomy — coordinate with analytics before
+    # adding more.
+    DIALECTIC_PREFETCH = "dialectic_prefetch"
+    SESSION_CONTEXT_SEARCH = "session_context_search"
+    PREFERENCE_EXTRACTION = "preference_extraction"
+    GENERIC_DOCUMENT_SEARCH = "generic_document_search"
 
 
 class EmbeddingCallCompletedEvent(BaseEvent):

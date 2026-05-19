@@ -317,22 +317,29 @@ async def honcho_llm_call(
     if not tools or not tool_executor:
         # enforce `max_input_tokens` for tool-less calls too. Before
         # this change, only `execute_tool_loop` consumed the kwarg — the
-        # deriver passed it but it was silently dropped, so the "input was
-        # truncated" signal it needed for RepresentationCompletedEvent could
-        # not be measured. Now we truncate the message list up-front (using
-        # the same helper the tool loop uses) and surface the flag on the
-        # returned response.
-        toolless_input_was_truncated = False
+        # deriver passed it but it was silently dropped, so the cap-hit
+        # signal it needed for RepresentationCompletedEvent could not be
+        # measured. Now we run the same message-list truncation helper
+        # and surface a `hit_input_token_cap` boolean on the response.
+        #
+        # The signal is purely token-based ("did the input exceed cap?")
+        # rather than message-count-based — the helper deliberately keeps
+        # the last conversation unit even when it's oversized (see
+        # truncate_messages_to_fit), so a single-message over-cap input
+        # (the deriver's prompt-only case) would otherwise silently fly
+        # through with hit=False. Token-based comparison catches it.
+        toolless_hit_input_token_cap = False
         toolless_messages = messages
         if max_input_tokens is not None:
-            from .conversation import truncate_messages_to_fit
+            from .conversation import count_message_tokens, truncate_messages_to_fit
 
             base_messages = messages or [{"role": "user", "content": prompt}]
-            original_count = len(base_messages)
+            toolless_hit_input_token_cap = (
+                count_message_tokens(base_messages) > max_input_tokens
+            )
             toolless_messages = truncate_messages_to_fit(
                 base_messages, max_input_tokens
             )
-            toolless_input_was_truncated = len(toolless_messages) != original_count
 
         # Re-bind the closure to use the truncated message list.
         if toolless_messages is not None:
@@ -404,8 +411,8 @@ async def honcho_llm_call(
         else:
             result = await decorated()
 
-        if toolless_input_was_truncated and isinstance(result, HonchoLLMCallResponse):
-            result.input_was_truncated = True
+        if toolless_hit_input_token_cap and isinstance(result, HonchoLLMCallResponse):
+            result.hit_input_token_cap = True
 
         if trace_name and isinstance(result, HonchoLLMCallResponse):
             log_reasoning_trace(

@@ -983,6 +983,23 @@ class TestCleanupStaleItemsCompletedEvent:
         assert event.documents_cleaned == 0
         assert event.queue_items_cleaned == 0
 
+    def test_queue_items_cleaned_round_trips_through_pydantic(
+        self, fixed_timestamp: datetime
+    ):
+        """Regression: `queue_items_cleaned` is a real field, not just
+        plumbing. Previously the consumer emit site dropped the captured
+        `deleted_count` and the field always defaulted to 0 on the wire.
+        """
+        event = CleanupStaleItemsCompletedEvent(
+            timestamp=fixed_timestamp,
+            total_duration_ms=500.0,
+            queue_items_cleaned=42,
+        )
+        assert event.queue_items_cleaned == 42
+        # Serialize → deserialize to ensure the field crosses the wire.
+        data = event.model_dump(mode="json")
+        assert data["queue_items_cleaned"] == 42
+
 
 # =============================================================================
 # Parametrized tests across all event types

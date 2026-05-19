@@ -513,3 +513,131 @@ def test_ground_truth_event_skips_sampler():
         output_tokens=1,
     )
     assert _should_sample(event, 1.0) is True
+
+
+class TestStreamFinalResponseRetryAttempt:
+    """`stream_final_response` (src/llm/tool_loop.py) must bump the
+    per-attempt index on the plan it passes to `honcho_llm_call_inner`.
+    Previously every retried stream-setup emit reported the same `attempt`
+    value because the pinned `winning_plan` was reused unchanged. Fix 13
+    plumbs a per-retry plan via `dataclasses.replace`.
+    """
+
+    @pytest.mark.asyncio
+    async def test_attempt_index_bumps_across_retries(self):
+        from collections.abc import AsyncIterator
+
+        from src.llm import executor, tool_loop
+
+        emitted: list[BaseEvent] = []
+
+        # execute_stream raises on the first two calls, succeeds on the third.
+        call_count = 0
+
+        async def _flaky_setup(*_args: Any, **_kwargs: Any) -> AsyncIterator[Any]:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise RuntimeError("transient")
+
+            async def _ok_stream() -> AsyncIterator[Any]:
+                # Empty async generator — the unreachable yield is required
+                # to keep this function an async generator (no `async def
+                # ... -> AsyncIterator: return` shortcut exists in Python).
+                return
+                yield  # pyright: ignore[reportUnreachable]
+
+            return _ok_stream()
+
+        # selected_config=None lets effective_config_for_call synthesize a
+        # minimal ModelConfig — avoids needing a real ModelConfig in this test.
+        winning_plan = AttemptPlan(
+            provider="anthropic",
+            model="claude-sonnet-4-5",
+            client=object(),
+            thinking_budget_tokens=None,
+            reasoning_effort=None,
+            selected_config=None,
+            attempt=1,
+            retry_attempts=3,
+            is_fallback=False,
+        )
+
+        with (
+            patch.object(executor, "CLIENTS", {"anthropic": object()}),
+            patch.object(executor, "backend_for_provider", return_value=object()),
+            patch.object(executor, "execute_stream", new=_flaky_setup),
+            patch(
+                "src.telemetry.events.emit",
+                side_effect=lambda event: emitted.append(event),
+            ),
+        ):
+            stream = tool_loop.stream_final_response(
+                winning_plan=winning_plan,
+                prompt="hi",
+                max_tokens=64,
+                conversation_messages=[{"role": "user", "content": "x"}],
+                response_model=None,
+                json_mode=False,
+                temperature=None,
+                stop_seqs=None,
+                verbosity=None,
+                enable_retry=True,
+                retry_attempts=3,
+                before_retry_callback=lambda _r: None,
+                telemetry=None,
+            )
+            # Drain (empty) so the wrapper's finally fires for the success attempt.
+            async for _chunk in stream:
+                pass
+
+        # 3 emissions: attempts 1 & 2 errored, attempt 3 succeeded.
+        llm_events = [e for e in emitted if isinstance(e, LLMCallCompletedEvent)]
+        assert [e.attempt for e in llm_events] == [1, 2, 3]
+        # Final attempt flag: only True on the last retry (attempt 3 of 3).
+        assert [e.is_final_attempt for e in llm_events] == [False, False, True]
+        # First two errored, last succeeded.
+        assert [e.outcome for e in llm_events] == ["error", "error", "success"]
+
+
+class TestStreamingResponseTokenWriteBack:
+    """`StreamingResponseWithMetadata` must accumulate the final-stream's
+    output_tokens (reported in usage chunks by OpenAI/Anthropic) into its
+    `output_tokens` attribute as the stream drains, so DialecticCompletedEvent
+    sees tool-loop totals + final-stream totals — not tool-loop totals alone.
+    """
+
+    @pytest.mark.asyncio
+    async def test_output_tokens_folds_in_final_stream_usage(self):
+        from src.llm.types import (
+            HonchoLLMCallStreamChunk,
+            StreamingResponseWithMetadata,
+        )
+
+        async def _fake_stream() -> Any:
+            # Content-only chunks, then a final usage chunk with cumulative
+            # output_tokens=137 — matches OpenAI's include_usage pattern.
+            yield HonchoLLMCallStreamChunk(content="hel", output_tokens=None)
+            yield HonchoLLMCallStreamChunk(content="lo", output_tokens=None)
+            yield HonchoLLMCallStreamChunk(content="", is_done=True, output_tokens=137)
+
+        wrapper = StreamingResponseWithMetadata(
+            stream=_fake_stream(),
+            tool_calls_made=[],
+            input_tokens=200,
+            output_tokens=50,  # tool-loop running output total
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+        )
+        # Before drain, the wrapper holds only the tool-loop total.
+        assert wrapper.output_tokens == 50
+
+        chunks: list[HonchoLLMCallStreamChunk] = []
+        async for chunk in wrapper:
+            chunks.append(chunk)
+
+        # After drain, the final-stream's 137 output tokens fold in.
+        assert wrapper.output_tokens == 50 + 137
+        # And we yielded every chunk to the caller — the wrapper is a
+        # passthrough, not a sink.
+        assert len(chunks) == 3

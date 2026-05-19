@@ -67,6 +67,16 @@ class DialecticCompletedEvent(BaseEvent):
         default=0, description="Tokens written to prompt cache"
     )
 
+    # Cap hit flag
+    hit_input_token_cap: bool = Field(
+        default=False,
+        description=(
+            "True when an iteration's input exceeded "
+            "settings.DIALECTIC.MAX_INPUT_TOKENS. Token-based — fires for the "
+            "single-oversized-message case too, not just message-list shrinkage."
+        ),
+    )
+
     def get_resource_id(self) -> str:
         """Resource ID is the run_id for uniqueness."""
         return self.run_id

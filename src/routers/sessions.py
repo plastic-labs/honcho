@@ -19,11 +19,12 @@ from src.exceptions import (
     ValidationException,
 )
 from src.security import JWTParams, require_auth
-from src.telemetry.events import GetContextEvent, emit
+from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
 from src.utils.representation import Representation
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -714,7 +715,14 @@ async def get_session_context(
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
-        with suppress(Exception):
+        with (
+            suppress(Exception),
+            embedding_call_purpose(
+                EmbeddingCallPurpose.SESSION_CONTEXT_SEARCH.value,
+                workspace_name=workspace_id,
+                parent_category="api",
+            ),
+        ):
             embedding = await embedding_client.embed(search_query)
 
     # Sequential calls on shared DB session

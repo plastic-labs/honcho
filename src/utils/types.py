@@ -108,6 +108,12 @@ _embedding_workspace_name: ContextVar[str | None] = ContextVar(
     "embedding_workspace_name", default=None
 )
 _embedding_run_id: ContextVar[str | None] = ContextVar("embedding_run_id", default=None)
+# Parent category for joining EmbeddingCallCompletedEvent against the
+# workflow that drove the call (e.g. "dialectic", "deriver",
+# "reconciliation", "api"). Optional — None when uninstrumented.
+_embedding_parent_category: ContextVar[str | None] = ContextVar(
+    "embedding_parent_category", default=None
+)
 
 
 def get_embedding_call_purpose() -> str | None:
@@ -125,12 +131,18 @@ def get_embedding_run_id() -> str | None:
     return _embedding_run_id.get()
 
 
+def get_embedding_parent_category() -> str | None:
+    """Read the parent category attached to the current embedding call scope."""
+    return _embedding_parent_category.get()
+
+
 @contextmanager
 def embedding_call_purpose(
     purpose: str,
     *,
     workspace_name: str | None = None,
     run_id: str | None = None,
+    parent_category: str | None = None,
 ) -> Generator[None]:
     """Tag any embedding calls made inside this `with` block.
 
@@ -142,6 +154,11 @@ def embedding_call_purpose(
     a specific workspace and agent run. Both are optional; callers that
     don't have one (or have it set further up the stack via a wider
     `with` block) can omit it.
+
+    `parent_category` joins the event back to the originating workflow —
+    typically the same category used by the calling LLM agent ("dialectic",
+    "deriver", "reconciliation", "api"). Lets analytics pivot embedding
+    cost/latency by workflow without per-purpose joins.
     """
     purpose_token = _embedding_call_purpose.set(purpose)
     workspace_token = (
@@ -150,6 +167,11 @@ def embedding_call_purpose(
         else None
     )
     run_id_token = _embedding_run_id.set(run_id) if run_id is not None else None
+    parent_category_token = (
+        _embedding_parent_category.set(parent_category)
+        if parent_category is not None
+        else None
+    )
     try:
         yield
     finally:
@@ -158,6 +180,8 @@ def embedding_call_purpose(
             _embedding_workspace_name.reset(workspace_token)
         if run_id_token is not None:
             _embedding_run_id.reset(run_id_token)
+        if parent_category_token is not None:
+            _embedding_parent_category.reset(parent_category_token)
 
 
 @dataclass
