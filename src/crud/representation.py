@@ -97,11 +97,19 @@ class RepresentationManager:
         observation_texts = [_observation_text(obs) for obs in all_observations]
         try:
             embeddings = await embedding_client.simple_batch_embed(observation_texts)
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             raise exceptions.ValidationException(
                 "Observation content exceeds maximum token limit of "
                 + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
             ) from e
+
+        # Guard against partial batch results (provider may return fewer vectors than texts)
+        if embeddings is not None and len(embeddings) != len(all_observations):
+            logger.warning(
+                f"Embedding batch returned {len(embeddings)} vectors for "
+                f"{len(all_observations)} observations; saving without embeddings"
+            )
+            embeddings = None
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
         accumulate_metric(
@@ -138,7 +146,7 @@ class RepresentationManager:
         self,
         db: AsyncSession,
         all_observations: list[ExplicitObservation | DeductiveObservation],
-        embeddings: list[list[float]],
+        embeddings: list[list[float]] | None,
         message_ids: list[int],
         session_name: str,
         message_created_at: datetime.datetime,
@@ -154,7 +162,7 @@ class RepresentationManager:
 
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
-        for obs, embedding in zip(all_observations, embeddings, strict=True):
+        for i, obs in enumerate(all_observations):
             # NOTE: will add additional levels of reasoning in the future
             if isinstance(obs, DeductiveObservation):
                 obs_level = "deductive"
@@ -177,7 +185,7 @@ class RepresentationManager:
                     session_name=session_name,
                     level=obs_level,
                     metadata=metadata,
-                    embedding=embedding,
+                    embedding=embeddings[i] if embeddings is not None else None,
                 )
             )
 
