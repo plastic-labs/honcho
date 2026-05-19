@@ -15,16 +15,13 @@ class MessageCreatedEvent(BaseEvent):
     """Emitted when one or more messages are created.
 
     This is the canonical API event for counting created messages, including
-    messages created from file uploads.
-
-    Schema v2: replaced `message_count` with `last_message_id` (public nanoid
-    of the trailing message) in the resource_id, so two batches of the same
-    size in the same session+source no longer collide. `message_count`
-    remains on the event body for analytics.
+    messages created from file uploads. The resource_id keys on
+    `last_message_id` (the trailing message's public nanoid) so two batches
+    of the same size in the same session+source produce distinct event ids.
     """
 
     _event_type: ClassVar[str] = "message.created"
-    _schema_version: ClassVar[int] = 2
+    _schema_version: ClassVar[int] = 1
     _category: ClassVar[str] = "api"
 
     workspace_name: str = Field(..., description="Workspace name")

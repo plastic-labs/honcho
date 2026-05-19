@@ -42,7 +42,7 @@ class TestDreamRunEventV2Fields:
         )
         assert event.dream_type is None
         assert event.enabled_types_count == 0
-        assert event.threshold_reason is None
+        assert event.trigger_reason is None
         assert event.delay_reason is None
         assert event.documents_since_last_dream_at_schedule is None
         assert event.document_threshold is None
@@ -63,20 +63,20 @@ class TestDreamRunEventV2Fields:
             total_duration_ms=500.0,
             dream_type="omni",
             enabled_types_count=1,
-            threshold_reason="document_threshold",
+            trigger_reason="document_threshold",
             delay_reason="idle_timeout",
             documents_since_last_dream_at_schedule=60,
             document_threshold=50,
         )
         assert event.dream_type == "omni"
-        assert event.threshold_reason == "document_threshold"
+        assert event.trigger_reason == "document_threshold"
         assert event.delay_reason == "idle_timeout"
         assert event.documents_since_last_dream_at_schedule == 60
         assert event.document_threshold == 50
 
     def test_threshold_and_delay_are_separate(self):
         """The two scheduler gates are intentionally separate fields. The
-        snapshot semantics differ: threshold_reason describes WHY the dream
+        snapshot semantics differ: trigger_reason describes WHY the dream
         was scheduled (which gate tripped); delay_reason describes WHEN it
         will fire (idle vs immediate)."""
         event = DreamRunEvent(
@@ -92,13 +92,13 @@ class TestDreamRunEventV2Fields:
             total_input_tokens=30,
             total_output_tokens=5,
             total_duration_ms=100.0,
-            threshold_reason="document_threshold",
+            trigger_reason="document_threshold",
             delay_reason="immediate",
         )
-        # threshold_reason captures the WHY; delay_reason captures the WHEN.
+        # trigger_reason captures the WHY; delay_reason captures the WHEN.
         # They are separate dimensions — flattening into one field would lose
         # the gate semantics that was specifically designed to expose.
-        assert event.threshold_reason != event.delay_reason
+        assert event.trigger_reason != event.delay_reason
 
 
 class TestDreamSpecialistEventV2Rollups:
@@ -156,7 +156,7 @@ class TestDreamPayloadSchedulerFields:
             observer="o",
             observed="user",
         )
-        assert payload.threshold_reason is None
+        assert payload.trigger_reason is None
         assert payload.delay_reason is None
         assert payload.documents_since_last_dream_at_schedule is None
         assert payload.document_threshold is None
@@ -168,7 +168,7 @@ class TestDreamPayloadSchedulerFields:
             dream_type=DreamType.OMNI,
             observer="o",
             observed="user",
-            threshold_reason="document_threshold",
+            trigger_reason="document_threshold",
             delay_reason="idle_timeout",
             documents_since_last_dream_at_schedule=55,
             document_threshold=50,
@@ -177,7 +177,7 @@ class TestDreamPayloadSchedulerFields:
         # happens between scheduler enqueue and consumer dequeue.
         data = payload.model_dump(mode="json")
         restored = DreamPayload(**data)
-        assert restored.threshold_reason == "document_threshold"
+        assert restored.trigger_reason == "document_threshold"
         assert restored.delay_reason == "idle_timeout"
         assert restored.documents_since_last_dream_at_schedule == 55
         assert restored.document_threshold == 50

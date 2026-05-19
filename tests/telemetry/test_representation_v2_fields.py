@@ -55,10 +55,11 @@ class TestRepresentationV2AdditiveFields:
         assert event.observer_count == 0
 
     def test_input_tokens_semantics_preserved(self):
-        """The billing-resolution key must remain 'queued-message tokens'.
+        """The downstream metering key must remain 'queued-message tokens'.
 
-        added many fields, but `input_tokens` MUST stay as the
-        billing key Xatu's Stripe meter reads. Don't rename or repurpose.
+        Added many fields, but `input_tokens` MUST stay as the downstream
+        metering key for representation.completed. Don't rename or
+        repurpose without coordinating with consumers.
         """
         event = RepresentationCompletedEvent(
             workspace_name="ws",

@@ -61,8 +61,9 @@ class RepresentationCompletedEvent(BaseEvent):
         ...,
         description=(
             "Queued-message tokens (the ones we're actually reasoning ABOUT). "
-            "keeps this field unchanged — it's the billing-resolution key "
-            "consumed by Xatu's Stripe meter for representation.completed."
+            "This field is the downstream metering key for "
+            "representation.completed — DO NOT rename or repurpose without "
+            "coordinating with downstream consumers."
         ),
     )
     total_input_tokens: int = Field(

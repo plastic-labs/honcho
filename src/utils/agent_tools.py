@@ -817,6 +817,7 @@ async def create_observations(
     message_ids: list[int],
     message_created_at: str,
     run_id: str | None = None,
+    parent_category: str | None = None,
 ) -> ObservationsCreatedResult:
     """
     Create multiple observations (documents) in the memory system in a single call.
@@ -868,6 +869,7 @@ async def create_observations(
             EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
             workspace_name=workspace_name,
             run_id=run_id,
+            parent_category=parent_category,
         ):
             embeddings = await embedding_client.simple_batch_embed(contents)
         embeddings_by_index = dict(
@@ -1319,6 +1321,7 @@ async def _handle_create_observations_impl(
             message_ids=message_ids,
             message_created_at=message_created_at,
             run_id=ctx.run_id,
+            parent_category=ctx.parent_category,
         )
 
     # Merge validation and embedding failures
@@ -1536,6 +1539,7 @@ async def _handle_search_memory(
             EmbeddingCallPurpose.SEARCH_MEMORY.value,
             workspace_name=ctx.workspace_name,
             run_id=ctx.run_id,
+            parent_category=ctx.parent_category,
         ):
             query_embedding = await embedding_client.embed(query)
     except ValueError:
@@ -1653,6 +1657,7 @@ async def _handle_search_messages(
         EmbeddingCallPurpose.SEARCH_MESSAGES.value,
         workspace_name=ctx.workspace_name,
         run_id=ctx.run_id,
+        parent_category=ctx.parent_category,
     ):
         query_embedding = await embedding_client.embed(query)
     snippets = await crud.search_messages(
@@ -1824,6 +1829,7 @@ async def _handle_search_messages_temporal(
         EmbeddingCallPurpose.SEARCH_MESSAGES.value,
         workspace_name=ctx.workspace_name,
         run_id=ctx.run_id,
+        parent_category=ctx.parent_category,
     ):
         query_embedding = await embedding_client.embed(query)
     snippets = await crud.search_messages_temporal(

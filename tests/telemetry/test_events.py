@@ -303,8 +303,8 @@ class TestMessageCreatedEvent:
         assert MessageCreatedEvent.event_type() == "message.created"
 
     def test_schema_version(self):
-        """schema_version() returns correct value (v2 after last_message_id)."""
-        assert MessageCreatedEvent.schema_version() == 2
+        """schema_version() returns correct value."""
+        assert MessageCreatedEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""

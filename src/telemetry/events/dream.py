@@ -78,7 +78,7 @@ class DreamRunEvent(BaseEvent):
         default=0,
         description="len(settings.DREAM.ENABLED_TYPES) at run start — how many dream types this deploy was producing",
     )
-    threshold_reason: str | None = Field(
+    trigger_reason: str | None = Field(
         default=None,
         description=(
             "What tripped the schedule: 'document_threshold' | 'manual' | 'surprisal'. "
@@ -89,7 +89,7 @@ class DreamRunEvent(BaseEvent):
         default=None,
         description=(
             "What governed when this dream actually fired: 'idle_timeout' | "
-            "'immediate' | 'min_hours_gate'. Disambiguates from threshold_reason "
+            "'immediate' | 'min_hours_gate'. Disambiguates from trigger_reason "
             "to preserve the two-gate scheduler semantics in analytics."
         ),
     )
@@ -158,6 +158,25 @@ class DreamSpecialistEvent(BaseEvent):
     deleted_observation_count: int = Field(
         default=0,
         description="Actual observations deleted across all delete_observations calls (from ToolResult.metadata.deleted_count)",
+    )
+    created_counts_by_level: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Counts of created observations per level (explicit / deductive / "
+            "inductive / contradiction), aggregated across all "
+            "create_observations tool calls in this specialist run. Levels "
+            "with zero count may be omitted; queries should treat missing "
+            "keys as 0. Dict-of-counts rather than list[str] because dream "
+            "specialists can produce 10-20+ observations per run — a flat "
+            "list becomes noisy at that scale."
+        ),
+    )
+    deleted_counts_by_level: dict[str, int] = Field(
+        default_factory=dict,
+        description=(
+            "Counts of deleted observations per level, aggregated across all "
+            "delete_observations tool calls in this specialist run."
+        ),
     )
     peer_card_updated: bool = Field(
         default=False,

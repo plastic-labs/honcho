@@ -62,7 +62,7 @@ class DreamPayload(BasePayload):
     # scheduled (which threshold tripped) and *what* governed when it fired
     # (idle delay vs. immediate vs. min-hours gate). Defaults preserve
     # backward compat for any in-flight payloads from older producers.
-    threshold_reason: str | None = None
+    trigger_reason: str | None = None
     delay_reason: str | None = None
     documents_since_last_dream_at_schedule: int | None = None
     document_threshold: int | None = None
@@ -99,7 +99,7 @@ def create_dream_payload(
     observer: str,
     observed: str,
     session_name: str | None = None,
-    threshold_reason: str | None = None,
+    trigger_reason: str | None = None,
     delay_reason: str | None = None,
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
@@ -110,7 +110,7 @@ def create_dream_payload(
         observer=observer,
         observed=observed,
         session_name=session_name,
-        threshold_reason=threshold_reason,
+        trigger_reason=trigger_reason,
         delay_reason=delay_reason,
         documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
         document_threshold=document_threshold,

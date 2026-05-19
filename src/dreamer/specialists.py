@@ -14,6 +14,7 @@ import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
@@ -158,86 +159,12 @@ If you update it, send the full deduplicated list and remove stale entries.
         task_name = f"dreamer_{self.name}_{run_id}"
         start_time = time.perf_counter()
 
-        # Short-lived DB session for preflight operations
-        async with tracked_db("dream.specialist.preflight") as db:
-            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
-            if observer != observed:
-                await crud.get_peer(
-                    db, workspace_name, schemas.PeerCreate(name=observed)
-                )
-
-            # Determine if peer card tools should be included
-            peer_card_enabled = configuration is None or configuration.peer_card.create
-
-            # Fetch current peer card to inject into prompt (saves a tool call)
-            current_peer_card: list[str] | None = None
-            if peer_card_enabled:
-                current_peer_card = await crud.get_peer_card(
-                    db,
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                )
-        # DB session closed — LLM calls happen without holding a connection
-
-        # Build messages
-        messages: list[dict[str, str]] = [
-            {
-                "role": "system",
-                "content": self.build_system_prompt(
-                    observed, peer_card_enabled=peer_card_enabled
-                ),
-            },
-            {
-                "role": "user",
-                "content": self.build_user_prompt(hints, current_peer_card),
-            },
-        ]
-
-        # Create tool executor with telemetry context
-        tool_executor: Callable[
-            [str, dict[str, Any]], Any
-        ] = await create_tool_executor(
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            session_name=session_name,
-            include_observation_ids=True,
-            history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
-            configuration=configuration,
-            run_id=run_id,
-            agent_type=self.name,
-            parent_category="dream",
-        )
-
-        model_config = self.get_model_config()
-
-        # Respect operator-configured max_output_tokens on the specialist's
-        # ModelConfig (e.g. DREAM_DEDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS).
-        # Only fall back to the specialist's hardcoded default when the
-        # config leaves max_output_tokens unset or non-positive.
-        configured_max = model_config.max_output_tokens
-        effective_max_tokens = (
-            configured_max
-            if configured_max and configured_max > 0
-            else self.get_max_tokens()
-        )
-
-        # Track iterations via callback
-        iteration_count = 0
-
-        def iteration_callback(data: Any) -> None:
-            nonlocal iteration_count
-            iteration_count = data.iteration
-
-        # call_purpose maps "deduction"/"induction" specialist names onto the
-        # closed CallPurpose enum slugs without importing the enum here.
-        call_purpose_slug = f"dream.{self.name}"
-
-        # Telemetry state — populated in the try block, emitted in the
-        # finally block so DreamSpecialistEvent ALWAYS fires (success and
-        # failure). Without this, the success=False path of the schema is
-        # dead and dashboards see only succeeded runs.
+        # Telemetry state initialized BEFORE the try so the finally block can
+        # always read consistent values. Without this, a failure in preflight
+        # (peer lookup, peer-card preload, create_tool_executor, get_model_config,
+        # prompt construction) would bypass the finally entirely and the run
+        # would disappear from failure-path analytics — orphaning the
+        # downstream DreamRunEvent.
         specialist_success = False
         specialist_error_class: str | None = None
         response: HonchoLLMCallResponse[str] | None = None
@@ -249,8 +176,92 @@ If you update it, send the full deduplicated list and remove stale entries.
         peer_card_updated = False
         search_tool_calls_count = 0
         duration_ms = 0.0
+        iteration_count = 0
+        # Per-level rollups — accumulated from each create/delete_observations
+        # tool call's metadata.levels list. Counter rather than list[str] so
+        # the emitted dict stays compact even when the specialist produces
+        # many observations.
+        created_counts_by_level: Counter[str] = Counter()
+        deleted_counts_by_level: Counter[str] = Counter()
 
         try:
+            # Short-lived DB session for preflight operations
+            async with tracked_db("dream.specialist.preflight") as db:
+                await crud.get_peer(
+                    db, workspace_name, schemas.PeerCreate(name=observer)
+                )
+                if observer != observed:
+                    await crud.get_peer(
+                        db, workspace_name, schemas.PeerCreate(name=observed)
+                    )
+
+                # Determine if peer card tools should be included
+                peer_card_enabled = (
+                    configuration is None or configuration.peer_card.create
+                )
+
+                # Fetch current peer card to inject into prompt (saves a tool call)
+                current_peer_card: list[str] | None = None
+                if peer_card_enabled:
+                    current_peer_card = await crud.get_peer_card(
+                        db,
+                        workspace_name=workspace_name,
+                        observer=observer,
+                        observed=observed,
+                    )
+            # DB session closed — LLM calls happen without holding a connection
+
+            # Build messages
+            messages: list[dict[str, str]] = [
+                {
+                    "role": "system",
+                    "content": self.build_system_prompt(
+                        observed, peer_card_enabled=peer_card_enabled
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": self.build_user_prompt(hints, current_peer_card),
+                },
+            ]
+
+            # Create tool executor with telemetry context
+            tool_executor: Callable[
+                [str, dict[str, Any]], Any
+            ] = await create_tool_executor(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                session_name=session_name,
+                include_observation_ids=True,
+                history_token_limit=settings.DREAM.HISTORY_TOKEN_LIMIT,
+                configuration=configuration,
+                run_id=run_id,
+                agent_type=self.name,
+                parent_category="dream",
+            )
+
+            model_config = self.get_model_config()
+
+            # Respect operator-configured max_output_tokens on the specialist's
+            # ModelConfig (e.g. DREAM_DEDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS).
+            # Only fall back to the specialist's hardcoded default when the
+            # config leaves max_output_tokens unset or non-positive.
+            configured_max = model_config.max_output_tokens
+            effective_max_tokens = (
+                configured_max
+                if configured_max and configured_max > 0
+                else self.get_max_tokens()
+            )
+
+            def iteration_callback(data: Any) -> None:
+                nonlocal iteration_count
+                iteration_count = data.iteration
+
+            # call_purpose maps "deduction"/"induction" specialist names onto the
+            # closed CallPurpose enum slugs without importing the enum here.
+            call_purpose_slug = f"dream.{self.name}"
+
             # Run the agent loop
             response = await honcho_llm_call(
                 model_config=model_config,
@@ -333,6 +344,22 @@ If you update it, send the full deduplicated list and remove stale entries.
                     deleted_observation_count += int(deleted_val)
                     if meta_dict.get("peer_card_updated"):
                         peer_card_updated = True
+                    # Accumulate per-level counts from create/delete observations.
+                    # Both handlers stash `{"levels": ["explicit", "deductive", ...]}`
+                    # in metadata (agent_tools.py:1373 + agent_tools.py:2011).
+                    levels_any: Any = meta_dict.get("levels")
+                    if isinstance(levels_any, list):
+                        levels_list = cast(list[Any], levels_any)
+                        level_strs = [
+                            str(level) for level in levels_list if level is not None
+                        ]
+                        # Tool-name dispatch decides which counter to update —
+                        # create_observations metadata has `created_count`,
+                        # delete_observations has `deleted_count`.
+                        if "created_count" in meta_dict:
+                            created_counts_by_level.update(level_strs)
+                        elif "deleted_count" in meta_dict:
+                            deleted_counts_by_level.update(level_strs)
 
             specialist_success = True
 
@@ -387,6 +414,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                         deleted_observation_count=deleted_observation_count,
                         peer_card_updated=peer_card_updated,
                         search_tool_calls_count=search_tool_calls_count,
+                        # Per-level breakdowns — `dict(Counter)` keeps the
+                        # serialized event compact (zero-count levels are
+                        # omitted, not enumerated).
+                        created_counts_by_level=dict(created_counts_by_level),
+                        deleted_counts_by_level=dict(deleted_counts_by_level),
                     )
                 )
             except Exception:  # pragma: no cover - telemetry must not raise

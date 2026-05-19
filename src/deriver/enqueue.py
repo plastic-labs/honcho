@@ -399,7 +399,7 @@ def create_dream_record(
     observed: str,
     dream_type: schemas.DreamType,
     session_name: str | None = None,
-    threshold_reason: str | None = None,
+    trigger_reason: str | None = None,
     delay_reason: str | None = None,
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
@@ -413,7 +413,7 @@ def create_dream_record(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to if specified
-        threshold_reason: what tripped the schedule
+        trigger_reason: what tripped the schedule
         delay_reason: what governed when it fires
         documents_since_last_dream_at_schedule: count snapshot at schedule time
         document_threshold: DOCUMENT_THRESHOLD snapshot at schedule time
@@ -426,7 +426,7 @@ def create_dream_record(
         observer=observer,
         observed=observed,
         session_name=session_name,
-        threshold_reason=threshold_reason,
+        trigger_reason=trigger_reason,
         delay_reason=delay_reason,
         documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
         document_threshold=document_threshold,
@@ -448,7 +448,7 @@ async def enqueue_dream(
     observed: str,
     dream_type: schemas.DreamType,
     session_name: str | None = None,
-    threshold_reason: str | None = None,
+    trigger_reason: str | None = None,
     delay_reason: str | None = None,
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
@@ -477,7 +477,7 @@ async def enqueue_dream(
                 observed=observed,
                 dream_type=dream_type,
                 session_name=session_name,
-                threshold_reason=threshold_reason,
+                trigger_reason=trigger_reason,
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
                 document_threshold=document_threshold,

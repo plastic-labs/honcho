@@ -190,7 +190,7 @@ def sample_dream_run_event(fixed_timestamp: datetime) -> DreamRunEvent:
         # additive fields
         dream_type="omni",
         enabled_types_count=1,
-        threshold_reason="document_threshold",
+        trigger_reason="document_threshold",
         delay_reason="idle_timeout",
         documents_since_last_dream_at_schedule=55,
         document_threshold=50,

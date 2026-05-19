@@ -11,7 +11,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import and_, delete, exists, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +57,7 @@ class WorkerOwnership(NamedTuple):
     aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
 
 
-@dataclass
+@dataclass(frozen=True)
 class QueueBatchResult:
     """Result of `QueueManager.get_queue_item_batch`.
 
@@ -742,9 +742,16 @@ class QueueManager:
                 preceding_message_id_subq, min_unprocessed_message_id_subq
             )
 
-            # Build CTE with ALL messages starting from effective_start_id
-            # This includes the preceding context message (if any) and interleaving messages
-            cte = (
+            # Build CTE in two nested selects so we can layer a second window
+            # function on top of `cumulative_token_count`. Postgres doesn't
+            # allow nesting window functions in a single select; we compute
+            # `cumulative_token_count` in `inner_cte`, then `cap_exceeded` as
+            # `bool_or(cumulative > cap) OVER ()` in the outer CTE. The flag
+            # is identical across every row, so reading it from any returned
+            # row tells us whether the SQL cap would have excluded messages —
+            # eliminating the separate `SELECT EXISTS` roundtrip that used to
+            # run post-fetch.
+            inner_cte = (
                 select(
                     models.Message.id.label("message_id"),
                     models.Message.token_count.label("token_count"),
@@ -756,7 +763,20 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id >= effective_start_id)
-                .order_by(models.Message.id)
+                .subquery()
+            )
+
+            cte = (
+                select(
+                    inner_cte.c.message_id,
+                    inner_cte.c.token_count,
+                    inner_cte.c.peer_name,
+                    inner_cte.c.cumulative_token_count,
+                    func.bool_or(inner_cte.c.cumulative_token_count > batch_max_tokens)
+                    .over()
+                    .label("cap_exceeded"),
+                )
+                .order_by(inner_cte.c.message_id)
                 .cte()
             )
 
@@ -768,7 +788,11 @@ class QueueManager:
             )
 
             query = (
-                select(models.Message, models.QueueItem)
+                select(
+                    models.Message,
+                    models.QueueItem,
+                    cte.c.cap_exceeded.label("cap_exceeded"),
+                )
                 .select_from(cte)
                 .join(models.Message, models.Message.id == cte.c.message_id)
                 .outerjoin(
@@ -791,8 +815,15 @@ class QueueManager:
                     batch_max_tokens=batch_max_tokens,
                 )
 
+            # cap_exceeded is window-aggregated over the CTE — same value on
+            # every row. Read once from the first row; default False if the
+            # cap is disabled (`batch_max_tokens == 0`).
+            cap_exceeded_from_query: bool = (
+                bool(rows[0][2]) if rows and batch_max_tokens > 0 else False
+            )
+
             seen_messages: set[int] = set()
-            for m, qi in rows:
+            for m, qi, _cap in rows:
                 if m.id not in seen_messages:
                     messages_context.append(m)
                     seen_messages.add(m.id)
@@ -804,13 +835,6 @@ class QueueManager:
             # Python list after detach and survives the rest of this block.
             _detach_queue_batch_objects(db, messages_context, items_to_process)
 
-            # Snapshot the PRE-filter SQL kept-range max id. Cap detection
-            # below compares queue-item boundaries before and after the
-            # config filter to decide whether the cap was binding on the
-            # actually-returned batch.
-            sql_max_kept_id: int | None = (
-                messages_context[-1].id if messages_context else None
-            )
             # The QUEUE-ITEM boundary (not the messages_context tail) is
             # what matters for cap detection. messages_context includes
             # non-queue interleaving context messages — if SQL kept some
@@ -854,47 +878,29 @@ class QueueManager:
 
             # detect if `batch_max_tokens` clamped this returned batch.
             #
-            # The `allowed_condition` SQL keeps rows whose CUMULATIVE token
-            # sum is `<= cap` (with an always-included first-unprocessed
-            # escape hatch). The cap is binding on the returned batch iff:
+            # `cap_exceeded_from_query` comes from the CTE's
+            # `bool_or(cumulative > cap) OVER ()` column — true iff the
+            # SQL would have excluded at least one message because of the
+            # cap. Combined with the queue-boundary guard below, this
+            # tells us the cap was binding on the returned batch:
+            #
             #   1. Config filter didn't shrink the QUEUE-ITEM boundary
             #      (`last_queued_id_before == last_queued_id_after`) —
             #      i.e. SQL chose the trailing queue item, not config; AND
-            #   2. There's at least one unprocessed message strictly past
-            #      `sql_max_kept_id` (the SQL's true kept-range tail,
-            #      which may extend into non-queue context past the last
-            #      queued item) — i.e. SQL had a reason to stop there.
+            #   2. The CTE detected at least one message past the cap.
+            #
             # Both conditions must hold; otherwise the cap wasn't the
             # constraint on this specific returned batch.
             #
-            # Previously we keyed on `messages_context[-1].id ==
-            # sql_max_kept_id` which produced false negatives when SQL
-            # kept trailing non-queue context past the last queued item
-            # (config filter would trim that context, making the check
-            # fire even though queue work was untouched). Queue-boundary
-            # comparison is the right invariant.
+            # Previously we issued a separate `SELECT EXISTS` query for
+            # the second condition. Folding it into the CTE eliminates the
+            # roundtrip — every batch fetch is now one query, not two.
             if (
                 batch_max_tokens > 0
-                and sql_max_kept_id is not None
                 and last_queued_id_before is not None
                 and last_queued_id_before == last_queued_id_after
             ):
-                next_exists_check = await db.execute(
-                    select(
-                        exists(
-                            select(models.Message.id)
-                            .where(
-                                models.Message.session_name == parsed_key.session_name
-                            )
-                            .where(
-                                models.Message.workspace_name
-                                == parsed_key.workspace_name
-                            )
-                            .where(models.Message.id > sql_max_kept_id)
-                        )
-                    )
-                )
-                hit_batch_token_cap = bool(next_exists_check.scalar())
+                hit_batch_token_cap = cap_exceeded_from_query
             else:
                 hit_batch_token_cap = False
 

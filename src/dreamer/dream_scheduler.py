@@ -60,7 +60,7 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
-        threshold_reason: str | None = None,
+        trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
         document_threshold: int | None = None,
@@ -85,7 +85,7 @@ class DreamScheduler:
                 dream_type,
                 observer=observer,
                 observed=observed,
-                threshold_reason=threshold_reason,
+                trigger_reason=trigger_reason,
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
                 document_threshold=document_threshold,
@@ -146,7 +146,7 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
-        threshold_reason: str | None = None,
+        trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
         document_threshold: int | None = None,
@@ -159,7 +159,7 @@ class DreamScheduler:
                 dream_type,
                 observer=observer,
                 observed=observed,
-                threshold_reason=threshold_reason,
+                trigger_reason=trigger_reason,
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
                 document_threshold=document_threshold,
@@ -180,7 +180,7 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
-        threshold_reason: str | None = None,
+        trigger_reason: str | None = None,
         delay_reason: str | None = None,
         documents_since_last_dream_at_schedule: int | None = None,
         document_threshold: int | None = None,
@@ -229,7 +229,7 @@ class DreamScheduler:
             observed=observed,
             dream_type=dream_type,
             session_name=session_name,
-            threshold_reason=threshold_reason,
+            trigger_reason=trigger_reason,
             delay_reason=delay_reason,
             documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
             document_threshold=document_threshold,
@@ -307,7 +307,7 @@ async def check_and_schedule_dream(
         # *how* it will fire (idle vs immediate). The two gates were
         # intentionally split — collapsing them into a single trigger_reason
         # would lose the scheduling semantics.
-        threshold_reason = "document_threshold"
+        trigger_reason = "document_threshold"
         delay_reason = (
             "idle_timeout" if settings.DREAM.IDLE_TIMEOUT_MINUTES > 0 else "immediate"
         )
@@ -385,7 +385,7 @@ async def check_and_schedule_dream(
                     dream_type=DreamType(dream_type),
                     observer=collection.observer,
                     observed=collection.observed,
-                    threshold_reason=threshold_reason,
+                    trigger_reason=trigger_reason,
                     delay_reason=delay_reason,
                     documents_since_last_dream_at_schedule=documents_since_last_dream,
                     document_threshold=settings.DREAM.DOCUMENT_THRESHOLD,
