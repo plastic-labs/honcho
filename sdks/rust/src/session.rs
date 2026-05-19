@@ -19,7 +19,7 @@ use crate::types::session::Session as SessionResponse;
 use crate::types::session::{
     SessionConfiguration, SessionConfigurationSet, SessionPeerConfig, SessionUpdate,
 };
-use crate::upload::{self, FileSource};
+use crate::upload::FileSource;
 
 pub(crate) struct SessionInner {
     http: HttpClient,
@@ -202,6 +202,7 @@ impl UploadFileBuilder<'_> {
         feature = "tracing",
         tracing::instrument(skip(self), name = "upload_file_send")
     )]
+    #[allow(clippy::too_many_lines)]
     pub async fn send(self) -> Result<Vec<crate::Message>> {
         let peer_id = self
             .peer_id
@@ -211,49 +212,107 @@ impl UploadFileBuilder<'_> {
             .source
             .ok_or_else(|| HonchoError::Validation("file source is required".into()))?;
 
-        let file_part = match source {
-            FileSource::Stream {
-                filename,
-                reader,
-                content_type,
-            } => {
-                let stream = tokio_util::io::ReaderStream::new(reader);
-                let body = reqwest::Body::wrap_stream(stream);
-                reqwest::multipart::Part::stream(body)
-                    .file_name(filename)
-                    .mime_str(&content_type)
-                    .map_err(|e| HonchoError::Configuration(format!("invalid mime type: {e}")))?
+        let metadata_text = self
+            .metadata
+            .as_ref()
+            .map(|md| {
+                serde_json::to_string(md)
+                    .map_err(|e| HonchoError::Configuration(format!("metadata: {e}")))
+            })
+            .transpose()?;
+
+        let configuration_text = self
+            .configuration
+            .as_ref()
+            .map(|cfg| {
+                serde_json::to_string(cfg)
+                    .map_err(|e| HonchoError::Configuration(format!("configuration: {e}")))
+            })
+            .transpose()?;
+
+        let created_at_text = self.created_at.map(|dt| dt.to_rfc3339());
+
+        let add_text_fields = move |mut form: Form| -> Form {
+            if let Some(ref md) = metadata_text {
+                form = form.text("metadata", md.clone());
             }
-            buffered => {
-                let (filename, bytes, content_type) = upload::resolve_to_bytes(buffered).await?;
-                reqwest::multipart::Part::bytes(bytes)
-                    .file_name(filename)
-                    .mime_str(&content_type)
-                    .map_err(|e| HonchoError::Configuration(format!("invalid mime type: {e}")))?
+            if let Some(ref cfg) = configuration_text {
+                form = form.text("configuration", cfg.clone());
             }
+            if let Some(ref dt) = created_at_text {
+                form = form.text("created_at", dt.clone());
+            }
+            form
         };
 
-        let mut form = Form::new().part("file", file_part).text("peer_id", peer_id);
-
-        if let Some(ref md) = self.metadata {
-            form = form.text(
-                "metadata",
-                serde_json::to_string(md)
-                    .map_err(|e| HonchoError::Configuration(format!("metadata: {e}")))?,
-            );
-        }
-
-        if let Some(ref cfg) = self.configuration {
-            form = form.text(
-                "configuration",
-                serde_json::to_string(cfg)
-                    .map_err(|e| HonchoError::Configuration(format!("configuration: {e}")))?,
-            );
-        }
-
-        if let Some(dt) = self.created_at {
-            form = form.text("created_at", dt.to_rfc3339());
-        }
+        // FileSource::Path — Part::file() streams from disk, re-opens on retry.
+        // FileSource::Stream — must buffer: AsyncRead consumed once, not replayable.
+        // FileSource::Bytes — already in memory.
+        type FormFactory = Box<
+            dyn Fn() -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<Form>> + Send + 'static>,
+                > + Send
+                + 'static,
+        >;
+        let form_factory: FormFactory = match source {
+            FileSource::Path(path) => Box::new(move || {
+                let path = path.clone();
+                let peer_id = peer_id.clone();
+                let add_text_fields = add_text_fields.clone();
+                Box::pin(async move {
+                    let mut file_part = reqwest::multipart::Part::file(&path)
+                        .await
+                        .map_err(HonchoError::from)?;
+                    if let Some(name) = path.file_name() {
+                        file_part = file_part.file_name(name.to_string_lossy().into_owned());
+                    }
+                    let form = Form::new().part("file", file_part).text("peer_id", peer_id);
+                    Ok(add_text_fields(form))
+                })
+            }),
+            FileSource::Bytes {
+                filename,
+                bytes,
+                content_type,
+            } => Box::new(move || {
+                let mut headers = reqwest::header::HeaderMap::new();
+                if let Ok(val) = reqwest::header::HeaderValue::from_str(&content_type) {
+                    headers.insert(reqwest::header::CONTENT_TYPE, val);
+                }
+                let file_part = reqwest::multipart::Part::bytes(bytes.clone())
+                    .file_name(filename.clone())
+                    .headers(headers);
+                let form = Form::new()
+                    .part("file", file_part)
+                    .text("peer_id", peer_id.clone());
+                let form = add_text_fields(form);
+                Box::pin(async move { Ok(form) })
+            }),
+            FileSource::Stream {
+                filename,
+                mut reader,
+                content_type,
+            } => {
+                let mut buf = Vec::new();
+                tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut buf)
+                    .await
+                    .map_err(HonchoError::from)?;
+                Box::new(move || {
+                    let mut headers = reqwest::header::HeaderMap::new();
+                    if let Ok(val) = reqwest::header::HeaderValue::from_str(&content_type) {
+                        headers.insert(reqwest::header::CONTENT_TYPE, val);
+                    }
+                    let file_part = reqwest::multipart::Part::bytes(buf.clone())
+                        .file_name(filename.clone())
+                        .headers(headers);
+                    let form = Form::new()
+                        .part("file", file_part)
+                        .text("peer_id", peer_id.clone());
+                    let form = add_text_fields(form);
+                    Box::pin(async move { Ok(form) })
+                })
+            }
+        };
 
         let route =
             routes::messages_upload(&self.session.inner.workspace_id, &self.session.inner.id);
@@ -262,7 +321,7 @@ impl UploadFileBuilder<'_> {
             .session
             .inner
             .http
-            .post_multipart(&route, form, &[])
+            .post_multipart(&route, form_factory, &[])
             .await?;
 
         Ok(responses

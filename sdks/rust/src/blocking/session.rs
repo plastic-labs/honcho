@@ -1,9 +1,12 @@
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{self, Read};
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWriteExt};
 
 use crate::FileSource;
 use crate::error::Result;
@@ -12,6 +15,32 @@ use crate::types::message::MessageSearchOptions;
 use crate::types::session::{SessionConfiguration, SessionPeerConfig};
 
 use super::runtime::block_on;
+
+struct ErrorAwareReader {
+    inner: tokio::io::DuplexStream,
+    error_slot: Arc<Mutex<Option<io::Error>>>,
+}
+
+impl AsyncRead for ErrorAwareReader {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_read(cx, buf) {
+            Poll::Ready(Ok(())) => {
+                if buf.filled().is_empty()
+                    && let Some(err) = this.error_slot.lock().ok().and_then(|mut g| g.take())
+                {
+                    return Poll::Ready(Err(err));
+                }
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
+    }
+}
 
 /// Synchronous wrapper around [`crate::Session`].
 #[derive(Clone)]
@@ -249,6 +278,8 @@ impl Session {
         let (mut tx, rx) = tokio::io::duplex(8192);
         let filename_owned = filename.into();
         let content_type_owned = content_type.into();
+        let error_slot: Arc<Mutex<Option<io::Error>>> = Arc::new(Mutex::new(None));
+        let slot_clone = error_slot.clone();
         let handle = super::runtime::handle();
 
         tokio::task::spawn_blocking(move || {
@@ -257,21 +288,30 @@ impl Session {
                 let mut buf = [0u8; 8192];
                 loop {
                     match reader.read(&mut buf) {
-                        Ok(0) | Err(_) => return,
+                        Ok(0) => return,
                         Ok(n) => {
                             if tx.write_all(&buf[..n]).await.is_err() {
                                 return;
                             }
+                        }
+                        Err(e) => {
+                            let _ = slot_clone.lock().map(|mut g| *g = Some(e));
+                            return;
                         }
                     }
                 }
             });
         });
 
+        let wrapped_rx = ErrorAwareReader {
+            inner: rx,
+            error_slot,
+        };
+
         BlockingUploadFileBuilder {
             inner: self.inner.upload_file(FileSource::stream(
                 filename_owned,
-                rx,
+                wrapped_rx,
                 content_type_owned,
             )),
         }

@@ -296,13 +296,18 @@ impl HttpClient {
             .await
     }
 
-    pub(crate) async fn request_multipart<TResp: DeserializeOwned + 'static>(
+    pub(crate) async fn request_multipart<TResp, F, Fut>(
         &self,
         method: Method,
         path: &str,
-        form: reqwest::multipart::Form,
+        form_factory: F,
         query: &[(String, String)],
-    ) -> Result<TResp> {
+    ) -> Result<TResp>
+    where
+        TResp: DeserializeOwned + 'static,
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<reqwest::multipart::Form>>,
+    {
         let url = self
             .inner
             .base_url
@@ -317,46 +322,90 @@ impl HttpClient {
             .chain(query.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .collect();
 
-        let mut headers = self.inner.default_headers.clone();
-        headers.remove(CONTENT_TYPE);
+        let mut multipart_headers = self.inner.default_headers.clone();
+        multipart_headers.remove(CONTENT_TYPE);
 
-        let req_builder = self
-            .inner
-            .client
-            .request(method, url)
-            .headers(headers)
-            .query(&merged_query)
-            .timeout(self.inner.timeout)
-            .multipart(form);
+        let mut attempt = 0u32;
+        loop {
+            let form = form_factory().await?;
+            let response = match self
+                .inner
+                .client
+                .request(method.clone(), url.clone())
+                .headers(multipart_headers.clone())
+                .query(&merged_query)
+                .timeout(self.inner.timeout)
+                .multipart(form)
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let error = if e.is_timeout() {
+                        HonchoError::Timeout {
+                            message: e.to_string(),
+                        }
+                    } else if e.is_connect() || e.is_request() {
+                        HonchoError::Connection {
+                            message: e.to_string(),
+                        }
+                    } else {
+                        HonchoError::Transport(e)
+                    };
 
-        let response = req_builder.send().await.map_err(|e| {
-            if e.is_timeout() {
-                HonchoError::Timeout {
-                    message: e.to_string(),
+                    let should_retry = !matches!(error, HonchoError::Transport(_))
+                        && attempt < self.inner.max_retries;
+
+                    if should_retry {
+                        tokio::time::sleep(delay_for_attempt(attempt)).await;
+                        attempt += 1;
+                        continue;
+                    }
+
+                    return Err(error);
                 }
-            } else if e.is_connect() {
-                HonchoError::Connection {
-                    message: e.to_string(),
-                }
-            } else {
-                HonchoError::Transport(e)
+            };
+
+            let status = response.status();
+
+            if status.is_success() {
+                return self.handle_success_response(response).await;
             }
-        })?;
 
-        let status = response.status();
+            let headers = response.headers().clone();
+            let Ok(body_bytes) = response.bytes().await else {
+                let msg = format!(
+                    "request failed with status {} (could not read response body)",
+                    status.as_u16()
+                );
+                return Err(if status.is_server_error() {
+                    HonchoError::Server {
+                        status: status.as_u16(),
+                        message: msg,
+                    }
+                } else {
+                    HonchoError::Client {
+                        status: status.as_u16(),
+                        message: msg,
+                    }
+                });
+            };
+            let api_error = error::from_response(status, &headers, &body_bytes, Utc::now());
 
-        if status.is_success() {
-            return self.handle_success_response(response).await;
+            let is_retryable = matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504);
+
+            if is_retryable && attempt < self.inner.max_retries {
+                let retry_after = headers
+                    .get("retry-after")
+                    .and_then(|v| error::parse_retry_after(v, Utc::now()));
+                let delay = retry_after.unwrap_or_else(|| delay_for_attempt(attempt));
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+                continue;
+            }
+
+            return Err(api_error);
         }
-
-        let headers = response.headers().clone();
-        let body_bytes = response.bytes().await.unwrap_or_default();
-        Err(error::from_response(
-            status,
-            &headers,
-            &body_bytes,
-            Utc::now(),
-        ))
     }
 
     pub(crate) async fn request_streaming(
@@ -426,13 +475,18 @@ impl HttpClient {
         ))
     }
 
-    pub(crate) async fn post_multipart<TResp: DeserializeOwned + 'static>(
+    pub(crate) async fn post_multipart<TResp, F, Fut>(
         &self,
         path: &str,
-        form: reqwest::multipart::Form,
+        form_factory: F,
         query: &[(String, String)],
-    ) -> Result<TResp> {
-        self.request_multipart(Method::POST, path, form, query)
+    ) -> Result<TResp>
+    where
+        TResp: DeserializeOwned + 'static,
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<reqwest::multipart::Form>>,
+    {
+        self.request_multipart(Method::POST, path, form_factory, query)
             .await
     }
 }
@@ -1064,12 +1118,16 @@ mod tests {
             .mount(&server)
             .await;
 
-        let form = reqwest::multipart::Form::new()
-            .text("field_name", "field_value")
-            .text("description", "test upload");
-
         let result: Workspace = client
-            .post_multipart("/v3/upload", form, &[])
+            .post_multipart(
+                "/v3/upload",
+                || async {
+                    Ok(reqwest::multipart::Form::new()
+                        .text("field_name", "field_value")
+                        .text("description", "test upload"))
+                },
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(result.id, "ws_abc123");
@@ -1087,12 +1145,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let form = reqwest::multipart::Form::new().text("key", "value");
-
         let result: Workspace = client
             .post_multipart(
                 "/v3/upload",
-                form,
+                || async { Ok(reqwest::multipart::Form::new().text("key", "value")) },
                 &[("workspace_id".to_string(), "ws1".to_string())],
             )
             .await
@@ -1112,10 +1168,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let form = reqwest::multipart::Form::new().text("key", "value");
-
         let result: Workspace = client
-            .post_multipart("/v3/upload", form, &[])
+            .post_multipart(
+                "/v3/upload",
+                || async { Ok(reqwest::multipart::Form::new().text("key", "value")) },
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(result.id, "ws_abc123");
@@ -1128,19 +1186,55 @@ mod tests {
 
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(503))
+            .expect(3)
             .mount(&server)
             .await;
 
-        let form = reqwest::multipart::Form::new().text("key", "value");
-
         let err = client
-            .post_multipart::<Workspace>("/v3/upload", form, &[])
+            .post_multipart::<Workspace, _, _>(
+                "/v3/upload",
+                || async { Ok(reqwest::multipart::Form::new().text("key", "value")) },
+                &[],
+            )
             .await
             .unwrap_err();
         assert!(
             matches!(err, HonchoError::Server { status: 503, .. }),
             "expected Server(503), got {err:?}"
         );
+    }
+
+    #[rstest::rstest]
+    #[case(429)]
+    #[case(500)]
+    #[case(502)]
+    #[case(503)]
+    #[case(504)]
+    #[tokio::test]
+    async fn retries_multipart_on_retryable_status(#[case] status: u16) {
+        let server = MockServer::start().await;
+        let client = make_client(&server);
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(workspace_json()))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(status))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+
+        let result: Workspace = client
+            .post_multipart(
+                "/v3/upload",
+                || async { Ok(reqwest::multipart::Form::new().text("key", "value")) },
+                &[],
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.id, "ws_abc123");
     }
 
     // ── Streaming ────────────────────────────────────────────────────────

@@ -63,7 +63,7 @@ pub struct Honcho {
 pub struct HonchoParams {
     /// API key. Falls back to `HONCHO_API_KEY` env var.
     api_key: Option<String>,
-    /// Base URL. Falls back to `HONCHO_URL` env var, then [`Environment::base_url`].
+    /// Base URL. Falls back to `HONCHO_URL` env var, then `HONCHO_API_URL`, then [`Environment::base_url`].
     base_url: Option<String>,
     /// API environment. Defaults to [`Environment::Production`].
     #[builder(default)]
@@ -142,6 +142,7 @@ impl Honcho {
         let resolved_base_url = params
             .base_url
             .or_else(|| std::env::var("HONCHO_URL").ok())
+            .or_else(|| std::env::var("HONCHO_API_URL").ok())
             .unwrap_or_else(|| params.environment.base_url().to_owned());
 
         let resolved_api_key = params
@@ -246,15 +247,10 @@ impl Honcho {
 
     /// Fetch workspace metadata from the server.
     pub async fn get_metadata(&self) -> Result<HashMap<String, Value>> {
-        let body = crate::types::workspace::WorkspaceCreate {
-            id: self.workspace_id().to_owned(),
-            metadata: None,
-            configuration: None,
-        };
         let ws: Workspace = self
             .inner
             .http
-            .post(&routes::workspaces(), Some(&body), &[])
+            .get(&routes::workspace(self.workspace_id()), &[])
             .await?;
         Ok(ws.metadata)
     }
@@ -281,15 +277,10 @@ impl Honcho {
     /// }
     /// ```
     pub async fn get_configuration(&self) -> Result<WorkspaceConfiguration> {
-        let body = crate::types::workspace::WorkspaceCreate {
-            id: self.workspace_id().to_owned(),
-            metadata: None,
-            configuration: None,
-        };
         let ws: Workspace = self
             .inner
             .http
-            .post(&routes::workspaces(), Some(&body), &[])
+            .get(&routes::workspace(self.workspace_id()), &[])
             .await?;
         Ok(ws.configuration)
     }
@@ -324,15 +315,10 @@ impl Honcho {
     /// Use this when the server returns fields not yet represented in
     /// [`WorkspaceConfiguration`].
     pub async fn get_configuration_raw(&self) -> Result<HashMap<String, Value>> {
-        let body = crate::types::workspace::WorkspaceCreate {
-            id: self.workspace_id().to_owned(),
-            metadata: None,
-            configuration: None,
-        };
         let raw: serde_json::Value = self
             .inner
             .http
-            .post(&routes::workspaces(), Some(&body), &[])
+            .get(&routes::workspace(self.workspace_id()), &[])
             .await?;
         match raw.get("configuration") {
             Some(serde_json::Value::Object(map)) => {
