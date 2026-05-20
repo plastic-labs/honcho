@@ -114,7 +114,6 @@ def _publish_embedding_event(
                 model=model,
                 input_count=input_count,
                 input_tokens_estimate=input_tokens_estimate,
-                batch_size=input_count,
                 duration_ms=duration_ms,
                 outcome=outcome,
                 is_final_attempt=is_final_attempt,
@@ -132,6 +131,7 @@ class BatchItem(NamedTuple):
     text: str
     text_id: str
     chunk_index: int
+    token_count: int
 
 
 class _EmbeddingClient:
@@ -405,7 +405,9 @@ class _EmbeddingClient:
                     current_batch = []
                     current_tokens = 0
 
-                current_batch.append(BatchItem(chunk_text, text_id, chunk_idx))
+                current_batch.append(
+                    BatchItem(chunk_text, text_id, chunk_idx, chunk_tokens)
+                )
                 current_tokens += chunk_tokens
 
         if current_batch:
@@ -460,10 +462,9 @@ class _EmbeddingClient:
                     )
             return result
 
-        # Pre-compute the size proxy once — batch contents are stable across retries.
-        batch_tokens_estimate = sum(
-            len(self.encoding.encode(item.text)) for item in batch
-        )
+        # Token counts were computed during chunk prep; reuse them here so the
+        # provider call doesn't re-encode every chunk just for the size proxy.
+        batch_tokens_estimate = sum(item.token_count for item in batch)
         batch_texts = [item.text for item in batch]
 
         for attempt in range(max_retries):

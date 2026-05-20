@@ -189,6 +189,7 @@ async def process_representation_tasks_batch(
         latest_message.created_at,
     )
 
+    successful_observer_count = 0
     if observations.is_empty() or not message_ids:
         logger.warning(
             "Deriver generated zero observations for messages %s:%s in %s/%s!",
@@ -214,6 +215,7 @@ async def process_representation_tasks_batch(
                     latest_message.created_at,
                     message_level_configuration,
                 )
+                successful_observer_count += 1
             except Exception as e:
                 logger.error(
                     "Failed to save representation for observer %s: %s", observer, e
@@ -310,6 +312,6 @@ async def process_representation_tasks_batch(
             was_flush_enabled=was_flush_enabled,
             hit_batch_token_cap=hit_batch_token_cap,
             hit_input_token_cap=response.hit_input_token_cap,
-            observer_count=len(observers),
+            observer_count=successful_observer_count,
         )
     )

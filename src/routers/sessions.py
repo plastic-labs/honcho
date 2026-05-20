@@ -81,6 +81,8 @@ async def _get_working_representation_task(
         max_observations=max_observations
         if max_observations is not None
         else config.settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+        parent_category="api",
+        embedding_purpose=EmbeddingCallPurpose.SESSION_CONTEXT_SEARCH,
     )
 
 

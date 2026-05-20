@@ -1,6 +1,7 @@
 import json
 import logging
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
@@ -13,11 +14,13 @@ from src import crud, schemas
 from src.config import settings
 from src.dependencies import db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
+from src.embedding_client import embedding_client
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
-from src.telemetry.events import GetContextEvent, emit
+from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils.search import search
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +257,18 @@ async def get_representation(
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
     try:
+        embedding: list[float] | None = None
+        if options.search_query:
+            with (
+                suppress(Exception),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.SEARCH_MEMORY.value,
+                    workspace_name=workspace_id,
+                    parent_category="api",
+                ),
+            ):
+                embedding = await embedding_client.embed(options.search_query)
+
         # If no target specified, get global representation (omniscient Honcho perspective)
         representation = await crud.get_working_representation(
             workspace_id,
@@ -261,6 +276,7 @@ async def get_representation(
             observed=options.target if options.target is not None else peer_id,
             session_name=options.session_id,
             include_semantic_query=options.search_query,
+            embedding=embedding,
             semantic_search_top_k=options.search_top_k,
             semantic_search_max_distance=options.search_max_distance,
             include_most_derived=options.include_most_frequent
@@ -269,6 +285,7 @@ async def get_representation(
             max_observations=options.max_conclusions
             if options.max_conclusions is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+            parent_category="api",
         )
         return schemas.RepresentationResponse(
             representation=representation.format_as_markdown()
@@ -404,6 +421,18 @@ async def get_peer_context(
     context_started = perf_counter()
 
     try:
+        embedding: list[float] | None = None
+        if search_query:
+            with (
+                suppress(Exception),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.SEARCH_MEMORY.value,
+                    workspace_name=workspace_id,
+                    parent_category="api",
+                ),
+            ):
+                embedding = await embedding_client.embed(search_query)
+
         # Get the working representation
         representation = await crud.get_working_representation(
             workspace_id,
@@ -411,12 +440,14 @@ async def get_peer_context(
             observed=observed,
             session_name=None,  # Peer context is global, not session-scoped
             include_semantic_query=search_query,
+            embedding=embedding,
             semantic_search_top_k=search_top_k,
             semantic_search_max_distance=search_max_distance,
             include_most_derived=include_most_frequent,
             max_observations=max_conclusions
             if max_conclusions is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+            parent_category="api",
         )
 
         # Get the peer card

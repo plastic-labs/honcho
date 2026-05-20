@@ -222,9 +222,6 @@ class EmbeddingCallCompletedEvent(BaseEvent):
             "rough proxy for Gemini (which has its own tokenizer)."
         ),
     )
-    batch_size: int = Field(
-        default=0, description="The provider call's batch size (= input_count today)"
-    )
     duration_ms: float = Field(
         ..., description="Wall-clock duration of the provider call"
     )

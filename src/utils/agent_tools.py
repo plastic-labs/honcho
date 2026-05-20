@@ -894,6 +894,7 @@ async def create_observations(
                     EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
                     workspace_name=workspace_name,
                     run_id=run_id,
+                    parent_category=parent_category,
                 ):
                     embedding = await embedding_client.embed(obs.content)
             except Exception as e:
@@ -1592,9 +1593,10 @@ async def _handle_search_memory(
                     snippets, f"for query '{query}'"
                 )
             if message_output:
+                fallback_meta = {**zero_hit_meta, "results_count": len(snippets)}
                 return ToolResult(
                     content=f"No observations yet. Message search results:\n\n{message_output}",
-                    metadata=zero_hit_meta,
+                    metadata=fallback_meta,
                 )
             return ToolResult(
                 content=(

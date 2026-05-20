@@ -289,6 +289,7 @@ async def create_messages(
                 with embedding_call_purpose(
                     EmbeddingCallPurpose.MESSAGE_CREATE.value,
                     workspace_name=workspace_name,
+                    parent_category="api",
                 ):
                     embedding_dict = await embedding_client.batch_embed(
                         id_resource_dict

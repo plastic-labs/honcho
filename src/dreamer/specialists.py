@@ -176,7 +176,6 @@ If you update it, send the full deduplicated list and remove stale entries.
         peer_card_updated = False
         search_tool_calls_count = 0
         duration_ms = 0.0
-        iteration_count = 0
         # Per-level rollups — accumulated from each create/delete_observations
         # tool call's metadata.levels list. Counter rather than list[str] so
         # the emitted dict stays compact even when the specialist produces
@@ -254,10 +253,6 @@ If you update it, send the full deduplicated list and remove stale entries.
                 else self.get_max_tokens()
             )
 
-            def iteration_callback(data: Any) -> None:
-                nonlocal iteration_count
-                iteration_count = data.iteration
-
             # call_purpose maps "deduction"/"induction" specialist names onto the
             # closed CallPurpose enum slugs without importing the enum here.
             call_purpose_slug = f"dream.{self.name}"
@@ -273,7 +268,6 @@ If you update it, send the full deduplicated list and remove stale entries.
                 max_tool_iterations=self.get_max_iterations(),
                 messages=messages,
                 track_name=f"Dreamer/{self.name}",
-                iteration_callback=iteration_callback,
                 telemetry=LLMTelemetryContext(
                     workspace_name=workspace_name,
                     call_purpose=call_purpose_slug,
@@ -366,7 +360,7 @@ If you update it, send the full deduplicated list and remove stale entries.
             return SpecialistResult(
                 run_id=run_id,
                 specialist_type=self.name,
-                iterations=iteration_count,
+                iterations=response.iterations,
                 tool_calls_count=len(response.tool_calls_made),
                 input_tokens=response.input_tokens,
                 output_tokens=response.output_tokens,
@@ -395,6 +389,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                 )
                 input_tokens = response.input_tokens if response is not None else 0
                 output_tokens = response.output_tokens if response is not None else 0
+                iterations = response.iterations if response is not None else 0
                 emit(
                     DreamSpecialistEvent(
                         run_id=run_id,
@@ -402,7 +397,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                         workspace_name=workspace_name,
                         observer=observer,
                         observed=observed,
-                        iterations=iteration_count,
+                        iterations=iterations,
                         tool_calls_count=tool_calls_count,
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
