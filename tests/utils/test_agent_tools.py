@@ -256,7 +256,8 @@ class TestCreateObservations:
         result = await _handle_create_observations(ctx, {"observations": []})
 
         assert "ERROR" in result
-        assert "empty" in result.lower()
+        # Handlers may return ToolResult (); str() returns .content.
+        assert "empty" in str(result).lower()
 
     async def test_batch_embedding_failure_falls_back_to_individual_embeds(
         self,
@@ -758,8 +759,12 @@ class TestSearchMessages:
 
         result = await _handle_search_messages(ctx, {"query": "test message"})
 
-        # Should return some result (may be empty if semantic search doesn't match)
-        assert isinstance(result, str)
+        # handler may return ToolResult (with search metadata) or
+        # a plain str. Both carry the result text; just check it's
+        # introspectable as string content.
+        from src.utils.types import ToolResult
+
+        assert isinstance(result, str | ToolResult)
 
 
 @pytest.mark.asyncio
@@ -900,7 +905,7 @@ class TestGetRecentHistory:
         result = await _handle_get_recent_history(ctx, {})
 
         assert "Conversation history" in result
-        assert "messages" in result.lower()
+        assert "messages" in str(result).lower()
 
     async def test_without_session_uses_observed(
         self,
@@ -1098,7 +1103,7 @@ class TestUpdatePeerCard:
 
         # Now attempt to update with None — should be a no-op
         result = await _handle_update_peer_card(ctx, {"content": None})
-        assert "empty" in result.lower()
+        assert "empty" in str(result).lower()
 
         # Refresh the observer so the identity map picks up the committed update
         await db_session.refresh(peer1)
@@ -1130,7 +1135,7 @@ class TestUpdatePeerCard:
 
         # Now attempt to update with empty list — should be a no-op
         result = await _handle_update_peer_card(ctx, {"content": []})
-        assert "empty" in result.lower()
+        assert "empty" in str(result).lower()
 
         # Refresh the observer so the identity map picks up the committed update
         await db_session.refresh(peer1)
@@ -1203,7 +1208,7 @@ class TestUpdatePeerCard:
                 ]
             },
         )
-        assert "rejected" in result.lower()
+        assert "rejected" in str(result).lower()
 
         await db_session.refresh(peer1)
         peer_card = await crud.get_peer_card(

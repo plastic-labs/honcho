@@ -22,6 +22,8 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
+from src.telemetry.events import EmbeddingCallPurpose
+from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -210,7 +212,11 @@ async def _sync_documents(
     if docs_needing_embed:
         try:
             contents = [doc.content for doc in docs_needing_embed]
-            new_embeddings = await embedding_client.simple_batch_embed(contents)
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.VECTOR_SYNC.value,
+                parent_category="reconciliation",
+            ):
+                new_embeddings = await embedding_client.simple_batch_embed(contents)
 
             if len(new_embeddings) != len(docs_needing_embed):
                 logger.warning(
@@ -332,7 +338,11 @@ async def _sync_message_embeddings(
     if embs_needing_embed:
         try:
             contents = [emb.content for emb in embs_needing_embed]
-            new_embeddings = await embedding_client.simple_batch_embed(contents)
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.VECTOR_SYNC.value,
+                parent_category="reconciliation",
+            ):
+                new_embeddings = await embedding_client.simple_batch_embed(contents)
 
             if len(new_embeddings) != len(embs_needing_embed):
                 logger.warning(

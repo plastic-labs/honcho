@@ -25,11 +25,11 @@ class DialecticCompletedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "dialectic.completed"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "dialectic"
 
     # Run identification (for correlating with iteration/tool events)
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
 
     # Workspace context
     workspace_name: str = Field(..., description="Workspace name")
@@ -65,6 +65,16 @@ class DialecticCompletedEvent(BaseEvent):
     )
     cache_creation_tokens: int = Field(
         default=0, description="Tokens written to prompt cache"
+    )
+
+    # Cap hit flag
+    hit_input_token_cap: bool = Field(
+        default=False,
+        description=(
+            "True when an iteration's input exceeded "
+            "settings.DIALECTIC.MAX_INPUT_TOKENS. Token-based — fires for the "
+            "single-oversized-message case too, not just message-list shrinkage."
+        ),
     )
 
     def get_resource_id(self) -> str:
