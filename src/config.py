@@ -1071,6 +1071,21 @@ class TelemetrySettings(HonchoSettings):
     # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
     NAMESPACE: str | None = None
 
+    # Sample rate for high-volume events: llm.call.completed, embedding.call.completed,
+    # agent.iteration, agent.tool.call.completed. Deterministic on run_id so traces
+    # remain coherent end-to-end. Aggregate envelopes (RepresentationCompleted,
+    # DialecticCompleted, DreamRun, etc.) are NEVER sampled — they're calibration
+    # ground truth.
+    #
+    # Design trade-off: at rate < 1.0, aggregate events still emit but their
+    # high-volume children get dropped. Downstream `JOIN ... ON run_id` queries
+    # will see parents without complete children — this is intentional (the
+    # aggregates carry totals; detail events are best-effort), but consumers
+    # MUST NOT rebuild per-call analytics from the sampled children alone or
+    # they'll undercount. If you tune this below 1.0, audit dashboards/queries
+    # that join high-volume events to aggregate envelopes first.
+    HIGH_VOLUME_SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
+
 
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore

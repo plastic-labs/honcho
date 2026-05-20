@@ -57,6 +57,15 @@ class DreamPayload(BasePayload):
     observer: str
     observed: str
     session_name: str | None = None
+    # scheduling context captured at schedule time so the
+    # eventual DreamRunEvent can attribute the cycle back to *why* it was
+    # scheduled (which threshold tripped) and *what* governed when it fired
+    # (idle delay vs. immediate vs. min-hours gate). Defaults preserve
+    # backward compat for any in-flight payloads from older producers.
+    trigger_reason: str | None = None
+    delay_reason: str | None = None
+    documents_since_last_dream_at_schedule: int | None = None
+    document_threshold: int | None = None
 
 
 class DeletionPayload(BasePayload):
@@ -90,6 +99,10 @@ def create_dream_payload(
     observer: str,
     observed: str,
     session_name: str | None = None,
+    trigger_reason: str | None = None,
+    delay_reason: str | None = None,
+    documents_since_last_dream_at_schedule: int | None = None,
+    document_threshold: int | None = None,
 ) -> dict[str, Any]:
     """Create a dream payload."""
     return DreamPayload(
@@ -97,6 +110,10 @@ def create_dream_payload(
         observer=observer,
         observed=observed,
         session_name=session_name,
+        trigger_reason=trigger_reason,
+        delay_reason=delay_reason,
+        documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+        document_threshold=document_threshold,
     ).model_dump(mode="json", exclude_none=True)
 
 

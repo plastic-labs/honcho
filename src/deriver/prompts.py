@@ -22,7 +22,9 @@ def _normalized_custom_instructions(custom_instructions: str | None) -> str | No
 
 def _custom_instructions_section(custom_instructions: str | None) -> str:
     """Render optional custom instructions for the deriver prompt."""
-    normalized_custom_instructions = _normalized_custom_instructions(custom_instructions)
+    normalized_custom_instructions = _normalized_custom_instructions(
+        custom_instructions
+    )
     if normalized_custom_instructions is None:
         return ""
 
@@ -93,7 +95,9 @@ def estimate_minimal_deriver_prompt_tokens() -> int:
 
 def estimate_deriver_prompt_tokens(custom_instructions: str | None) -> int:
     """Estimate minimal deriver prompt tokens, including custom instructions if present."""
-    normalized_custom_instructions = _normalized_custom_instructions(custom_instructions)
+    normalized_custom_instructions = _normalized_custom_instructions(
+        custom_instructions
+    )
     if normalized_custom_instructions is None:
         return estimate_minimal_deriver_prompt_tokens()
 
