@@ -9,7 +9,7 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
+from src.telemetry.prometheus.metrics import prometheus_metrics
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -107,28 +108,55 @@ async def _get_message_embeddings_needing_sync(
     """
     Get pending message embeddings that need to be synced to the vector store.
 
-    Returns only pending embeddings (with full data including embedding vectors).
-    The batch_size limits the number of embeddings returned.
+    Claims up to `batch_size` distinct message_ids that have at least one
+    eligible pending row, then loads ALL pending rows for those message_ids.
+    This guarantees a single message's chunks are always processed together in
+    one batch, which keeps vector-ID assignment (`{message_id}_{chunk_index}`,
+    derived from row-id ordering) stable across reconciler cycles.
 
-    Uses FOR UPDATE SKIP LOCKED to prevent concurrent processing and
-    orders by last_sync_at (nulls first) to prioritize never-synced records.
+    Uses FOR UPDATE SKIP LOCKED on the per-row claim so concurrent reconcilers
+    don't double-process the same chunks.
 
     Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
     """
-    stmt = (
-        select(models.MessageEmbedding)
+    # Step 1: pick distinct message_ids with at least one eligible pending row,
+    # prioritizing those with the oldest last_sync_at.
+    msg_id_stmt = (
+        select(
+            models.MessageEmbedding.message_id,
+            func.min(models.MessageEmbedding.last_sync_at).label("oldest_attempt"),
+        )
         .where(
             and_(
                 models.MessageEmbedding.sync_state == "pending",
                 _backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
-        .order_by(models.MessageEmbedding.last_sync_at.asc().nullsfirst())
+        .group_by(models.MessageEmbedding.message_id)
+        .order_by(func.min(models.MessageEmbedding.last_sync_at).asc().nullsfirst())
         .limit(batch_size)
+    )
+    msg_id_rows = (await db.execute(msg_id_stmt)).all()
+    message_ids = [row[0] for row in msg_id_rows]
+    if not message_ids:
+        return []
+
+    # Step 2: claim all pending rows for those messages. Skip rows another
+    # reconciler holds; if we can't claim every chunk of a message right now,
+    # the message will be retried next cycle.
+    rows_stmt = (
+        select(models.MessageEmbedding)
+        .where(
+            and_(
+                models.MessageEmbedding.message_id.in_(message_ids),
+                models.MessageEmbedding.sync_state == "pending",
+                _backoff_eligible(models.MessageEmbedding.last_sync_at),
+            )
+        )
+        .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
         .with_for_update(skip_locked=True)
     )
-
-    result = await db.execute(stmt)
+    result = await db.execute(rows_stmt)
     return list(result.scalars().all())
 
 
@@ -300,15 +328,19 @@ async def _sync_documents(
 async def _sync_message_embeddings(
     db: AsyncSession,
     embeddings: list[models.MessageEmbedding],
-    external_vector_store: VectorStore,
+    external_vector_store: VectorStore | None,
 ) -> tuple[int, int]:
     """
-    Sync a batch of pending message embeddings to the external vector store.
+    Sync a batch of pending message embeddings.
 
-    Handles three cases for each embedding:
+    When `external_vector_store` is provided, handles three cases per embedding:
     1. Embedding exists in postgres → use it for external upsert
     2. Embedding missing + need postgres storage → re-embed, write to both stores
     3. Embedding missing + external-only mode → re-embed, write to external only
+
+    When `external_vector_store` is None (pgvector-only mode), re-embeds any
+    pending row missing a vector, writes the vector to postgres, and marks
+    sync_state='synced'. No external upsert is performed.
 
     Returns (synced_count, failed_count).
     """
@@ -357,6 +389,32 @@ async def _sync_message_embeddings(
     if failed_to_embed:
         await _bump_message_embedding_sync_attempts(db, failed_to_embed)
         failed_count += len(failed_to_embed)
+
+    # pgvector-only mode: no external store to upsert to. Any row that now
+    # has an embedding (either pre-existing or freshly embedded) is fully
+    # synced. Write embeddings via per-row UPDATE so the vector is persisted
+    # alongside sync_state in a single statement (session has autoflush=False,
+    # so the ORM mutation above isn't enough on its own).
+    if external_vector_store is None:
+        embs_done: list[models.MessageEmbedding] = []
+        for emb in embeddings:
+            new_emb = freshly_embedded.get(emb.id)
+            existing = emb.embedding
+            if new_emb is None and existing is None:
+                continue
+            await db.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id == emb.id)
+                .values(
+                    sync_state="synced",
+                    last_sync_at=func.now(),
+                    sync_attempts=0,
+                    **({"embedding": new_emb} if new_emb is not None else {}),
+                )
+            )
+            embs_done.append(emb)
+        synced_count += len(embs_done)
+        return synced_count, failed_count
 
     # Step 2: Compute chunk positions for vector IDs
     # Messages can be split into multiple chunks; we need {message_id}_{chunk_position}
@@ -423,11 +481,23 @@ async def _sync_message_embeddings(
 
         try:
             await external_vector_store.upsert_many(namespace, vector_records)
-            await db.execute(
-                update(models.MessageEmbedding)
-                .where(models.MessageEmbedding.id.in_([e.id for e in embs_to_sync]))
-                .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
-            )
+            # Per-row UPDATEs so freshly-embedded rows persist the vector
+            # alongside sync_state. Session has autoflush=False so the ORM
+            # mutation above isn't sufficient on its own.
+            for emb in embs_to_sync:
+                new_emb = freshly_embedded.get(emb.id)
+                values: dict[str, Any] = {
+                    "sync_state": "synced",
+                    "last_sync_at": func.now(),
+                    "sync_attempts": 0,
+                }
+                if new_emb is not None and store_in_postgres:
+                    values["embedding"] = new_emb
+                await db.execute(
+                    update(models.MessageEmbedding)
+                    .where(models.MessageEmbedding.id == emb.id)
+                    .values(**values)
+                )
             synced_count += len(embs_to_sync)
         except VectorStoreError:
             logger.warning(
@@ -502,7 +572,7 @@ async def _reconcile_documents_batch(
 
 
 async def _reconcile_message_embeddings_batch(
-    external_vector_store: VectorStore,
+    external_vector_store: VectorStore | None,
     metrics: ReconciliationMetrics,
 ) -> bool:
     """
@@ -567,6 +637,31 @@ async def _cleanup_pgvector_batch(
         return True
 
 
+async def _publish_message_embedding_state_gauges() -> None:
+    """
+    Refresh prometheus gauges for MessageEmbedding rows by sync_state.
+
+    Called once per reconciliation cycle so monitoring can alert on rising
+    pending/failed counts before MAX_SYNC_ATTEMPTS is exhausted.
+    """
+    if not settings.METRICS.ENABLED:
+        return
+    try:
+        async with tracked_db("reconciliation_state_metrics") as db:
+            stmt = select(
+                models.MessageEmbedding.sync_state,
+                func.count().label("n"),
+            ).group_by(models.MessageEmbedding.sync_state)
+            rows = (await db.execute(stmt)).all()
+        counts = {state: int(n) for state, n in rows}
+        prometheus_metrics.set_message_embedding_state_counts(
+            pending=counts.get("pending", 0),
+            failed=counts.get("failed", 0),
+        )
+    except Exception:
+        logger.exception("Failed to publish message embedding state gauges")
+
+
 async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     """
     Run a complete reconciliation cycle.
@@ -582,12 +677,20 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     external_vector_store = get_external_vector_store()
     deadline = time.monotonic() + RECONCILIATION_TIME_BUDGET_SECONDS
 
-    # If no external vector store (pgvector mode), only clean up soft-deleted documents
+    # pgvector-only mode: still need to embed pending MessageEmbedding rows
+    # (create_messages defers embedding to the reconciler), then clean up.
     if external_vector_store is None:
         while time.monotonic() < deadline:
-            did_work = await _cleanup_pgvector_batch(metrics)
-            if not did_work:
+            embs_work = await _reconcile_message_embeddings_batch(None, metrics)
+
+            if time.monotonic() >= deadline:
                 break
+
+            cleanup_work = await _cleanup_pgvector_batch(metrics)
+
+            if not (embs_work or cleanup_work):
+                break
+        await _publish_message_embedding_state_gauges()
         logger.info("Vector reconciliation cycle completed (pgvector mode)")
         return metrics
 
@@ -615,5 +718,6 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             logger.debug("No work done, breaking reconciliation loop")
             break
 
+    await _publish_message_embedding_state_gauges()
     logger.info("Vector reconciliation cycle completed")
     return metrics

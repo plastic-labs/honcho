@@ -479,6 +479,9 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
         patch(
             "src.embedding_client.embedding_client.simple_batch_embed"
         ) as mock_simple_batch_embed,
+        patch(
+            "src.embedding_client.embedding_client.prepare_chunks"
+        ) as mock_prepare_chunks,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
     ):
         # Mock the embed method to return content-dependent embedding
@@ -491,6 +494,14 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
             return [_content_to_embedding(text) for text in texts]
 
         mock_simple_batch_embed.side_effect = mock_simple_batch_embed_func
+
+        def mock_prepare_chunks_func(
+            id_resource_dict: dict[str, str],
+        ) -> dict[str, list[str]]:
+            # No real tokenizer in mocks: treat each input as a single chunk.
+            return {text_id: [text] for text_id, text in id_resource_dict.items()}
+
+        mock_prepare_chunks.side_effect = mock_prepare_chunks_func
 
         # Mock the batch_embed method to return content-dependent embeddings
         async def mock_batch_embed_func(
@@ -506,6 +517,7 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
         yield {
             "embed": mock_embed,
             "simple_batch_embed": mock_simple_batch_embed,
+            "prepare_chunks": mock_prepare_chunks,
             "batch_embed": mock_batch_embed,
         }
 

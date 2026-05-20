@@ -182,10 +182,16 @@ def test_non_1536_pgvector_without_migrated_no_longer_raises_at_config_time() ->
     with non-1536 + default pgvector + MIGRATED=false should now succeed
     (the runtime schema validator at startup is the new safety net)."""
     env = {
-        **os.environ,
-        "PYTHON_DOTENV_DISABLED": "1",
-        "EMBEDDING_VECTOR_DIMENSIONS": "768",
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("VECTOR_STORE") and not k.startswith("EMBEDDING")
     }
+    env.update(
+        {
+            "PYTHON_DOTENV_DISABLED": "1",
+            "EMBEDDING_VECTOR_DIMENSIONS": "768",
+        }
+    )
     # Use a subprocess so the global settings singleton in this test
     # process is not perturbed and is re-evaluated freshly in the child.
     snippet = (
