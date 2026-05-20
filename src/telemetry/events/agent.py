@@ -29,12 +29,12 @@ class AgentIterationEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "agent.iteration"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "agent"
     _volume_class: ClassVar[str] = "high_volume"
 
     # Run identification
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
 
     # Context
     parent_category: str = Field(
@@ -83,11 +83,11 @@ class AgentToolConclusionsCreatedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "agent.tool.conclusions.created"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "agent"
 
     # Run identification
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
     iteration: int = Field(..., description="Iteration number when this occurred")
 
     # Context
@@ -122,11 +122,11 @@ class AgentToolConclusionsDeletedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "agent.tool.conclusions.deleted"
-    _schema_version: ClassVar[int] = 2
+    _schema_version: ClassVar[int] = 3
     _category: ClassVar[str] = "agent"
 
     # Run identification
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
     iteration: int = Field(..., description="Iteration number when this occurred")
 
     # Context
@@ -159,11 +159,11 @@ class AgentToolPeerCardUpdatedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "agent.tool.peer_card.updated"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "agent"
 
     # Run identification
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
     iteration: int = Field(..., description="Iteration number when this occurred")
 
     # Context
@@ -195,7 +195,7 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     _category: ClassVar[str] = "agent"
 
     # Run identification (may be placeholder if not from an agentic loop)
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
     iteration: int = Field(..., description="Iteration number when this occurred")
 
     # Context

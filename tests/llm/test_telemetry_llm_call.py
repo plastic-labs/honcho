@@ -528,7 +528,6 @@ def test_ground_truth_event_skips_sampler():
     with patch("src.config.settings") as mock_settings:
         mock_settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE = 0.0
         mock_settings.TELEMETRY.NAMESPACE = "test"
-        mock_settings.TELEMETRY.HONCHO_VERSION = None
         emitter.emit(event)
     assert emitter.buffer_size == 1  # ground_truth survived the sampler
 
@@ -554,7 +553,6 @@ def test_ground_truth_event_skips_sampler():
     with patch("src.config.settings") as mock_settings:
         mock_settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE = 0.0
         mock_settings.TELEMETRY.NAMESPACE = "test"
-        mock_settings.TELEMETRY.HONCHO_VERSION = None
         emitter.emit(sampled_event)
     # Buffer still 1 — high_volume event was sampled out.
     assert emitter.buffer_size == 1

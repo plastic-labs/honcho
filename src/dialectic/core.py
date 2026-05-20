@@ -7,9 +7,10 @@ and synthesize responses to queries about a peer.
 
 import logging
 import time
-import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
+
+from nanoid import generate as generate_nanoid
 
 from src import crud
 from src.config import ConfiguredModelSettings, ReasoningLevel, settings
@@ -101,9 +102,7 @@ class DialecticAgent:
         ]
         self._session_history_initialized: bool = False
         self._prefetched_conclusion_count: int = 0
-        self._run_id: str = str(uuid.uuid4())[
-            :8
-        ]  # Always generate for event correlation
+        self._run_id: str = generate_nanoid()  # Always generate for event correlation
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -251,7 +250,7 @@ class DialecticAgent:
         if self.metric_key:
             task_name = self.metric_key
         else:
-            run_id = str(uuid.uuid4())[:8]
+            run_id = generate_nanoid()
             task_name = f"dialectic_chat_{run_id}"
         start_time = time.perf_counter()
 

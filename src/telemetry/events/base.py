@@ -112,26 +112,12 @@ class BaseEvent(BaseModel):
         Folds in the honcho package version so the same logical event from
         two different deploys produces distinct ids — downstream dedupe by
         id won't silently merge events whose body shape may have shifted.
-        Reads version from settings first (allows tests to override) and
-        falls back to the installed package metadata.
         """
-        # Local imports to avoid circulars at module import time (this file
-        # is imported by tools that don't have settings loaded yet, e.g.
-        # schema-export scripts).
-        from src._version import honcho_version as _resolve_honcho_version
-
-        try:
-            from src.config import settings
-
-            version = settings.TELEMETRY.HONCHO_VERSION
-            if not isinstance(version, str) or not version:
-                version = _resolve_honcho_version()
-        except Exception:
-            version = _resolve_honcho_version()
+        from src._version import HONCHO_VERSION
 
         return generate_event_id(
             event_type=self.event_type(),
             timestamp=self.timestamp,
             resource_id=self.get_resource_id(),
-            honcho_version=version,
+            honcho_version=HONCHO_VERSION,
         )

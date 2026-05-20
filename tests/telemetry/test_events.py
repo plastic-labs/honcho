@@ -170,10 +170,6 @@ class TestRepresentationCompletedEvent:
         """event_type() returns correct value."""
         assert RepresentationCompletedEvent.event_type() == "representation.completed"
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert RepresentationCompletedEvent.schema_version() == 2
-
     def test_category(self):
         """category() returns correct value."""
         assert RepresentationCompletedEvent.category() == "representation"
@@ -219,10 +215,6 @@ class TestLLMCallCompletedEvent:
 
     def test_event_type(self):
         assert LLMCallCompletedEvent.event_type() == "llm.call.completed"
-
-    def test_schema_version(self):
-        # ships at v1.
-        assert LLMCallCompletedEvent.schema_version() == 1
 
     def test_category(self):
         assert LLMCallCompletedEvent.category() == "llm"
@@ -302,10 +294,6 @@ class TestMessageCreatedEvent:
         """event_type() returns correct value."""
         assert MessageCreatedEvent.event_type() == "message.created"
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert MessageCreatedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert MessageCreatedEvent.category() == "api"
@@ -366,10 +354,6 @@ class TestFileUploadedEvent:
         """event_type() returns correct value."""
         assert FileUploadedEvent.event_type() == "file.uploaded"
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert FileUploadedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert FileUploadedEvent.category() == "api"
@@ -408,10 +392,6 @@ class TestGetContextEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert GetContextEvent.event_type() == "context.retrieved"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert GetContextEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""
@@ -511,10 +491,6 @@ class TestDreamRunEvent:
         """event_type() returns correct value."""
         assert DreamRunEvent.event_type() == "dream.run"
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert DreamRunEvent.schema_version() == 2
-
     def test_category(self):
         """category() returns correct value."""
         assert DreamRunEvent.category() == "dream"
@@ -547,10 +523,6 @@ class TestDreamSpecialistEvent:
         """event_type() returns correct value."""
         assert DreamSpecialistEvent.event_type() == "dream.specialist"
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert DreamSpecialistEvent.schema_version() == 2
-
     def test_category(self):
         """category() returns correct value."""
         assert DreamSpecialistEvent.category() == "dream"
@@ -579,10 +551,6 @@ class TestDialecticCompletedEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert DialecticCompletedEvent.event_type() == "dialectic.completed"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert DialecticCompletedEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""
@@ -642,10 +610,6 @@ class TestAgentIterationEvent:
         """event_type() returns correct value."""
         assert AgentIterationEvent.event_type() == "agent.iteration"
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentIterationEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert AgentIterationEvent.category() == "agent"
@@ -698,10 +662,6 @@ class TestAgentToolConclusionsCreatedEvent:
             == "agent.tool.conclusions.created"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentToolConclusionsCreatedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert AgentToolConclusionsCreatedEvent.category() == "agent"
@@ -738,10 +698,6 @@ class TestAgentToolConclusionsDeletedEvent:
             == "agent.tool.conclusions.deleted"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentToolConclusionsDeletedEvent.schema_version() == 2
-
     def test_category(self):
         """category() returns correct value."""
         assert AgentToolConclusionsDeletedEvent.category() == "agent"
@@ -770,10 +726,6 @@ class TestAgentToolPeerCardUpdatedEvent:
             AgentToolPeerCardUpdatedEvent.event_type() == "agent.tool.peer_card.updated"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentToolPeerCardUpdatedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert AgentToolPeerCardUpdatedEvent.category() == "agent"
@@ -799,10 +751,6 @@ class TestAgentToolSummaryCreatedEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert AgentToolSummaryCreatedEvent.event_type() == "agent.tool.summary.created"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentToolSummaryCreatedEvent.schema_version() == 2
 
     def test_category(self):
         """category() returns correct value."""
@@ -849,10 +797,6 @@ class TestDeletionCompletedEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert DeletionCompletedEvent.event_type() == "deletion.completed"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert DeletionCompletedEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""
@@ -919,10 +863,6 @@ class TestSyncVectorsCompletedEvent:
             == "reconciliation.sync_vectors.completed"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert SyncVectorsCompletedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert SyncVectorsCompletedEvent.category() == "reconciliation"
@@ -959,10 +899,6 @@ class TestCleanupStaleItemsCompletedEvent:
             CleanupStaleItemsCompletedEvent.event_type()
             == "reconciliation.cleanup_stale_items.completed"
         )
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert CleanupStaleItemsCompletedEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""

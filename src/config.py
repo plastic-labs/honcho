@@ -1071,10 +1071,6 @@ class TelemetrySettings(HonchoSettings):
     # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
     NAMESPACE: str | None = None
 
-    # Honcho service version emitted on every event body for release-aware analytics.
-    # Resolution order: explicit setting → importlib.metadata.version("honcho") → None (omitted).
-    HONCHO_VERSION: str | None = None
-
     # Sample rate for high-volume events: llm.call.completed, embedding.call.completed,
     # agent.iteration, agent.tool.call.completed. Deterministic on run_id so traces
     # remain coherent end-to-end. Aggregate envelopes (RepresentationCompleted,

@@ -2328,6 +2328,15 @@ async def create_tool_executor(
                 is_error = True
                 logger.warning(result_str)
 
+        except asyncio.CancelledError:
+            # Cancellation (client disconnect, server shutdown) — populate
+            # telemetry fields so the finally-block emit records an accurate
+            # event, then re-raise so cancellation propagates to the caller.
+            # CancelledError extends BaseException, so the broader except
+            # clauses below do not catch it.
+            result_str = f"Tool {tool_name} cancelled"
+            is_error = True
+            raise
         except ValueError as e:
             # Recoverable errors (bad input, validation failures) - return to LLM
             result_str = f"Tool {tool_name} failed with invalid input: {e}"
@@ -2348,25 +2357,27 @@ async def create_tool_executor(
             logger.error(result_str, exc_info=True)
             # No explicit rollback needed — each handler uses tracked_db() which
             # handles rollback in its finally block
+        finally:
+            # Emit in finally so CancelledError (and any other BaseException)
+            # still produces an AgentToolCallCompletedEvent before propagating.
+            duration_ms = (time.perf_counter() - start) * 1000
 
-        duration_ms = (time.perf_counter() - start) * 1000
+            # Publish ToolResult.metadata for tool_loop to stash on all_tool_calls.
+            # Reset to {} (rather than leaving stale metadata) so a non-ToolResult
+            # handler doesn't appear to have leaked metadata from a prior call.
+            set_last_tool_metadata(metadata)
 
-        # Publish ToolResult.metadata for tool_loop to stash on all_tool_calls.
-        # Reset to {} (rather than leaving stale metadata) so a non-ToolResult
-        # handler doesn't appear to have leaked metadata from a prior call.
-        set_last_tool_metadata(metadata)
-
-        _emit_agent_tool_call_completed(
-            ctx=ctx,
-            tool_name=tool_name,
-            duration_ms=duration_ms,
-            result_str=result_str,
-            metadata=metadata,
-            is_error=is_error,
-            iteration=get_current_iteration(),
-            tool_call_seq=get_current_tool_call_seq(),
-            provider_tool_call_id=get_current_provider_tool_call_id(),
-        )
+            _emit_agent_tool_call_completed(
+                ctx=ctx,
+                tool_name=tool_name,
+                duration_ms=duration_ms,
+                result_str=result_str,
+                metadata=metadata,
+                is_error=is_error,
+                iteration=get_current_iteration(),
+                tool_call_seq=get_current_tool_call_seq(),
+                provider_tool_call_id=get_current_provider_tool_call_id(),
+            )
 
         return result_str
 

@@ -25,11 +25,11 @@ class DialecticCompletedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "dialectic.completed"
-    _schema_version: ClassVar[int] = 1
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "dialectic"
 
     # Run identification (for correlating with iteration/tool events)
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
 
     # Workspace context
     workspace_name: str = Field(..., description="Workspace name")

@@ -26,7 +26,7 @@ class DreamRunEvent(BaseEvent):
     _category: ClassVar[str] = "dream"
 
     # Run identification (for correlating with specialist/iteration/tool events)
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
 
     # Workspace context
     workspace_name: str = Field(..., description="Workspace name")
@@ -123,7 +123,7 @@ class DreamSpecialistEvent(BaseEvent):
     _category: ClassVar[str] = "dream"
 
     # Run identification (correlates with parent dream.run)
-    run_id: str = Field(..., description="8-char UUID prefix for run correlation")
+    run_id: str = Field(..., description="Nanoid for run correlation")
 
     # Specialist info
     specialist_type: str = Field(

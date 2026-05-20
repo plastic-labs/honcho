@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import logging
 import time
-import uuid
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
+
+from nanoid import generate as generate_nanoid
 
 from src import crud, schemas
 from src.config import ConfiguredModelSettings, settings
@@ -155,7 +156,7 @@ If you update it, send the full deduplicated list and remove stale entries.
         Returns:
             SpecialistResult with metrics and content
         """
-        run_id = parent_run_id or str(uuid.uuid4())[:8]
+        run_id = parent_run_id or generate_nanoid()
         task_name = f"dreamer_{self.name}_{run_id}"
         start_time = time.perf_counter()
 

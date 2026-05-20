@@ -19,7 +19,7 @@ import httpx
 from cloudevents.conversion import to_json  # pyright: ignore[reportUnknownVariableType]
 from cloudevents.http import CloudEvent
 
-from src._version import honcho_version as _resolve_honcho_version
+from src._version import HONCHO_VERSION
 
 if TYPE_CHECKING:
     from src.telemetry.events.base import BaseEvent
@@ -36,8 +36,7 @@ def _should_sample(
     reads it straight from `settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE`,
     which in tests gets MagicMock'd. A MagicMock comparison against 1.0
     raises TypeError, so we validate at the boundary and fall back to
-    passthrough on anything non-numeric. Mirrors the same guard pattern
-    used for `HONCHO_VERSION` .
+    passthrough on anything non-numeric.
 
     When the event carries a `run_id`, sampling decisions hash on that id —
     so every event in an agent run either passes or fails the sampler, and
@@ -282,11 +281,7 @@ class TelemetryEmitter:
         # instance — tests and callers that observe the event after emit() see it
         # unchanged. Only the serialized body that hits the wire carries the extras.
         body: dict[str, Any] = event.model_dump(mode="json")
-        honcho_version = settings.TELEMETRY.HONCHO_VERSION
-        if not isinstance(honcho_version, str) or not honcho_version:
-            honcho_version = _resolve_honcho_version()
-        if isinstance(honcho_version, str) and honcho_version:
-            body["honcho_version"] = honcho_version
+        body["honcho_version"] = HONCHO_VERSION
 
         # Buffer-full check happens here because deque(maxlen=) silently evicts.
         # Detect by length-before-append; if at capacity, the append will displace

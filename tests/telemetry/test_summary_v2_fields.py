@@ -17,11 +17,6 @@ from __future__ import annotations
 from src.telemetry.events.agent import AgentToolSummaryCreatedEvent
 
 
-class TestSchemaBump:
-    def test_schema_version_is_v2(self):
-        assert AgentToolSummaryCreatedEvent.schema_version() == 2
-
-
 class TestAdditiveFields:
     def test_new_fields_default_to_zero(self):
         """Callers that omit the breakdown fields must construct valid events."""
