@@ -42,9 +42,7 @@ async def get_peers(
     options: schemas.PeerGet | None = Body(
         None, description="Filtering options for the peers list"
     ),
-    reverse: bool = Query(
-        False, description="Whether to reverse the order of results"
-    ),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = db,
 ):
     """Get all Peers for a Workspace, paginated with optional filters."""
@@ -135,9 +133,7 @@ async def get_sessions_for_peer(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering options for the sessions list"
     ),
-    reverse: bool = Query(
-        False, description="Whether to reverse the order of results"
-    ),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = db,
 ):
     """Get all Sessions for a Peer, paginated with optional filters."""
