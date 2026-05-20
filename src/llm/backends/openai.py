@@ -128,11 +128,6 @@ class OpenAIBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        if thinking_budget_tokens is not None:
-            raise ValidationException(
-                "OpenAI backend does not support thinking_budget_tokens; use thinking_effort instead"
-            )
-
         params = self._build_params(
             model=model,
             messages=messages,
@@ -142,6 +137,7 @@ class OpenAIBackend:
             tools=tools,
             tool_choice=tool_choice,
             thinking_effort=thinking_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
             extra_params=extra_params,
         )
 
@@ -221,11 +217,6 @@ class OpenAIBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        if thinking_budget_tokens is not None:
-            raise ValidationException(
-                "OpenAI backend does not support thinking_budget_tokens; use thinking_effort instead"
-            )
-
         params = self._build_params(
             model=model,
             messages=messages,
@@ -235,6 +226,7 @@ class OpenAIBackend:
             tools=tools,
             tool_choice=tool_choice,
             thinking_effort=thinking_effort,
+            thinking_budget_tokens=thinking_budget_tokens,
             extra_params=extra_params,
         )
         params["stream"] = True
@@ -284,6 +276,7 @@ class OpenAIBackend:
         tools: list[dict[str, Any]] | None,
         tool_choice: str | dict[str, Any] | None,
         thinking_effort: str | None,
+        thinking_budget_tokens: int | None,
         extra_params: dict[str, Any] | None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
@@ -303,6 +296,16 @@ class OpenAIBackend:
 
         if thinking_effort:
             params["reasoning_effort"] = thinking_effort
+
+        # Token-budget style thinking is not part of the native OpenAI API, but
+        # OpenAI-compatible proxies (OpenRouter, etc.) accept a `reasoning` object
+        # on the request body. Pass through via extra_body so it reaches those
+        # backends; operators on providers that need a different shape (vLLM,
+        # Fireworks, ...) can override via ModelConfig.provider_params.
+        if thinking_budget_tokens is not None and thinking_budget_tokens > 0:
+            params.setdefault("extra_body", {}).setdefault("reasoning", {})[
+                "max_tokens"
+            ] = thinking_budget_tokens
 
         if stop:
             params["stop"] = stop

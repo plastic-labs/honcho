@@ -123,13 +123,32 @@ async def test_anthropic_backend_skips_assistant_prefill_for_claude_4_models() -
 
 
 @pytest.mark.asyncio
-async def test_anthropic_backend_rejects_thinking_effort() -> None:
-    backend = AnthropicBackend(Mock())
-
-    with pytest.raises(ValueError, match="does not support thinking_effort"):
-        await backend.complete(
-            model="claude-haiku-4-5",
-            messages=[{"role": "user", "content": "Hello"}],
-            max_tokens=100,
-            thinking_effort="high",
+async def test_anthropic_backend_ignores_thinking_effort() -> None:
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text="ok")],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
         )
+    )
+
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_effort="high",
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert "thinking" not in call
+    assert "reasoning_effort" not in call
