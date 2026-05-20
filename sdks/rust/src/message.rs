@@ -1,5 +1,6 @@
 //! Message wrapper — construction, getters, custom Debug/Display.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -97,16 +98,10 @@ impl Message {
 
 impl fmt::Debug for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let truncated = if self.inner.content.len() > 50 {
-            let end = self
-                .inner
-                .content
-                .char_indices()
-                .nth(50)
-                .map_or(self.inner.content.len(), |(i, _)| i);
-            format!("{}...", &self.inner.content[..end])
-        } else {
-            self.inner.content.clone()
+        let content = &self.inner.content;
+        let truncated: Cow<'_, str> = match content.char_indices().nth(50) {
+            Some((idx, _)) => Cow::Owned(format!("{}...", &content[..idx])),
+            None => Cow::Borrowed(content),
         };
         f.debug_struct("Message")
             .field("id", &self.inner.id)

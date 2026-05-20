@@ -10,22 +10,18 @@ use crate::error::Result;
 /// A single delta in a streaming dialectic response.
 ///
 /// Corresponds to `DialecticStreamDelta` in the Python SDK.
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct DialecticStreamDelta {
-    /// The content string for this delta, if any.
-    pub content: Option<String>,
+pub(crate) struct DialecticStreamDelta {
+    pub(crate) content: Option<String>,
 }
 
-/// A chunk (SSE event) in a streaming dialectic response.
-///
-/// Corresponds to `DialecticStreamChunk` in the Python SDK.
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct DialecticStreamChunk {
-    /// The delta payload within this chunk.
-    pub delta: DialecticStreamDelta,
-    /// Whether this is a terminal chunk.
+pub(crate) struct DialecticStreamChunk {
+    pub(crate) delta: DialecticStreamDelta,
     #[serde(default)]
-    pub done: bool,
+    pub(crate) done: bool,
 }
 
 /// The fully-accumulated content of a completed dialectic stream.
@@ -66,10 +62,12 @@ pub struct DialecticStream<S> {
     complete: bool,
 }
 
+#[allow(clippy::missing_fields_in_debug)]
 impl<S> std::fmt::Debug for DialecticStream<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DialecticStream")
-            .field("state", &"<hidden>")
+            .field("is_complete", &self.complete)
+            .field("content_len", &self.final_response.content.len())
             .finish()
     }
 }
@@ -84,7 +82,7 @@ where
         Self {
             inner: stream,
             final_response: FinalResponse {
-                content: String::new(),
+                content: String::with_capacity(1024),
             },
             complete: false,
         }

@@ -156,7 +156,7 @@ impl Peer {
         let resp: PeerResponse = self
             .inner
             .http
-            .post(&routes::peers(&self.inner.workspace_id), Some(&body), &[])
+            .post(&routes::peers(&self.inner.workspace_id)?, Some(&body), &[])
             .await?;
         *self
             .inner
@@ -213,7 +213,7 @@ impl Peer {
             .inner
             .http
             .put(
-                &routes::peer(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -270,7 +270,7 @@ impl Peer {
             .inner
             .http
             .put(
-                &routes::peer(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -301,7 +301,7 @@ impl Peer {
         let resp: PeerResponse = self
             .inner
             .http
-            .post(&routes::peers(&self.inner.workspace_id), Some(&body), &[])
+            .post(&routes::peers(&self.inner.workspace_id)?, Some(&body), &[])
             .await?;
         *self
             .inner
@@ -329,7 +329,7 @@ impl Peer {
             .inner
             .http
             .put(
-                &routes::peer(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -362,7 +362,7 @@ impl Peer {
             .inner
             .http
             .put(
-                &routes::peer(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -410,7 +410,7 @@ impl Peer {
             .inner
             .http
             .post(
-                &routes::peer_chat(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer_chat(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -450,7 +450,7 @@ impl Peer {
             .inner
             .http
             .post(
-                &routes::peer_chat(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer_chat(&self.inner.workspace_id, &self.inner.id)?,
                 Some(options),
                 &[],
             )
@@ -504,7 +504,7 @@ impl Peer {
     /// ```
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(peer_id = self.inner.id.as_str())))]
     pub async fn representation(&self) -> Result<String> {
-        let route = routes::peer_representation(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::peer_representation(&self.inner.workspace_id, &self.inner.id)?;
         let body = crate::types::peer::PeerRepresentationGet {
             session_id: None,
             target: None,
@@ -615,7 +615,7 @@ impl Peer {
         &self,
         options: &crate::types::peer::PeerContextOptions,
     ) -> Result<PeerContext> {
-        let route = routes::peer_context(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::peer_context(&self.inner.workspace_id, &self.inner.id)?;
         let mut params: Vec<(&str, String)> = Vec::new();
         if let Some(ref v) = options.target {
             params.push(("target", v.clone()));
@@ -659,7 +659,7 @@ impl Peer {
     /// ```
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(peer_id = self.inner.id.as_str())))]
     pub async fn sessions(&self) -> Result<Page<Session>> {
-        let route = routes::peer_sessions_list(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::peer_sessions_list(&self.inner.workspace_id, &self.inner.id)?;
         pagination::paginate_post(&self.inner.http, &route, None, 1, 50, false).await
     }
 
@@ -683,7 +683,7 @@ impl Peer {
         &self,
         options: &SessionListOptions,
     ) -> Result<Page<Session>> {
-        let route = routes::peer_sessions_list(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::peer_sessions_list(&self.inner.workspace_id, &self.inner.id)?;
         let body = options
             .filters
             .as_ref()
@@ -760,7 +760,7 @@ impl Peer {
             .inner
             .http
             .post(
-                &routes::peer_search(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer_search(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&options),
                 &[],
             )
@@ -793,7 +793,7 @@ impl Peer {
             .inner
             .http
             .get(
-                &routes::peer_card(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer_card(&self.inner.workspace_id, &self.inner.id)?,
                 &[],
             )
             .await?;
@@ -816,7 +816,7 @@ impl Peer {
             .inner
             .http
             .get(
-                &routes::peer_card(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer_card(&self.inner.workspace_id, &self.inner.id)?,
                 &[("target", target)],
             )
             .await?;
@@ -840,7 +840,7 @@ impl Peer {
             .inner
             .http
             .put(
-                &routes::peer_card(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer_card(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -869,7 +869,7 @@ impl Peer {
             .inner
             .http
             .put(
-                &routes::peer_card(&self.inner.workspace_id, &self.inner.id),
+                &routes::peer_card(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[("target", target)],
             )
@@ -1044,7 +1044,7 @@ impl ChatStreamBuilder {
             .reasoning_level(self.reasoning_level.unwrap_or_default())
             .build();
 
-        let route = routes::peer_chat(&self.workspace_id, &self.peer_id);
+        let route = routes::peer_chat(&self.workspace_id, &self.peer_id)?;
         let response = self
             .http
             .request_streaming(
@@ -1237,7 +1237,7 @@ impl RepresentationBuilder {
             max_conclusions: self.max_conclusions,
         };
 
-        let route = routes::peer_representation(&self.workspace_id, &self.peer_id);
+        let route = routes::peer_representation(&self.workspace_id, &self.peer_id)?;
         let resp: RepresentationResponse = self.http.post(&route, Some(&params), &[]).await?;
         Ok(resp.representation)
     }
@@ -1364,7 +1364,7 @@ impl ContextBuilder {
             )));
         }
 
-        let route = routes::peer_context(&self.workspace_id, &self.peer_id);
+        let route = routes::peer_context(&self.workspace_id, &self.peer_id)?;
         let mut params: Vec<(&str, String)> = Vec::new();
         if let Some(ref v) = self.target {
             params.push(("target", v.clone()));

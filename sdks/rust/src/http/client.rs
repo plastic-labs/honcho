@@ -35,17 +35,17 @@ pub struct HttpClient {
 #[builder(finish_fn = build)]
 #[doc(hidden)]
 pub struct HttpClientParams {
-    base_url: String,
-    api_key: Option<String>,
+    pub(crate) base_url: String,
+    pub(crate) api_key: Option<String>,
     #[builder(default = DEFAULT_MAX_RETRIES)]
-    max_retries: u32,
+    pub(crate) max_retries: u32,
     #[builder(default)]
-    default_headers: HeaderMap,
+    pub(crate) default_headers: HeaderMap,
     #[builder(default)]
-    default_query: Vec<(String, String)>,
+    pub(crate) default_query: Vec<(String, String)>,
     #[builder(default = DEFAULT_TIMEOUT)]
-    timeout: Duration,
-    http_client: Option<reqwest::Client>,
+    pub(crate) timeout: Duration,
+    pub(crate) http_client: Option<reqwest::Client>,
 }
 
 impl HttpClient {
@@ -449,7 +449,7 @@ impl HttpClient {
                     HonchoError::Timeout {
                         message: e.to_string(),
                     }
-                } else if e.is_connect() {
+                } else if e.is_connect() || e.is_request() {
                     HonchoError::Connection {
                         message: e.to_string(),
                     }
@@ -495,7 +495,9 @@ impl HttpClient {
 #[must_use]
 pub fn delay_for_attempt(attempt: u32) -> Duration {
     let shift = attempt.min(31);
-    INITIAL_RETRY_DELAY.saturating_mul(1u32 << shift)
+    INITIAL_RETRY_DELAY
+        .saturating_mul(1u32 << shift)
+        .min(Duration::from_secs(60))
 }
 
 #[cfg(test)]
@@ -1001,9 +1003,8 @@ mod tests {
     }
 
     #[test]
-    fn delay_for_attempt_large_values_no_cap() {
-        // No upper cap — matches Python which also has no cap
-        assert_eq!(delay_for_attempt(10), Duration::from_secs(512));
+    fn delay_for_attempt_capped_at_60s() {
+        assert_eq!(delay_for_attempt(10), Duration::from_secs(60));
     }
 
     #[tokio::test]
@@ -1068,7 +1069,7 @@ mod tests {
             .await;
 
         let result: Peer = client
-            .get(&routes::peer("ws1", "alice"), &[])
+            .get(&routes::peer("ws1", "alice").unwrap(), &[])
             .await
             .unwrap();
         assert_eq!(result.id, "p1");

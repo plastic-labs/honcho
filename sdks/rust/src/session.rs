@@ -315,7 +315,7 @@ impl UploadFileBuilder<'_> {
         };
 
         let route =
-            routes::messages_upload(&self.session.inner.workspace_id, &self.session.inner.id);
+            routes::messages_upload(&self.session.inner.workspace_id, &self.session.inner.id)?;
 
         let responses: Vec<MessageResponse> = self
             .session
@@ -465,7 +465,7 @@ impl Session {
             .inner
             .http
             .post(
-                &routes::sessions(&self.inner.workspace_id),
+                &routes::sessions(&self.inner.workspace_id)?,
                 Some(&body),
                 &[],
             )
@@ -525,7 +525,7 @@ impl Session {
             .inner
             .http
             .put(
-                &routes::session(&self.inner.workspace_id, &self.inner.id),
+                &routes::session(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -580,7 +580,7 @@ impl Session {
             .inner
             .http
             .put(
-                &routes::session(&self.inner.workspace_id, &self.inner.id),
+                &routes::session(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -609,7 +609,7 @@ impl Session {
             .inner
             .http
             .post(
-                &routes::sessions(&self.inner.workspace_id),
+                &routes::sessions(&self.inner.workspace_id)?,
                 Some(&body),
                 &[],
             )
@@ -633,7 +633,7 @@ impl Session {
             .inner
             .http
             .put(
-                &routes::session(&self.inner.workspace_id, &self.inner.id),
+                &routes::session(&self.inner.workspace_id, &self.inner.id)?,
                 Some(&body),
                 &[],
             )
@@ -678,7 +678,7 @@ impl Session {
         specs: impl IntoIterator<Item = impl Into<PeerSpec>>,
     ) -> Result<()> {
         let peers_map = normalize_peers(specs)?;
-        let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id)?;
         self.inner.http.post(&route, Some(&peers_map), &[]).await
     }
 
@@ -697,7 +697,7 @@ impl Session {
         specs: impl IntoIterator<Item = impl Into<PeerSpec>>,
     ) -> Result<()> {
         let peers_map = normalize_peers(specs)?;
-        let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id)?;
         self.inner.http.put(&route, Some(&peers_map), &[]).await
     }
 
@@ -716,7 +716,7 @@ impl Session {
         ids: impl IntoIterator<Item = impl Into<String>>,
     ) -> Result<()> {
         let id_list: Vec<String> = ids.into_iter().map(Into::into).collect();
-        let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id)?;
         self.inner
             .http
             .request::<_, ()>(Method::DELETE, &route, Some(&id_list), &[])
@@ -737,7 +737,7 @@ impl Session {
     /// # }
     /// ```
     pub async fn peers(&self) -> Result<Vec<crate::Peer>> {
-        let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_peers(&self.inner.workspace_id, &self.inner.id)?;
         let page: PeersPageResponse = self.inner.http.get(&route, &[]).await?;
         page.items
             .into_iter()
@@ -764,7 +764,7 @@ impl Session {
     /// # }
     /// ```
     pub async fn get_peer_configuration(&self, peer_id: &str) -> Result<SessionPeerConfig> {
-        let route = routes::session_peer_config(&self.inner.workspace_id, &self.inner.id, peer_id);
+        let route = routes::session_peer_config(&self.inner.workspace_id, &self.inner.id, peer_id)?;
         self.inner.http.get(&route, &[]).await
     }
 
@@ -785,7 +785,7 @@ impl Session {
         peer_id: &str,
         config: &SessionPeerConfig,
     ) -> Result<()> {
-        let route = routes::session_peer_config(&self.inner.workspace_id, &self.inner.id, peer_id);
+        let route = routes::session_peer_config(&self.inner.workspace_id, &self.inner.id, peer_id)?;
         self.inner.http.put(&route, Some(config), &[]).await
     }
 
@@ -815,7 +815,7 @@ impl Session {
             return Ok(Vec::new());
         }
 
-        let route = routes::messages(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::messages(&self.inner.workspace_id, &self.inner.id)?;
 
         let responses: Vec<MessageResponse> = if messages.len() <= 100 {
             let body = crate::types::message::MessageBatchCreate { messages };
@@ -877,7 +877,7 @@ impl Session {
         size: u64,
         reverse: bool,
     ) -> Result<crate::types::pagination::Page<MessageResponse, Message>> {
-        let route = routes::messages_list(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::messages_list(&self.inner.workspace_id, &self.inner.id)?;
         let body = filters
             .map(|f| {
                 serde_json::to_value(f)
@@ -925,11 +925,11 @@ impl Session {
         }
     }
 
-    /// Begin a **streaming** file upload to this session.
+    /// Begin a file upload to this session from a streaming reader.
     ///
-    /// Unlike [`Session::upload_file`], the reader is consumed lazily via
-    /// [`tokio_util::io::ReaderStream`] so the entire file is never buffered
-    /// in memory.
+    /// The reader is fully buffered into memory before uploading. This is
+    /// **not** true streaming — use [`Session::upload_file`] with a
+    /// [`FileSource::path`] for filesystem streaming that avoids buffering.
     ///
     /// Returns an [`UploadFileBuilder`]. You **must** call `.peer(id)` and
     /// then `.send()` to complete the upload.
@@ -966,7 +966,7 @@ impl Session {
         self.inner
             .http
             .delete(
-                &routes::session(&self.inner.workspace_id, &self.inner.id),
+                &routes::session(&self.inner.workspace_id, &self.inner.id)?,
                 &[],
             )
             .await
@@ -984,7 +984,7 @@ impl Session {
     /// ```
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn clone_session(&self) -> Result<Session> {
-        let route = routes::session_clone(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_clone(&self.inner.workspace_id, &self.inner.id)?;
         let resp: SessionResponse = self.inner.http.post(&route, None::<&Value>, &[]).await?;
         Ok(Self::from_parts(
             self.inner.http.clone(),
@@ -1005,7 +1005,7 @@ impl Session {
     /// ```
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn clone_session_with_message(&self, message_id: &str) -> Result<Session> {
-        let route = routes::session_clone(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_clone(&self.inner.workspace_id, &self.inner.id)?;
         let resp: SessionResponse = self
             .inner
             .http
@@ -1031,7 +1031,7 @@ impl Session {
     /// ```
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn get_message(&self, id: &str) -> Result<Message> {
-        let route = routes::message(&self.inner.workspace_id, &self.inner.id, id);
+        let route = routes::message(&self.inner.workspace_id, &self.inner.id, id)?;
         let resp: MessageResponse = self.inner.http.get(&route, &[]).await?;
         Ok(Message::from_raw(self.inner.workspace_id.clone(), resp))
     }
@@ -1054,7 +1054,7 @@ impl Session {
         id: &str,
         metadata: HashMap<String, Value>,
     ) -> Result<Message> {
-        let route = routes::message(&self.inner.workspace_id, &self.inner.id, id);
+        let route = routes::message(&self.inner.workspace_id, &self.inner.id, id)?;
         let body = crate::types::message::MessageMetadataSet { metadata };
         let resp: MessageResponse = self.inner.http.put(&route, Some(&body), &[]).await?;
         Ok(Message::from_raw(self.inner.workspace_id.clone(), resp))
@@ -1102,7 +1102,7 @@ impl Session {
         options: &crate::types::session::SessionContextOptions,
     ) -> Result<crate::types::session::SessionContext> {
         options.validate()?;
-        let route = routes::session_context(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_context(&self.inner.workspace_id, &self.inner.id)?;
         let mut params: Vec<(&str, String)> = vec![
             (
                 "summary",
@@ -1166,7 +1166,7 @@ impl Session {
     /// ```
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), fields(session_id = self.inner.id.as_str())))]
     pub async fn summaries(&self) -> Result<crate::types::session::SessionSummaries> {
-        let route = routes::session_summaries(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_summaries(&self.inner.workspace_id, &self.inner.id)?;
         self.inner.http.get(&route, &[]).await
     }
 
@@ -1221,7 +1221,7 @@ impl Session {
                 "query must not be empty".to_string(),
             ));
         }
-        let route = routes::session_search(&self.inner.workspace_id, &self.inner.id);
+        let route = routes::session_search(&self.inner.workspace_id, &self.inner.id)?;
         let responses: Vec<MessageResponse> =
             self.inner.http.post(&route, Some(&options), &[]).await?;
         Ok(responses
@@ -1297,7 +1297,7 @@ impl Session {
         observer_id: Option<&str>,
         sender_id: Option<&str>,
     ) -> Result<crate::types::dream::QueueStatus> {
-        let route = routes::workspace_queue_status(&self.inner.workspace_id);
+        let route = routes::workspace_queue_status(&self.inner.workspace_id)?;
         let mut query: Vec<(&str, &str)> = vec![("session_id", self.inner.id.as_str())];
         if let Some(v) = observer_id {
             query.push(("observer_id", v));
@@ -1467,7 +1467,7 @@ impl SessionRepresentationBuilder {
             max_conclusions: self.max_conclusions,
         };
 
-        let route = routes::peer_representation(&self.workspace_id, &self.peer_id);
+        let route = routes::peer_representation(&self.workspace_id, &self.peer_id)?;
         let resp: crate::types::dialectic::RepresentationResponse =
             self.http.post(&route, Some(&params), &[]).await?;
         Ok(resp.representation)

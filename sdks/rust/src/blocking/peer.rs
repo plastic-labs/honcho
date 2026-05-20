@@ -22,6 +22,14 @@ pub struct Peer {
     inner: crate::Peer,
 }
 
+impl std::fmt::Debug for Peer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Peer")
+            .field("id", &self.inner.id())
+            .finish()
+    }
+}
+
 impl Peer {
     pub(crate) fn new(inner: crate::Peer) -> Self {
         Self { inner }
@@ -424,7 +432,34 @@ impl BlockingContextBuilder {
     }
 
     /// Send the context request.
-    pub fn send(self) -> crate::error::Result<crate::types::peer::PeerContext> {
+    pub fn send(self) -> Result<PeerContext> {
         block_on(self.inner.send())
+    }
+}
+
+impl std::fmt::Debug for BlockingChatStreamBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockingChatStreamBuilder")
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ChatStreamIterator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChatStreamIterator").finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for BlockingRepresentationBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockingRepresentationBuilder")
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for BlockingContextBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockingContextBuilder")
+            .finish_non_exhaustive()
     }
 }

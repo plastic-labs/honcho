@@ -9,7 +9,7 @@ use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncWriteExt};
 
 use crate::FileSource;
-use crate::error::Result;
+use crate::error::{HonchoError, Result};
 use crate::session::PeerSpec;
 use crate::types::message::MessageSearchOptions;
 use crate::types::session::{SessionConfiguration, SessionPeerConfig};
@@ -46,6 +46,15 @@ impl AsyncRead for ErrorAwareReader {
 #[derive(Clone)]
 pub struct Session {
     inner: crate::Session,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("id", &self.inner.id())
+            .field("is_active", &self.inner.is_active())
+            .finish()
+    }
 }
 
 impl Session {
@@ -257,6 +266,7 @@ impl Session {
     pub fn upload_file(&self, source: impl Into<FileSource>) -> BlockingUploadFileBuilder<'_> {
         BlockingUploadFileBuilder {
             inner: self.inner.upload_file(source),
+            reader_handle: None,
         }
     }
 
@@ -282,7 +292,7 @@ impl Session {
         let slot_clone = error_slot.clone();
         let handle = super::runtime::handle();
 
-        tokio::task::spawn_blocking(move || {
+        let reader_handle = tokio::task::spawn_blocking(move || {
             let mut reader = reader;
             handle.block_on(async {
                 let mut buf = [0u8; 8192];
@@ -314,6 +324,7 @@ impl Session {
                 wrapped_rx,
                 content_type_owned,
             )),
+            reader_handle: Some(reader_handle),
         }
     }
 }
@@ -321,6 +332,14 @@ impl Session {
 /// Blocking wrapper around [`crate::UploadFileBuilder`].
 pub struct BlockingUploadFileBuilder<'a> {
     inner: crate::UploadFileBuilder<'a>,
+    reader_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for BlockingUploadFileBuilder<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockingUploadFileBuilder")
+            .finish_non_exhaustive()
+    }
 }
 
 impl BlockingUploadFileBuilder<'_> {
@@ -329,6 +348,7 @@ impl BlockingUploadFileBuilder<'_> {
     pub fn peer(self, id: impl Into<String>) -> Self {
         Self {
             inner: self.inner.peer(id),
+            reader_handle: self.reader_handle,
         }
     }
 
@@ -337,6 +357,7 @@ impl BlockingUploadFileBuilder<'_> {
     pub fn metadata(self, value: Value) -> Self {
         Self {
             inner: self.inner.metadata(value),
+            reader_handle: self.reader_handle,
         }
     }
 
@@ -345,6 +366,7 @@ impl BlockingUploadFileBuilder<'_> {
     pub fn configuration(self, value: Value) -> Self {
         Self {
             inner: self.inner.configuration(value),
+            reader_handle: self.reader_handle,
         }
     }
 
@@ -353,6 +375,7 @@ impl BlockingUploadFileBuilder<'_> {
     pub fn created_at(self, dt: DateTime<Utc>) -> Self {
         Self {
             inner: self.inner.created_at(dt),
+            reader_handle: self.reader_handle,
         }
     }
 
@@ -363,7 +386,20 @@ impl BlockingUploadFileBuilder<'_> {
     /// Returns [`HonchoError::Validation`](crate::error::HonchoError::Validation)
     /// if no peer was set via `.peer()`.
     pub fn send(self) -> Result<Vec<crate::Message>> {
-        block_on(self.inner.send())
+        let result = block_on(self.inner.send());
+
+        if let Some(handle) = self.reader_handle {
+            let join_result = block_on(handle);
+            if result.is_ok()
+                && let Err(join_error) = join_result
+            {
+                return Err(HonchoError::Io(std::io::Error::other(
+                    join_error.to_string(),
+                )));
+            }
+        }
+
+        result
     }
 }
 

@@ -193,3 +193,5 @@ metrics.jsonl
 AGENTS.md
 lancedb_data/
 grafana-data/
+
+sdks/rust/examples/smoke_test/

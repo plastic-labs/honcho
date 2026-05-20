@@ -76,6 +76,15 @@ pub struct ConclusionScope {
     inner: AsyncConclusionScope,
 }
 
+impl std::fmt::Debug for ConclusionScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConclusionScope")
+            .field("observer_id", &self.inner.observer_id())
+            .field("observed_id", &self.inner.observed_id())
+            .finish()
+    }
+}
+
 impl ConclusionScope {
     pub(crate) fn new(inner: AsyncConclusionScope) -> Self {
         Self { inner }
@@ -119,6 +128,7 @@ impl ConclusionScope {
     }
 
     /// Builder for querying conclusions.
+    #[must_use]
     pub fn query(&self, query: impl Into<String>) -> BlockingQueryConclusionsBuilder {
         BlockingQueryConclusionsBuilder {
             inner: self.inner.query(query),
@@ -183,6 +193,13 @@ impl BlockingConclusionRepresentationBuilder {
     }
 }
 
+impl std::fmt::Debug for BlockingConclusionRepresentationBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockingConclusionRepresentationBuilder")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Blocking builder for listing conclusions.
 pub struct BlockingListConclusionsBuilder {
     inner: crate::conclusion::ListConclusionsBuilder,
@@ -190,6 +207,7 @@ pub struct BlockingListConclusionsBuilder {
 
 impl BlockingListConclusionsBuilder {
     /// Page number (1-based).
+    #[must_use]
     pub fn page(self, page: u32) -> Self {
         Self {
             inner: self.inner.page(page),
@@ -197,6 +215,7 @@ impl BlockingListConclusionsBuilder {
     }
 
     /// Page size.
+    #[must_use]
     pub fn size(self, size: u32) -> Self {
         Self {
             inner: self.inner.size(size),
@@ -204,6 +223,7 @@ impl BlockingListConclusionsBuilder {
     }
 
     /// Filter to a session.
+    #[must_use]
     pub fn session(self, session_id: impl Into<String>) -> Self {
         Self {
             inner: self.inner.session(session_id),
@@ -211,6 +231,7 @@ impl BlockingListConclusionsBuilder {
     }
 
     /// Reverse ordering.
+    #[must_use]
     pub fn reverse(self, reverse: bool) -> Self {
         Self {
             inner: self.inner.reverse(reverse),
@@ -223,6 +244,13 @@ impl BlockingListConclusionsBuilder {
     }
 }
 
+impl std::fmt::Debug for BlockingListConclusionsBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockingListConclusionsBuilder")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Blocking builder for querying conclusions.
 pub struct BlockingQueryConclusionsBuilder {
     inner: crate::conclusion::QueryConclusionsBuilder,
@@ -230,6 +258,7 @@ pub struct BlockingQueryConclusionsBuilder {
 
 impl BlockingQueryConclusionsBuilder {
     /// Number of results (1–100).
+    #[must_use]
     pub fn top_k(self, top_k: u32) -> Self {
         Self {
             inner: self.inner.top_k(top_k),
@@ -237,6 +266,7 @@ impl BlockingQueryConclusionsBuilder {
     }
 
     /// Max cosine distance threshold.
+    #[must_use]
     pub fn distance(self, distance: f64) -> Self {
         Self {
             inner: self.inner.distance(distance),
@@ -246,5 +276,12 @@ impl BlockingQueryConclusionsBuilder {
     /// Send the query.
     pub fn send(self) -> Result<Vec<Conclusion>> {
         block_on(self.inner.send()).map(|v| v.into_iter().map(Conclusion::new).collect())
+    }
+}
+
+impl std::fmt::Debug for BlockingQueryConclusionsBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockingQueryConclusionsBuilder")
+            .finish_non_exhaustive()
     }
 }

@@ -170,6 +170,13 @@ pub struct SessionContextOptions {
     pub max_conclusions: Option<u32>,
 }
 
+const SEARCH_TOP_K_MIN: u32 = 1;
+const SEARCH_TOP_K_MAX: u32 = 100;
+const SEARCH_MAX_DISTANCE_MIN: f64 = 0.0;
+const SEARCH_MAX_DISTANCE_MAX: f64 = 1.0;
+const MAX_CONCLUSIONS_MIN: u32 = 1;
+const MAX_CONCLUSIONS_MAX: u32 = 100;
+
 impl SessionContextOptions {
     /// Validate cross-field constraints.
     pub fn validate(&self) -> std::result::Result<(), crate::error::HonchoError> {
@@ -184,25 +191,25 @@ impl SessionContextOptions {
             ));
         }
         if let Some(k) = self.search_top_k
-            && !(1..=100).contains(&k)
+            && !(SEARCH_TOP_K_MIN..=SEARCH_TOP_K_MAX).contains(&k)
         {
-            return Err(crate::error::HonchoError::Validation(
-                "search_top_k must be between 1 and 100".into(),
-            ));
+            return Err(crate::error::HonchoError::Validation(format!(
+                "search_top_k must be between {SEARCH_TOP_K_MIN} and {SEARCH_TOP_K_MAX}"
+            )));
         }
         if let Some(d) = self.search_max_distance
-            && !(0.0..=1.0).contains(&d)
+            && !(SEARCH_MAX_DISTANCE_MIN..=SEARCH_MAX_DISTANCE_MAX).contains(&d)
         {
-            return Err(crate::error::HonchoError::Validation(
-                "search_max_distance must be between 0.0 and 1.0".into(),
-            ));
+            return Err(crate::error::HonchoError::Validation(format!(
+                "search_max_distance must be between {SEARCH_MAX_DISTANCE_MIN} and {SEARCH_MAX_DISTANCE_MAX}"
+            )));
         }
         if let Some(m) = self.max_conclusions
-            && !(1..=100).contains(&m)
+            && !(MAX_CONCLUSIONS_MIN..=MAX_CONCLUSIONS_MAX).contains(&m)
         {
-            return Err(crate::error::HonchoError::Validation(
-                "max_conclusions must be between 1 and 100".into(),
-            ));
+            return Err(crate::error::HonchoError::Validation(format!(
+                "max_conclusions must be between {MAX_CONCLUSIONS_MIN} and {MAX_CONCLUSIONS_MAX}"
+            )));
         }
         Ok(())
     }
@@ -450,15 +457,22 @@ impl SessionContext {
         result
     }
 
-    /// Returns the number of messages plus 1 if a summary is present.
+    /// Returns the number of entries that `to_openai` / `to_anthropic` would produce.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.messages.len() + usize::from(self.summary.is_some())
+        self.messages.len()
+            + usize::from(self.summary.is_some())
+            + usize::from(self.peer_representation.is_some())
+            + usize::from(self.peer_card.is_some())
     }
 
-    /// Returns `true` if the context contains no messages and no summary.
+    /// Returns `true` if the context contains no messages, summary,
+    /// peer representation, or peer card.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.messages.is_empty() && self.summary.is_none()
+        self.messages.is_empty()
+            && self.summary.is_none()
+            && self.peer_representation.is_none()
+            && self.peer_card.is_none()
     }
 }

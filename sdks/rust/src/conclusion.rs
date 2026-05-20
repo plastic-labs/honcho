@@ -317,7 +317,7 @@ impl ConclusionScope {
             return Ok(Vec::new());
         }
 
-        let route = routes::conclusions(&self.inner.workspace_id);
+        let route = routes::conclusions(&self.inner.workspace_id)?;
 
         let all_data: Vec<ConclusionData> = if creates.len() <= 100 {
             let body = ConclusionBatchCreate {
@@ -457,7 +457,7 @@ impl ConclusionScope {
     /// Returns [`HonchoError::Server`] if the conclusion does not exist or
     /// the server rejects the request.
     pub async fn delete(&self, conclusion_id: impl Into<String>) -> Result<()> {
-        let route = routes::conclusion_delete(&self.inner.workspace_id, &conclusion_id.into());
+        let route = routes::conclusion_delete(&self.inner.workspace_id, &conclusion_id.into())?;
         self.inner.http.delete(&route, &[]).await
     }
 }
@@ -605,7 +605,7 @@ impl ConclusionRepresentationBuilder {
             max_conclusions: self.max_conclusions,
         };
 
-        let route = routes::peer_representation(&self.workspace_id, &self.observer_id);
+        let route = routes::peer_representation(&self.workspace_id, &self.observer_id)?;
         let resp: RepresentationResponse = self.http.post(&route, Some(&params), &[]).await?;
         Ok(resp.representation)
     }
@@ -703,7 +703,7 @@ impl ListConclusionsBuilder {
             filters["session_id"] = serde_json::Value::String(sid.clone());
         }
         let body = serde_json::json!({"filters": filters});
-        let route = routes::conclusions_list(&self.scope.inner.workspace_id);
+        let route = routes::conclusions_list(&self.scope.inner.workspace_id)?;
         paginate_post(
             &self.scope.inner.http,
             &route,
@@ -798,7 +798,7 @@ impl QueryConclusionsBuilder {
         if let Some(d) = self.distance {
             body["distance"] = serde_json::Value::from(d);
         }
-        let route = routes::conclusions_query(&self.scope.inner.workspace_id);
+        let route = routes::conclusions_query(&self.scope.inner.workspace_id)?;
         let data: Vec<ConclusionData> =
             self.scope.inner.http.post(&route, Some(&body), &[]).await?;
         let ws = self.scope.inner.workspace_id.clone();

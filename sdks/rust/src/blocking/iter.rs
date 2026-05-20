@@ -6,6 +6,8 @@ use futures_util::Stream;
 
 use super::runtime::block_on;
 
+const MAX_COLLECT_PAGES: u32 = 1_000;
+
 pub(crate) struct BlockingIter<S> {
     stream: Pin<Box<S>>,
 }
@@ -47,7 +49,6 @@ where
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
 pub(crate) async fn collect_all_pages<
     TRaw: Clone + Send + 'static,
     TOut: Clone + Send + 'static,
@@ -59,7 +60,14 @@ pub(crate) async fn collect_all_pages<
     let mut first_items = first_page.items();
     all.append(&mut first_items);
     let mut current = first_page;
+    let mut pages: u32 = 1;
     while let Some(next) = current.next_page().await? {
+        pages += 1;
+        if pages > MAX_COLLECT_PAGES {
+            return Err(crate::error::HonchoError::Validation(format!(
+                "pagination exceeded {MAX_COLLECT_PAGES} pages (attempted {pages}), aborting to prevent infinite-loop safety cap"
+            )));
+        }
         let mut next_items = next.items();
         all.append(&mut next_items);
         current = next;

@@ -7,7 +7,6 @@
 //!
 //! **Alpha** — this SDK is under active development and not yet ready for production use.
 //!
-//! See the [porting plan](../rust-port-tdd-plan.md) for current progress.
 
 #![forbid(unsafe_code)]
 #![deny(
@@ -17,7 +16,7 @@
     clippy::todo,
     missing_docs
 )]
-#![warn(clippy::pedantic, clippy::cargo)]
+#![warn(clippy::pedantic, clippy::cargo, rustdoc::broken_intra_doc_links)]
 #![allow(
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,
@@ -30,7 +29,9 @@ pub mod client;
 pub mod conclusion;
 /// Stream adapter for dialectic responses.
 pub mod dialectic_stream;
+/// Error types for the Honcho SDK.
 pub mod error;
+/// HTTP transport layer (client, routes, SSE decoding).
 pub mod http;
 /// Message wrapper type.
 pub mod message;
@@ -45,9 +46,7 @@ pub mod upload;
 
 pub use client::Honcho;
 pub use conclusion::{Conclusion, ConclusionCreateParams, ConclusionScope};
-pub use dialectic_stream::{
-    DialecticStream, DialecticStreamChunk, DialecticStreamDelta, FinalResponse,
-};
+pub use dialectic_stream::{DialecticStream, FinalResponse};
 pub use message::Message;
 pub use peer::Peer;
 pub use session::{Session, UploadFileBuilder};

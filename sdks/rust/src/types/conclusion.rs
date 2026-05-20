@@ -33,7 +33,9 @@ pub struct Conclusion {
 /// Request body for creating a single conclusion.
 ///
 /// Maps `OpenAPI` `ConclusionCreate`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 #[non_exhaustive]
 pub struct ConclusionCreate {
     /// The conclusion content (1–65535 chars).
@@ -50,7 +52,8 @@ pub struct ConclusionCreate {
 /// Request body for batch-creating conclusions (1–100 items).
 ///
 /// Maps `OpenAPI` `ConclusionBatchCreate`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(finish_fn = build)]
 #[non_exhaustive]
 pub struct ConclusionBatchCreate {
     /// The conclusions to create.
@@ -60,7 +63,8 @@ pub struct ConclusionBatchCreate {
 /// Request body for listing conclusions with optional filters.
 ///
 /// Maps `OpenAPI` `ConclusionGet`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, bon::Builder)]
+#[builder(finish_fn = build)]
 #[non_exhaustive]
 pub struct ConclusionGet {
     /// Optional metadata filters.
@@ -71,7 +75,9 @@ pub struct ConclusionGet {
 /// Request body for semantic search over conclusions.
 ///
 /// Maps `OpenAPI` `ConclusionQuery`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 #[non_exhaustive]
 pub struct ConclusionQuery {
     /// Semantic search query string.

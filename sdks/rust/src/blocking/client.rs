@@ -22,6 +22,15 @@ pub struct Honcho {
     inner: crate::Honcho,
 }
 
+impl std::fmt::Debug for Honcho {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Honcho")
+            .field("workspace_id", &self.inner.workspace_id())
+            .field("base_url", &self.inner.base_url().as_str())
+            .finish()
+    }
+}
+
 impl Honcho {
     /// Create a blocking client pointed at `base_url` for `workspace_id`.
     pub fn new(base_url: &str, workspace_id: &str) -> Result<Self> {

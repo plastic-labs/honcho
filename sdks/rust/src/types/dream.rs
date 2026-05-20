@@ -1,7 +1,5 @@
 //! Dream API types — background memory consolidation scheduling.
 
-pub use super::common::{DreamConfiguration, ReasoningConfiguration};
-
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};

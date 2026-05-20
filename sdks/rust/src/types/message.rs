@@ -34,7 +34,9 @@ pub struct MessageResponse {
 }
 
 /// Parameters for creating a single message.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct MessageCreate {
     /// Message content text (max 25 000 characters).
     pub content: String,
@@ -53,13 +55,16 @@ pub struct MessageCreate {
 
 /// Parameters for batch-creating messages (1–100).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct MessageBatchCreate {
     /// List of messages to create.
     pub messages: Vec<MessageCreate>,
 }
 
 /// Parameters for updating a message.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, bon::Builder)]
+#[builder(on(String, into))]
+#[builder(finish_fn = build)]
 pub struct MessageUpdate {
     /// Updated metadata (replaces existing).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,6 +83,7 @@ pub struct MessageMetadataSet {
 ///
 /// All fields optional; message-level config overrides session and workspace config.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[non_exhaustive]
 pub struct MessageConfiguration {
     /// Reasoning configuration for this message.
     pub reasoning: Option<ReasoningConfiguration>,
@@ -99,8 +105,12 @@ pub struct MessageSearchOptions {
     pub limit: u32,
 }
 
-fn default_limit() -> u32 {
-    10
+const fn default_limit() -> u32 {
+    MessageSearchOptions::DEFAULT_LIMIT
+}
+
+impl MessageSearchOptions {
+    const DEFAULT_LIMIT: u32 = 10;
 }
 
 /// Paginated response of [`MessageResponse`] items.

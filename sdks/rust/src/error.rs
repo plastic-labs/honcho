@@ -137,6 +137,61 @@ impl HonchoError {
             Self::Validation(_) => "validation_error",
         }
     }
+
+    /// Returns the HTTP status code if this error originated from an HTTP response.
+    #[must_use]
+    pub fn status_code(&self) -> Option<u16> {
+        match self {
+            Self::BadRequest { .. } => Some(400),
+            Self::Authentication { .. } => Some(401),
+            Self::PermissionDenied { .. } => Some(403),
+            Self::NotFound { .. } => Some(404),
+            Self::Conflict { .. } => Some(409),
+            Self::UnprocessableEntity { .. } => Some(422),
+            Self::RateLimit { .. } => Some(429),
+            Self::Client { status, .. } | Self::Server { status, .. } => Some(*status),
+            Self::Timeout { .. }
+            | Self::Connection { .. }
+            | Self::Transport(_)
+            | Self::Decode { .. }
+            | Self::Io(_)
+            | Self::Configuration(_)
+            | Self::Validation(_) => None,
+        }
+    }
+
+    /// Returns the suggested wait time for rate-limited requests.
+    #[must_use]
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::RateLimit { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
+
+    /// Returns the human-readable error message.
+    #[must_use]
+    #[allow(clippy::match_same_arms)]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::BadRequest { message, .. } => message,
+            Self::Authentication { message } => message,
+            Self::PermissionDenied { message } => message,
+            Self::NotFound { message } => message,
+            Self::Conflict { message, .. } => message,
+            Self::UnprocessableEntity { message, .. } => message,
+            Self::RateLimit { message, .. } => message,
+            Self::Client { message, .. } => message,
+            Self::Server { message, .. } => message,
+            Self::Timeout { message } => message,
+            Self::Connection { message } => message,
+            Self::Transport(_) => "transport error",
+            Self::Io(_) => "I/O error",
+            Self::Decode { .. } => "failed to decode response",
+            Self::Configuration(s) => s,
+            Self::Validation(s) => s,
+        }
+    }
 }
 
 /// Alias for `Result<T, HonchoError>`.
@@ -188,8 +243,10 @@ pub fn parse_retry_after(value: &HeaderValue, now: DateTime<Utc>) -> Option<Dura
 
     let target = parse_http_date(s).ok()?;
     let now_systime: SystemTime = now.into();
-    let diff = target.duration_since(now_systime).ok()?;
-    Some(diff)
+    match target.duration_since(now_systime) {
+        Ok(diff) => Some(diff),
+        Err(_) => Some(Duration::ZERO),
+    }
 }
 
 /// Construct a `HonchoError` from an HTTP response.
@@ -219,7 +276,7 @@ pub fn from_response(
         },
         429 => {
             let retry_after = headers
-                .get("retry-after")
+                .get(reqwest::header::RETRY_AFTER)
                 .and_then(|v| parse_retry_after(v, now));
             HonchoError::RateLimit {
                 message,

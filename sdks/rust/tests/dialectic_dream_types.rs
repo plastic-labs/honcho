@@ -8,10 +8,9 @@
 
 mod common;
 
+use honcho_ai::types::common::{DreamConfiguration, ReasoningConfiguration};
 use honcho_ai::types::dialectic::{DialecticOptions, ReasoningLevel, RepresentationResponse};
-use honcho_ai::types::dream::{
-    DreamConfiguration, DreamType, QueueStatus, ReasoningConfiguration, ScheduleDreamRequest,
-};
+use honcho_ai::types::dream::{DreamType, QueueStatus, ScheduleDreamRequest};
 
 use common::{load_fixture, roundtrip, validate_openapi};
 

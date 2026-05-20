@@ -195,11 +195,16 @@ impl Honcho {
                     metadata: None,
                     configuration: None,
                 };
-                self.inner
+                match self
+                    .inner
                     .http
                     .post::<_, Workspace>(&routes::workspaces(), Some(&body), &[])
                     .await
-                    .map(drop)
+                {
+                    Ok(_) => Ok(()),
+                    Err(e) if e.status_code() == Some(409) => Ok(()),
+                    Err(e) => Err(e),
+                }
             })
             .await
             .map(drop)
@@ -250,7 +255,7 @@ impl Honcho {
         let ws: Workspace = self
             .inner
             .http
-            .get(&routes::workspace(self.workspace_id()), &[])
+            .get(&routes::workspace(self.workspace_id())?, &[])
             .await?;
         Ok(ws.metadata)
     }
@@ -261,7 +266,7 @@ impl Honcho {
         let _: Workspace = self
             .inner
             .http
-            .put(&routes::workspace(self.workspace_id()), Some(&body), &[])
+            .put(&routes::workspace(self.workspace_id())?, Some(&body), &[])
             .await?;
         Ok(())
     }
@@ -280,7 +285,7 @@ impl Honcho {
         let ws: Workspace = self
             .inner
             .http
-            .get(&routes::workspace(self.workspace_id()), &[])
+            .get(&routes::workspace(self.workspace_id())?, &[])
             .await?;
         Ok(ws.configuration)
     }
@@ -304,7 +309,7 @@ impl Honcho {
         let _: Workspace = self
             .inner
             .http
-            .put(&routes::workspace(self.workspace_id()), Some(&body), &[])
+            .put(&routes::workspace(self.workspace_id())?, Some(&body), &[])
             .await?;
         Ok(())
     }
@@ -318,7 +323,7 @@ impl Honcho {
         let raw: serde_json::Value = self
             .inner
             .http
-            .get(&routes::workspace(self.workspace_id()), &[])
+            .get(&routes::workspace(self.workspace_id())?, &[])
             .await?;
         match raw.get("configuration") {
             Some(serde_json::Value::Object(map)) => {
@@ -340,7 +345,7 @@ impl Honcho {
         let _: Workspace = self
             .inner
             .http
-            .put(&routes::workspace(self.workspace_id()), Some(&body), &[])
+            .put(&routes::workspace(self.workspace_id())?, Some(&body), &[])
             .await?;
         Ok(())
     }
@@ -377,7 +382,7 @@ impl Honcho {
         let resp: PeerResponse = self
             .inner
             .http
-            .post(&routes::peers(&self.inner.workspace_id), Some(&body), &[])
+            .post(&routes::peers(&self.inner.workspace_id)?, Some(&body), &[])
             .await?;
         Peer::from_response(self, resp)
     }
@@ -435,7 +440,7 @@ impl Honcho {
             .inner
             .http
             .post(
-                &routes::sessions(&self.inner.workspace_id),
+                &routes::sessions(&self.inner.workspace_id)?,
                 Some(&body),
                 &[],
             )
@@ -487,7 +492,7 @@ impl Honcho {
             .inner
             .http
             .post(
-                &routes::workspace_search(&self.inner.workspace_id),
+                &routes::workspace_search(&self.inner.workspace_id)?,
                 Some(&body),
                 &[],
             )
@@ -529,7 +534,7 @@ impl Honcho {
         self.inner
             .http
             .get(
-                &routes::workspace_queue_status(&self.inner.workspace_id),
+                &routes::workspace_queue_status(&self.inner.workspace_id)?,
                 &query,
             )
             .await
@@ -563,7 +568,7 @@ impl Honcho {
         self.inner
             .http
             .post(
-                &routes::workspace_schedule_dream(&self.inner.workspace_id),
+                &routes::workspace_schedule_dream(&self.inner.workspace_id)?,
                 Some(&body),
                 &[],
             )
@@ -582,7 +587,7 @@ impl Honcho {
     /// # }
     /// ```
     pub async fn delete_workspace(&self, id: &str) -> Result<()> {
-        self.inner.http.delete(&routes::workspace(id), &[]).await
+        self.inner.http.delete(&routes::workspace(id)?, &[]).await
     }
 
     // ── Paginated list methods (F4.5) ──────────────────────────────────
@@ -607,7 +612,7 @@ impl Honcho {
         self.ensure_workspace().await?;
         crate::types::pagination::paginate_post(
             &self.inner.http,
-            &routes::peers_list(&self.inner.workspace_id),
+            &routes::peers_list(&self.inner.workspace_id)?,
             None,
             1,
             50,
@@ -644,7 +649,7 @@ impl Honcho {
             serde_json::to_value(&body).map_err(|e| HonchoError::Configuration(e.to_string()))?;
         crate::types::pagination::paginate_post(
             &self.inner.http,
-            &routes::peers_list(&self.inner.workspace_id),
+            &routes::peers_list(&self.inner.workspace_id)?,
             Some(&body_val),
             page,
             size,
@@ -675,7 +680,7 @@ impl Honcho {
         self.ensure_workspace().await?;
         crate::types::pagination::paginate_post(
             &self.inner.http,
-            &routes::sessions_list(&self.inner.workspace_id),
+            &routes::sessions_list(&self.inner.workspace_id)?,
             None,
             1,
             50,
@@ -712,7 +717,7 @@ impl Honcho {
             serde_json::to_value(&body).map_err(|e| HonchoError::Configuration(e.to_string()))?;
         crate::types::pagination::paginate_post(
             &self.inner.http,
-            &routes::sessions_list(&self.inner.workspace_id),
+            &routes::sessions_list(&self.inner.workspace_id)?,
             Some(&body_val),
             page,
             size,

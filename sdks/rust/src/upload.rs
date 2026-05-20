@@ -22,7 +22,7 @@ pub enum FileSource {
     },
     /// A filesystem path. Resolved at upload time.
     Path(PathBuf),
-    /// A streaming reader — uploaded without buffering the entire payload.
+    /// A streaming reader — fully buffered into memory before uploading.
     Stream {
         /// File name to send.
         filename: String,
@@ -81,8 +81,12 @@ impl FileSource {
 
     /// Create a `Stream` variant from an [`AsyncRead`] source.
     ///
-    /// The reader is consumed lazily via [`tokio_util::io::ReaderStream`]
-    /// so the upload does **not** buffer the entire payload in memory.
+    /// The reader is fully consumed with [`tokio::io::AsyncReadExt::read_to_end`]
+    /// and buffered into a `Vec<u8>` before the upload begins. This is **not**
+    /// true streaming — the entire payload resides in memory during the request.
+    ///
+    /// For files on disk, prefer [`FileSource::path`] which streams from the
+    /// filesystem without buffering.
     ///
     /// # Examples
     ///
