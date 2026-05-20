@@ -22,7 +22,6 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
-from src.telemetry.prometheus.metrics import prometheus_metrics
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -637,31 +636,6 @@ async def _cleanup_pgvector_batch(
         return True
 
 
-async def _publish_message_embedding_state_gauges() -> None:
-    """
-    Refresh prometheus gauges for MessageEmbedding rows by sync_state.
-
-    Called once per reconciliation cycle so monitoring can alert on rising
-    pending/failed counts before MAX_SYNC_ATTEMPTS is exhausted.
-    """
-    if not settings.METRICS.ENABLED:
-        return
-    try:
-        async with tracked_db("reconciliation_state_metrics") as db:
-            stmt = select(
-                models.MessageEmbedding.sync_state,
-                func.count().label("n"),
-            ).group_by(models.MessageEmbedding.sync_state)
-            rows = (await db.execute(stmt)).all()
-        counts = {state: int(n) for state, n in rows}
-        prometheus_metrics.set_message_embedding_state_counts(
-            pending=counts.get("pending", 0),
-            failed=counts.get("failed", 0),
-        )
-    except Exception:
-        logger.exception("Failed to publish message embedding state gauges")
-
-
 async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     """
     Run a complete reconciliation cycle.
@@ -690,7 +664,6 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
 
             if not (embs_work or cleanup_work):
                 break
-        await _publish_message_embedding_state_gauges()
         logger.info("Vector reconciliation cycle completed (pgvector mode)")
         return metrics
 
@@ -718,6 +691,5 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             logger.debug("No work done, breaking reconciliation loop")
             break
 
-    await _publish_message_embedding_state_gauges()
     logger.info("Vector reconciliation cycle completed")
     return metrics

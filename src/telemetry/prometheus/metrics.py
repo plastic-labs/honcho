@@ -10,7 +10,6 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
     Counter,
-    Gauge,
     disable_created_metrics,
     generate_latest,
 )
@@ -26,12 +25,6 @@ logger = logging.getLogger(__name__)
 
 class NamespacedCounter(Counter):
     def labels(self, **kwargs: str) -> NamespacedCounter:
-        kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
-        return super().labels(**kwargs)  # type: ignore[return-value]
-
-
-class NamespacedGauge(Gauge):
-    def labels(self, **kwargs: str) -> NamespacedGauge:
         kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)  # type: ignore[return-value]
 
@@ -97,19 +90,6 @@ dreamer_tokens_processed_counter = NamespacedCounter(
     "dreamer_tokens_processed",
     "Total tokens processed by the dreamer",
     ["namespace", "specialist_name", "token_type"],
-)
-
-# MessageEmbedding sync_state gauges.
-message_embeddings_pending_gauge = NamespacedGauge(
-    "message_embeddings_pending",
-    "MessageEmbedding rows with sync_state='pending'",
-    ["namespace"],
-)
-
-message_embeddings_failed_gauge = NamespacedGauge(
-    "message_embeddings_failed",
-    "MessageEmbedding rows with sync_state='failed'",
-    ["namespace"],
 )
 
 
@@ -221,18 +201,6 @@ class PrometheusMetrics:
             ).inc(count)
         except Exception as e:
             self._handle_metric_error("record_dialectic_tokens", e)
-
-    def set_message_embedding_state_counts(
-        self,
-        *,
-        pending: int,
-        failed: int,
-    ) -> None:
-        try:
-            message_embeddings_pending_gauge.labels().set(pending)
-            message_embeddings_failed_gauge.labels().set(failed)
-        except Exception as e:
-            self._handle_metric_error("set_message_embedding_state_counts", e)
 
     def record_dreamer_tokens(
         self,
