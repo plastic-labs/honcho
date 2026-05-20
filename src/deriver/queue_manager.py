@@ -310,16 +310,51 @@ class QueueManager:
             )
 
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
+            # Also force-process work units whose oldest item exceeds STALE_BATCH_HOURS
             if not settings.DERIVER.FLUSH_ENABLED and batch_max_tokens > 0:
-                query = query.where(
-                    or_(
-                        ~work_units_subq.c.work_unit_key.startswith(
-                            representation_prefix
-                        ),
-                        func.coalesce(token_stats_subq.c.total_tokens, 0)
-                        >= batch_max_tokens,
+                stale_hours = settings.DERIVER.STALE_BATCH_HOURS
+                if stale_hours > 0:
+                    stale_cutoff = datetime.now(timezone.utc) - timedelta(
+                        hours=stale_hours
                     )
-                )
+                    oldest_item_subq = (
+                        select(
+                            models.QueueItem.work_unit_key,
+                            func.min(models.QueueItem.created_at).label(
+                                "oldest_created"
+                            ),
+                        )
+                        .where(~models.QueueItem.processed)
+                        .group_by(models.QueueItem.work_unit_key)
+                        .subquery()
+                    )
+                    query = query.outerjoin(
+                        oldest_item_subq,
+                        work_units_subq.c.work_unit_key
+                        == oldest_item_subq.c.work_unit_key,
+                    ).where(
+                        or_(
+                            ~work_units_subq.c.work_unit_key.startswith(
+                                representation_prefix
+                            ),
+                            func.coalesce(token_stats_subq.c.total_tokens, 0)
+                            >= batch_max_tokens,
+                            func.coalesce(
+                                oldest_item_subq.c.oldest_created, stale_cutoff
+                            )
+                            <= stale_cutoff,
+                        )
+                    )
+                else:
+                    query = query.where(
+                        or_(
+                            ~work_units_subq.c.work_unit_key.startswith(
+                                representation_prefix
+                            ),
+                            func.coalesce(token_stats_subq.c.total_tokens, 0)
+                            >= batch_max_tokens,
+                        )
+                    )
 
             result = await db.execute(query)
             available_units = result.scalars().all()

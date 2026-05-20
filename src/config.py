@@ -780,6 +780,9 @@ class DeriverSettings(HonchoSettings):
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
 
+    # Force-process representation work units whose oldest queue item is older than this many hours
+    STALE_BATCH_HOURS: Annotated[int, Field(default=0, ge=0, le=168)] = 0
+
     @model_validator(mode="before")
     @classmethod
     def _merge_model_config_defaults(cls, data: Any) -> Any:
