@@ -7,9 +7,10 @@ and synthesize responses to queries about a peer.
 
 import logging
 import time
-import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
+
+from nanoid import generate as generate_nanoid
 
 from src import crud
 from src.config import ConfiguredModelSettings, ReasoningLevel, settings
@@ -21,8 +22,9 @@ from src.llm import (
     StreamingResponseWithMetadata,
     honcho_llm_call,
 )
+from src.llm.types import LLMTelemetryContext
 from src.telemetry import prometheus_metrics
-from src.telemetry.events import DialecticCompletedEvent, emit
+from src.telemetry.events import DialecticCompletedEvent, EmbeddingCallPurpose, emit
 from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -36,6 +38,7 @@ from src.utils.agent_tools import (
     search_memory,
 )
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +102,7 @@ class DialecticAgent:
         ]
         self._session_history_initialized: bool = False
         self._prefetched_conclusion_count: int = 0
-        self._run_id: str = str(uuid.uuid4())[
-            :8
-        ]  # Always generate for event correlation
+        self._run_id: str = generate_nanoid()  # Always generate for event correlation
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -173,7 +174,13 @@ class DialecticAgent:
 
         try:
             # Pre-compute embedding once for both searches (no DB needed)
-            query_embedding = await embedding_client.embed(query)
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.DIALECTIC_PREFETCH.value,
+                workspace_name=self.workspace_name,
+                run_id=self._run_id,
+                parent_category="dialectic",
+            ):
+                query_embedding = await embedding_client.embed(query)
 
             # search_memory manages its own short-lived DB sessions so no
             # connection is held during external vector-store calls.
@@ -200,10 +207,11 @@ class DialecticAgent:
             if explicit_repr.is_empty() and derived_repr.is_empty():
                 return None
 
-            # Count prefetched conclusions for telemetry
-            explicit_count = len(explicit_repr.explicit) + len(explicit_repr.deductive)
-            derived_count = len(derived_repr.explicit) + len(derived_repr.deductive)
-            self._prefetched_conclusion_count = explicit_count + derived_count
+            # Count prefetched conclusions for telemetry. `Representation.len()`
+            # sums all four levels (explicit/deductive/inductive/contradiction);
+            # the previous hand-sum dropped inductive + contradiction even
+            # though prefetch explicitly requests them.
+            self._prefetched_conclusion_count = explicit_repr.len() + derived_repr.len()
 
             # Format as two separate sections
             parts: list[str] = []
@@ -242,7 +250,7 @@ class DialecticAgent:
         if self.metric_key:
             task_name = self.metric_key
         else:
-            run_id = str(uuid.uuid4())[:8]
+            run_id = generate_nanoid()
             task_name = f"dialectic_chat_{run_id}"
         start_time = time.perf_counter()
 
@@ -293,6 +301,23 @@ class DialecticAgent:
 
         return tool_executor, task_name, run_id, start_time
 
+    def _telemetry_context(self) -> LLMTelemetryContext:
+        """Build the LLMTelemetryContext shared by answer() and answer_stream().
+
+        Carries the instance's `_run_id` (always set in __init__) + workspace +
+        peer identifiers so LLMCallCompletedEvent and 's
+        AgentIterationEvent can attribute every per-iteration LLM call back to
+        this dialectic invocation.
+        """
+        return LLMTelemetryContext(
+            workspace_name=self.workspace_name,
+            call_purpose="dialectic.answer",
+            parent_category="dialectic",
+            agent_type="dialectic",
+            run_id=self._run_id,
+            peer_name=self.observed,
+        )
+
     def _log_response_metrics(
         self,
         task_name: str,
@@ -306,6 +331,7 @@ class DialecticAgent:
         tool_calls_count: int,
         thinking_content: str | None,
         iterations: int,
+        hit_input_token_cap: bool = False,
     ) -> None:
         """
         Log metrics common to both streaming and non-streaming responses.
@@ -374,6 +400,7 @@ class DialecticAgent:
                 output_tokens=output_tokens,
                 cache_read_tokens=cache_read_input_tokens or 0,
                 cache_creation_tokens=cache_creation_input_tokens or 0,
+                hit_input_token_cap=hit_input_token_cap,
             )
         )
 
@@ -422,6 +449,7 @@ class DialecticAgent:
             track_name="Dialectic Agent",
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
             trace_name="dialectic_chat",
+            telemetry=self._telemetry_context(),
         )
 
         self._log_response_metrics(
@@ -436,6 +464,7 @@ class DialecticAgent:
             tool_calls_count=len(response.tool_calls_made),
             thinking_content=response.thinking_content,
             iterations=response.iterations,
+            hit_input_token_cap=response.hit_input_token_cap,
         )
 
         return response.content
@@ -489,6 +518,7 @@ class DialecticAgent:
                 track_name="Dialectic Agent Stream",
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
+                telemetry=self._telemetry_context(),
             ),
         )
 
@@ -510,4 +540,5 @@ class DialecticAgent:
             tool_calls_count=len(response.tool_calls_made),
             thinking_content=response.thinking_content,
             iterations=response.iterations,
+            hit_input_token_cap=response.hit_input_token_cap,
         )

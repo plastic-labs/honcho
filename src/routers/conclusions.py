@@ -9,6 +9,8 @@ from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import require_auth
+from src.telemetry.events import EmbeddingCallPurpose
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -111,16 +113,21 @@ async def query_conclusions(
             "observer and observed must be specified for semantic search"
         )
 
-    documents = await crud.query_documents(
-        db,
+    with embedding_call_purpose(
+        EmbeddingCallPurpose.GENERIC_DOCUMENT_SEARCH.value,
         workspace_name=workspace_id,
-        query=body.query,
-        observer=observer,
-        observed=observed,
-        filters=body.filters,
-        max_distance=body.distance,
-        top_k=body.top_k,
-    )
+        parent_category="api",
+    ):
+        documents = await crud.query_documents(
+            db,
+            workspace_name=workspace_id,
+            query=body.query,
+            observer=observer,
+            observed=observed,
+            filters=body.filters,
+            max_distance=body.distance,
+            top_k=body.top_k,
+        )
     return [schemas.Conclusion.model_validate(doc) for doc in documents]
 
 
