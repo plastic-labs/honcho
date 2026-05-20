@@ -104,6 +104,11 @@ def short_summary_prompt(
     return c(f"""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
+Output language: write the summary in English. If source messages contain Chinese
+or another non-English language, translate the relevant meaning into English
+instead of preserving the non-English text, unless exact literal text is necessary
+as a name, command, path, URL, code token, or short quote.
+
 1. Key facts and information shared (**Capture as many explicit facts as possible**)
 2. User preferences, opinions, and questions
 3. Important context and requests
@@ -135,6 +140,11 @@ def long_summary_prompt(
     """Generate the long summary prompt."""
     return c(f"""
 You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
+
+Output language: write the summary in English. If source messages contain Chinese
+or another non-English language, translate the relevant meaning into English
+instead of preserving the non-English text, unless exact literal text is necessary
+as a name, command, path, URL, code token, or short quote.
 
 1. Key facts and information shared (**Capture as many explicit facts as possible**)
 2. User preferences, opinions, and questions
