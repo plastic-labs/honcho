@@ -17,6 +17,7 @@ from .api_types import (
     PeerResponse,
     QueueStatusResponse,
     SessionConfiguration,
+    SessionPeerConfig,
     SessionResponse,
     WorkspaceConfiguration,
     WorkspaceResponse,
@@ -28,7 +29,7 @@ from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
-from .utils import resolve_id
+from .utils import normalize_peers_to_dict, resolve_id
 
 logger = logging.getLogger(__name__)
 
@@ -400,6 +401,17 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),
+        peers: str
+        | PeerBase
+        | tuple[str, SessionPeerConfig]
+        | tuple[PeerBase, SessionPeerConfig]
+        | list[PeerBase | str]
+        | list[tuple[PeerBase | str, SessionPeerConfig]]
+        | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]]
+        | None = Field(
+            None,
+            description="Optional peers to attach to the session at creation. Accepts the same shape as Session.add_peers.",
+        ),
     ) -> Session:
         """
         Get or create a session with the given ID.
@@ -411,6 +423,9 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             id: Unique identifier for the session within the workspace.
             metadata: Optional metadata dictionary to associate with this session.
             configuration: Optional configuration to set for this session.
+            peers: Optional peers to attach to the session at creation. Accepts the
+                same shape as Session.add_peers (peer ID string, Peer object, list
+                of either, or tuples with SessionPeerConfig).
 
         Returns:
             A Session object with cached metadata, configuration, created_at, and is_active.
@@ -421,6 +436,8 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             body["metadata"] = metadata
         if configuration is not None:
             body["configuration"] = configuration.model_dump(exclude_none=True)
+        if peers is not None:
+            body["peers"] = normalize_peers_to_dict(peers)
 
         data = self._http.post(routes.sessions(self.workspace_id), body=body)
         session_data = SessionResponse.model_validate(data)
