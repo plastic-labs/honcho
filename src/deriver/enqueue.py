@@ -399,6 +399,10 @@ def create_dream_record(
     observed: str,
     dream_type: schemas.DreamType,
     session_name: str | None = None,
+    trigger_reason: str | None = None,
+    delay_reason: str | None = None,
+    documents_since_last_dream_at_schedule: int | None = None,
+    document_threshold: int | None = None,
 ) -> dict[str, Any]:
     """
     Create a queue record for a dream task.
@@ -409,6 +413,10 @@ def create_dream_record(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to if specified
+        trigger_reason: what tripped the schedule
+        delay_reason: what governed when it fires
+        documents_since_last_dream_at_schedule: count snapshot at schedule time
+        document_threshold: DOCUMENT_THRESHOLD snapshot at schedule time
 
     Returns:
         Queue record dictionary with workspace_name and other fields
@@ -418,6 +426,10 @@ def create_dream_record(
         observer=observer,
         observed=observed,
         session_name=session_name,
+        trigger_reason=trigger_reason,
+        delay_reason=delay_reason,
+        documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+        document_threshold=document_threshold,
     )
 
     return {
@@ -436,6 +448,10 @@ async def enqueue_dream(
     observed: str,
     dream_type: schemas.DreamType,
     session_name: str | None = None,
+    trigger_reason: str | None = None,
+    delay_reason: str | None = None,
+    documents_since_last_dream_at_schedule: int | None = None,
+    document_threshold: int | None = None,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
@@ -461,6 +477,10 @@ async def enqueue_dream(
                 observed=observed,
                 dream_type=dream_type,
                 session_name=session_name,
+                trigger_reason=trigger_reason,
+                delay_reason=delay_reason,
+                documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+                document_threshold=document_threshold,
             )
 
             work_unit_key = dream_record["work_unit_key"]

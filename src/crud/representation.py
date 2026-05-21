@@ -15,6 +15,7 @@ from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
 from src.schemas import ResolvedConfiguration
+from src.telemetry.events import EmbeddingCallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
 from src.utils.representation import (
@@ -22,6 +23,7 @@ from src.utils.representation import (
     ExplicitObservation,
     Representation,
 )
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,14 @@ class RepresentationManager:
 
         observation_texts = [_observation_text(obs) for obs in all_observations]
         try:
-            embeddings = await embedding_client.simple_batch_embed(observation_texts)
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
+                workspace_name=self.workspace_name,
+                parent_category="representation",
+            ):
+                embeddings = await embedding_client.simple_batch_embed(
+                    observation_texts
+                )
         except ValueError as e:
             raise exceptions.ValidationException(
                 "Observation content exceeds maximum token limit of "
@@ -210,6 +219,8 @@ class RepresentationManager:
         semantic_search_max_distance: float | None = None,
         include_most_derived: bool = False,
         max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+        parent_category: str | None = None,
+        embedding_purpose: EmbeddingCallPurpose = EmbeddingCallPurpose.SEARCH_MEMORY,
     ) -> Representation:
         """
         Get working representation with flexible query options.
@@ -224,13 +235,32 @@ class RepresentationManager:
             semantic_search_max_distance: Maximum distance for semantic search
             include_most_derived: Include most derived observations
             max_observations: Maximum total observations to return
+            parent_category: Optional workflow attribution forwarded to the
+                fallback embedding call when the caller didn't pre-compute
+                an embedding (or pre-compute failed).
+            embedding_purpose: Embedding call_purpose tag to use on the
+                fallback embed when no pre-computed embedding was supplied.
+                Defaults to SEARCH_MEMORY; callers whose route-level
+                precompute uses a more specific purpose (e.g.
+                SESSION_CONTEXT_SEARCH) should pass that here so the
+                fallback path lands in the same analytics bucket.
 
         Returns:
             Representation combining various query strategies
         """
         if include_semantic_query and embedding is None:
-            with suppress(Exception):
-                # Best-effort precompute
+            # Best-effort precompute when caller didn't supply one (or their
+            # precompute was suppressed). The purpose is parameterized so
+            # this fallback shows up in the same telemetry bucket as the
+            # successful path — see embedding_purpose docstring above.
+            with (
+                suppress(Exception),
+                embedding_call_purpose(
+                    embedding_purpose.value,
+                    workspace_name=self.workspace_name,
+                    parent_category=parent_category,
+                ),
+            ):
                 embedding = await embedding_client.embed(include_semantic_query)
 
         if db is not None:
@@ -496,6 +526,8 @@ async def get_working_representation(
     semantic_search_max_distance: float | None = None,
     include_most_derived: bool = False,
     max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+    parent_category: str | None = None,
+    embedding_purpose: EmbeddingCallPurpose = EmbeddingCallPurpose.SEARCH_MEMORY,
 ) -> Representation:
     """
     Get raw working representation data from the relevant document collection.
@@ -507,6 +539,11 @@ async def get_working_representation(
         db: Optional database session. If provided, uses it directly;
             otherwise creates a new session via tracked_db.
         embedding: Pre-computed embedding for the semantic query.
+        parent_category: Workflow attribution forwarded to the fallback
+            embedding call when no pre-computed embedding was supplied.
+        embedding_purpose: Embedding call_purpose for the fallback embed;
+            callers should match it to whatever purpose their route-level
+            precompute used so failure/retry paths stay in the same bucket.
     """
     manager = RepresentationManager(
         workspace_name=workspace_name,
@@ -522,4 +559,6 @@ async def get_working_representation(
         semantic_search_max_distance=semantic_search_max_distance,
         include_most_derived=include_most_derived,
         max_observations=max_observations,
+        parent_category=parent_category,
+        embedding_purpose=embedding_purpose,
     )

@@ -2,6 +2,7 @@ import asyncio
 import signal
 from asyncio import Task
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any, NamedTuple, cast
@@ -54,6 +55,25 @@ class WorkerOwnership(NamedTuple):
 
     work_unit_key: str
     aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
+
+
+@dataclass(frozen=True)
+class QueueBatchResult:
+    """Result of `QueueManager.get_queue_item_batch`.
+
+    telemetry needs to know two things in addition to the batch
+    contents: whether the cumulative-token cap clamped the batch, and what
+    the configured cap was. These flags feed `RepresentationCompletedEvent`
+    so analytics can detect "we under-batched because of a flush" vs
+    "we hit the cap and kept going".
+    """
+
+    messages_context: list[models.Message] = field(default_factory=list)
+    items_to_process: list["QueueItem"] = field(default_factory=list)
+    configuration: ResolvedConfiguration | None = None
+    hit_batch_token_cap: bool = False
+    was_flush_enabled: bool = False
+    batch_max_tokens: int = 0
 
 
 def _detach_queue_batch_objects(
@@ -464,13 +484,12 @@ class QueueManager:
                         break
                     try:
                         if work_unit.task_type == "representation":
-                            (
-                                messages_context,
-                                items_to_process,
-                                message_level_configuration,
-                            ) = await self.get_queue_item_batch(
+                            batch_result = await self.get_queue_item_batch(
                                 work_unit.task_type, work_unit_key, ownership.aqs_id
                             )
+                            messages_context = batch_result.messages_context
+                            items_to_process = batch_result.items_to_process
+                            message_level_configuration = batch_result.configuration
                             logger.debug(
                                 f"Worker {worker_id} retrieved {len(messages_context)} messages and {len(items_to_process)} queue items for work unit {work_unit_key} (AQS ID: {ownership.aqs_id})"
                             )
@@ -503,6 +522,9 @@ class QueueManager:
                                     observers=observers,
                                     observed=work_unit.observed,
                                     queue_item_message_ids=queue_item_message_ids,
+                                    hit_batch_token_cap=batch_result.hit_batch_token_cap,
+                                    was_flush_enabled=batch_result.was_flush_enabled,
+                                    batch_max_tokens=batch_result.batch_max_tokens,
                                 )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
@@ -636,13 +658,17 @@ class QueueManager:
         task_type: str,
         work_unit_key: str,
         aqs_id: str,
-    ) -> tuple[list[models.Message], list[QueueItem], ResolvedConfiguration | None]:
+    ) -> "QueueBatchResult":
         """
         Batch processing for representation and agent tasks.
-        Returns a tuple of (messages_context, items_to_process, configuration).
+
+        Returns a `QueueBatchResult` carrying:
         - messages_context: unique Message rows (conversation turns) forming the context window
         - items_to_process: QueueItems for the current work_unit_key within that window
         - configuration: Resolved configuration for the batch
+        - hit_batch_token_cap: True when the cumulative-token window clamped the batch
+        - was_flush_enabled: snapshot of `settings.DERIVER.FLUSH_ENABLED` at fetch time
+        - batch_max_tokens: snapshot of the cap actually applied to this batch
         """
         if task_type != "representation":
             raise ValueError(
@@ -650,6 +676,7 @@ class QueueManager:
             )
 
         batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        was_flush_enabled = settings.DERIVER.FLUSH_ENABLED
         parsed_key = parse_work_unit_key(work_unit_key)
         messages_context: list[models.Message] = []
         items_to_process: list[QueueItem] = []
@@ -663,7 +690,10 @@ class QueueManager:
                 .where(models.ActiveQueueSession.id == aqs_id)
             )
             if not ownership_check.scalar_one_or_none():
-                return [], [], None
+                return QueueBatchResult(
+                    was_flush_enabled=was_flush_enabled,
+                    batch_max_tokens=batch_max_tokens,
+                )
 
             # Step 2: Build a single SQL query that:
             # 1. Finds the earliest unprocessed message for this work_unit_key
@@ -712,9 +742,16 @@ class QueueManager:
                 preceding_message_id_subq, min_unprocessed_message_id_subq
             )
 
-            # Build CTE with ALL messages starting from effective_start_id
-            # This includes the preceding context message (if any) and interleaving messages
-            cte = (
+            # Build CTE in two nested selects so we can layer a second window
+            # function on top of `cumulative_token_count`. Postgres doesn't
+            # allow nesting window functions in a single select; we compute
+            # `cumulative_token_count` in `inner_cte`, then `cap_exceeded` as
+            # `bool_or(cumulative > cap) OVER ()` in the outer CTE. The flag
+            # is identical across every row, so reading it from any returned
+            # row tells us whether the SQL cap would have excluded messages —
+            # eliminating the separate `SELECT EXISTS` roundtrip that used to
+            # run post-fetch.
+            inner_cte = (
                 select(
                     models.Message.id.label("message_id"),
                     models.Message.token_count.label("token_count"),
@@ -726,7 +763,20 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id >= effective_start_id)
-                .order_by(models.Message.id)
+                .subquery()
+            )
+
+            cte = (
+                select(
+                    inner_cte.c.message_id,
+                    inner_cte.c.token_count,
+                    inner_cte.c.peer_name,
+                    inner_cte.c.cumulative_token_count,
+                    func.bool_or(inner_cte.c.cumulative_token_count > batch_max_tokens)
+                    .over()
+                    .label("cap_exceeded"),
+                )
+                .order_by(inner_cte.c.message_id)
                 .cte()
             )
 
@@ -738,7 +788,11 @@ class QueueManager:
             )
 
             query = (
-                select(models.Message, models.QueueItem)
+                select(
+                    models.Message,
+                    models.QueueItem,
+                    cte.c.cap_exceeded.label("cap_exceeded"),
+                )
                 .select_from(cte)
                 .join(models.Message, models.Message.id == cte.c.message_id)
                 .outerjoin(
@@ -756,31 +810,108 @@ class QueueManager:
             result = await db.execute(query)
             rows = result.all()
             if not rows:
-                return [], [], None
+                return QueueBatchResult(
+                    was_flush_enabled=was_flush_enabled,
+                    batch_max_tokens=batch_max_tokens,
+                )
+
+            # cap_exceeded is window-aggregated over the CTE — same value on
+            # every row. Read once from the first row; default False if the
+            # cap is disabled (`batch_max_tokens == 0`).
+            cap_exceeded_from_query: bool = (
+                bool(rows[0][2]) if rows and batch_max_tokens > 0 else False
+            )
 
             seen_messages: set[int] = set()
-            for m, qi in rows:
+            for m, qi, _cap in rows:
                 if m.id not in seen_messages:
                     messages_context.append(m)
                     seen_messages.add(m.id)
                 if qi is not None:
                     items_to_process.append(qi)
 
+            # Detach BEFORE config-filter — `_resolve_batch_configuration` is
+            # sync and doesn't need the session; `messages_context` is a plain
+            # Python list after detach and survives the rest of this block.
             _detach_queue_batch_objects(db, messages_context, items_to_process)
 
-        items_to_process, resolved_config = _resolve_batch_configuration(
-            items_to_process
-        )
-
-        if items_to_process:
-            max_queue_item_message_id = max(
-                qi.message_id for qi in items_to_process if qi.message_id is not None
+            # The QUEUE-ITEM boundary (not the messages_context tail) is
+            # what matters for cap detection. messages_context includes
+            # non-queue interleaving context messages — if SQL kept some
+            # trailing context past the last queued item, the config
+            # filter trims that context but doesn't touch the queue
+            # items. Using messages_context[-1].id as a "did config
+            # filter shrink the batch" signal produced false negatives
+            # for that case.
+            last_queued_id_before: int | None = (
+                max(
+                    qi.message_id
+                    for qi in items_to_process
+                    if qi.message_id is not None
+                )
+                if items_to_process
+                else None
             )
-            messages_context = [
-                m for m in messages_context if m.id <= max_queue_item_message_id
-            ]
 
-        return messages_context, items_to_process, resolved_config
+            items_to_process, resolved_config = _resolve_batch_configuration(
+                items_to_process
+            )
+            if items_to_process:
+                max_queue_item_message_id = max(
+                    qi.message_id
+                    for qi in items_to_process
+                    if qi.message_id is not None
+                )
+                messages_context = [
+                    m for m in messages_context if m.id <= max_queue_item_message_id
+                ]
+
+            last_queued_id_after: int | None = (
+                max(
+                    qi.message_id
+                    for qi in items_to_process
+                    if qi.message_id is not None
+                )
+                if items_to_process
+                else None
+            )
+
+            # detect if `batch_max_tokens` clamped this returned batch.
+            #
+            # `cap_exceeded_from_query` comes from the CTE's
+            # `bool_or(cumulative > cap) OVER ()` column — true iff the
+            # SQL would have excluded at least one message because of the
+            # cap. Combined with the queue-boundary guard below, this
+            # tells us the cap was binding on the returned batch:
+            #
+            #   1. Config filter didn't shrink the QUEUE-ITEM boundary
+            #      (`last_queued_id_before == last_queued_id_after`) —
+            #      i.e. SQL chose the trailing queue item, not config; AND
+            #   2. The CTE detected at least one message past the cap.
+            #
+            # Both conditions must hold; otherwise the cap wasn't the
+            # constraint on this specific returned batch.
+            #
+            # Previously we issued a separate `SELECT EXISTS` query for
+            # the second condition. Folding it into the CTE eliminates the
+            # roundtrip — every batch fetch is now one query, not two.
+            if (
+                batch_max_tokens > 0
+                and last_queued_id_before is not None
+                and last_queued_id_before == last_queued_id_after
+            ):
+                hit_batch_token_cap = cap_exceeded_from_query
+            else:
+                hit_batch_token_cap = False
+
+        return QueueBatchResult(
+            messages_context=messages_context,
+            items_to_process=items_to_process,
+            configuration=resolved_config,
+            hit_batch_token_cap=hit_batch_token_cap,
+            was_flush_enabled=was_flush_enabled,
+            batch_max_tokens=batch_max_tokens,
+        )
 
     async def mark_queue_items_as_processed(
         self, items: list[QueueItem], work_unit_key: str

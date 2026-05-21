@@ -1,7 +1,7 @@
 # pyright: reportUnknownParameterType=false, reportMissingParameterType=false, reportUnusedParameter=false
 """Unit tests for telemetry event classes.
 
-Tests all 12 event types for:
+Tests all telemetry event types for:
 - Correct instantiation with required fields
 - event_type(), schema_version(), category() class methods
 - get_resource_id() returns expected format
@@ -21,10 +21,16 @@ from src.telemetry.events.agent import (
     AgentToolPeerCardUpdatedEvent,
     AgentToolSummaryCreatedEvent,
 )
+from src.telemetry.events.api import (
+    FileUploadedEvent,
+    GetContextEvent,
+    MessageCreatedEvent,
+)
 from src.telemetry.events.base import BaseEvent, generate_event_id
 from src.telemetry.events.deletion import DeletionCompletedEvent
 from src.telemetry.events.dialectic import DialecticCompletedEvent
 from src.telemetry.events.dream import DreamRunEvent, DreamSpecialistEvent
+from src.telemetry.events.llm import CallPurpose, LLMCallCompletedEvent
 from src.telemetry.events.reconciliation import (
     CleanupStaleItemsCompletedEvent,
     SyncVectorsCompletedEvent,
@@ -91,6 +97,27 @@ class TestGenerateEventId:
         # Base64url encoded 16 bytes = 22 chars (without padding)
         assert len(event_id) == 4 + 22  # "evt_" + 22 chars
 
+    def test_honcho_version_changes_id(self, fixed_timestamp: datetime):
+        """Same event from different deploys must produce distinct IDs so
+        downstream dedupe doesn't silently merge events whose payload shape
+        may have shifted between versions."""
+        id_a = generate_event_id(
+            "test.event", fixed_timestamp, "resource_1", honcho_version="2.0.0"
+        )
+        id_b = generate_event_id(
+            "test.event", fixed_timestamp, "resource_1", honcho_version="2.0.1"
+        )
+        assert id_a != id_b
+
+    def test_honcho_version_none_matches_empty(self, fixed_timestamp: datetime):
+        """None and unset version segments are equivalent — backwards-
+        compatible with callers that don't pass the new kwarg yet."""
+        id_default = generate_event_id("test.event", fixed_timestamp, "resource_1")
+        id_explicit_none = generate_event_id(
+            "test.event", fixed_timestamp, "resource_1", honcho_version=None
+        )
+        assert id_default == id_explicit_none
+
 
 # =============================================================================
 # Tests for BaseEvent class
@@ -116,6 +143,7 @@ class TestBaseEvent:
             llm_call_ms=100.0,
             total_duration_ms=110.0,
             input_tokens=100,
+            total_input_tokens=150,
             output_tokens=50,
         )
 
@@ -141,10 +169,6 @@ class TestRepresentationCompletedEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert RepresentationCompletedEvent.event_type() == "representation.completed"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert RepresentationCompletedEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""
@@ -182,6 +206,280 @@ class TestRepresentationCompletedEvent:
 
 
 # =============================================================================
+# Tests for LLMCallCompletedEvent ()
+# =============================================================================
+
+
+class TestLLMCallCompletedEvent:
+    """Tests for the LLMCallCompletedEvent."""
+
+    def test_event_type(self):
+        assert LLMCallCompletedEvent.event_type() == "llm.call.completed"
+
+    def test_category(self):
+        assert LLMCallCompletedEvent.category() == "llm"
+
+    def test_volume_class(self):
+        # event must be high_volume so the sampler picks it up.
+        assert LLMCallCompletedEvent.volume_class() == "high_volume"
+
+    def test_get_resource_id_includes_attempt(
+        self, sample_llm_call_event: LLMCallCompletedEvent
+    ):
+        # Resource id must include attempt so multiple retry attempts in one
+        # iteration get distinct deterministic ids.
+        assert (
+            sample_llm_call_event.get_resource_id()
+            == "abc12345:1:1:anthropic:claude-sonnet-4-5"
+        )
+
+    def test_call_purpose_enum_values(self):
+        # The closed taxonomy used by callers.
+        assert CallPurpose.DERIVER_REPRESENTATION.value == "deriver.representation"
+        assert CallPurpose.DIALECTIC_ANSWER.value == "dialectic.answer"
+        assert CallPurpose.DREAM_DEDUCTION.value == "dream.deduction"
+        assert CallPurpose.DREAM_INDUCTION.value == "dream.induction"
+        assert CallPurpose.SUMMARY_SHORT.value == "summary.short"
+        assert CallPurpose.SUMMARY_LONG.value == "summary.long"
+
+    def test_error_outcome_with_error_class(self, fixed_timestamp: datetime):
+        event = LLMCallCompletedEvent(
+            timestamp=fixed_timestamp,
+            transport="openai",
+            model="gpt-4",
+            effective_max_output_tokens=512,
+            outcome="error",
+            is_final_attempt=True,
+            error_class="RateLimitError",
+            attempt=3,
+            retry_attempts=3,
+            was_fallback=True,
+            duration_ms=200.0,
+        )
+        assert event.outcome == "error"
+        assert event.error_class == "RateLimitError"
+        assert event.is_final_attempt is True
+        # Token fields default to 0 when no result was produced.
+        assert event.provider_input_tokens == 0
+        assert event.provider_output_tokens == 0
+
+    def test_stream_placeholder_has_zero_tokens(self, fixed_timestamp: datetime):
+        event = LLMCallCompletedEvent(
+            timestamp=fixed_timestamp,
+            transport="anthropic",
+            model="claude-sonnet-4-5",
+            effective_max_output_tokens=2048,
+            outcome="success",
+            is_final_attempt=False,
+            attempt=1,
+            retry_attempts=3,
+            was_fallback=False,
+            duration_ms=0.0,
+            was_stream=True,
+        )
+        assert event.was_stream is True
+        assert event.provider_input_tokens == 0
+        assert event.provider_output_tokens == 0
+
+
+# =============================================================================
+# Tests for MessageCreatedEvent
+# =============================================================================
+
+
+class TestMessageCreatedEvent:
+    """Tests for MessageCreatedEvent."""
+
+    def test_event_type(self):
+        """event_type() returns correct value."""
+        assert MessageCreatedEvent.event_type() == "message.created"
+
+    def test_category(self):
+        """category() returns correct value."""
+        assert MessageCreatedEvent.category() == "api"
+
+    def test_get_resource_id(self, sample_message_created_event: MessageCreatedEvent):
+        """get_resource_id() keys on workspace:session:source:last_message_id."""
+        assert (
+            sample_message_created_event.get_resource_id()
+            == "test_workspace:test_session:api:msg_abc123_fixture_____"
+        )
+
+    def test_source_defaults_to_api(self, fixed_timestamp: datetime):
+        """source defaults to api."""
+        event = MessageCreatedEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            session_name="test_session",
+            message_count=1,
+            total_tokens=100,
+            last_message_id="msg_default_source_____",
+        )
+        assert event.source == "api"
+
+    def test_distinct_batches_get_distinct_ids(self, fixed_timestamp: datetime):
+        """Two batches of the same size in the same session+source must produce
+        different event ids — the previous (v1) key collided here."""
+        e1 = MessageCreatedEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="ws",
+            session_name="sess",
+            message_count=5,
+            total_tokens=500,
+            source="api",
+            last_message_id="msg_first_batch________",
+        )
+        e2 = MessageCreatedEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="ws",
+            session_name="sess",
+            message_count=5,
+            total_tokens=500,
+            source="api",
+            last_message_id="msg_second_batch_______",
+        )
+        assert e1.generate_id() != e2.generate_id()
+        assert e1.get_resource_id() != e2.get_resource_id()
+
+
+# =============================================================================
+# Tests for FileUploadedEvent
+# =============================================================================
+
+
+class TestFileUploadedEvent:
+    """Tests for FileUploadedEvent."""
+
+    def test_event_type(self):
+        """event_type() returns correct value."""
+        assert FileUploadedEvent.event_type() == "file.uploaded"
+
+    def test_category(self):
+        """category() returns correct value."""
+        assert FileUploadedEvent.category() == "api"
+
+    def test_get_resource_id(self, sample_file_uploaded_event: FileUploadedEvent):
+        """get_resource_id() returns workspace:session:file format."""
+        assert (
+            sample_file_uploaded_event.get_resource_id()
+            == "test_workspace:test_session:file_123"
+        )
+
+    def test_optional_file_fields(self, fixed_timestamp: datetime):
+        """filename, content_type, and file_size_bytes are optional."""
+        event = FileUploadedEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            session_name="test_session",
+            peer_name="user_peer",
+            file_id="file_123",
+            message_count=1,
+            total_tokens=100,
+        )
+        assert event.filename is None
+        assert event.content_type is None
+        assert event.file_size_bytes is None
+
+
+# =============================================================================
+# Tests for GetContextEvent
+# =============================================================================
+
+
+class TestGetContextEvent:
+    """Tests for GetContextEvent."""
+
+    def test_event_type(self):
+        """event_type() returns correct value."""
+        assert GetContextEvent.event_type() == "context.retrieved"
+
+    def test_category(self):
+        """category() returns correct value."""
+        assert GetContextEvent.category() == "api"
+
+    def test_get_resource_id_session(self, sample_get_context_event: GetContextEvent):
+        """session context resource ID includes workspace and session.
+
+        Uses empty-string sentinel for unset peer/target so that a peer
+        literally named "none" can't collide with the absent-peer case.
+        """
+        assert (
+            sample_get_context_event.get_resource_id()
+            == "test_workspace:session:test_session::"
+        )
+
+    def test_get_resource_id_disambiguates_peer_named_none(
+        self, fixed_timestamp: datetime
+    ):
+        """Regression: a peer literally named "none" must NOT collide with
+        absent-peer resource ids. Empty-string sentinel guards this.
+        """
+        absent = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="ws",
+            context_scope="peer",
+            total_duration_ms=1.0,
+        )
+        literal_none = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="ws",
+            context_scope="peer",
+            peer_name="none",
+            target_name="none",
+            total_duration_ms=1.0,
+        )
+        assert absent.get_resource_id() != literal_none.get_resource_id()
+
+    def test_get_resource_id_peer(self, fixed_timestamp: datetime):
+        """peer context resource ID includes observer and observed peers."""
+        event = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            context_scope="peer",
+            peer_name="observer",
+            target_name="observed",
+            total_duration_ms=10.0,
+        )
+        assert event.get_resource_id() == "test_workspace:peer:observer:observed"
+
+    def test_context_defaults(self, fixed_timestamp: datetime):
+        """Context booleans and counts have conservative defaults."""
+        event = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            context_scope="session",
+            session_name="test_session",
+            total_duration_ms=10.0,
+        )
+        assert event.message_count == 0
+        assert event.has_summary is False
+        assert event.has_representation is False
+        assert event.include_summary is None
+        assert event.tokens_requested is None
+        assert event.peer_perspective_provided is False
+
+    def test_session_context_can_record_raw_request_options(
+        self, fixed_timestamp: datetime
+    ):
+        """Raw request options can be recorded independently of resolved values."""
+        event = GetContextEvent(
+            timestamp=fixed_timestamp,
+            workspace_name="test_workspace",
+            context_scope="session",
+            session_name="test_session",
+            peer_name="observer",
+            target_name="observed",
+            tokens_requested=8000,
+            include_summary=False,
+            peer_perspective_provided=True,
+            total_duration_ms=10.0,
+        )
+        assert event.tokens_requested == 8000
+        assert event.include_summary is False
+        assert event.peer_perspective_provided is True
+
+
+# =============================================================================
 # Tests for DreamRunEvent
 # =============================================================================
 
@@ -192,10 +490,6 @@ class TestDreamRunEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert DreamRunEvent.event_type() == "dream.run"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert DreamRunEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""
@@ -229,10 +523,6 @@ class TestDreamSpecialistEvent:
         """event_type() returns correct value."""
         assert DreamSpecialistEvent.event_type() == "dream.specialist"
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert DreamSpecialistEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert DreamSpecialistEvent.category() == "dream"
@@ -261,10 +551,6 @@ class TestDialecticCompletedEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert DialecticCompletedEvent.event_type() == "dialectic.completed"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert DialecticCompletedEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""
@@ -324,10 +610,6 @@ class TestAgentIterationEvent:
         """event_type() returns correct value."""
         assert AgentIterationEvent.event_type() == "agent.iteration"
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentIterationEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert AgentIterationEvent.category() == "agent"
@@ -380,10 +662,6 @@ class TestAgentToolConclusionsCreatedEvent:
             == "agent.tool.conclusions.created"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentToolConclusionsCreatedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert AgentToolConclusionsCreatedEvent.category() == "agent"
@@ -420,10 +698,6 @@ class TestAgentToolConclusionsDeletedEvent:
             == "agent.tool.conclusions.deleted"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentToolConclusionsDeletedEvent.schema_version() == 2
-
     def test_category(self):
         """category() returns correct value."""
         assert AgentToolConclusionsDeletedEvent.category() == "agent"
@@ -452,10 +726,6 @@ class TestAgentToolPeerCardUpdatedEvent:
             AgentToolPeerCardUpdatedEvent.event_type() == "agent.tool.peer_card.updated"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentToolPeerCardUpdatedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert AgentToolPeerCardUpdatedEvent.category() == "agent"
@@ -481,10 +751,6 @@ class TestAgentToolSummaryCreatedEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert AgentToolSummaryCreatedEvent.event_type() == "agent.tool.summary.created"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert AgentToolSummaryCreatedEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""
@@ -531,10 +797,6 @@ class TestDeletionCompletedEvent:
     def test_event_type(self):
         """event_type() returns correct value."""
         assert DeletionCompletedEvent.event_type() == "deletion.completed"
-
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert DeletionCompletedEvent.schema_version() == 1
 
     def test_category(self):
         """category() returns correct value."""
@@ -601,10 +863,6 @@ class TestSyncVectorsCompletedEvent:
             == "reconciliation.sync_vectors.completed"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert SyncVectorsCompletedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert SyncVectorsCompletedEvent.category() == "reconciliation"
@@ -642,10 +900,6 @@ class TestCleanupStaleItemsCompletedEvent:
             == "reconciliation.cleanup_stale_items.completed"
         )
 
-    def test_schema_version(self):
-        """schema_version() returns correct value."""
-        assert CleanupStaleItemsCompletedEvent.schema_version() == 1
-
     def test_category(self):
         """category() returns correct value."""
         assert CleanupStaleItemsCompletedEvent.category() == "reconciliation"
@@ -664,6 +918,25 @@ class TestCleanupStaleItemsCompletedEvent:
         )
         assert event.documents_cleaned == 0
         assert event.queue_items_cleaned == 0
+
+    def test_queue_items_cleaned_round_trips_through_pydantic(
+        self, fixed_timestamp: datetime
+    ):
+        """Regression: `queue_items_cleaned` is a real field, not just
+        plumbing. Previously the consumer emit site dropped the captured
+        `deleted_count` and the field always defaulted to 0 on the wire.
+        """
+        event = CleanupStaleItemsCompletedEvent(
+            timestamp=fixed_timestamp,
+            total_duration_ms=500.0,
+            queue_items_cleaned=42,
+        )
+        assert event.queue_items_cleaned == 42
+        # Serialize → deserialize to ensure the field crosses the wire.
+        data = event.model_dump(mode="json")
+        assert data["queue_items_cleaned"] == 42
+        round_tripped = CleanupStaleItemsCompletedEvent.model_validate(data)
+        assert round_tripped.queue_items_cleaned == 42
 
 
 # =============================================================================
