@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from src.exceptions import ValidationException
 from src.llm.backends.openai import OpenAIBackend
 
 
@@ -153,18 +152,79 @@ async def test_openai_backend_does_not_treat_proxy_models_with_gpt5_substring_as
 
 
 @pytest.mark.asyncio
-async def test_openai_backend_rejects_thinking_budget_tokens() -> None:
-    backend = OpenAIBackend(Mock())
-
-    with pytest.raises(
-        ValidationException, match="does not support thinking_budget_tokens"
-    ):
-        await backend.complete(
-            model="gpt-5-mini",
-            messages=[{"role": "user", "content": "Hello"}],
-            max_tokens=100,
-            thinking_budget_tokens=256,
+async def test_openai_backend_passes_thinking_budget_via_extra_body() -> None:
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
         )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="x-ai/grok-4.1-fast",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_budget_tokens=256,
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["extra_body"] == {"reasoning": {"max_tokens": 256}}
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_skips_extra_body_when_thinking_budget_zero() -> None:
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="x-ai/grok-4.1-fast",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_budget_tokens=0,
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert "extra_body" not in call
 
 
 @pytest.mark.asyncio
