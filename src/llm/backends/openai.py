@@ -324,9 +324,10 @@ class OpenAIBackend:
         # LiteLLM's Langfuse callback reads metadata.session_id to group
         # traces from the same agent operation (dream cycle, dialectic
         # request, etc.) under one Langfuse session.
-        if extra_params and "langfuse_session_id" in extra_params:
+        session_id = extra_params.get("langfuse_session_id") if extra_params else None
+        if isinstance(session_id, str) and session_id:
             params["extra_body"] = {
-                "metadata": {"session_id": extra_params["langfuse_session_id"]}
+                "metadata": {"session_id": session_id}
             }
 
         return params

@@ -322,7 +322,11 @@ async def honcho_llm_call_inner(
     # Propagate Langfuse session_id for trace grouping via LiteLLM proxy.
     # When set, backends include it in the request metadata so LiteLLM's
     # Langfuse callback groups all calls from the same agent operation.
-    if telemetry and telemetry.langfuse_session_id:
+    if (
+        telemetry
+        and telemetry.langfuse_session_id
+        and isinstance(telemetry.langfuse_session_id, str)
+    ):
         call_extras["langfuse_session_id"] = telemetry.langfuse_session_id
 
     if stream:
