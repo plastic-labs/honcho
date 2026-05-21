@@ -1,6 +1,8 @@
 import logging
 import time
 
+from nanoid import generate as generate_nanoid
+
 from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
@@ -62,6 +64,8 @@ async def process_representation_tasks_batch(
         return
 
     overall_start = time.perf_counter()
+
+    batch_id = generate_nanoid()
 
     messages.sort(key=lambda x: x.id)
     latest_message = messages[-1]
@@ -159,7 +163,7 @@ async def process_representation_tasks_batch(
             call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
             parent_category="representation",
             observed=observed,
-            langfuse_session_id=f"deriver-{latest_message.workspace_name}-{observed}",
+            langfuse_session_id=f"deriver-{batch_id}",
         ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
