@@ -1210,18 +1210,6 @@ class DreamSettings(HonchoSettings):
         return self
 
 
-class CORSSettings(HonchoSettings):
-    """Settings for the FastAPI CORS middleware (allowed origins)."""
-
-    model_config = SettingsConfigDict(env_prefix="CORS_", extra="ignore")  # pyright: ignore
-
-    ORIGINS: list[str] = [
-        "http://localhost",
-        "http://127.0.0.1:8000",
-        "https://api.honcho.dev",
-    ]
-
-
 class VectorStoreSettings(HonchoSettings):
     """Settings for vector store (pgvector, Turbopuffer, or LanceDB)."""
 
@@ -1286,6 +1274,13 @@ class AppSettings(HonchoSettings):
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 
+    # Origins allowed by the FastAPI CORSMiddleware
+    CORS_ORIGINS: list[str] = [
+        "http://localhost",
+        "http://127.0.0.1:8000",
+        "https://api.honcho.dev",
+    ]
+
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
     REASONING_TRACES_FILE: str | None = None  # Path to JSONL file for reasoning traces
@@ -1308,7 +1303,6 @@ class AppSettings(HonchoSettings):
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
-    CORS: CORSSettings = Field(default_factory=CORSSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
