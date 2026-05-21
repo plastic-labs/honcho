@@ -201,6 +201,55 @@ async def test_session_peer_config(client_fixture: tuple[Honcho, str]):
 
 
 @pytest.mark.asyncio
+async def test_session_create_with_peers(client_fixture: tuple[Honcho, str]):
+    """
+    Tests creating a session with peers attached in a single call.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        session = await honcho_client.aio.session(
+            id="test-session-create-peers-async",
+            peers=["create-peer-async-a", "create-peer-async-b"],
+        )
+        assert isinstance(session, Session)
+        peers = await session.aio.peers()
+        peer_ids = {p.id for p in peers}
+        assert "create-peer-async-a" in peer_ids
+        assert "create-peer-async-b" in peer_ids
+
+        config = SessionPeerConfig(observe_me=True, observe_others=False)
+        peer = await honcho_client.aio.peer(id="create-peer-async-config")
+        session_with_config = await honcho_client.aio.session(
+            id="test-session-create-peers-config-async",
+            peers=[(peer, config)],
+        )
+        retrieved = await session_with_config.aio.get_peer_configuration(peer)
+        assert retrieved.observe_me is True
+        assert retrieved.observe_others is False
+    else:
+        session = honcho_client.session(
+            id="test-session-create-peers",
+            peers=["create-peer-a", "create-peer-b"],
+        )
+        assert isinstance(session, Session)
+        peers = session.peers()
+        peer_ids = {p.id for p in peers}
+        assert "create-peer-a" in peer_ids
+        assert "create-peer-b" in peer_ids
+
+        config = SessionPeerConfig(observe_me=True, observe_others=False)
+        peer = honcho_client.peer(id="create-peer-config")
+        session_with_config = honcho_client.session(
+            id="test-session-create-peers-config",
+            peers=[(peer, config)],
+        )
+        retrieved = session_with_config.get_peer_configuration(peer)
+        assert retrieved.observe_me is True
+        assert retrieved.observe_others is False
+
+
+@pytest.mark.asyncio
 async def test_session_messages(client_fixture: tuple[Honcho, str]):
     """
     Tests adding and getting messages from a session.

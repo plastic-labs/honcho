@@ -243,6 +243,14 @@ class HonchoAio(AsyncMetadataConfigMixin):
         *,
         metadata: dict[str, object] | None = None,
         configuration: SessionConfiguration | None = None,
+        peers: str
+        | PeerBase
+        | tuple[str, SessionPeerConfig]
+        | tuple[PeerBase, SessionPeerConfig]
+        | list[PeerBase | str]
+        | list[tuple[PeerBase | str, SessionPeerConfig]]
+        | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]]
+        | None = None,
     ) -> Session:
         """
         Get or create a session with the given ID asynchronously.
@@ -251,6 +259,9 @@ class HonchoAio(AsyncMetadataConfigMixin):
             id: Unique identifier for the session within the workspace.
             metadata: Optional metadata dictionary to associate with this session.
             configuration: Optional configuration to set for this session.
+            peers: Optional peers to attach to the session at creation. Accepts the
+                same shape as Session.add_peers (peer ID string, Peer object, list
+                of either, or tuples with SessionPeerConfig).
 
         Returns:
             A Session object with cached values from the API response.
@@ -261,6 +272,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
             body["metadata"] = metadata
         if configuration is not None:
             body["configuration"] = configuration.model_dump(exclude_none=True)
+        if peers is not None:
+            body["peers"] = normalize_peers_to_dict(peers)
 
         data = await self._honcho._async_http_client.post(
             routes.sessions(self._honcho.workspace_id), body=body
