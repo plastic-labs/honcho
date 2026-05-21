@@ -233,13 +233,13 @@ async def refresh_nous_credentials() -> str | None:
 
         # 6. Update in-memory settings globally (if Honcho is running)
         try:
-            from honcho.config import settings
+            from src.config import settings
 
             settings.LLM.NOUS_API_KEY = agent_key
             logger.info("In-memory settings.LLM.NOUS_API_KEY updated")
-        except Exception:
+        except (ImportError, AttributeError) as exc:
             # settings may not be importable in all contexts (tests, CLI)
-            pass
+            logger.debug("Could not import settings for in-memory update: %s", exc)
 
         logger.info("Nous OAuth refresh complete — new key expires at %s", expires_at)
         return agent_key

@@ -19,8 +19,9 @@ from src.llm.nous_refresh import (
 
 # ── State management ─────────────────────────────────────────────────────────
 
-def test_load_state_missing(tmp_path: Path) -> None:
+def test_load_state_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """load_state returns {} when state file does not exist."""
+    monkeypatch.delenv("NOUS_REFRESH_TOKEN", raising=False)
     with patch.object(Path, "exists", return_value=False):
         assert load_state() == {}
 
@@ -78,14 +79,9 @@ def test_update_env_key_appends_when_missing(tmp_path: Path) -> None:
 def test_find_project_root_with_dotenv(tmp_path: Path) -> None:
     """_find_project_root locates directory containing .env."""
     (tmp_path / ".env").touch()
-    # Simulate file deep in subdir
     deep = tmp_path / "sub" / "deep"
     deep.mkdir(parents=True)
-    fake_file = deep / "dummy.py"
-    with patch("src.llm.nous_refresh.Path", side_effect=lambda x: tmp_path / x if x == "__file__" else Path(x)):
-        # simpler: patch Path(__file__).resolve to return deep file
-        pass  # This is complex; test at integration level may be better.
-    # Skip unit-level path walk test — rely on manual verification later.
+    assert _find_project_root(start=deep / "dummy.py") == tmp_path
 
 
 # ── OAuth flow mocks ─────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 # Honcho MCP Tool Verification Report
 
 **Date**: 2026-05-07
-**Target Environment**: `hermes_workspace` (PTDEV)
+**Target Environment**: `test-workspace` (PTDEV)
 
 This document provides a detailed breakdown of the End-to-End verification performed on the `honcho-mcp` service tools. Exact inputs and outputs observed during the test execution are fully documented without omission.
 
@@ -15,7 +15,7 @@ This document provides a detailed breakdown of the End-to-End verification perfo
   - **Output**: 
     ```json
     {
-      "workspace_id": "hermes_workspace",
+      "workspace_id": "test-workspace",
       "metadata": {},
       "configuration": {},
       "peer_count": 16,
@@ -24,12 +24,12 @@ This document provides a detailed breakdown of the End-to-End verification perfo
         {"id": "1970177716"}, {"id": "165712924557331-lid"}, {"id": "test_peer"},
         {"id": "hermes_agent"}, {"id": "webhook-paperclip"}, {"id": "webhook-swarmclaw"},
         {"id": "fd3fdd74-1ba4-4df1-a5ea-55b35de08c5f"}, {"id": "14793c39-3f63-44b6-9c36-499bae249b7e"},
-        {"id": "hao-nguyen"}, {"id": "aziz"}, {"id": "some-random-id-123"},
+        {"id": "test-peer-1"}, {"id": "test-peer-2"}, {"id": "some-random-id-123"},
         {"id": "test_peer_nous"}, {"id": "test_mcp_tool_user"}
       ],
       "session_count": 82,
       "sessions": [
-        {"id": "test-session-1"}, {"id": "test-session-2"},
+        {"id": "session-1"}, {"id": "test-session-2"},
         {"id": "test-session-3"}, {"id": "test-session-4"}
       ]
     }
@@ -43,7 +43,7 @@ This document provides a detailed breakdown of the End-to-End verification perfo
     ```json
     {
       "workspaces": [
-        {"id":"hermes_workspace"},
+        {"id":"test-workspace"},
         {"id":"default"},
         {"id":"test-lmstudio-1777021141"},
         {"id":"test-lmstudio-1777021204"},
@@ -77,7 +77,7 @@ This document provides a detailed breakdown of the End-to-End verification perfo
         {"id":"1970177716"},{"id":"165712924557331-lid"},{"id":"test_peer"},
         {"id":"hermes_agent"},{"id":"webhook-paperclip"},{"id":"webhook-swarmclaw"},
         {"id":"fd3fdd74-1ba4-4df1-a5ea-55b35de08c5f"},{"id":"14793c39-3f63-44b6-9c36-499bae249b7e"},
-        {"id":"hao-nguyen"},{"id":"aziz"},{"id":"some-random-id-123"},{"id":"test_peer_nous"},
+        {"id":"test-peer-1"},{"id":"test-peer-2"},{"id":"some-random-id-123"},{"id":"test_peer_nous"},
         {"id":"test_mcp_tool_user"},{"id":"test-qa-peer-1"},{"id":"test-qa-peer-2"}
       ],
       "total":18,
