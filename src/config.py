@@ -661,6 +661,12 @@ class LLMSettings(HonchoSettings):
     OPENAI_BASE_URL: str | None = None
     GEMINI_BASE_URL: str | None = None
 
+    # Optional OpenRouter attribution for OpenAI-compatible calls routed through
+    # https://openrouter.ai/api/v1. These map to OpenRouter's HTTP-Referer and
+    # X-OpenRouter-Title/X-Title headers so activity is not shown as "Unknown".
+    OPENROUTER_APP_URL: str | None = None
+    OPENROUTER_APP_TITLE: str | None = None
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 

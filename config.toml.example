@@ -61,6 +61,11 @@ OPENAI_API_KEY = "your-api-key-here"
 # ANTHROPIC_API_KEY = "your-api-key"
 # GEMINI_API_KEY = "your-api-key"
 
+# Optional OpenRouter app attribution. Used only when an OpenAI-compatible
+# base_url is https://openrouter.ai/api/v1.
+# OPENROUTER_APP_URL = "https://your-app.example"
+# OPENROUTER_APP_TITLE = "Your Honcho App"
+
 # Embedding settings
 [embedding]
 VECTOR_DIMENSIONS = 1536
