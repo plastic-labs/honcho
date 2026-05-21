@@ -319,6 +319,16 @@ class OpenAIBackend:
             ):
                 if key in extra_params:
                     params[key] = extra_params[key]
+
+        # Propagate Langfuse session_id for trace grouping via LiteLLM proxy.
+        # LiteLLM's Langfuse callback reads metadata.session_id to group
+        # traces from the same agent operation (dream cycle, dialectic
+        # request, etc.) under one Langfuse session.
+        if extra_params and "langfuse_session_id" in extra_params:
+            params["extra_body"] = {
+                "metadata": {"session_id": extra_params["langfuse_session_id"]}
+            }
+
         return params
 
     def _normalize_response(

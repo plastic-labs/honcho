@@ -319,6 +319,12 @@ async def honcho_llm_call_inner(
     # build_config_extra_params(effective_config) on top for top_p/seed/etc.
     call_extras: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
 
+    # Propagate Langfuse session_id for trace grouping via LiteLLM proxy.
+    # When set, backends include it in the request metadata so LiteLLM's
+    # Langfuse callback groups all calls from the same agent operation.
+    if telemetry and telemetry.langfuse_session_id:
+        call_extras["langfuse_session_id"] = telemetry.langfuse_session_id
+
     if stream:
         # Stream path: setup must run inside the awaited coroutine so it
         # sits inside the outer retry wrapper (tool_loop.stream_final_response

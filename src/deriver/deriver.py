@@ -159,6 +159,7 @@ async def process_representation_tasks_batch(
             call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
             parent_category="representation",
             observed=observed,
+            langfuse_session_id=f"deriver-{latest_message.workspace_name}-{observed}",
         ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000

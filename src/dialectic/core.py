@@ -316,6 +316,7 @@ class DialecticAgent:
             agent_type="dialectic",
             run_id=self._run_id,
             peer_name=self.observed,
+            langfuse_session_id=f"dialectic-{self._run_id}" if self._run_id else None,
         )
 
     def _log_response_metrics(
