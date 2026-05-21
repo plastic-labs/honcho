@@ -291,6 +291,7 @@ Then point the SDKs at it:
 ```python
 honcho = Honcho(workspace_id="my-app-testing", base_url="http://localhost:8000")
 # or: export HONCHO_URL=http://localhost:8000
+# If you changed PORT in .env, use that port instead (e.g., http://localhost:3001)
 ```
 
 <!-- markdownlint-disable MD033 -->
