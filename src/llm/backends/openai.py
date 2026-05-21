@@ -304,7 +304,7 @@ class OpenAIBackend:
         if thinking_effort:
             params["reasoning_effort"] = thinking_effort
 
-        if stop:
+        if stop and not _uses_max_completion_tokens(model):
             params["stop"] = stop
         if tools:
             params["tools"] = self._convert_tools(tools)

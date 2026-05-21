@@ -64,6 +64,48 @@ async def test_openai_backend_uses_gpt5_params_and_extracts_reasoning() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_backend_omits_stop_for_gpt5_reasoning_models() -> None:
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="Hello from GPT-5",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-5.4-mini",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        stop=["\n\n\n\n"],
+        thinking_effort="low",
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["model"] == "gpt-5.4-mini"
+    assert call["max_completion_tokens"] == 100
+    assert call["reasoning_effort"] == "low"
+    assert "stop" not in call
+
+
+@pytest.mark.asyncio
 async def test_openai_backend_passes_thinking_effort_through_for_non_gpt5_models() -> (
     None
 ):
