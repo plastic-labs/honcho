@@ -2,13 +2,21 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import Select, case, func, or_, select
+from sqlalchemy import Select, and_, case, false, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.config import settings
 
 logger = getLogger(__name__)
+
+
+# Task types surfaced by the queue status endpoint.
+_TRACKED_TASK_TYPES = ("representation", "summary", "dream")
+
+# Only this task type is gated by DERIVER_REPRESENTATION_BATCH_MAX_TOKENS.
+_THRESHOLD_GATED_TASK_TYPE = "representation"
 
 
 async def get_queue_status(
@@ -24,6 +32,11 @@ async def get_queue_status(
 
     Only tracks user-facing task types: representation, summary, and dream.
     Internal infrastructure tasks (reconciler, webhook, deletion) are excluded.
+
+    Pending work units are further split into "stalled" (representation work
+    units below DERIVER_REPRESENTATION_BATCH_MAX_TOKENS) vs "ready" (everything
+    else). When DERIVER_FLUSH_ENABLED is true, the threshold is bypassed and
+    nothing is stalled.
 
     Note: completed_work_units reflects items since the last periodic queue
     cleanup, not lifetime totals.
@@ -75,8 +88,56 @@ async def get_deriver_status(
     )
 
 
-# Task types surfaced by the queue status endpoint.
-_TRACKED_TASK_TYPES = ("representation", "summary", "dream")
+async def get_queue_work_units_query(
+    workspace_name: str,
+    session_name: str | None = None,
+    *,
+    observer: str | None = None,
+    observed: str | None = None,
+) -> Select[Any]:
+    """
+    Build the Select statement for one row per unprocessed work unit, with
+    token totals, in-progress flag, observer/observed, and timestamps.
+
+    Returns a SQLAlchemy Select for cursor pagination via apaginate. The
+    router is responsible for computing per-row threshold classification
+    (hit_threshold, tokens_until_threshold) and wrapping the envelope.
+
+    Same filter semantics as get_queue_status: observer/observed match the
+    queue item payload, session_name filters via the sessions table.
+    """
+    normalized_observer = observer if observer else None
+    normalized_observed = observed if observed else None
+    normalized_session_name = session_name if session_name else None
+
+    return _build_queue_work_units_query(
+        workspace_name,
+        normalized_session_name,
+        observer=normalized_observer,
+        observed=normalized_observed,
+    )
+
+
+def classify_work_unit_row(row: Any) -> tuple[bool, int]:
+    """Classify a work-units query row against current threshold/flush settings.
+
+    Returns (hit_threshold, tokens_until_threshold). Pure function so it
+    can be applied in a pagination transformer.
+    """
+    batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+    flush_enabled = settings.DERIVER.FLUSH_ENABLED
+
+    threshold_gated = (
+        row.task_type == _THRESHOLD_GATED_TASK_TYPE
+        and not flush_enabled
+        and batch_max_tokens > 0
+    )
+    if threshold_gated:
+        return (
+            row.pending_tokens >= batch_max_tokens,
+            max(batch_max_tokens - row.pending_tokens, 0),
+        )
+    return True, 0
 
 
 def _build_queue_status_query(
@@ -86,56 +147,178 @@ def _build_queue_status_query(
     observer: str | None = None,
     observed: str | None = None,
 ) -> Select[Any]:
-    """Build SQL query for queue status with validation and aggregation."""
+    """Build SQL query for queue status with validation and aggregation.
+
+    Two-layer structure: an inner per-queue-item subquery joins messages to
+    compute the per-work_unit_key pending-token sum (a window function), then
+    the outer query classifies each row and tallies overall + per-session
+    counts via additional window functions.
+    """
     observer_name_expr = models.QueueItem.payload["observer"].astext
     observed_name_expr = models.QueueItem.payload["observed"].astext
 
-    # Define conditions for cleaner window functions
-    is_completed = models.QueueItem.processed
-    is_in_progress = (~models.QueueItem.processed) & (
-        models.ActiveQueueSession.id.isnot(None)
-    )
-    is_pending = (~models.QueueItem.processed) & (
+    inner_is_in_progress = models.ActiveQueueSession.id.isnot(None)
+    inner_is_pending = (~models.QueueItem.processed) & (
         models.ActiveQueueSession.id.is_(None)
     )
 
-    # Use window functions to calculate totals and per-session counts in SQL
+    # Per-work_unit_key sum of token_count, restricted to pending items.
+    # Computed in the inner subquery because window functions cannot reference
+    # each other directly in the outer SELECT.
+    pending_tokens_per_wuk = func.sum(
+        case(
+            (inner_is_pending, func.coalesce(models.Message.token_count, 0)),
+            else_=0,
+        )
+    ).over(partition_by=models.QueueItem.work_unit_key)
+
+    inner = (
+        select(
+            models.QueueItem.session_id.label("session_id"),
+            models.QueueItem.task_type.label("task_type"),
+            models.QueueItem.processed.label("processed"),
+            inner_is_in_progress.label("is_in_progress_flag"),
+            pending_tokens_per_wuk.label("wuk_pending_tokens"),
+        )
+        .select_from(models.QueueItem)
+        .outerjoin(
+            models.ActiveQueueSession,
+            models.QueueItem.work_unit_key == models.ActiveQueueSession.work_unit_key,
+        )
+        .outerjoin(
+            models.Message,
+            models.QueueItem.message_id == models.Message.id,
+        )
+    )
+
+    inner = inner.where(models.QueueItem.workspace_name == workspace_name)
+    inner = inner.where(models.QueueItem.task_type.in_(_TRACKED_TASK_TYPES))
+
+    if session_name is not None:
+        inner = inner.join(
+            models.Session, models.QueueItem.session_id == models.Session.id
+        )
+        inner = inner.where(models.Session.name == session_name)
+
+    peer_conditions = []
+    if observer is not None:
+        peer_conditions.append(observer_name_expr == observer)  # pyright: ignore
+    if observed is not None:
+        peer_conditions.append(observed_name_expr == observed)  # pyright: ignore
+    if peer_conditions:
+        inner = inner.where(or_(*peer_conditions))  # pyright: ignore
+
+    inner_subq = inner.subquery()
+
+    # Outer classification
+    is_completed = inner_subq.c.processed
+    is_in_progress = (~inner_subq.c.processed) & inner_subq.c.is_in_progress_flag
+    is_pending = (~inner_subq.c.processed) & ~inner_subq.c.is_in_progress_flag
+
+    batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+    flush_enabled = settings.DERIVER.FLUSH_ENABLED
+
+    if not flush_enabled and batch_max_tokens > 0:
+        is_stalled = and_(
+            is_pending,
+            inner_subq.c.task_type == _THRESHOLD_GATED_TASK_TYPE,
+            inner_subq.c.wuk_pending_tokens < batch_max_tokens,
+        )
+    else:
+        is_stalled = false()
+
+    is_pending_ready = and_(is_pending, ~is_stalled)
+
     stmt = select(
-        models.QueueItem.session_id,
-        # Overall totals using window functions
+        inner_subq.c.session_id,
+        # Overall totals
         func.count().over().label("total"),
         func.count(case((is_completed, 1))).over().label("completed"),
         func.count(case((is_in_progress, 1))).over().label("in_progress"),
         func.count(case((is_pending, 1))).over().label("pending"),
-        # Per-session totals using partitioned window functions
-        func.count()
-        .over(partition_by=models.QueueItem.session_id)
-        .label("session_total"),
+        func.count(case((is_stalled, 1))).over().label("pending_stalled"),
+        func.count(case((is_pending_ready, 1))).over().label("pending_ready"),
+        # Per-session totals
+        func.count().over(partition_by=inner_subq.c.session_id).label("session_total"),
         func.count(case((is_completed, 1)))
-        .over(partition_by=models.QueueItem.session_id)
+        .over(partition_by=inner_subq.c.session_id)
         .label("session_completed"),
         func.count(case((is_in_progress, 1)))
-        .over(partition_by=models.QueueItem.session_id)
+        .over(partition_by=inner_subq.c.session_id)
         .label("session_in_progress"),
         func.count(case((is_pending, 1)))
-        .over(partition_by=models.QueueItem.session_id)
+        .over(partition_by=inner_subq.c.session_id)
         .label("session_pending"),
-    ).select_from(models.QueueItem)
-
-    stmt = stmt.outerjoin(
-        models.ActiveQueueSession,
-        models.QueueItem.work_unit_key == models.ActiveQueueSession.work_unit_key,
+        func.count(case((is_stalled, 1)))
+        .over(partition_by=inner_subq.c.session_id)
+        .label("session_pending_stalled"),
+        func.count(case((is_pending_ready, 1)))
+        .over(partition_by=inner_subq.c.session_id)
+        .label("session_pending_ready"),
     )
 
-    stmt = stmt.where(models.QueueItem.workspace_name == workspace_name)
+    return stmt
 
-    # Only include user-facing task types
-    stmt = stmt.where(models.QueueItem.task_type.in_(_TRACKED_TASK_TYPES))
+
+def _build_queue_work_units_query(
+    workspace_name: str,
+    session_name: str | None,
+    *,
+    observer: str | None = None,
+    observed: str | None = None,
+) -> Select[Any]:
+    """One row per unprocessed work_unit_key, aggregating queue items + tokens."""
+    observer_name_expr = models.QueueItem.payload["observer"].astext
+    observed_name_expr = models.QueueItem.payload["observed"].astext
+
+    stmt = (
+        select(
+            models.QueueItem.work_unit_key.label("work_unit_key"),
+            models.QueueItem.task_type.label("task_type"),
+            models.QueueItem.session_id.label("session_id"),
+            models.Session.name.label("session_name"),
+            func.min(observer_name_expr).label("observer"),
+            func.min(observed_name_expr).label("observed"),
+            func.count().label("pending_items"),
+            func.coalesce(
+                func.sum(func.coalesce(models.Message.token_count, 0)), 0
+            ).label("pending_tokens"),
+            func.min(models.QueueItem.created_at).label("oldest_item_at"),
+            func.max(models.QueueItem.created_at).label("newest_item_at"),
+            func.bool_or(models.ActiveQueueSession.id.isnot(None)).label("in_progress"),
+        )
+        .select_from(models.QueueItem)
+        .outerjoin(
+            models.ActiveQueueSession,
+            models.QueueItem.work_unit_key == models.ActiveQueueSession.work_unit_key,
+        )
+        .outerjoin(
+            models.Message,
+            models.QueueItem.message_id == models.Message.id,
+        )
+        .outerjoin(
+            models.Session,
+            models.QueueItem.session_id == models.Session.id,
+        )
+        .where(models.QueueItem.workspace_name == workspace_name)
+        .where(models.QueueItem.task_type.in_(_TRACKED_TASK_TYPES))
+        .where(~models.QueueItem.processed)
+        .group_by(
+            models.QueueItem.work_unit_key,
+            models.QueueItem.task_type,
+            models.QueueItem.session_id,
+            models.Session.name,
+        )
+        .order_by(
+            # Oldest-pending first surfaces the most-stuck work for debugging.
+            # work_unit_key is a unique tiebreaker required by sqlakeyset for
+            # stable cursor pagination when timestamps collide.
+            func.min(models.QueueItem.created_at),
+            models.QueueItem.work_unit_key,
+        )
+    )
 
     if session_name is not None:
-        stmt = stmt.join(
-            models.Session, models.QueueItem.session_id == models.Session.id
-        )
         stmt = stmt.where(models.Session.name == session_name)
 
     peer_conditions = []
@@ -157,6 +340,8 @@ def _process_queue_rows(rows: Sequence[Row[Any]]) -> schemas.QueueCounts:
             completed=0,
             in_progress=0,
             pending=0,
+            pending_stalled=0,
+            pending_ready=0,
             sessions={},
         )
 
@@ -174,6 +359,8 @@ def _process_queue_rows(rows: Sequence[Row[Any]]) -> schemas.QueueCounts:
                 completed=row.session_completed,
                 in_progress=row.session_in_progress,
                 pending=row.session_pending,
+                pending_stalled=row.session_pending_stalled,
+                pending_ready=row.session_pending_ready,
             )
             seen_sessions.add(row.session_id)
 
@@ -182,6 +369,8 @@ def _process_queue_rows(rows: Sequence[Row[Any]]) -> schemas.QueueCounts:
         completed=first_row.completed,
         in_progress=first_row.in_progress,
         pending=first_row.pending,
+        pending_stalled=first_row.pending_stalled,
+        pending_ready=first_row.pending_ready,
         sessions=sessions,
     )
 
@@ -198,6 +387,8 @@ def _build_status_response(
             completed_work_units=counts.completed,
             in_progress_work_units=counts.in_progress,
             pending_work_units=counts.pending,
+            pending_stalled_work_units=counts.pending_stalled,
+            pending_ready_work_units=counts.pending_ready,
         )
 
     sessions: dict[str, schemas.SessionQueueStatus] = {}
@@ -209,6 +400,8 @@ def _build_status_response(
             completed_work_units=data.completed,
             in_progress_work_units=data.in_progress,
             pending_work_units=data.pending,
+            pending_stalled_work_units=data.pending_stalled,
+            pending_ready_work_units=data.pending_ready,
         )
 
     return schemas.QueueStatus(
@@ -217,4 +410,6 @@ def _build_status_response(
         completed_work_units=counts.completed,
         in_progress_work_units=counts.in_progress,
         pending_work_units=counts.pending,
+        pending_stalled_work_units=counts.pending_stalled,
+        pending_ready_work_units=counts.pending_ready,
     )

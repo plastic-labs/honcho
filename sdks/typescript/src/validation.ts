@@ -389,6 +389,23 @@ export const QueueStatusOptionsSchema = z
   .strict()
 
 /**
+ * Schema for queue work units options (cursor-paginated).
+ */
+export const QueueWorkUnitsOptionsSchema = z
+  .object({
+    observer: z.union([PeerIdSchema, PeerIdObjectSchema]).optional(),
+    sender: z.union([PeerIdSchema, PeerIdObjectSchema]).optional(),
+    session: z.union([SessionIdSchema, SessionIdObjectSchema]).optional(),
+    cursor: z.string().optional(),
+    size: z
+      .number()
+      .int('Page size must be an integer')
+      .positive('Page size must be positive')
+      .optional(),
+  })
+  .strict()
+
+/**
  * Schema for file upload parameters.
  * Supports Blob/File objects and custom uploadable objects with binary content.
  */
@@ -960,6 +977,7 @@ export type ChatQuery = z.infer<typeof ChatQuerySchema>
 export type ContextParams = z.infer<typeof ContextParamsSchema>
 export type SearchQueryLike = z.infer<typeof SearchQueryLikeSchema>
 export type QueueStatusOptions = z.infer<typeof QueueStatusOptionsSchema>
+export type QueueWorkUnitsOptions = z.infer<typeof QueueWorkUnitsOptionsSchema>
 export type FileUpload = z.infer<typeof FileUploadSchema>
 export type GetRepresentationParams = z.infer<
   typeof GetRepresentationParamsSchema

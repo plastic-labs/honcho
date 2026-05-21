@@ -1,4 +1,8 @@
-import type { PageResponse } from './types/api'
+import type {
+  CursorPageResponse,
+  PageResponse,
+  QueueWorkUnitsResponse,
+} from './types/api'
 
 /**
  * Function type for fetching the next page of results.
@@ -7,6 +11,14 @@ export type NextPageFetcher<T> = (
   page: number,
   size: number
 ) => Promise<PageResponse<T>>
+
+/**
+ * Function type for fetching a page by cursor token.
+ */
+export type CursorPageFetcher<T> = (
+  cursor: string,
+  size?: number
+) => Promise<CursorPageResponse<T>>
 
 /**
  * Generic paginated result wrapper for Honcho SDK.
@@ -179,5 +191,202 @@ export class Page<T, TOriginal = T> implements AsyncIterable<T> {
       allItems.push(item)
     }
     return allItems
+  }
+}
+
+/**
+ * Cursor-paginated result wrapper. Uses opaque tokens (`nextPage`/`previousPage`)
+ * instead of page numbers. Stable across concurrent mutations of the
+ * underlying data, unlike offset pagination.
+ *
+ * **Warning:** The underlying server data may still mutate between page fetches.
+ * Iterating across pages snapshots what the server returns per page, but pages
+ * may be inconsistent with each other under concurrent processing. Use
+ * `.items` to read just the current page if you need a stable view.
+ */
+export class CursorPage<T, TOriginal = T> implements AsyncIterable<T> {
+  protected _data: CursorPageResponse<TOriginal>
+  protected _transformFunc?: (item: TOriginal) => T
+  protected _fetchNext?: CursorPageFetcher<TOriginal>
+  protected _fetchPrevious?: CursorPageFetcher<TOriginal>
+
+  constructor(
+    data: CursorPageResponse<TOriginal>,
+    transformFunc?: (item: TOriginal) => T,
+    fetchNext?: CursorPageFetcher<TOriginal>,
+    fetchPrevious?: CursorPageFetcher<TOriginal>
+  ) {
+    this._data = data
+    this._transformFunc = transformFunc
+    this._fetchNext = fetchNext
+    this._fetchPrevious = fetchPrevious
+  }
+
+  /**
+   * Async iterator across all pages, auto-following `nextPage` until exhausted.
+   * Use `.items` for the current page only.
+   */
+  async *[Symbol.asyncIterator](): AsyncIterator<T> {
+    for (const item of this._data.items) {
+      yield this._transformFunc
+        ? this._transformFunc(item)
+        : (item as unknown as T)
+    }
+
+    let currentPage: CursorPage<T, TOriginal> | null = this
+    while (currentPage.hasNextPage) {
+      const next: CursorPage<T, TOriginal> | null =
+        await currentPage.getNextPage()
+      if (!next) break
+      currentPage = next
+      for (const item of next._data.items) {
+        yield next._transformFunc
+          ? next._transformFunc(item)
+          : (item as unknown as T)
+      }
+    }
+  }
+
+  get items(): T[] {
+    const items = this._data.items || []
+    return this._transformFunc
+      ? items.map(this._transformFunc)
+      : (items as unknown as T[])
+  }
+
+  get length(): number {
+    return this._data.items?.length ?? 0
+  }
+
+  /** Total items across all pages, when the server populates it. */
+  get total(): number | null {
+    return this._data.total ?? null
+  }
+
+  /** Cursor token that re-fetches the current page. */
+  get currentPage(): string | null {
+    return this._data.current_page ?? null
+  }
+
+  /** Cursor token to re-fetch the current page from the last item. */
+  get currentPageBackwards(): string | null {
+    return this._data.current_page_backwards ?? null
+  }
+
+  /** Cursor token for the next page, or null at the end. */
+  get nextPage(): string | null {
+    return this._data.next_page ?? null
+  }
+
+  /** Cursor token for the previous page, or null at the start. */
+  get previousPage(): string | null {
+    return this._data.previous_page ?? null
+  }
+
+  get hasNextPage(): boolean {
+    return this._data.next_page != null
+  }
+
+  get hasPreviousPage(): boolean {
+    return this._data.previous_page != null
+  }
+
+  /** Fetch the next page; null if at end or no fetch callback. */
+  async getNextPage(): Promise<CursorPage<T, TOriginal> | null> {
+    if (!this._data.next_page || !this._fetchNext) return null
+    const data = await this._fetchNext(this._data.next_page)
+    return new CursorPage<T, TOriginal>(
+      data,
+      this._transformFunc,
+      this._fetchNext,
+      this._fetchPrevious
+    )
+  }
+
+  /** Fetch the previous page; null if at start or no fetch callback. */
+  async getPreviousPage(): Promise<CursorPage<T, TOriginal> | null> {
+    if (!this._data.previous_page || !this._fetchPrevious) return null
+    const data = await this._fetchPrevious(this._data.previous_page)
+    return new CursorPage<T, TOriginal>(
+      data,
+      this._transformFunc,
+      this._fetchNext,
+      this._fetchPrevious
+    )
+  }
+
+  /** Collect items from all pages into an array. */
+  async toArray(): Promise<T[]> {
+    const allItems: T[] = []
+    for await (const item of this) {
+      allItems.push(item)
+    }
+    return allItems
+  }
+}
+
+/**
+ * Cursor page for the /queue/work-units endpoint with envelope extras
+ * (`representationBatchMaxTokens`, `flushEnabled`) carrying the server-side
+ * deriver threshold configuration.
+ */
+export class QueueWorkUnitsPage<T, TOriginal = T> extends CursorPage<
+  T,
+  TOriginal
+> {
+  protected override _data: QueueWorkUnitsResponse & {
+    items: TOriginal[]
+  }
+
+  constructor(
+    data: QueueWorkUnitsResponse & { items: TOriginal[] },
+    transformFunc?: (item: TOriginal) => T,
+    fetchNext?: CursorPageFetcher<TOriginal>,
+    fetchPrevious?: CursorPageFetcher<TOriginal>
+  ) {
+    super(data, transformFunc, fetchNext, fetchPrevious)
+    this._data = data
+  }
+
+  /** DERIVER_REPRESENTATION_BATCH_MAX_TOKENS at the time of the request. */
+  get representationBatchMaxTokens(): number {
+    return this._data.representation_batch_max_tokens
+  }
+
+  /** True when the batch threshold gating is bypassed server-side. */
+  get flushEnabled(): boolean {
+    return this._data.flush_enabled
+  }
+
+  override async getNextPage(): Promise<QueueWorkUnitsPage<
+    T,
+    TOriginal
+  > | null> {
+    if (!this._data.next_page || !this._fetchNext) return null
+    const data = (await this._fetchNext(
+      this._data.next_page
+    )) as QueueWorkUnitsResponse & { items: TOriginal[] }
+    return new QueueWorkUnitsPage<T, TOriginal>(
+      data,
+      this._transformFunc,
+      this._fetchNext,
+      this._fetchPrevious
+    )
+  }
+
+  override async getPreviousPage(): Promise<QueueWorkUnitsPage<
+    T,
+    TOriginal
+  > | null> {
+    if (!this._data.previous_page || !this._fetchPrevious) return null
+    const data = (await this._fetchPrevious(
+      this._data.previous_page
+    )) as QueueWorkUnitsResponse & { items: TOriginal[] }
+    return new QueueWorkUnitsPage<T, TOriginal>(
+      data,
+      this._transformFunc,
+      this._fetchNext,
+      this._fetchPrevious
+    )
   }
 }

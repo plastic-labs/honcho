@@ -356,3 +356,152 @@ class TestDeriverStatusEndpoint:
             responses.append(response.json())  # pyright: ignore
         # Check consistency
         assert all(r == responses[0] for r in responses)  # pyright: ignore
+
+
+@pytest.mark.asyncio
+class TestQueueWorkUnitsEndpoint:
+    """Test suite for the /queue/work-units endpoint"""
+
+    async def test_empty_workspace_returns_empty_work_units(
+        self,
+        client: TestClient,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        workspace, _ = sample_data
+        response = client.get(f"/v3/workspaces/{workspace.name}/queue/work-units")
+        assert response.status_code == 200
+        body = response.json()
+        # CursorPage envelope: items, total, current_page, next_page, previous_page
+        assert body["items"] == []
+        assert body["total"] == 0
+        assert body["next_page"] is None
+        assert body["previous_page"] is None
+        # Envelope additions
+        assert body["representation_batch_max_tokens"] > 0
+        assert "flush_enabled" in body
+
+    async def test_pending_representation_below_threshold_is_stalled(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Default token_count is 0 → below threshold → stalled (when flush disabled)."""
+        workspace, peer = sample_data
+        session = models.Session(workspace_name=workspace.name, name="wu_session")
+        db_session.add(session)
+        await db_session.commit()
+        await db_session.refresh(session)
+
+        payload = {
+            "observed": peer.name,
+            "observer": peer.name,
+            "task_type": "representation",
+            "workspace_name": workspace.name,
+            "session_name": session.name,
+        }
+        for _ in range(3):
+            db_session.add(
+                models.QueueItem(
+                    session_id=session.id,
+                    task_type="representation",
+                    work_unit_key=construct_work_unit_key(workspace.name, payload),
+                    payload=payload,
+                    processed=False,
+                    workspace_name=workspace.name,
+                )
+            )
+        await db_session.commit()
+
+        # Check the new aggregate fields on /queue/status
+        status_resp = client.get(f"/v3/workspaces/{workspace.name}/queue/status")
+        assert status_resp.status_code == 200
+        status_body = status_resp.json()
+        assert status_body["pending_work_units"] == 3
+        # With default settings (FLUSH_ENABLED=False, threshold=1024) and 0 tokens,
+        # all 3 are stalled below the threshold
+        assert status_body["pending_stalled_work_units"] == 3
+        assert status_body["pending_ready_work_units"] == 0
+        assert (
+            status_body["pending_stalled_work_units"]
+            + status_body["pending_ready_work_units"]
+            == status_body["pending_work_units"]
+        )
+
+        # Check per-work-unit endpoint (cursor-paginated)
+        wu_resp = client.get(f"/v3/workspaces/{workspace.name}/queue/work-units")
+        assert wu_resp.status_code == 200
+        wu_body = wu_resp.json()
+        assert len(wu_body["items"]) == 1  # 3 items collapse into 1 work unit
+        assert wu_body["total"] == 1
+        work_unit = wu_body["items"][0]
+        assert work_unit["task_type"] == "representation"
+        assert work_unit["pending_items"] == 3
+        assert work_unit["pending_tokens"] == 0
+        assert work_unit["hit_threshold"] is False
+        assert work_unit["in_progress"] is False
+        assert (
+            work_unit["tokens_until_threshold"]
+            == wu_body["representation_batch_max_tokens"]
+        )
+
+    async def test_cursor_pagination_navigation(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Verify cursor tokens enable forward navigation across pages."""
+        workspace, peer = sample_data
+        # Create 3 distinct work units (one per session) so we have 3 rows
+        sessions = [
+            models.Session(workspace_name=workspace.name, name=f"cursor_sess_{i}")
+            for i in range(3)
+        ]
+        db_session.add_all(sessions)
+        await db_session.commit()
+        for s in sessions:
+            await db_session.refresh(s)
+        for session in sessions:
+            payload = {
+                "observed": peer.name,
+                "observer": peer.name,
+                "task_type": "representation",
+                "workspace_name": workspace.name,
+                "session_name": session.name,
+            }
+            db_session.add(
+                models.QueueItem(
+                    session_id=session.id,
+                    task_type="representation",
+                    work_unit_key=construct_work_unit_key(workspace.name, payload),
+                    payload=payload,
+                    processed=False,
+                    workspace_name=workspace.name,
+                )
+            )
+        await db_session.commit()
+
+        # Page 1 with size=2
+        page1 = client.get(
+            f"/v3/workspaces/{workspace.name}/queue/work-units",
+            params={"size": 2},
+        )
+        assert page1.status_code == 200
+        body1 = page1.json()
+        assert len(body1["items"]) == 2
+        assert body1["next_page"] is not None  # has more
+
+        # Page 2 via the cursor — fetch remaining row
+        page2 = client.get(
+            f"/v3/workspaces/{workspace.name}/queue/work-units",
+            params={"size": 2, "cursor": body1["next_page"]},
+        )
+        assert page2.status_code == 200
+        body2 = page2.json()
+        assert len(body2["items"]) == 1
+        assert body2["next_page"] is None  # end of results
+
+        # No duplicates / skips across pages
+        seen = {item["work_unit_key"] for item in body1["items"] + body2["items"]}
+        assert len(seen) == 3

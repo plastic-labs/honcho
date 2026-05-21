@@ -15,6 +15,8 @@ from .api_types import (
     MessageResponse,
     PeerResponse,
     QueueStatusResponse,
+    QueueWorkUnit,
+    QueueWorkUnitsPageSync,
     RepresentationResponse,
     SessionConfiguration,
     SessionPeerConfig,
@@ -967,6 +969,59 @@ class Session(SessionBase, MetadataConfigMixin):
             query=query,
         )
         return QueueStatusResponse.model_validate(data)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def queue_work_units(
+        self,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
+        *,
+        cursor: str | None = None,
+        size: int | None = None,
+    ) -> QueueWorkUnitsPageSync:
+        """List unprocessed queue work units scoped to this session.
+
+        Cursor-paginated. ``session_id`` is hard-set to this session and cannot
+        be overridden.
+        """
+        self._honcho._ensure_workspace()
+        resolved_observer_id = resolve_id(observer)
+        resolved_sender_id = resolve_id(sender)
+
+        def build_query(cursor_token: str | None) -> dict[str, Any]:
+            q: dict[str, Any] = {"session_id": self.id}
+            if resolved_observer_id:
+                q["observer_id"] = resolved_observer_id
+            if resolved_sender_id:
+                q["sender_id"] = resolved_sender_id
+            if cursor_token is not None:
+                q["cursor"] = cursor_token
+            if size is not None:
+                q["size"] = size
+            return q
+
+        def fetch_at(cursor_token: str) -> QueueWorkUnitsPageSync:
+            next_data = self._honcho._http.get(
+                routes.workspace_queue_work_units(self.workspace_id),
+                query=build_query(cursor_token),
+            )
+            return QueueWorkUnitsPageSync(
+                next_data,
+                QueueWorkUnit,
+                fetch_next=fetch_at,
+                fetch_previous=fetch_at,
+            )
+
+        data = self._honcho._http.get(
+            routes.workspace_queue_work_units(self.workspace_id),
+            query=build_query(cursor),
+        )
+        return QueueWorkUnitsPageSync(
+            data,
+            QueueWorkUnit,
+            fetch_next=fetch_at,
+            fetch_previous=fetch_at,
+        )
 
     def get_message(self, message_id: str) -> Message:
         """Get a single message by ID from this session.

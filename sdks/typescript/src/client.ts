@@ -1,7 +1,7 @@
 import { API_VERSION } from './api-version'
 import { HonchoHTTPClient } from './http/client'
 import { Message } from './message'
-import { Page } from './pagination'
+import { CursorPage, Page, QueueWorkUnitsPage } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
 import type {
@@ -11,10 +11,17 @@ import type {
   QueueStatus,
   QueueStatusParams,
   QueueStatusResponse,
+  QueueWorkUnit,
+  QueueWorkUnitResponse,
+  QueueWorkUnitsResponse,
   SessionResponse,
   WorkspaceResponse,
 } from './types/api'
-import { resolveId, transformQueueStatus } from './utils'
+import {
+  resolveId,
+  transformQueueStatus,
+  transformQueueWorkUnit,
+} from './utils'
 import {
   FilterSchema,
   type Filters,
@@ -30,6 +37,7 @@ import {
   peerConfigFromApi,
   peerConfigToApi,
   type QueueStatusOptions,
+  type QueueWorkUnitsOptions,
   SearchQuerySchema,
   type SessionConfig,
   SessionConfigSchema,
@@ -816,6 +824,68 @@ export class Honcho {
 
     const status = await this._getQueueStatus(this.workspaceId, queryParams)
     return transformQueueStatus(status)
+  }
+
+  /**
+   * List unprocessed queue work units, cursor-paginated.
+   *
+   * Useful for debugging "why isn't this work unit advancing?" — distinguishes
+   * work units stalled below the batch token threshold from those claimed by
+   * a worker or eligible to be claimed.
+   *
+   * @returns A QueueWorkUnitsPage iterable across pages. Read `.items` for the
+   *   current page only; iterate the page object to walk subsequent pages.
+   *   `.representationBatchMaxTokens` and `.flushEnabled` expose the server's
+   *   threshold configuration.
+   */
+  async queueWorkUnits(
+    options?: Omit<
+      QueueWorkUnitsOptions,
+      'observerId' | 'senderId' | 'sessionId'
+    > & {
+      observer?: string | Peer
+      sender?: string | Peer
+      session?: string | Session
+    }
+  ): Promise<QueueWorkUnitsPage<QueueWorkUnit, QueueWorkUnitResponse>> {
+    await this._ensureWorkspace()
+    const observerId = options?.observer
+      ? resolveId(options.observer)
+      : undefined
+    const senderId = options?.sender ? resolveId(options.sender) : undefined
+    const sessionId = options?.session ? resolveId(options.session) : undefined
+    const size = options?.size
+
+    const buildQuery = (
+      cursor?: string
+    ): Record<string, string | number | boolean | undefined> => {
+      const q: Record<string, string | number | boolean | undefined> = {}
+      if (observerId) q.observer_id = observerId
+      if (senderId) q.sender_id = senderId
+      if (sessionId) q.session_id = sessionId
+      if (cursor) q.cursor = cursor
+      if (size != null) q.size = size
+      return q
+    }
+
+    const fetchAt = async (cursor: string): Promise<QueueWorkUnitsResponse> => {
+      return this._http.get<QueueWorkUnitsResponse>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/queue/work-units`,
+        { query: buildQuery(cursor) }
+      )
+    }
+
+    const data = await this._http.get<QueueWorkUnitsResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/queue/work-units`,
+      { query: buildQuery(options?.cursor) }
+    )
+
+    return new QueueWorkUnitsPage<QueueWorkUnit, QueueWorkUnitResponse>(
+      data,
+      transformQueueWorkUnit,
+      fetchAt,
+      fetchAt
+    )
   }
 
   /**

@@ -39,6 +39,8 @@ from .api_types import (
     PeerContextResponse,
     PeerResponse,
     QueueStatusResponse,
+    QueueWorkUnit,
+    QueueWorkUnitsPageAsync,
     RepresentationResponse,
     SessionConfiguration,
     SessionPeerConfig,
@@ -400,6 +402,64 @@ class HonchoAio(AsyncMetadataConfigMixin):
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
+
+    async def queue_work_units(
+        self,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        *,
+        cursor: str | None = None,
+        size: int | None = None,
+    ) -> QueueWorkUnitsPageAsync:
+        """List unprocessed queue work units asynchronously, cursor-paginated.
+
+        Useful for debugging "why isn't this work unit advancing?" — distinguishes
+        work units stalled below the batch token threshold from those claimed by
+        a worker or eligible to be claimed. See ``Honcho.queue_work_units`` for
+        details.
+        """
+        await self._honcho._ensure_workspace_async()
+        resolved_observer_id = resolve_id(observer)
+        resolved_sender_id = resolve_id(sender)
+        resolved_session_id = resolve_id(session)
+
+        def build_query(cursor_token: str | None) -> dict[str, Any]:
+            q: dict[str, Any] = {}
+            if resolved_observer_id:
+                q["observer_id"] = resolved_observer_id
+            if resolved_sender_id:
+                q["sender_id"] = resolved_sender_id
+            if resolved_session_id:
+                q["session_id"] = resolved_session_id
+            if cursor_token is not None:
+                q["cursor"] = cursor_token
+            if size is not None:
+                q["size"] = size
+            return q
+
+        async def fetch_at(cursor_token: str) -> QueueWorkUnitsPageAsync:
+            next_data = await self._honcho._async_http_client.get(
+                routes.workspace_queue_work_units(self._honcho.workspace_id),
+                query=build_query(cursor_token),
+            )
+            return QueueWorkUnitsPageAsync(
+                next_data,
+                QueueWorkUnit,
+                fetch_next=fetch_at,
+                fetch_previous=fetch_at,
+            )
+
+        data = await self._honcho._async_http_client.get(
+            routes.workspace_queue_work_units(self._honcho.workspace_id),
+            query=build_query(cursor) or None,
+        )
+        return QueueWorkUnitsPageAsync(
+            data,
+            QueueWorkUnit,
+            fetch_next=fetch_at,
+            fetch_previous=fetch_at,
+        )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def schedule_dream(
@@ -1361,6 +1421,58 @@ class SessionAio(AsyncMetadataConfigMixin):
             query=query,
         )
         return QueueStatusResponse.model_validate(data)
+
+    async def queue_work_units(
+        self,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
+        *,
+        cursor: str | None = None,
+        size: int | None = None,
+    ) -> QueueWorkUnitsPageAsync:
+        """List unprocessed queue work units scoped to this session.
+
+        Cursor-paginated. ``session_id`` is hard-set to this session and cannot
+        be overridden.
+        """
+        await self._session._honcho._ensure_workspace_async()
+        resolved_observer_id = resolve_id(observer)
+        resolved_sender_id = resolve_id(sender)
+
+        def build_query(cursor_token: str | None) -> dict[str, Any]:
+            q: dict[str, Any] = {"session_id": self._session.id}
+            if resolved_observer_id:
+                q["observer_id"] = resolved_observer_id
+            if resolved_sender_id:
+                q["sender_id"] = resolved_sender_id
+            if cursor_token is not None:
+                q["cursor"] = cursor_token
+            if size is not None:
+                q["size"] = size
+            return q
+
+        async def fetch_at(cursor_token: str) -> QueueWorkUnitsPageAsync:
+            next_data = await self._session._honcho._async_http_client.get(
+                routes.workspace_queue_work_units(self._session.workspace_id),
+                query=build_query(cursor_token),
+            )
+            return QueueWorkUnitsPageAsync(
+                next_data,
+                QueueWorkUnit,
+                fetch_next=fetch_at,
+                fetch_previous=fetch_at,
+            )
+
+        data = await self._session._honcho._async_http_client.get(
+            routes.workspace_queue_work_units(self._session.workspace_id),
+            query=build_query(cursor),
+        )
+        return QueueWorkUnitsPageAsync(
+            data,
+            QueueWorkUnit,
+            fetch_next=fetch_at,
+            fetch_previous=fetch_at,
+        )
 
     async def get_message(self, message_id: str) -> Message:
         """Get a single message by ID from this session asynchronously.
