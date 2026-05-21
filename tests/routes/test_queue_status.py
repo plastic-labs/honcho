@@ -356,3 +356,85 @@ class TestDeriverStatusEndpoint:
             responses.append(response.json())  # pyright: ignore
         # Check consistency
         assert all(r == responses[0] for r in responses)  # pyright: ignore
+
+
+@pytest.mark.asyncio
+class TestQueueWorkUnitsEndpoint:
+    """Test suite for the /queue/work-units endpoint"""
+
+    async def test_empty_workspace_returns_empty_work_units(
+        self,
+        client: TestClient,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        workspace, _ = sample_data
+        response = client.get(f"/v3/workspaces/{workspace.name}/queue/work-units")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["work_units"] == []
+        assert body["representation_batch_max_tokens"] > 0
+        assert "flush_enabled" in body
+
+    async def test_pending_representation_below_threshold_is_stalled(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Default token_count is 0 → below threshold → stalled (when flush disabled)."""
+        workspace, peer = sample_data
+        session = models.Session(workspace_name=workspace.name, name="wu_session")
+        db_session.add(session)
+        await db_session.commit()
+        await db_session.refresh(session)
+
+        payload = {
+            "observed": peer.name,
+            "observer": peer.name,
+            "task_type": "representation",
+            "workspace_name": workspace.name,
+            "session_name": session.name,
+        }
+        for _ in range(3):
+            db_session.add(
+                models.QueueItem(
+                    session_id=session.id,
+                    task_type="representation",
+                    work_unit_key=construct_work_unit_key(workspace.name, payload),
+                    payload=payload,
+                    processed=False,
+                    workspace_name=workspace.name,
+                )
+            )
+        await db_session.commit()
+
+        # Check the new aggregate fields on /queue/status
+        status_resp = client.get(f"/v3/workspaces/{workspace.name}/queue/status")
+        assert status_resp.status_code == 200
+        status_body = status_resp.json()
+        assert status_body["pending_work_units"] == 3
+        # With default settings (FLUSH_ENABLED=False, threshold=1024) and 0 tokens,
+        # all 3 are stalled below the threshold
+        assert status_body["pending_stalled_work_units"] == 3
+        assert status_body["pending_ready_work_units"] == 0
+        assert (
+            status_body["pending_stalled_work_units"]
+            + status_body["pending_ready_work_units"]
+            == status_body["pending_work_units"]
+        )
+
+        # Check per-work-unit endpoint
+        wu_resp = client.get(f"/v3/workspaces/{workspace.name}/queue/work-units")
+        assert wu_resp.status_code == 200
+        wu_body = wu_resp.json()
+        assert len(wu_body["work_units"]) == 1  # 3 items collapse into 1 work unit
+        work_unit = wu_body["work_units"][0]
+        assert work_unit["task_type"] == "representation"
+        assert work_unit["pending_items"] == 3
+        assert work_unit["pending_tokens"] == 0
+        assert work_unit["hit_threshold"] is False
+        assert work_unit["in_progress"] is False
+        assert (
+            work_unit["tokens_until_threshold"]
+            == wu_body["representation_batch_max_tokens"]
+        )

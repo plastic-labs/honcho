@@ -132,6 +132,8 @@ class SessionCounts(BaseModel):
     completed: int
     in_progress: int
     pending: int
+    pending_stalled: int = 0
+    pending_ready: int = 0
 
 
 class QueueCounts(BaseModel):
@@ -141,6 +143,8 @@ class QueueCounts(BaseModel):
     completed: int
     in_progress: int
     pending: int
+    pending_stalled: int = 0
+    pending_ready: int = 0
     sessions: dict[str, SessionCounts]
 
 
@@ -152,10 +156,14 @@ class QueueStatusRow(BaseModel):
     completed: int
     in_progress: int
     pending: int
+    pending_stalled: int
+    pending_ready: int
     session_total: int
     session_completed: int
     session_in_progress: int
     session_pending: int
+    session_pending_stalled: int
+    session_pending_ready: int
 
 
 # ---------------------------------------------------------------------------

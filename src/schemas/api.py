@@ -611,6 +611,23 @@ class SessionQueueStatus(BaseModel):
         description="Work units currently being processed"
     )
     pending_work_units: int = Field(description="Work units waiting to be processed")
+    pending_stalled_work_units: int = Field(
+        default=0,
+        description=(
+            "Pending representation work units waiting to accumulate enough "
+            "tokens to hit DERIVER_REPRESENTATION_BATCH_MAX_TOKENS. Always 0 "
+            "when DERIVER_FLUSH_ENABLED is true."
+        ),
+    )
+    pending_ready_work_units: int = Field(
+        default=0,
+        description=(
+            "Pending work units eligible to be claimed: non-representation "
+            "task types, plus representation work units whose pending tokens "
+            "are at/above the batch threshold (or when flush is enabled). "
+            "pending_stalled_work_units + pending_ready_work_units == pending_work_units."
+        ),
+    )
 
 
 class QueueStatus(BaseModel):
@@ -631,10 +648,80 @@ class QueueStatus(BaseModel):
         description="Work units currently being processed"
     )
     pending_work_units: int = Field(description="Work units waiting to be processed")
+    pending_stalled_work_units: int = Field(
+        default=0,
+        description=(
+            "Pending representation work units waiting to accumulate enough "
+            "tokens to hit DERIVER_REPRESENTATION_BATCH_MAX_TOKENS. Always 0 "
+            "when DERIVER_FLUSH_ENABLED is true."
+        ),
+    )
+    pending_ready_work_units: int = Field(
+        default=0,
+        description=(
+            "Pending work units eligible to be claimed: non-representation "
+            "task types, plus representation work units whose pending tokens "
+            "are at/above the batch threshold (or when flush is enabled). "
+            "pending_stalled_work_units + pending_ready_work_units == pending_work_units."
+        ),
+    )
     sessions: dict[str, SessionQueueStatus] | None = Field(
         default=None,
         description="Per-session status when not filtered by session",
     )
+
+
+class QueueWorkUnit(BaseModel):
+    """Per-work-unit breakdown returned by /queue/work-units.
+
+    `hit_threshold` and `tokens_until_threshold` apply only to representation
+    work units (the only task type gated by DERIVER_REPRESENTATION_BATCH_MAX_TOKENS).
+    For other task types, `hit_threshold` is always True and
+    `tokens_until_threshold` is 0.
+    """
+
+    work_unit_key: str
+    task_type: str
+    session_id: str | None = None
+    session_name: str | None = None
+    observer: str | None = None
+    observed: str | None = None
+    pending_items: int = Field(description="Unprocessed queue items in this work unit")
+    pending_tokens: int = Field(
+        description="Sum of token_count across messages on unprocessed queue items"
+    )
+    tokens_until_threshold: int = Field(
+        description=(
+            "Tokens still needed before the deriver will claim this batch. "
+            "0 for non-representation task types and when flush is enabled."
+        )
+    )
+    hit_threshold: bool = Field(
+        description=(
+            "True if this work unit is eligible to be claimed (not threshold-"
+            "gated, threshold met, or flush enabled). False means stalled."
+        )
+    )
+    in_progress: bool = Field(
+        description="True if a deriver worker has claimed this work unit"
+    )
+    oldest_item_at: datetime.datetime
+    newest_item_at: datetime.datetime
+
+
+class QueueWorkUnitsResponse(BaseModel):
+    """Response for /queue/work-units — per-work-unit listing of unprocessed queue items."""
+
+    representation_batch_max_tokens: int = Field(
+        description="DERIVER_REPRESENTATION_BATCH_MAX_TOKENS at the time of the request"
+    )
+    flush_enabled: bool = Field(
+        description=(
+            "DERIVER_FLUSH_ENABLED. When true, the batch threshold is bypassed "
+            "and all pending representation work units are eligible to be claimed."
+        )
+    )
+    work_units: list[QueueWorkUnit]
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ from .collection import (
     get_or_create_collection,
     update_collection_internal_metadata,
 )
-from .deriver import get_deriver_status, get_queue_status
+from .deriver import get_deriver_status, get_queue_status, get_queue_work_units
 from .document import (
     create_documents,
     create_observations,
@@ -82,6 +82,7 @@ __all__ = [
     # Deriver
     "get_deriver_status",
     "get_queue_status",
+    "get_queue_work_units",
     # Document
     "create_documents",
     "create_observations",

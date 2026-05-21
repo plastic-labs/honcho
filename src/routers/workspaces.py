@@ -190,6 +190,43 @@ async def get_queue_status(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+@router.get(
+    "/{workspace_id}/queue/work-units",
+    response_model=schemas.QueueWorkUnitsResponse,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def get_queue_work_units(
+    workspace_id: str = Path(...),
+    observer_id: str | None = Query(
+        None, description="Optional observer ID to filter by"
+    ),
+    sender_id: str | None = Query(None, description="Optional sender ID to filter by"),
+    session_id: str | None = Query(
+        None, description="Optional session ID to filter by"
+    ),
+    db: AsyncSession = db,
+):
+    """
+    Return one row per unprocessed work unit in the Workspace's queue, with
+    token totals, in-progress flag, and threshold classification.
+
+    Useful for debugging "why isn't this work unit advancing?" — distinguishes
+    work units stalled below the batch token threshold from those claimed by a
+    worker or eligible to be claimed. Same filter semantics as /queue/status.
+    """
+    try:
+        return await crud.get_queue_work_units(
+            db,
+            workspace_name=workspace_id,
+            session_name=session_id,
+            observer=observer_id,
+            observed=sender_id,
+        )
+    except ValueError as e:
+        logger.warning(f"Invalid request parameters: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.post(
     "/{workspace_id}/schedule_dream",
     status_code=204,
