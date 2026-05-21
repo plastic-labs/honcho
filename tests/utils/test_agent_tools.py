@@ -1156,10 +1156,12 @@ class TestUpdatePeerCard:
         make_tool_context: Callable[..., ToolContext],
     ):
         """Entries without an allowed prefix are dropped; valid entries pass through."""
+        from src.utils.types import ToolResult
+
         workspace, peer1, peer2, _, _, _ = tool_test_data
         ctx = make_tool_context()
 
-        await _handle_update_peer_card(
+        result = await _handle_update_peer_card(
             ctx,
             {
                 "content": [
@@ -1172,6 +1174,21 @@ class TestUpdatePeerCard:
                 ]
             },
         )
+
+        # Partial-reject success path must surface the rejection in the tool
+        # response so the model can re-emit the dropped entries (with correct
+        # prefixes) on a retry instead of silently losing them.
+        assert isinstance(result, ToolResult)
+        content_lower = str(result).lower()
+        assert "updated peer card" in content_lower
+        assert "rejected 4 of 6" in content_lower
+        # At least one rejected sample should appear so the model knows what
+        # to fix.
+        assert "age: 39+" in content_lower or "trait: methodical" in content_lower
+        assert result.metadata is not None
+        assert result.metadata["peer_card_updated"] is True
+        assert result.metadata["facts_count"] == 2
+        assert result.metadata["rejected_count"] == 4
 
         await db_session.refresh(peer1)
         peer_card = await crud.get_peer_card(

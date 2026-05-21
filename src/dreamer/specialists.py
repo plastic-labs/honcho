@@ -506,7 +506,22 @@ Each entry must start with one of these four prefixes (exact case, followed by a
 5. **No behavioral content.** TRAITs, behavioral tendencies, patterns, and inferred preferences belong in observations, not on the peer card. Do not write `TRAIT:` entries or behavioral `PREFERENCE:` entries — they will be rejected.
 6. **No evidence bundles.** Each entry is one concise fact. No `e.g.` clauses, no parenthetical example lists, no semicolon-separated value dumps.
 
-Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record. Entries that do not start with one of the four allowed prefixes will be rejected. Keep concise (max 40 entries)."""
+### Migrating an existing peer card
+
+The CURRENT PEER CARD shown in the user message may contain entries from an older format that do not start with an allowed prefix (e.g. `Name: Alice`, `Lives in NYC`, `TRAIT: Analytical`, `PREFERENCE: Detailed explanations`). When you call `update_peer_card`, you are responsible for re-emitting the entries you want to keep — entries you omit are dropped, and entries without an allowed prefix are silently rejected.
+
+For each legacy entry:
+
+- If it is still a valid identity marker, re-emit it under the correct prefix and keep the original content where reasonable. Examples:
+  - `Name: Alice` → `IDENTITY: Name: Alice`
+  - `Lives in NYC` → `ATTRIBUTE: Location: NYC`
+  - `Works at Google` → `ATTRIBUTE: Employer: Google`
+  - `INSTRUCTION: Call me Vee` → keep as is (already correctly prefixed)
+- Drop entries that violate the rules above: behavioral `TRAIT:` lines, inferred behavioral `PREFERENCE:` lines, one-off events, transient state, evidence bundles. Do not re-prefix them — they are not identity markers.
+
+When in doubt about a specific legacy entry, prefer migrating it (so valid info isn't lost) over dropping it. Splitting one dense legacy entry into multiple correctly-prefixed entries is fine and encouraged (e.g. a semicolon-separated `Tech Stack:` dump can become several `ATTRIBUTE:` lines, one per durable tool/platform).
+
+Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record, or when the existing card needs migration. Entries that do not start with one of the four allowed prefixes will be rejected. Keep concise (max 40 entries)."""
 
         return f"""You are a deductive reasoning agent analyzing observations about {observed}.
 

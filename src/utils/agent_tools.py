@@ -1468,6 +1468,11 @@ async def _handle_update_peer_card(
     normalized_peer_card: list[str] = []
     seen: set[str] = set()
     rejected_count = 0
+    # Keep a small sample of rejected entries to surface back to the model so it
+    # can self-correct on a retry. Capped to avoid bloating the tool response.
+    rejected_samples: list[str] = []
+    _REJECTED_SAMPLE_CAP = 3
+    _REJECTED_SAMPLE_LINE_LIMIT = 120
     items = (
         cast(list[str], raw_peer_card_content)
         if isinstance(raw_peer_card_content, list)
@@ -1480,6 +1485,8 @@ async def _handle_update_peer_card(
 
         if not _validate_peer_card_entry(line):
             rejected_count += 1
+            if len(rejected_samples) < _REJECTED_SAMPLE_CAP:
+                rejected_samples.append(line[:_REJECTED_SAMPLE_LINE_LIMIT])
             logger.info(
                 "Rejecting peer card entry (no allowed prefix, empty body, or over length cap): %r",
                 line[:80],
@@ -1502,6 +1509,25 @@ async def _handle_update_peer_card(
             rejected_count,
         )
 
+    def _format_rejection_feedback(scope: str) -> str:
+        """Build a self-correction hint for the model. `scope` is grammar glue:
+        either "all" (every entry rejected) or e.g. "3 of 12" (partial)."""
+        samples_block = ""
+        if rejected_samples:
+            sample_lines = "\n".join(f"  - {s!r}" for s in rejected_samples)
+            extra = (
+                f" (+{rejected_count - len(rejected_samples)} more)"
+                if rejected_count > len(rejected_samples)
+                else ""
+            )
+            samples_block = f" Examples of rejected entries{extra}:\n{sample_lines}"
+        return (
+            f"Rejected {scope} entries for failing structural validation. "
+            "Each entry must start with one of `IDENTITY: `, `ATTRIBUTE: `, "
+            "`RELATIONSHIP: `, or `INSTRUCTION: ` and stay under the per-entry "
+            f"length cap.{samples_block}"
+        )
+
     # Don't clear the peer card if all content normalized to empty or every
     # entry was structurally invalid.
     if not normalized_peer_card:
@@ -1511,12 +1537,7 @@ async def _handle_update_peer_card(
             rejected_count,
         )
         if rejected_count:
-            return (
-                f"Peer card update rejected: all {rejected_count} entries failed "
-                "structural validation. Each entry must start with one of "
-                "`IDENTITY: `, `ATTRIBUTE: `, `RELATIONSHIP: `, or `INSTRUCTION: ` "
-                "and stay under the per-entry length cap."
-            )
+            return _format_rejection_feedback(f"all {rejected_count}")
         return "Peer card content was empty after normalization, no update performed."
 
     if len(normalized_peer_card) > MAX_PEER_CARD_FACTS:
@@ -1560,9 +1581,24 @@ async def _handle_update_peer_card(
     # can set its `peer_card_updated` flag without name-counting.
     from src.utils.types import ToolResult
 
+    success_content = (
+        f"Updated peer card for {ctx.observed} by {ctx.observer} "
+        f"with {len(normalized_peer_card)} entries."
+    )
+    if rejected_count:
+        # Partial reject: surface the rejection so the model can re-emit the
+        # dropped entries (with correct prefixes) on a retry instead of
+        # silently losing them.
+        accepted = len(normalized_peer_card)
+        total = accepted + rejected_count
+        success_content = f"{success_content} {_format_rejection_feedback(f'{rejected_count} of {total}')}"
     return ToolResult(
-        content=f"Updated peer card for {ctx.observed} by {ctx.observer}",
-        metadata={"peer_card_updated": True, "facts_count": len(normalized_peer_card)},
+        content=success_content,
+        metadata={
+            "peer_card_updated": True,
+            "facts_count": len(normalized_peer_card),
+            "rejected_count": rejected_count,
+        },
     )
 
 
