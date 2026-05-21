@@ -3,7 +3,12 @@ from .collection import (
     get_or_create_collection,
     update_collection_internal_metadata,
 )
-from .deriver import get_deriver_status, get_queue_status, get_queue_work_units
+from .deriver import (
+    classify_work_unit_row,
+    get_deriver_status,
+    get_queue_status,
+    get_queue_work_units_query,
+)
 from .document import (
     create_documents,
     create_observations,
@@ -80,9 +85,10 @@ __all__ = [
     "get_or_create_collection",
     "update_collection_internal_metadata",
     # Deriver
+    "classify_work_unit_row",
     "get_deriver_status",
     "get_queue_status",
-    "get_queue_work_units",
+    "get_queue_work_units_query",
     # Document
     "create_documents",
     "create_observations",

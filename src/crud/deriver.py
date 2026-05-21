@@ -88,21 +88,20 @@ async def get_deriver_status(
     )
 
 
-async def get_queue_work_units(
-    db: AsyncSession,
+async def get_queue_work_units_query(
     workspace_name: str,
     session_name: str | None = None,
     *,
     observer: str | None = None,
     observed: str | None = None,
-) -> schemas.QueueWorkUnitsResponse:
+) -> Select[Any]:
     """
-    Return one row per unprocessed work unit in the queue, with token totals,
-    in-progress flag, and threshold classification.
+    Build the Select statement for one row per unprocessed work unit, with
+    token totals, in-progress flag, observer/observed, and timestamps.
 
-    Useful for debugging "why isn't this work unit advancing?" — distinguishes
-    work units stalled below DERIVER_REPRESENTATION_BATCH_MAX_TOKENS from those
-    that are claimed by a worker or eligible to be claimed.
+    Returns a SQLAlchemy Select for cursor pagination via apaginate. The
+    router is responsible for computing per-row threshold classification
+    (hit_threshold, tokens_until_threshold) and wrapping the envelope.
 
     Same filter semantics as get_queue_status: observer/observed match the
     queue item payload, session_name filters via the sessions table.
@@ -111,55 +110,34 @@ async def get_queue_work_units(
     normalized_observed = observed if observed else None
     normalized_session_name = session_name if session_name else None
 
-    batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
-    flush_enabled = settings.DERIVER.FLUSH_ENABLED
-
-    stmt = _build_queue_work_units_query(
+    return _build_queue_work_units_query(
         workspace_name,
         normalized_session_name,
         observer=normalized_observer,
         observed=normalized_observed,
     )
-    result = await db.execute(stmt)
-    rows = result.fetchall()
 
-    work_units: list[schemas.QueueWorkUnit] = []
-    for row in rows:
-        threshold_gated = (
-            row.task_type == _THRESHOLD_GATED_TASK_TYPE
-            and not flush_enabled
-            and batch_max_tokens > 0
-        )
-        if threshold_gated:
-            hit_threshold = row.pending_tokens >= batch_max_tokens
-            tokens_until_threshold = max(batch_max_tokens - row.pending_tokens, 0)
-        else:
-            hit_threshold = True
-            tokens_until_threshold = 0
 
-        work_units.append(
-            schemas.QueueWorkUnit(
-                work_unit_key=row.work_unit_key,
-                task_type=row.task_type,
-                session_id=row.session_id,
-                session_name=row.session_name,
-                observer=row.observer,
-                observed=row.observed,
-                pending_items=row.pending_items,
-                pending_tokens=row.pending_tokens,
-                tokens_until_threshold=tokens_until_threshold,
-                hit_threshold=hit_threshold,
-                in_progress=bool(row.in_progress),
-                oldest_item_at=row.oldest_item_at,
-                newest_item_at=row.newest_item_at,
-            )
-        )
+def classify_work_unit_row(row: Any) -> tuple[bool, int]:
+    """Classify a work-units query row against current threshold/flush settings.
 
-    return schemas.QueueWorkUnitsResponse(
-        representation_batch_max_tokens=batch_max_tokens,
-        flush_enabled=flush_enabled,
-        work_units=work_units,
+    Returns (hit_threshold, tokens_until_threshold). Pure function so it
+    can be applied in a pagination transformer.
+    """
+    batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+    flush_enabled = settings.DERIVER.FLUSH_ENABLED
+
+    threshold_gated = (
+        row.task_type == _THRESHOLD_GATED_TASK_TYPE
+        and not flush_enabled
+        and batch_max_tokens > 0
     )
+    if threshold_gated:
+        return (
+            row.pending_tokens >= batch_max_tokens,
+            max(batch_max_tokens - row.pending_tokens, 0),
+        )
+    return True, 0
 
 
 def _build_queue_status_query(
@@ -332,10 +310,11 @@ def _build_queue_work_units_query(
             models.Session.name,
         )
         .order_by(
-            # Stalled-first ordering would require a HAVING-style classification;
-            # instead order by oldest pending so debugging surfaces oldest stuck
-            # work first.
-            func.min(models.QueueItem.created_at)
+            # Oldest-pending first surfaces the most-stuck work for debugging.
+            # work_unit_key is a unique tiebreaker required by sqlakeyset for
+            # stable cursor pagination when timestamps collide.
+            func.min(models.QueueItem.created_at),
+            models.QueueItem.work_unit_key,
         )
     )
 

@@ -10,6 +10,7 @@ from typing import Annotated, Any, Self, cast
 from urllib.parse import urlparse
 
 import tiktoken
+from fastapi_pagination.cursor import CursorPage
 from pydantic import (
     AliasChoices,
     BaseModel,
@@ -709,8 +710,18 @@ class QueueWorkUnit(BaseModel):
     newest_item_at: datetime.datetime
 
 
-class QueueWorkUnitsResponse(BaseModel):
-    """Response for /queue/work-units — per-work-unit listing of unprocessed queue items."""
+class QueueWorkUnitsPage(CursorPage[QueueWorkUnit]):
+    """Cursor-paginated /queue/work-units response.
+
+    Cursor pagination is used because the queue mutates rapidly (workers claim
+    and complete items continuously) — offset pagination would skip rows when
+    items are processed between page fetches.
+
+    Standard CursorPage envelope (`items`, `total`, `current_page`,
+    `next_page`, `previous_page`) plus two additional fields describing the
+    deriver's threshold configuration, needed to interpret per-row
+    `hit_threshold` and `tokens_until_threshold`.
+    """
 
     representation_batch_max_tokens: int = Field(
         description="DERIVER_REPRESENTATION_BATCH_MAX_TOKENS at the time of the request"
@@ -721,7 +732,6 @@ class QueueWorkUnitsResponse(BaseModel):
             "and all pending representation work units are eligible to be claimed."
         )
     )
-    work_units: list[QueueWorkUnit]
 
 
 # ---------------------------------------------------------------------------
