@@ -1,3 +1,4 @@
+import datetime
 from typing import Any
 
 import pytest
@@ -5,7 +6,7 @@ from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud
+from src import crud, models
 from src.models import Peer, Workspace
 
 
@@ -169,6 +170,148 @@ def test_get_peers_with_null_filter(
     assert isinstance(data["items"], list)
 
 
+def test_get_peers_with_reverse(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer listing with reverse creation-time ordering."""
+    test_workspace, _ = sample_data
+    reverse_group = f"reverse-peers-{generate_nanoid()}"
+    first_name = f"reverse-peer-a-{generate_nanoid()}"
+    second_name = f"reverse-peer-b-{generate_nanoid()}"
+
+    first_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": first_name, "metadata": {"reverse_group": reverse_group}},
+    )
+    assert first_response.status_code in [200, 201]
+
+    second_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers",
+        json={"name": second_name, "metadata": {"reverse_group": reverse_group}},
+    )
+    assert second_response.status_code in [200, 201]
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        first_name,
+        second_name,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        second_name,
+        first_name,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_peers_reverse_uses_id_tiebreaker(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Peers with identical created_at fall back to ordering by id (nanoid PK)."""
+    test_workspace, _ = sample_data
+    reverse_group = f"tiebreaker-peers-{generate_nanoid()}"
+    shared_created_at = datetime.datetime(
+        2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
+    )
+
+    low_id = "A" * 21
+    high_id = "z" * 21
+    low_name = f"tie-low-peer-{generate_nanoid()}"
+    high_name = f"tie-high-peer-{generate_nanoid()}"
+
+    db_session.add(
+        models.Peer(
+            id=low_id,
+            name=low_name,
+            workspace_name=test_workspace.name,
+            created_at=shared_created_at,
+            h_metadata={"reverse_group": reverse_group},
+        )
+    )
+    db_session.add(
+        models.Peer(
+            id=high_id,
+            name=high_name,
+            workspace_name=test_workspace.name,
+            created_at=shared_created_at,
+            h_metadata={"reverse_group": reverse_group},
+        )
+    )
+    await db_session.commit()
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    # When created_at ties, ordering falls back to the nanoid id: low_id < high_id
+    # lexicographically, so low sorts first ascending and last descending.
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        low_name,
+        high_name,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        high_name,
+        low_name,
+    ]
+
+
+def test_get_peers_reverse_with_pagination(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Paged reverse listing returns newest-first across consecutive pages."""
+    test_workspace, _ = sample_data
+    reverse_group = f"paged-reverse-peers-{generate_nanoid()}"
+    peer_names = [f"paged-reverse-peer-{i}-{generate_nanoid()}" for i in range(3)]
+
+    for peer_name in peer_names:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/peers",
+            json={"name": peer_name, "metadata": {"reverse_group": reverse_group}},
+        )
+        assert response.status_code in [200, 201]
+
+    page_one = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list?reverse=true&page=1&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_one.status_code == 200
+    page_two = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list?reverse=true&page=2&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_two.status_code == 200
+    page_three = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list?reverse=true&page=3&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_three.status_code == 200
+
+    assert page_one.json()["total"] == 3
+    assert [item["id"] for item in page_one.json()["items"]] == [peer_names[2]]
+    assert [item["id"] for item in page_two.json()["items"]] == [peer_names[1]]
+    assert [item["id"] for item in page_three.json()["items"]] == [peer_names[0]]
+
+
 def test_update_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     response = client.put(
@@ -306,6 +449,159 @@ def test_get_sessions_for_peer_with_empty_filter(
     data = response.json()
     assert "items" in data
     assert isinstance(data["items"], list)
+
+
+def test_get_sessions_for_peer_with_reverse(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer session listing with reverse creation-time ordering."""
+    test_workspace, test_peer = sample_data
+    reverse_group = f"reverse-peer-sessions-{generate_nanoid()}"
+    first_session = f"reverse-peer-session-a-{generate_nanoid()}"
+    second_session = f"reverse-peer-session-b-{generate_nanoid()}"
+
+    first_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": first_session,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"reverse_group": reverse_group},
+        },
+    )
+    assert first_response.status_code in [200, 201]
+
+    second_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": second_session,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"reverse_group": reverse_group},
+        },
+    )
+    assert second_response.status_code in [200, 201]
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        first_session,
+        second_session,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        second_session,
+        first_session,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_for_peer_reverse_uses_id_tiebreaker(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Peer-scoped sessions with identical created_at fall back to ordering by id."""
+    test_workspace, test_peer = sample_data
+    reverse_group = f"tiebreaker-peer-sessions-{generate_nanoid()}"
+    shared_created_at = datetime.datetime(
+        2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
+    )
+
+    low_id = "A" * 21
+    high_id = "z" * 21
+    low_name = f"tie-low-peer-session-{generate_nanoid()}"
+    high_name = f"tie-high-peer-session-{generate_nanoid()}"
+
+    for session_id, session_name in ((low_id, low_name), (high_id, high_name)):
+        db_session.add(
+            models.Session(
+                id=session_id,
+                name=session_name,
+                workspace_name=test_workspace.name,
+                created_at=shared_created_at,
+                h_metadata={"reverse_group": reverse_group},
+            )
+        )
+        db_session.add(
+            models.SessionPeer(
+                workspace_name=test_workspace.name,
+                session_name=session_name,
+                peer_name=test_peer.name,
+            )
+        )
+    await db_session.commit()
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        low_name,
+        high_name,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        high_name,
+        low_name,
+    ]
+
+
+def test_get_sessions_for_peer_reverse_with_pagination(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Paged reverse listing of a peer's sessions returns newest-first across pages."""
+    test_workspace, test_peer = sample_data
+    reverse_group = f"paged-reverse-peer-sessions-{generate_nanoid()}"
+    session_names = [
+        f"paged-reverse-peer-session-{i}-{generate_nanoid()}" for i in range(3)
+    ]
+
+    for session_name in session_names:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={
+                "id": session_name,
+                "peer_names": {test_peer.name: {}},
+                "metadata": {"reverse_group": reverse_group},
+            },
+        )
+        assert response.status_code in [200, 201]
+
+    page_one = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions?reverse=true&page=1&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_one.status_code == 200
+    page_two = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions?reverse=true&page=2&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_two.status_code == 200
+    page_three = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions?reverse=true&page=3&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_three.status_code == 200
+
+    assert page_one.json()["total"] == 3
+    assert [item["id"] for item in page_one.json()["items"]] == [session_names[2]]
+    assert [item["id"] for item in page_two.json()["items"]] == [session_names[1]]
+    assert [item["id"] for item in page_three.json()["items"]] == [session_names[0]]
 
 
 def test_chat(

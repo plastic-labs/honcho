@@ -232,6 +232,7 @@ export class Honcho {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    reverse?: boolean
   }): Promise<PageResponse<WorkspaceResponse>> {
     return this._http.post<PageResponse<WorkspaceResponse>>(
       `/${API_VERSION}/workspaces/list`,
@@ -242,6 +243,7 @@ export class Honcho {
         query: {
           page: params?.page,
           size: params?.size,
+          reverse: params?.reverse ? 'true' : undefined,
         },
       }
     )
@@ -707,7 +709,7 @@ export class Honcho {
    * user has access to.
    *
    * @param options - Either a legacy raw filter object or an options object with
-   *                  `filters`, `page`, and `size`. See
+   *                  `filters`, `page`, `size`, and `reverse`. See
    *                  [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of workspace ID strings. Returns an empty
    *          page if no workspaces are accessible or none exist
@@ -719,20 +721,24 @@ export class Honcho {
           filters?: Filters
           page?: number
           size?: number
+          reverse?: boolean
         }
   ): Promise<Page<string, WorkspaceResponse>> {
     const normalizedOptions = normalizeListOptions(options, [
       'filters',
       'page',
       'size',
+      'reverse',
     ])
     const validatedFilter = normalizedOptions.filters
       ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
+    const reverse = normalizedOptions.reverse
     const workspacesPage = await this._listWorkspaces({
       filters: validatedFilter,
       page: normalizedOptions.page,
       size: normalizedOptions.size,
+      reverse,
     })
 
     const fetchNextPage = async (
@@ -743,6 +749,7 @@ export class Honcho {
         filters: validatedFilter,
         page,
         size,
+        reverse,
       })
     }
 

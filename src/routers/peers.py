@@ -1,3 +1,5 @@
+"""FastAPI routes for peer resources and peer-scoped operations."""
+
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -40,6 +42,7 @@ async def get_peers(
     options: schemas.PeerGet | None = Body(
         None, description="Filtering options for the peers list"
     ),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = db,
 ):
     """Get all Peers for a Workspace, paginated with optional filters."""
@@ -51,7 +54,11 @@ async def get_peers(
 
     return await apaginate(
         db,
-        await crud.get_peers(workspace_name=workspace_id, filters=filter_param),
+        await crud.get_peers(
+            workspace_name=workspace_id,
+            filters=filter_param,
+            reverse=reverse,
+        ),
     )
 
 
@@ -126,6 +133,7 @@ async def get_sessions_for_peer(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering options for the sessions list"
     ),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = db,
 ):
     """Get all Sessions for a Peer, paginated with optional filters."""
@@ -142,6 +150,7 @@ async def get_sessions_for_peer(
             workspace_name=workspace_id,
             peer_name=peer_id,
             filters=filter_param,
+            reverse=reverse,
         ),
     )
 

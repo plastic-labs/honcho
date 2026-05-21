@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- `Honcho.workspaces()` now actually forwards the `reverse` option to the server. The 2.1.0 changelog listed `workspaces()` among the list methods that gained `reverse`, but `client.ts` was missing the field on the params type and request builder, so the option was silently dropped. Honoring `reverse` on the workspace/peer/session list routes also requires a Honcho server with the matching API fix; older servers silently ignore the parameter.
+
 ## [2.1.1] - 2026-04-01
 
 ### Fixed
