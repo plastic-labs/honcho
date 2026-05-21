@@ -321,6 +321,12 @@ describe('Honcho Client', () => {
       expect(typeof status.completedWorkUnits).toBe('number')
       expect(typeof status.inProgressWorkUnits).toBe('number')
       expect(typeof status.pendingWorkUnits).toBe('number')
+      // Phase 1 fields: stalled + ready partition pending
+      expect(typeof status.pendingStalledWorkUnits).toBe('number')
+      expect(typeof status.pendingReadyWorkUnits).toBe('number')
+      expect(
+        status.pendingStalledWorkUnits + status.pendingReadyWorkUnits
+      ).toBe(status.pendingWorkUnits)
     })
 
     test('queueStatus with observer filter', async () => {
@@ -341,6 +347,59 @@ describe('Honcho Client', () => {
       })
 
       expect(typeof status.totalWorkUnits).toBe('number')
+    })
+  })
+
+  // ===========================================================================
+  // Queue Work Units (cursor-paginated)
+  // ===========================================================================
+
+  describe('GET /workspaces/:id/queue/work-units', () => {
+    test('queueWorkUnits returns cursor-paginated page with envelope extras', async () => {
+      const page = await client.queueWorkUnits()
+
+      // Envelope extras (server's deriver threshold config)
+      expect(typeof page.representationBatchMaxTokens).toBe('number')
+      expect(page.representationBatchMaxTokens).toBeGreaterThan(0)
+      expect(typeof page.flushEnabled).toBe('boolean')
+
+      // Cursor page surface
+      expect(Array.isArray(page.items)).toBe(true)
+      expect(page.hasNextPage).toBe(false) // empty workspace
+      expect(page.nextPage).toBeNull()
+    })
+
+    test('queueWorkUnits with filter combos still returns a page', async () => {
+      const peer = await client.peer('queue-wu-observer')
+      const session = await client.session('queue-wu-session', {
+        metadata: {},
+      })
+
+      const byObserver = await client.queueWorkUnits({ observer: peer })
+      expect(Array.isArray(byObserver.items)).toBe(true)
+
+      const bySession = await client.queueWorkUnits({ session: session })
+      expect(Array.isArray(bySession.items)).toBe(true)
+
+      const bySender = await client.queueWorkUnits({ sender: peer })
+      expect(Array.isArray(bySender.items)).toBe(true)
+    })
+
+    test('queueWorkUnits session-scoped variant hard-sets session_id', async () => {
+      const session = await client.session('queue-wu-session-scoped', {
+        metadata: {},
+      })
+      const page = await session.queueWorkUnits()
+      expect(typeof page.representationBatchMaxTokens).toBe('number')
+      expect(Array.isArray(page.items)).toBe(true)
+    })
+
+    test('queueWorkUnits with size param does not exceed page size', async () => {
+      const page = await client.queueWorkUnits({ size: 10 })
+      expect(page.items.length).toBeLessThanOrEqual(10)
+      // Empty queue: no next page, getNextPage returns null
+      const next = await page.getNextPage()
+      expect(next).toBeNull()
     })
   })
 

@@ -1,6 +1,8 @@
 import type {
   QueueStatus,
   QueueStatusResponse,
+  QueueWorkUnit,
+  QueueWorkUnitResponse,
   SessionQueueStatus,
   SessionQueueStatusResponse,
 } from './types/api'
@@ -32,6 +34,8 @@ function transformSessionQueueStatus(
     completedWorkUnits: status.completed_work_units,
     inProgressWorkUnits: status.in_progress_work_units,
     pendingWorkUnits: status.pending_work_units,
+    pendingStalledWorkUnits: status.pending_stalled_work_units ?? 0,
+    pendingReadyWorkUnits: status.pending_ready_work_units ?? 0,
   }
 }
 
@@ -53,6 +57,31 @@ export function transformQueueStatus(status: QueueStatusResponse): QueueStatus {
     completedWorkUnits: status.completed_work_units,
     inProgressWorkUnits: status.in_progress_work_units,
     pendingWorkUnits: status.pending_work_units,
+    pendingStalledWorkUnits: status.pending_stalled_work_units ?? 0,
+    pendingReadyWorkUnits: status.pending_ready_work_units ?? 0,
     sessions,
+  }
+}
+
+/**
+ * Transform a QueueWorkUnitResponse to QueueWorkUnit (snake_case to camelCase).
+ */
+export function transformQueueWorkUnit(
+  row: QueueWorkUnitResponse
+): QueueWorkUnit {
+  return {
+    workUnitKey: row.work_unit_key,
+    taskType: row.task_type,
+    sessionId: row.session_id,
+    sessionName: row.session_name,
+    observer: row.observer,
+    observed: row.observed,
+    pendingItems: row.pending_items,
+    pendingTokens: row.pending_tokens,
+    tokensUntilThreshold: row.tokens_until_threshold,
+    hitThreshold: row.hit_threshold,
+    inProgress: row.in_progress,
+    oldestItemAt: row.oldest_item_at,
+    newestItemAt: row.newest_item_at,
   }
 }

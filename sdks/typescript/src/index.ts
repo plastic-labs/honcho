@@ -28,7 +28,7 @@ export {
   DialecticStreamResponse,
 } from './http/streaming'
 export { Message, type MessageInput } from './message'
-export { Page } from './pagination'
+export { CursorPage, Page, QueueWorkUnitsPage } from './pagination'
 export { Peer, PeerContext } from './peer'
 export { Session } from './session'
 export {
@@ -42,12 +42,16 @@ export {
 export type {
   ConclusionQueryParams,
   ConclusionResponse,
+  CursorPageResponse,
   MessageResponse,
   PageResponse,
   PeerContextResponse,
   PeerResponse,
   QueueStatus,
   QueueStatusResponse,
+  QueueWorkUnit,
+  QueueWorkUnitResponse,
+  QueueWorkUnitsResponse,
   RepresentationOptions,
   SessionContextResponse,
   SessionQueueStatus,
@@ -72,6 +76,7 @@ export type {
   PeerMetadata,
   PeerRemoval,
   QueueStatusOptions,
+  QueueWorkUnitsOptions,
   SessionConfig,
   SessionMetadata,
   SessionPeerConfig,
