@@ -13,16 +13,62 @@ import contextlib
 import json
 import logging
 from collections import deque
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from cloudevents.conversion import to_json  # pyright: ignore[reportUnknownVariableType]
 from cloudevents.http import CloudEvent
 
+from src._version import HONCHO_VERSION
+
 if TYPE_CHECKING:
     from src.telemetry.events.base import BaseEvent
 
 logger = logging.getLogger(__name__)
+
+
+def _should_sample(
+    event: "BaseEvent", rate: object, *, event_id: str | None = None
+) -> bool:
+    """Trace-coherent deterministic sampler for high-volume events.
+
+    `rate` is typed as `object` (rather than `float`) because the caller
+    reads it straight from `settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE`,
+    which in tests gets MagicMock'd. A MagicMock comparison against 1.0
+    raises TypeError, so we validate at the boundary and fall back to
+    passthrough on anything non-numeric.
+
+    When the event carries a `run_id`, sampling decisions hash on that id —
+    so every event in an agent run either passes or fails the sampler, and
+    join queries downstream don't see half-traces. Events without `run_id`
+    (summarizer, deriver — non-agentic call sites) sample independently per
+    event using the event's deterministic id. Callers that have already
+    computed `event.generate_id()` can pass it as `event_id` to avoid the
+    redundant sha256 hash.
+    """
+    if not isinstance(rate, int | float):
+        return True
+    rate_f = float(rate)
+    if rate_f >= 1.0:
+        return True
+    if rate_f <= 0.0:
+        return False
+    run_id = getattr(event, "run_id", None)
+    if isinstance(run_id, str) and run_id:
+        key = run_id
+    elif event_id is not None:
+        key = event_id
+    else:
+        key = event.generate_id()
+    # Stable hash → 0..9999 → compare against rate * 10000.
+    bucket = int.from_bytes(_stable_hash(key)[:4], "big") % 10_000
+    return bucket < int(rate_f * 10_000)
+
+
+def _stable_hash(value: str) -> bytes:
+    import hashlib
+
+    return hashlib.sha256(value.encode("utf-8")).digest()
 
 
 class TelemetryEmitter:
@@ -59,6 +105,8 @@ class TelemetryEmitter:
     _client: httpx.AsyncClient | None
     _running: bool
     _lock: asyncio.Lock
+    _capacity_warning_active: bool
+    _pending_flush_tasks: set[asyncio.Task[None]]
 
     def __init__(
         self,
@@ -97,6 +145,8 @@ class TelemetryEmitter:
         self._client = None
         self._running = False
         self._lock = asyncio.Lock()
+        self._capacity_warning_active = False
+        self._pending_flush_tasks = set()
 
     async def start(self) -> None:
         """Start the emitter background tasks.
@@ -121,8 +171,14 @@ class TelemetryEmitter:
     async def shutdown(self) -> None:
         """Gracefully shutdown the emitter.
 
-        Stops the periodic flush task, flushes remaining events,
-        and closes the HTTP client.
+        Stops the periodic flush task, drains any in-flight threshold
+        flushes, flushes remaining events, and closes the HTTP client.
+
+        Threshold flushes are spawned from emit() and pop their batch
+        under lock before releasing it for the HTTP send. If we don't
+        await those tasks first, the final flush() can see an empty
+        buffer and return while the in-flight task is still mid-send —
+        closing the HTTP client then orphans that batch.
         """
         if not self.enabled:
             return
@@ -134,6 +190,12 @@ class TelemetryEmitter:
             self._flush_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._flush_task
+
+        # Drain in-flight threshold flushes. Snapshot the set first because
+        # the done-callback mutates it. Exceptions here mustn't block shutdown.
+        pending = list(self._pending_flush_tasks)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
         # Final flush of remaining events
         await self.flush()
@@ -159,9 +221,45 @@ class TelemetryEmitter:
             return
 
         from src.config import settings
+        from src.telemetry.prometheus.metrics import prometheus_metrics
 
-        # Generate deterministic event ID
-        event_id = event.generate_id()
+        # High-volume events are subject to HIGH_VOLUME_SAMPLE_RATE. Aggregate
+        # envelopes (representation.completed, dialectic.completed, dream.run,
+        # etc.) declare _volume_class="ground_truth" and skip the sampler.
+        # Sampling is deterministic on run_id when available so an entire
+        # agentic trace is either fully kept or fully dropped — never a
+        # half-sampled run that breaks join queries downstream.
+        #
+        # Trade-off: at rate < 1.0, ground_truth aggregates still emit but
+        # their high-volume children get sampled out. Downstream JOIN ... ON
+        # run_id sees orphaned parents; aggregates carry totals so this is
+        # intentional, but per-call analytics rebuilt from the sampled
+        # children alone will undercount. See HIGH_VOLUME_SAMPLE_RATE
+        # docstring in src/config.py for the full implications.
+        # Lazy event_id generation. The sampler only needs it for high-volume
+        # events without a run_id (run_id events sample on run_id directly).
+        # For sampled-out children of an agent run, deferring saves a sha256
+        # hash per event; for events that pass the sampler or skip it, we
+        # still only compute the id once and reuse it for the CloudEvent.
+        event_id: str | None = None
+
+        if event.volume_class() == "high_volume":
+            run_id = getattr(event, "run_id", None)
+            has_run_id = isinstance(run_id, str) and bool(run_id)
+            if not has_run_id:
+                event_id = event.generate_id()
+            if not _should_sample(
+                event,
+                settings.TELEMETRY.HIGH_VOLUME_SAMPLE_RATE,
+                event_id=event_id,
+            ):
+                prometheus_metrics.record_telemetry_event_sampled_out(
+                    event_type=event.event_type()
+                )
+                return
+
+        if event_id is None:
+            event_id = event.generate_id()
 
         # Build source with namespace for tenant routing
         # Format: /honcho/{namespace}/{category} or /honcho/{category}
@@ -179,28 +277,64 @@ class TelemetryEmitter:
             "dataschema": f"https://honcho.dev/schemas/{event.event_type()}/v{event.schema_version()}",
         }
 
+        # Build body and inject envelope-level identity. We do NOT mutate the event
+        # instance — tests and callers that observe the event after emit() see it
+        # unchanged. Only the serialized body that hits the wire carries the extras.
+        body: dict[str, Any] = event.model_dump(mode="json")
+        body["honcho_version"] = HONCHO_VERSION
+
+        # Buffer-full check happens here because deque(maxlen=) silently evicts.
+        # Detect by length-before-append; if at capacity, the append will displace
+        # the oldest event — that's a drop.
+        will_drop_oldest = len(self._buffer) >= self.max_buffer_size
+
         # Create CloudEvent
-        cloud_event = CloudEvent(attributes, event.model_dump(mode="json"))
+        cloud_event = CloudEvent(attributes, body)
+
+        if will_drop_oldest:
+            prometheus_metrics.record_telemetry_event_dropped(reason="buffer_full")
 
         self._buffer.append(cloud_event)
         buffer_size = len(self._buffer)
+        prometheus_metrics.record_telemetry_event_emitted(event_type=event.event_type())
+        prometheus_metrics.set_telemetry_buffer_size(size=buffer_size)
         logger.debug("Queued event %s (buffer size: %d)", event_id, buffer_size)
 
-        # Warning logs as buffer approaches max capacity
+        # Warning logs as buffer approaches max capacity. Edge-triggered so
+        # sustained backpressure doesn't spam thousands of WARN lines per
+        # second — exactly when log pipelines are most fragile.
         capacity_ratio = buffer_size / self.max_buffer_size
         if capacity_ratio >= 0.8:
-            logger.warning(
-                "Telemetry buffer at %.0f%% capacity (%d/%d events)",
-                capacity_ratio * 100,
-                buffer_size,
-                self.max_buffer_size,
-            )
+            if not self._capacity_warning_active:
+                self._capacity_warning_active = True
+                logger.warning(
+                    "Telemetry buffer at %.0f%% capacity (%d/%d events)",
+                    capacity_ratio * 100,
+                    buffer_size,
+                    self.max_buffer_size,
+                )
+        else:
+            self._capacity_warning_active = False
 
         logger.debug("Event added to emitter (buffer size: %d)", buffer_size)
-        # Threshold-based flush trigger
+        # Threshold-based flush trigger. emit() is sync — guard against the
+        # case where a future caller invokes it from outside an event loop;
+        # the periodic flush task will still pick up the buffered events.
+        # Track spawned tasks so shutdown() can await them before closing the
+        # HTTP client — otherwise an in-flight threshold flush (which pops its
+        # batch under lock, then sends without the lock) can be orphaned and
+        # lose its batch when the client closes underneath it.
         if buffer_size >= self.flush_threshold and self._running:
             logger.debug("Triggering flush (buffer size: %d)", buffer_size)
-            asyncio.create_task(self.flush())
+            try:
+                asyncio.get_running_loop()
+                flush_task = asyncio.create_task(self.flush())
+                self._pending_flush_tasks.add(flush_task)
+                flush_task.add_done_callback(self._pending_flush_tasks.discard)
+            except RuntimeError:
+                logger.debug(
+                    "emit() called outside an event loop; deferring flush to periodic task"
+                )
 
     async def flush(self) -> None:
         """Flush buffered events to the endpoint.
@@ -208,31 +342,47 @@ class TelemetryEmitter:
         Sends events in batches up to batch_size. Uses exponential
         backoff retry on failure. Events are returned to the buffer
         on permanent failure.
+
+        The lock is held only for buffer mutations (pop batch / restore on
+        failure) — never across the HTTP send. A failing endpoint can spend
+        tens of seconds in retry + backoff; keeping that out of the lock
+        lets concurrent flushers make progress on disjoint batches.
         """
         if not self.enabled or not self._buffer or self._client is None:
             return
 
-        async with self._lock:
-            while self._buffer:
-                # Extract a batch
+        while True:
+            async with self._lock:
+                if not self._buffer:
+                    return
                 batch: list[CloudEvent] = []
                 while self._buffer and len(batch) < self.batch_size:
                     batch.append(self._buffer.popleft())
 
-                if not batch:
-                    break
+            if not batch:
+                return
 
-                # Try to send the batch
-                success = await self._send_batch(batch)
-                if not success:
-                    # Put events back at the front of the buffer
-                    for event in reversed(batch):
-                        self._buffer.appendleft(event)
-                    logger.warning(
-                        "Failed to send batch of %d events, returned to buffer",
-                        len(batch),
-                    )
-                    break
+            success = await self._send_batch(batch)
+            if success:
+                continue
+
+            from src.telemetry.prometheus.metrics import prometheus_metrics
+
+            async with self._lock:
+                # Put events back at the front of the buffer. If the buffer is
+                # already full, deque.appendleft silently evicts from the right
+                # — those events are lost. Count the eviction as send_failed.
+                for event in reversed(batch):
+                    if len(self._buffer) >= self.max_buffer_size:
+                        prometheus_metrics.record_telemetry_event_dropped(
+                            reason="send_failed"
+                        )
+                    self._buffer.appendleft(event)
+            logger.warning(
+                "Failed to send batch of %d events, returned to buffer",
+                len(batch),
+            )
+            return
 
     async def _send_batch(self, batch: list[CloudEvent]) -> bool:
         """Send a batch of events to the endpoint with retry logic.

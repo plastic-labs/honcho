@@ -368,6 +368,7 @@ class TestExecuteDreamSessionFilter:
             observed: str,
             dream_type: Any,
             session_name: str,
+            **_scheduler_extra: Any,  # trigger_reason / delay_reason / etc.
         ) -> None:
             captured_kwargs.update(
                 {

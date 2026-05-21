@@ -99,7 +99,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         "--base-url",
         type=str,
         default=None,
-        help="Base URL for remote Honcho instance (e.g., https://groudon.fly.dev). Overrides --base-api-port.",
+        help="Base URL for remote Honcho instance (e.g., https://api.example.com). Overrides --base-api-port.",
     )
 
     parser.add_argument(

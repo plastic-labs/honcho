@@ -10,6 +10,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
     Counter,
+    Gauge,
     disable_created_metrics,
     generate_latest,
 )
@@ -25,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 class NamespacedCounter(Counter):
     def labels(self, **kwargs: str) -> NamespacedCounter:
+        kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
+        return super().labels(**kwargs)  # type: ignore[return-value]
+
+
+class NamespacedGauge(Gauge):
+    def labels(self, **kwargs: str) -> NamespacedGauge:
         kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)  # type: ignore[return-value]
 
@@ -90,6 +97,32 @@ dreamer_tokens_processed_counter = NamespacedCounter(
     "dreamer_tokens_processed",
     "Total tokens processed by the dreamer",
     ["namespace", "specialist_name", "token_type"],
+)
+
+# CloudEvents emitter health metrics. Split intentional (sampled out) vs unintentional
+# (dropped) so the dropped counter remains a real alert signal.
+telemetry_events_emitted_counter = NamespacedCounter(
+    "telemetry_events_emitted",
+    "CloudEvents successfully placed on the emitter buffer",
+    ["namespace", "type"],
+)
+
+telemetry_events_sampled_out_counter = NamespacedCounter(
+    "telemetry_events_sampled_out",
+    "CloudEvents intentionally dropped by HIGH_VOLUME_SAMPLE_RATE",
+    ["namespace", "type"],
+)
+
+telemetry_events_dropped_counter = NamespacedCounter(
+    "telemetry_events_dropped",
+    "CloudEvents lost unintentionally (buffer_full or send_failed)",
+    ["namespace", "reason"],
+)
+
+telemetry_buffer_size_gauge = NamespacedGauge(
+    "telemetry_buffer_size",
+    "Current size of the CloudEvents emitter buffer",
+    ["namespace"],
 )
 
 
@@ -216,6 +249,31 @@ class PrometheusMetrics:
             ).inc(count)
         except Exception as e:
             self._handle_metric_error("record_dreamer_tokens", e)
+
+    def record_telemetry_event_emitted(self, *, event_type: str) -> None:
+        try:
+            telemetry_events_emitted_counter.labels(type=event_type).inc()
+        except Exception as e:
+            self._handle_metric_error("record_telemetry_event_emitted", e)
+
+    def record_telemetry_event_sampled_out(self, *, event_type: str) -> None:
+        try:
+            telemetry_events_sampled_out_counter.labels(type=event_type).inc()
+        except Exception as e:
+            self._handle_metric_error("record_telemetry_event_sampled_out", e)
+
+    def record_telemetry_event_dropped(self, *, reason: str) -> None:
+        # Reason is one of "buffer_full" | "send_failed".
+        try:
+            telemetry_events_dropped_counter.labels(reason=reason).inc()
+        except Exception as e:
+            self._handle_metric_error("record_telemetry_event_dropped", e)
+
+    def set_telemetry_buffer_size(self, *, size: int) -> None:
+        try:
+            telemetry_buffer_size_gauge.labels().set(size)
+        except Exception as e:
+            self._handle_metric_error("set_telemetry_buffer_size", e)
 
 
 prometheus_metrics = PrometheusMetrics()

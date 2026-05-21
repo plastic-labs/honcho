@@ -142,6 +142,7 @@ def create_representation_event(
         llm_call_ms=1200.0,
         total_duration_ms=1300.0,
         input_tokens=5000,
+        total_input_tokens=7500,
         output_tokens=500,
     )
 
