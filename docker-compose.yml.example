@@ -20,14 +20,15 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8000:8000"
+      # Set PORT in .env to change the API server port (e.g., PORT=8080)
+      - "127.0.0.1:${PORT:-8000}:${PORT:-8000}"
     healthcheck:
       test:
         [
           "CMD",
-          "/app/.venv/bin/python",
+          "sh",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+          "/app/.venv/bin/python -c \"import urllib.request, os; urllib.request.urlopen(f'http://localhost:{os.getenv(\\\"PORT\\\", \\\"8000\\\")}/health', timeout=2).read()\"",
         ]
       interval: 5s
       timeout: 5s
@@ -38,6 +39,8 @@ services:
     #   - .:/app
     #   - venv:/app/.venv
     environment:
+      # PORT is set in .env (defaults to 8000 if not specified)
+      - PORT=${PORT:-8000}
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
       - CACHE_ENABLED=true
