@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- Added optional storage-level deduplication to the Conclusions API endpoint.
 - New `src/llm/` package as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy
 - `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback
 - Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends

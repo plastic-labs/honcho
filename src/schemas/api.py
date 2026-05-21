@@ -519,6 +519,7 @@ class ConclusionBatchCreate(BaseModel):
         max_length=100,
         validation_alias=AliasChoices("conclusions", "observations"),
     )
+    deduplicate: bool = False
 
 
 # ---------------------------------------------------------------------------

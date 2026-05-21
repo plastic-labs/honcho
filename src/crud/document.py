@@ -746,6 +746,7 @@ async def create_observations(
     db: AsyncSession,
     observations: Sequence[schemas.ConclusionCreate],
     workspace_name: str,
+    deduplicate: bool = False,
 ) -> list[models.Document]:
     """
     Create multiple observations (documents) from user input.
@@ -815,6 +816,30 @@ async def create_observations(
     )
 
     for obs, embedding in zip(observations, embeddings, strict=True):
+        if deduplicate:
+            # For each document, if deduplicate is True, perform a process
+            # that checks against existing documents and either rejects this document
+            # as a duplicate OR deletes an existing document that is a superior duplicate.
+            temp_doc = schemas.DocumentCreate(
+                content=obs.content,
+                session_name=obs.session_id,
+                level="explicit",
+                times_derived=1,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[], message_created_at=""
+                ),
+                embedding=embedding,
+            )
+            is_duplicate = await is_rejected_duplicate(
+                db,
+                temp_doc,
+                workspace_name,
+                observer=obs.observer_id,
+                observed=obs.observed_id,
+            )
+            if is_duplicate:
+                continue
+
         if store_embeddings_in_postgres:
             doc = models.Document(
                 workspace_name=workspace_name,
