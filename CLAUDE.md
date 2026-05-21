@@ -140,6 +140,7 @@ The Deriver processes batches of incoming messages and extracts conclusions abou
 - **Output**: Explicit conclusions (direct facts) and deductive conclusions (inferences) saved to `(observer, observed)` collections.
 - **Entry point**: `src/deriver/__main__.py` → `queue_manager.main()`.
 - **Prompts**: `src/deriver/prompts.py` (`minimal_deriver_prompt`).
+- **Custom instructions**: per-workspace/peer guidance can be threaded into the prompt via reasoning configuration; `DERIVER__MAX_CUSTOM_INSTRUCTIONS_TOKENS` caps the addition (default 2000) and `DERIVER__MAX_INPUT_TOKENS` defaults to 25000 to make room.
 
 #### 2. Dialectic (`src/dialectic/`)
 
@@ -177,8 +178,9 @@ The Dreamer is an orchestrated multi-specialist system that runs during schedule
 #### Shared Agent Infrastructure
 
 - **Tool definitions** (`src/utils/agent_tools.py`): unified `TOOLS` dict; per-agent lists (`DIALECTIC_TOOLS`, `DIALECTIC_TOOLS_MINIMAL`, `DREAMER_TOOLS`, `DEDUCTION_SPECIALIST_TOOLS`, `INDUCTION_SPECIALIST_TOOLS`).
-- **LLM subsystem** (`src/llm/`): provider-agnostic `honcho_llm_call()`. Backends in `src/llm/backends/` (`anthropic.py`, `gemini.py`, `openai.py`). Includes prompt caching (`caching.py`), structured output (`structured_output.py`), tool loop (`tool_loop.py`), history adapters for cross-provider message formats, and a model registry.
+- **LLM subsystem** (`src/llm/`): provider-agnostic `honcho_llm_call()`. Backends in `src/llm/backends/` (`anthropic.py`, `gemini.py`, `openai.py`). Includes prompt caching (`caching.py`), structured output (`structured_output.py`), tool loop (`tool_loop.py`), history adapters for cross-provider message formats, and a model registry. Per-retry provider selection is pinned via an `AttemptPlan` so stream-final retries don't bounce back to primary after the tool loop has settled on fallback.
 - **Per-agent model config**: each agent has its own `MODEL_CONFIG` in `src/config.py` with fallback chains (see `ConfiguredModelSettings`, `FallbackModelSettings`).
+- **Telemetry**: cloudevents in `src/telemetry/events/` cover API routes, dialectic, dream, deletion, reconciliation, representation, and per-call LLM accounting (`llm.py` — `LLMCallCompletedEvent` fires once per provider hit with full cost-attribution context). High-volume events are sampled deterministically per `run_id` via `TelemetrySettings.HIGH_VOLUME_SAMPLE_RATE`.
 
 ### Project Structure
 
@@ -192,7 +194,8 @@ src/
 ├── dependencies.py      # FastAPI DI (tracked_db, etc.)
 ├── exceptions.py        # Custom exception types (HonchoException + subclasses)
 ├── security.py          # JWT authentication
-├── embedding_client.py  # Embedding provider client
+├── embedding_client.py  # Embedding provider client (configurable dimensions
+│                        #   via EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE)
 ├── schemas/             # Pydantic schemas
 │   ├── api.py            # Public API request/response schemas
 │   ├── configuration.py  # Per-resource configuration schemas

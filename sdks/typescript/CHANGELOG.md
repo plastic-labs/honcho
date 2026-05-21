@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [2.1.2] - 2026-05-21
+
+### Added
+
+- `peers` option on `Honcho.session()` — attach peers to a session at creation time instead of needing a follow-up `session.addPeers()` call. Accepts the same `PeerAddition` shape as `session.addPeers()` (peer ID strings, `Peer` objects, arrays of either, or a record with per-peer `observe_me`/`observe_others` config).
+
+### Changed
+
+- ID validation in `validation.ts` now accepts workspace, peer, and session IDs up to 512 characters (was 100), matching the server-side schema change in Honcho v3.0.7.
 
 ### Fixed
 
