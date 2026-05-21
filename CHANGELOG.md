@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Stream-final retries pin to the `AttemptPlan` that succeeded rather than re-running provider selection through the outer `current_attempt` ContextVar (which could roll streaming back to primary after the tool loop had already switched to fallback)
 - OpenAI structured-output calls continue to use `chat.completions.parse()` with strict schema enforcement, while tool-calling paths use `chat.completions.create()` without `strict:True` for broader proxy compatibility (OpenRouter, vLLM, Ollama)
 - Gemini `cached_content` reuse keys now include `system_instruction` and `tool_config` so cache hits don't cross configurations that differ only in those fields
+- `reverse` query parameter is now honored on the v3 workspace list (`POST /v3/workspaces/list`), peer list (`POST /v3/workspaces/{workspace_id}/peers/list`), workspace-scoped session list (`POST /v3/workspaces/{workspace_id}/sessions/list`), and peer-scoped session list (`POST /v3/workspaces/{workspace_id}/peers/{peer_id}/sessions`). Honcho SDKs at 2.1.0+ were already sending `reverse=true` for these routes but the server silently ignored it. Ties on `created_at` now fall back to the internal nanoid `id` so ordering remains stable across pages.
 
 ### Removed
 
