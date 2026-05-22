@@ -344,26 +344,45 @@ class DeductionSpecialist(BaseSpecialist):
     ) -> str:
         peer_card_section = ""
         if peer_card_enabled:
-            peer_card_section = """
+            peer_card_section = f"""
 
 ## PEER CARD (REQUIRED)
 
-The peer card is a summary of stable biographical facts. You MUST update it when you learn:
-- Name, age, location, occupation
-- Family members and relationships
-- Standing instructions ("call me X", "don't mention Y")
-- Core preferences and traits
+The peer card stores **objective stable facts** about {observed} -- facts that would still be true a month from now and that {observed} would recognize as true about themselves. The dialectic agent later uses the card as a small set of grounded identity facts when answering questions about {observed}.
 
-Never add temporary event summaries, one-off conclusions, reasoning traces, or contradiction notes.
+The card is NOT for behavioral patterns, preferences, traits, persona descriptions, or standing instructions. Those live as observations and conclusions and are surfaced through other paths in the system. Keeping them off the card is intentional -- the card's value comes from being a tight, trustworthy identity surface.
 
-Format entries as:
-- Plain facts: "Name: Alice", "Works at Google", "Lives in NYC"
-- `INSTRUCTION: ...` for standing instructions
-- `PREFERENCE: ...` for preferences
-- `TRAIT: ...` for personality traits
+CRITICAL: every entry MUST be a fact about {observed} themselves -- not about another peer who appears in the conversation as context. Putting another peer's name, location, or relationships on {observed}'s card causes the dialectic to attribute them to {observed} as identity facts, which is a hallucination. Empty is far better than polluted.
 
-Call `update_peer_card` with the complete updated list when you have new biographical info.
-Keep it concise (max 40 entries), deduplicated, and current."""
+## WHAT TO CAPTURE
+
+Only objective stable identity facts. The same rules apply regardless of whether {observed} is a human, an AI agent, or any other kind of peer -- a peer is a peer.
+
+- **Name and aliases**: how {observed} is referred to, including nicknames, handles, or display names
+- **Location**: a stable home location (city / region / country) confirmed by {observed}'s own statements about themselves
+- **Relationships to other peers or named individuals**: stable social relationships (e.g. "co-worker of Alice", "partnered with Bob")
+
+If {observed}'s own messages do not establish such facts in this batch, the card may stay empty. Empty is the correct output for many peers -- it produces accurate "I don't have stable identity facts about that peer" answers downstream. Behavioral content (preferences, instructions, traits, persona) does NOT belong here.
+
+## DECISION FILTER (apply to EVERY proposed entry)
+
+For each candidate entry, ask:
+1. Is it an **objective fact** (not a preference, instruction, or behavioral pattern)?
+2. Is it about **{observed} themselves** (not about another peer mentioned in context)?
+3. Is it **stable** (would still be true in a month, not a per-task or per-session detail)?
+4. Is it **confirmed by {observed}'s own statements** (not inferred from another peer's claim about them)?
+
+If any answer is no, skip the entry.
+
+Format entries as plain factual statements:
+- "Name: Alice"
+- "Aliases: Al, Allie, @alice42"
+- "Lives in NYC"
+- "Co-worker of Bob"
+
+Never add behavioral content (no INSTRUCTION/PREFERENCE/TRAIT entries), event summaries, reasoning traces, or per-conversation context.
+
+Call `update_peer_card` with the complete updated list when you have new objective stable identity facts about {observed}. Keep it short (max 20 entries), deduplicated, and current."""
 
         return f"""You are a deductive reasoning agent analyzing observations about {observed}.
 
@@ -492,18 +511,45 @@ class InductionSpecialist(BaseSpecialist):
     ) -> str:
         peer_card_section = ""
         if peer_card_enabled:
-            peer_card_section = """
+            peer_card_section = f"""
 
 ## PEER CARD (REQUIRED)
 
-After identifying patterns, only update the peer card for durable profile-level traits/preferences:
-- `TRAIT: Analytical thinker`
-- `TRAIT: Tends to reschedule when stressed`
-- `PREFERENCE: Prefers detailed explanations`
+The peer card stores **objective stable facts** about {observed} -- facts that would still be true a month from now and that {observed} would recognize as true about themselves. The dialectic agent later uses the card as a small set of grounded identity facts when answering questions about {observed}.
 
-Do NOT add temporary patterns, episode-specific conclusions, or reasoning summaries.
-Call `update_peer_card` with the complete deduplicated list only when a durable profile update is warranted.
-Keep it concise (max 40 entries)."""
+The card is NOT for behavioral patterns, preferences, traits, persona descriptions, or standing instructions. Inductive behavioral patterns belong as observations and conclusions, not on the card. Keeping them off the card is intentional -- the card's value comes from being a tight, trustworthy identity surface.
+
+CRITICAL: every entry MUST be a fact about {observed} themselves -- not about another peer who appears in the conversation as context. Putting another peer's name, location, or relationships on {observed}'s card causes the dialectic to attribute them to {observed} as identity facts, which is a hallucination. Empty is far better than polluted.
+
+## WHAT TO CAPTURE
+
+Only objective stable identity facts. The same rules apply regardless of whether {observed} is a human, an AI agent, or any other kind of peer -- a peer is a peer.
+
+- **Name and aliases**: how {observed} is referred to, including nicknames, handles, or display names
+- **Location**: a stable home location (city / region / country) confirmed by {observed}'s own statements about themselves
+- **Relationships to other peers or named individuals**: stable social relationships (e.g. "co-worker of Alice", "partnered with Bob")
+
+If {observed}'s own messages do not establish such facts in this batch, the card may stay empty. Empty is the correct output for many peers. Behavioral patterns (which is what inductive analysis surfaces) do NOT belong here -- record them as inductive observations instead.
+
+## DECISION FILTER (apply to EVERY proposed entry)
+
+For each candidate entry, ask:
+1. Is it an **objective fact** (not a preference, pattern, or behavioral tendency)?
+2. Is it about **{observed} themselves** (not about another peer mentioned in context)?
+3. Is it **stable** (would still be true in a month, not a per-task or per-session detail)?
+4. Is it **confirmed by {observed}'s own statements** (not inferred from another peer's claim about them)?
+
+If any answer is no, skip the entry.
+
+Format entries as plain factual statements:
+- "Name: Alice"
+- "Aliases: Al, Allie, @alice42"
+- "Lives in NYC"
+- "Co-worker of Bob"
+
+Never add behavioral content (no INSTRUCTION/PREFERENCE/TRAIT entries), pattern summaries, or per-conversation context.
+
+Call `update_peer_card` with the complete updated list only when you have new objective stable identity facts about {observed}. Keep it short (max 20 entries), deduplicated, and current."""
 
         return f"""You are an inductive reasoning agent identifying patterns about {observed}.
 

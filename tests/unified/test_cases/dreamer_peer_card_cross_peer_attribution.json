@@ -1,0 +1,90 @@
+{
+  "description": "dreamer_peer_card_cross_peer_attribution [H] -- When the dreamer's deduction (or induction) specialist runs with observed=A in a multi-peer session, biographical facts/patterns about peer B (mentioned by anyone in the session) MUST NOT end up in A's peer card. The deduction specialist's broad-context retrieval (search_messages returning all session messages, not just observed's) is INTENTIONAL per the design (Vineeth, 2026-05-06) -- the model needs other peers' messages to interpret the observed peer's statements. Attribution discipline must therefore live in the peer-card construction prompt, not in the retrieval layer. ===== Empirical evidence ===== Production observation, kassandra/claude_code workspace, May 2026: the assistant's peer card contained biographical facts that originated in messages authored by the user (kassandra). Vineeth confirmed retrieval-broad is intentional; original PR #655 fix was at the wrong layer (retrieval) and was closed in favor of this prompt-level fix. ===== Discriminating design ===== This test now has TWO sides: (1) NEGATIVE -- assistant's peer card must not contain Kassandra's identity facts; (2) POSITIVE -- assistant's peer card must capture at least one of the explicit standing INSTRUCTIONs Kassandra gives to the assistant about HOW IT SHOULD BEHAVE. The positive side prevents a 'play-it-safe empty card' false pass and validates that the dreamer recognizes legitimate agent-card content (per docs: INSTRUCTION-prefixed entries are an explicit peer card category). Kassandra's own peer card is also asserted to contain her bio facts, as a pipeline-ran sanity check. ===== Polarity ===== INITIAL polarity pass_if=true (invariant test). Verify-first: ran on current Honcho (main, no prompt fix) to confirm RED before applying the deduction/induction specialist prompt patch. After patch in src/dreamer/specialists.py:DeductionSpecialist.build_system_prompt and InductionSpecialist.build_system_prompt PEER CARD sections (which now distinguishes human-peer from agent-peer card contents), expect GREEN.",
+  "workspace_config": {"dream": {"enabled": true}},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "cross_peer_attr",
+      "peer_configs": {
+        "kassandra": {"observe_me": true, "observe_others": true},
+        "assistant": {"observe_me": true, "observe_others": true}
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "cross_peer_attr",
+      "messages": [
+        {"peer_id": "kassandra", "content": "Hi! I'm Kassandra, a backend engineer at Acme. I'm migrating our payment service from a monolith to a Kubernetes-based microservice architecture, deployed on EKS. I strongly prefer Ruff over Black for Python formatting -- we just migrated last quarter. I work mostly in Python and Go."},
+        {"peer_id": "assistant", "content": "Got it. Ready to dig into the migration whenever you want."},
+        {"peer_id": "kassandra", "content": "Quick context: I usually work mornings, prefer detailed technical explanations over high-level overviews, and I'm allergic to unnecessary abstractions. Standing instruction: don't pad answers with filler."},
+        {"peer_id": "assistant", "content": "Understood. Concrete and detailed, no filler."},
+        {"peer_id": "kassandra", "content": "Let's start with the deployment story. We're on EKS already; the question is blue/green vs canary for the rollout."},
+        {"peer_id": "assistant", "content": "At your scale, canary makes sense. Want to walk through the rollout percentages and rollback triggers?"},
+        {"peer_id": "kassandra", "content": "Yes. Start with the percentage progression and what metric thresholds gate each step."},
+        {"peer_id": "assistant", "content": "Standard canary progression: 5% -> 25% -> 50% -> 100%. Each step holds for 15 minutes minimum. Gates: error rate +0.5% over baseline, p95 latency +20%, or any 5xx spike triggers automatic rollback."},
+        {"peer_id": "kassandra", "content": "Good. One more standing instruction for you, going forward: when I ask about implementation, always show me the relevant code or config first, then explain it. Don't lead with prose."},
+        {"peer_id": "assistant", "content": "Got it -- code/config first, prose second."},
+        {"peer_id": "kassandra", "content": "Also: when we're working through problems together, use 'we' language. I find it helps me think collaboratively rather than feeling like I'm being lectured at."},
+        {"peer_id": "assistant", "content": "Will do -- collaborative framing from here on."},
+        {"peer_id": "kassandra", "content": "Last one for now: if I'm wrong about something technical, just tell me directly. Don't soften. I'd rather be corrected than have you agree-and-then-walk-back."},
+        {"peer_id": "assistant", "content": "Understood. Direct corrections, no softening."}
+      ]
+    },
+    {"step_type": "wait", "target": "queue_empty", "timeout": 240, "flush": true},
+    {
+      "step_type": "schedule_dream",
+      "observer": "kassandra",
+      "observed": "assistant",
+      "session_id": "cross_peer_attr",
+      "dream_type": "omni"
+    },
+    {"step_type": "wait", "target": "queue_empty", "timeout": 300, "flush": true},
+    {
+      "step_type": "schedule_dream",
+      "observer": "assistant",
+      "observed": "kassandra",
+      "session_id": "cross_peer_attr",
+      "dream_type": "omni"
+    },
+    {"step_type": "wait", "target": "queue_empty", "timeout": 300, "flush": true},
+    {
+      "step_type": "query",
+      "description": "NEGATIVE side: Assistant's peer card should not contain Kassandra's bio facts.",
+      "target": "get_peer_card",
+      "observer_peer_id": "kassandra",
+      "observed_peer_id": "assistant",
+      "assertions": [
+        {"assertion_type": "not_contains", "text": "backend engineer"},
+        {"assertion_type": "not_contains", "text": "Acme"},
+        {"assertion_type": "not_contains", "text": "Ruff"},
+        {"assertion_type": "not_contains", "text": "Kubernetes"},
+        {"assertion_type": "not_contains", "text": "EKS"},
+        {"assertion_type": "not_contains", "text": "payment service"},
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The peer card for `assistant` is shown. In the session, a user named Kassandra revealed her IDENTITY facts (backend engineer at Acme, payment service migration to Kubernetes/EKS, prefers Ruff over Black, works in Python/Go, lives/works mornings). Does this peer card INCORRECTLY contain any of Kassandra's identity facts misattributed to the assistant? Identity facts include: role/profession, employer, project domain, tooling preferences (specific languages, formatters, frameworks), location, schedule. Return passed=true if NO Kassandra-identity facts appear in the assistant's card. Return passed=false ONLY if Kassandra's specific identity facts (e.g., 'works at Acme', 'is a backend engineer', 'prefers Ruff', 'works on payment migration') are recorded as facts about the assistant. Note: assistant behaviors observed in the conversation (e.g., 'gave detailed responses', 'recommended canary') may be OTHER observation issues but they are NOT cross-peer attribution failures and should NOT cause this assertion to fail. The narrow target of THIS test is cross-peer identity-fact misattribution only.",
+          "pass_if": true
+        },
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The peer card for `assistant` is shown. During the conversation, Kassandra gave the assistant THREE explicit standing instructions about HOW THE ASSISTANT SHOULD BEHAVE going forward (these are NOT Kassandra's biography -- they are agent-side behavioral rules):\n(1) 'When I ask about implementation, always show me the relevant code or config first, then explain it. Don't lead with prose.'\n(2) 'When we're problem-solving, use we language' (collaborative framing).\n(3) 'If I'm wrong about something technical, just tell me directly. Don't soften.'\nPlus an earlier standing instruction (4) 'Don't pad answers with filler.'\n\nThese are exactly the kind of stable agent-behavioral content that belongs on an LLM peer's card per Honcho's documented INSTRUCTION category -- they describe how the agent should operate, not facts about the user.\n\nDoes the assistant's peer card capture AT LEAST ONE of these four standing instructions in some recognizable form (paraphrased is fine, e.g., 'Code-first responses', 'Direct corrections', 'No filler', 'Collaborative we-language')? Return passed=true if 1+ are captured. Return passed=false if NONE are captured (which would mean the dreamer is producing an empty or otherwise content-less assistant card and missing legitimate agent-card material).\n\nThis is the POSITIVE control for legitimate agent-card content; without it, an empty card would falsely pass the negative assertions above.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "description": "Pipeline-ran sanity check: Kassandra's own peer card should reflect her bio.",
+      "target": "get_peer_card",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "kassandra",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The peer card for Kassandra is shown. Does it include at least 2 of these substantive facts: (a) role or profession (engineer/backend), (b) employer or project context (Acme, payment service, Kubernetes, EKS), (c) tooling preference (Ruff, Black, Python, Go), (d) work style (mornings, detailed explanations, dislikes abstractions, no filler)? Return passed=true if 2+ are present. (This is a sanity check that the dreamer pipeline actually ran for Kassandra; failure here means the test infrastructure didn't run, not that the cross-peer attribution bug is absent.)",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}
