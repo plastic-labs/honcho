@@ -10,17 +10,17 @@ Wanting to add Honcho to your product? The **`/honcho-integration` skill** walks
 
 ## Quick Reference
 
-The main design question is what should be isolated and what should be continuous. **Workspaces control isolation, peers control continuity, and sessions control local context.**
+**Workspaces isolate, peers persist, and sessions scope the active context.**
 
 | Decision | Recommendation |
 |----------|---------------|
 | How many workspaces? | Start with one workspace per application, tool, tenant, or collaboration boundary. Split workspaces only when you need hard isolation between products, customers, environments, or agents. |
 | When should agents share a workspace? | Share a workspace when agents collaborate over the same product, project, team, user, customer, or game state. Separate them when they should not see or influence each other's memory. |
-| Who should be a peer? | Any persistent participant whose messages should be attributed or reasoned about: users, agents, assistants, NPCs, students, or customers. Use one stable peer ID for the same entity across sessions and platforms. |
+| Who should be a peer? | Any persistent participant whose messages should be attributed or reasoned about: users, agents, assistants, NPCs, students, or customers. Use one peer for the same entity across sessions and platforms. |
 | How should I scope sessions? | Scope sessions to the active interaction: per-conversation, per-channel, per-task run, per-project, per-import, or other bounded context. Reuse a session when local context should keep accumulating. |
-| How does cross-session reasoning work? | Session memory stays local to one session. Peer representations accumulate across every session where the same peer ID appears, and `session.context()` becomes cross-session when you include a peer target. |
-| Should I set `observe_me: false`? | Yes, for peers you do not need Honcho to model, usually deterministic assistants, bots, and tool agents. Keep it enabled for users or agents whose preferences, behavior, or knowledge evolve. |
-| Do I need `observe_others`? | Only when a peer needs its own perspective on another participant, such as games, multi-agent systems, or parent/subagent workflows. Most apps can keep the default of `false`. |
+| How does cross-session reasoning work? | Session memory stays local to one session. Peer representations accumulate across every session where the peer is included, and `session.context()` becomes cross-session when you include a peer target. |
+| Should I set `observe_me: false`? | Yes, for deterministic peers Honcho does not need to model, like bots or tool agents. Still save their messages so other peers have session context. Keep it enabled for users and evolving agents. |
+| Do I need `observe_others`? | Only when a peer needs its own perspective on another participant, such as in games, multi-agent systems, or parent/subagent workflows. |
 
 ## Workspace Design
 
@@ -50,15 +50,9 @@ If you are using the SDK, it will create a workspace called `default` if no name
 
 ## Peer Design
 
-A peer is any entity that participates in a session. Observation settings control which ones Honcho reasons about.
+A peer is any entity that participates in a session, changes over time (preferences shift, knowledge grows), and or it produces messages you want Honcho to see. Observation settings control which ones Honcho reasons about.
 
-**What makes a good peer?**
-
-- It participates in sessions (a user, an agent, a character, an NPC)
-- It persists across sessions
-- It changes over time (preferences shift, knowledge grows), or it produces messages you want Honcho to see
-
-If the same person, agent, or character appears in multiple sessions, give that entity the same stable peer ID. If you split one person across `user-web`, `user-discord`, and `user-slack`, Honcho will treat those as three different peers with three different representations.
+The same person, agent, or character should have the same peer across all sessions. If you split one person across `user-web`, `user-discord`, and `user-slack`, Honcho will treat those as three different peers with three different representations.
 
 Use separate peer IDs when peers have different roles, responsibilities, personalities, or memories. For example, your Hermes planner agent, coding agent, and reviewer agent can each be peers if you want to attribute their messages separately or let Honcho reason about their behavior independently.
 
@@ -172,10 +166,11 @@ const response = await owner.chat("What's going on in this user's life right now
 </CodeGroup>
 
 **Key decisions (from the [OpenClaw plugin](/v3/guides/integrations/openclaw)):**
-- **Session key = thread + platform** — `general-discord` and `general-telegram` are separate sessions but share a single owner representation, so Honcho learns from every channel
-- **Stable owner peer** — every platform writes to the same owner peer, so the companion remembers the person rather than the channel
+- **One workspace per host**, shared across all agents — every OpenClaw agent writes to the same Honcho workspace, so memory and reasoning are unified across your OpenClaw setup rather than fragmented per agent or per channel.
+- **Stable owner peer across platforms** — the human is mapped to a single owner peer no matter which platform they message from, so the companion remembers the person rather than the channel. The sender-to-peer mapping is persisted locally (in ~/.honcho/openclaw-peers.json)
 - **Dynamic agent peers** — each persistent agent gets its own peer (`agent-{id}`) when its behavior or identity should be tracked independently
-- **Asymmetric observation** — the owner is observed for long-term memory; agent observation depends on whether you want Honcho to model the agent itself
+- **Per-thread sessions, scoped by platform** — each thread/channel gets its own session id, with the platform (Discord, Telegram, etc.) baked in. Local conversation context stays per-channel while the owner peer accumulates cross-session memory.
+- **Asymmetric observation** — both the owner peer and agent peers are observed so Honcho builds a representation about their behavior. In subagent flows the parent agent is added as a silent observer (observe_me: false, observe_others: true) so it can later reason about what the subagent did.
 
 See the [OpenClaw integration guide](/v3/guides/integrations/openclaw) for the full plugin setup.
 
@@ -231,11 +226,11 @@ const context = await developer.chat("What are this developer's preferences for 
 </CodeGroup>
 
 **Key decisions (from the Claude Code plugin):**
-- **One workspace per tool** -- Claude Code and Cursor each get their own workspace, with optional cross-linking for read access
-- **Asymmetric peers** -- developer is observed (memory formation), agent is not observed but still stores messages so Honcho sees both sides
-- **Session-per-directory** by default -- each project accumulates its own memory. Prefix with peer name (`user-honcho-repo`) so multiple developers on the same workspace don't collide. Alternative strategies: `git-branch` (session switches on branch change) or `chat-instance` (clean slate each time)
-- **Filter what you store** -- user messages go in real-time; agent messages are filtered to skip trivial tool output and keep substantive explanations
-- **Import external data** with single-peer sessions to ingest READMEs, architecture docs, or commit history into a developer's representation
+- **Peers** — asymmetric, shared across tools. The developer is a single peer (peerName defaulting to $USER) that should be reused across Claude Code, Cursor, and any other Honcho-aware tool so the representation accumulates in one place. The agent is a separate peer with observe_me disabled, so its messages are stored for session context but Honcho doesn't spend reasoning on modeling the assistant.
+- **Sessions** — per project directory, with a peer prefix. The default per-directory strategy gives each repo its own session so local context (recent messages, summary) stays project-scoped, while the developer peer carries long-term memory across projects. Session names are prefixed with the peer (user-honcho-repo) so multiple developers sharing a workspace don't collide. Swap in git-branch when each branch is its own line of work, or chat-instance when you want a fresh session per Claude Code window.
+- **Observation mode** controls where user-observations land. Default is unified — every agent writes observations into the developer's self-collection, so memory is shared across tools. Switch to directional when you want this specific AI to keep its own per-AI view of the developer (e.g., when comparing how different assistants model the same person).
+- **Filter** what gets stored. User prompts are written in real time but trivial ones are skipped; assistant messages are pulled from the transcript at stop time with tool_use blocks dropped, so only substantive explanations land in the session.
+- Replay **external activity** at session start. Git state changes that happened between Claude sessions (new commits, branch switches) are captured and added to the session as observations, so the developer's representation reflects work done outside the agent — not just chat turns.
 
 See the [Claude Code integration guide](/v3/guides/integrations/claude-code) for the full plugin setup.
 
@@ -243,14 +238,7 @@ See the [Claude Code integration guide](/v3/guides/integrations/claude-code) for
 
 ### Multi-Agent Systems
 
-Multi-agent systems introduce two extra questions: which agents share a reasoning boundary, and which agents need their own perspective. Model each persistent actor as a peer, put collaborating agents in the same workspace, and use sessions for the bounded work they do together.
-
-<Info>
-Production examples worth studying:
-
-- [OpenClaw](/v3/guides/integrations/openclaw) models each OpenClaw agent as its own Honcho peer and tracks parent/subagent relationships when a primary agent delegates specialized work.
-- [Hermes Agent](/v3/guides/integrations/hermes) uses a dual-peer architecture where both the user and AI agent have durable representations, with Honcho context available through prompt injection and agent tools.
-</Info>
+Managing memory in multi-agent systems adds quite a bit of complexity, and this is what Honcho is built for. Our architecture is configured for multi-agent setups.  Our [OpenClaw](/v3/guides/integrations/openclaw) and [Hermes](/v3/guides/integrations/hermes) are good examples to review when thinking about how to set this up.
 
 <CodeGroup>
 ```python Python
