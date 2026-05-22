@@ -31,6 +31,7 @@ class HonchoConfig:
 
 
 _honcho_client: Honcho | None = None
+_honcho_client_config: HonchoConfig | None = None
 
 
 def get_honcho_client(config: HonchoConfig | None = None) -> Honcho:
@@ -46,13 +47,15 @@ def get_honcho_client(config: HonchoConfig | None = None) -> Honcho:
     Raises:
         ValueError: If HONCHO_API_KEY is not set.
     """
-    global _honcho_client
-
-    if _honcho_client is not None:
-        return _honcho_client
-
     if config is None:
         config = HonchoConfig.from_env()
+
+    global _honcho_client, _honcho_client_config
+
+    if _honcho_client is not None:
+        if _honcho_client_config != config:
+            raise ValueError("Honcho client already initialized with a different config")
+        return _honcho_client
 
     if not config.api_key:
         raise ValueError(
@@ -62,11 +65,11 @@ def get_honcho_client(config: HonchoConfig | None = None) -> Honcho:
 
     try:
         from honcho import Honcho
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "honcho-ai is required for Honcho integration. "
             "Install it with: nanobot honcho enable --api-key YOUR_KEY"
-        )
+        ) from exc
 
     logger.info(f"Initializing Honcho client (workspace: {config.workspace_id})")
 
@@ -75,11 +78,13 @@ def get_honcho_client(config: HonchoConfig | None = None) -> Honcho:
         api_key=config.api_key,
         environment=config.environment,
     )
+    _honcho_client_config = config
 
     return _honcho_client
 
 
 def reset_honcho_client() -> None:
     """Reset the Honcho client singleton (useful for testing)."""
-    global _honcho_client
+    global _honcho_client, _honcho_client_config
     _honcho_client = None
+    _honcho_client_config = None

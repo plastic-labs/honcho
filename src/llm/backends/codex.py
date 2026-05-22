@@ -170,13 +170,16 @@ class CodexResponsesBackend:
         thinking_effort: str | None,
         extra_params: dict[str, Any] | None,
     ) -> dict[str, Any]:
-        _ = (max_tokens, temperature, thinking_budget_tokens)
+        _ = thinking_budget_tokens
         instructions, input_items = self._messages_to_responses(messages)
         params: dict[str, Any] = {
             "model": model,
             "input": input_items,
+            "max_output_tokens": max_tokens,
             "store": False,
         }
+        if temperature is not None:
+            params["temperature"] = temperature
         params["instructions"] = instructions or DEFAULT_CODEX_INSTRUCTIONS
         if stop:
             params["stop"] = stop
@@ -237,6 +240,7 @@ class CodexResponsesBackend:
             cache_read_input_tokens=self._usage_cache_read_tokens(usage),
             finish_reason=self._finish_reason(response),
             tool_calls=self._response_tool_calls(response),
+            reasoning_details=self._response_reasoning_details(response),
             raw_response=response,
         )
 
@@ -256,6 +260,7 @@ class CodexResponsesBackend:
             if role in {"user", "assistant"}:
                 if content is not None and content != "":
                     items.append({"role": role, "content": content})
+                items.extend(CodexResponsesBackend._message_reasoning_items(message))
                 raw_tool_calls = message.get("tool_calls")
                 tool_calls: list[Any] = (
                     cast(list[Any], raw_tool_calls)
@@ -302,6 +307,20 @@ class CodexResponsesBackend:
                     }
                 )
         return "\n\n".join(instructions) if instructions else None, items
+
+    @staticmethod
+    def _message_reasoning_items(message: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_reasoning = message.get("reasoning_details")
+        if raw_reasoning is None:
+            raw_reasoning = message.get("reasoning")
+        if not isinstance(raw_reasoning, list):
+            return []
+
+        items: list[dict[str, Any]] = []
+        for value in cast(list[Any], raw_reasoning):
+            if isinstance(value, dict):
+                items.append(cast(dict[str, Any], value))
+        return items
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
@@ -401,7 +420,7 @@ class CodexResponsesBackend:
     @staticmethod
     def _response_tool_calls(response: Any) -> list[ToolCallResult]:
         tool_calls: list[ToolCallResult] = []
-        for item in getattr(response, "output", []) or []:
+        for item in CodexResponsesBackend._response_output_items(response):
             if getattr(item, "type", None) != "function_call":
                 continue
             call_id = getattr(item, "call_id", None) or getattr(item, "id", "")
@@ -424,6 +443,37 @@ class CodexResponsesBackend:
                 )
             )
         return tool_calls
+
+    @staticmethod
+    def _response_output_items(response: Any) -> list[Any]:
+        raw_items: Any = getattr(response, "output", None)
+        return cast(list[Any], raw_items) if isinstance(raw_items, list) else []
+
+    @staticmethod
+    def _response_reasoning_details(response: Any) -> list[dict[str, Any]]:
+        details: list[dict[str, Any]] = []
+        for item in CodexResponsesBackend._response_output_items(response):
+            if isinstance(item, dict):
+                item_dict = cast(dict[str, Any], item)
+                item_type = item_dict.get("type")
+                if isinstance(item_type, str) and item_type.startswith("reasoning"):
+                    details.append(item_dict)
+                continue
+            if getattr(item, "type", None) != "reasoning":
+                continue
+            model_dump = getattr(item, "model_dump", None)
+            if callable(model_dump):
+                dumped: Any = model_dump()
+                if isinstance(dumped, dict):
+                    details.append(cast(dict[str, Any], dumped))
+                continue
+            detail: dict[str, Any] = {"type": "reasoning"}
+            for key in ("id", "summary", "content", "encrypted_content"):
+                value = getattr(item, key, None)
+                if value is not None:
+                    detail[key] = value
+            details.append(detail)
+        return details
 
     @staticmethod
     def _usage_input_tokens(usage: Any) -> int:

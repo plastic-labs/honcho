@@ -77,6 +77,7 @@ async def test_codex_backend_uses_responses_stream_and_normalizes_text() -> None
             {"role": "user", "content": "Hello"},
         ],
         max_tokens=100,
+        temperature=0.2,
         thinking_effort="minimal",
     )
 
@@ -89,7 +90,8 @@ async def test_codex_backend_uses_responses_stream_and_normalizes_text() -> None
     assert call["model"] == "gpt-5.5"
     assert call["instructions"] == "Be terse."
     assert call["input"] == [{"role": "user", "content": "Hello"}]
-    assert "max_output_tokens" not in call
+    assert call["max_output_tokens"] == 100
+    assert call["temperature"] == 0.2
     assert call["store"] is False
     assert call["reasoning"] == {"effort": "low", "summary": "auto"}
 
@@ -140,7 +142,7 @@ async def test_codex_backend_streams_and_normalizes_text() -> None:
     assert call["model"] == "gpt-5.5"
     assert call["instructions"] == "Be terse."
     assert call["input"] == [{"role": "user", "content": "Hello"}]
-    assert "max_output_tokens" not in call
+    assert call["max_output_tokens"] == 100
     assert call["store"] is False
     assert call["reasoning"] == {"effort": "low", "summary": "auto"}
 
@@ -182,6 +184,11 @@ async def test_codex_backend_converts_tools_and_tool_results() -> None:
                 output_text="",
                 output=[
                     SimpleNamespace(
+                        type="reasoning",
+                        id="rs_123",
+                        summary=[{"text": "checking weather"}],
+                    ),
+                    SimpleNamespace(
                         type="function_call",
                         call_id="call_weather",
                         name="get_weather",
@@ -200,6 +207,9 @@ async def test_codex_backend_converts_tools_and_tool_results() -> None:
             {
                 "role": "assistant",
                 "content": None,
+                "reasoning_details": [
+                    {"type": "reasoning", "summary": [{"text": "checking weather"}]}
+                ],
                 "tool_calls": [
                     {
                         "id": "call_weather",
@@ -234,9 +244,17 @@ async def test_codex_backend_converts_tools_and_tool_results() -> None:
     assert result.tool_calls[0].id == "call_weather"
     assert result.tool_calls[0].name == "get_weather"
     assert result.tool_calls[0].input == {"city": "Miami"}
+    assert result.reasoning_details == [
+        {
+            "type": "reasoning",
+            "id": "rs_123",
+            "summary": [{"text": "checking weather"}],
+        }
+    ]
 
     call = client.responses.stream.call_args.kwargs
     assert call["input"] == [
+        {"type": "reasoning", "summary": [{"text": "checking weather"}]},
         {
             "type": "function_call",
             "call_id": "call_weather",

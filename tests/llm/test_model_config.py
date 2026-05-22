@@ -229,6 +229,28 @@ def test_openai_codex_prefixed_model_enables_codex_oauth() -> None:
     assert configured.overrides.auth_mode == "codex_oauth"
 
 
+def test_partial_nested_codex_model_override_enables_codex_oauth() -> None:
+    from src.config import DeriverSettings
+
+    settings = DeriverSettings.model_validate(
+        {"MODEL_CONFIG": {"model": "codex/gpt-5.5"}}
+    )
+
+    assert settings.MODEL_CONFIG.transport == "openai"
+    assert settings.MODEL_CONFIG.model == "gpt-5.5"
+    assert settings.MODEL_CONFIG.overrides.auth_mode == "codex_oauth"
+
+
+def test_codex_prefix_normalizes_when_transport_is_prefilled() -> None:
+    configured = ConfiguredModelSettings.model_validate(
+        {"transport": "openai", "model": "codex/gpt-5.5"}
+    )
+
+    assert configured.transport == "openai"
+    assert configured.model == "gpt-5.5"
+    assert configured.overrides.auth_mode == "codex_oauth"
+
+
 def test_resolve_model_config_preserves_codex_oauth_overrides() -> None:
     configured = ConfiguredModelSettings(
         model="gpt-5.5",

@@ -1,8 +1,17 @@
 """Honcho tool for querying user context."""
 
+from __future__ import annotations
+
+import asyncio
+from contextvars import ContextVar
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
+
+_current_session_key: ContextVar[str | None] = ContextVar(
+    "honcho_current_session_key",
+    default=None,
+)
 
 
 class HonchoTool(Tool):
@@ -13,7 +22,7 @@ class HonchoTool(Tool):
     based on their history and learned preferences.
     """
 
-    def __init__(self, session_manager: "HonchoSessionManager"):
+    def __init__(self, session_manager: Any):
         """
         Initialize the Honcho tool.
 
@@ -21,7 +30,6 @@ class HonchoTool(Tool):
             session_manager: The HonchoSessionManager instance.
         """
         self._session_manager = session_manager
-        self._current_session_key: str | None = None
 
     @property
     def name(self) -> str:
@@ -62,7 +70,7 @@ class HonchoTool(Tool):
         Args:
             session_key: The session key (channel:chat_id).
         """
-        self._current_session_key = session_key
+        _current_session_key.set(session_key)
 
     async def execute(self, query: str) -> str:
         """
@@ -74,12 +82,15 @@ class HonchoTool(Tool):
         Returns:
             Honcho's response about the user.
         """
-        if not self._current_session_key:
+        session_key = _current_session_key.get()
+        if not session_key:
             return "Error: No session context set. Unable to query user information."
 
         try:
-            result = self._session_manager.get_user_context(
-                self._current_session_key, query
+            result = await asyncio.to_thread(
+                self._session_manager.get_user_context,
+                session_key,
+                query,
             )
             return result
         except Exception as e:

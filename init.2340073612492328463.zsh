@@ -3,13 +3,19 @@ export POSH_SHELL_VERSION=$ZSH_VERSION
 export POWERLINE_COMMAND='oh-my-posh'
 export CONDA_PROMPT_MODIFIER=false
 export ZLE_RPROMPT_INDENT=0
-export OSTYPE=$OSTYPE
+export OSTYPE
 
 # disable all known python virtual environment prompts
 export VIRTUAL_ENV_DISABLE_PROMPT=1
 export PYENV_VIRTUALENV_DISABLE_PROMPT=1
 
-_omp_executable=$'/opt/homebrew/bin/oh-my-posh'
+if (( $+commands[oh-my-posh] )); then
+  _omp_executable=${commands[oh-my-posh]}
+elif [[ -x /opt/homebrew/bin/oh-my-posh ]]; then
+  _omp_executable=/opt/homebrew/bin/oh-my-posh
+else
+  return 1
+fi
 _omp_tooltip_command=''
 
 # switches to enable/disable features
@@ -364,4 +370,3 @@ function enable_poshtooltips() {
 
 # legacy functions
 function enable_poshtransientprompt() {}
-

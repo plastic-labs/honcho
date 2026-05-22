@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, TYPE_CHECKING
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-
 from nanobot.honcho.client import get_honcho_client
 
 if TYPE_CHECKING:
     from honcho import Honcho
-    from honcho.api_types import SessionPeerConfig
 
 
 @dataclass
@@ -152,14 +152,18 @@ class HonchoSessionManager:
 
             # Verify chronological ordering
             if existing_messages and len(existing_messages) > 1:
-                timestamps = [m.created_at for m in existing_messages if m.created_at]
+                timestamps = [
+                    self._created_at_utc(m)
+                    for m in existing_messages
+                    if getattr(m, "created_at", None)
+                ]
                 if timestamps and timestamps != sorted(timestamps):
                     logger.warning(
                         f"Honcho messages not chronologically ordered for session '{session_id}', sorting"
                     )
                     existing_messages = sorted(
                         existing_messages,
-                        key=lambda m: m.created_at or datetime.min,
+                        key=self._created_at_utc,
                     )
 
             if existing_messages:
@@ -174,7 +178,25 @@ class HonchoSessionManager:
 
     def _sanitize_id(self, id_str: str) -> str:
         """Sanitize an ID to match Honcho's pattern: ^[a-zA-Z0-9_-]+"""
-        return re.sub(r'[^a-zA-Z0-9_-]', '-', id_str)
+        normalized = re.sub(r"[^a-zA-Z0-9_-]+", "-", id_str).strip("-")
+        if not normalized:
+            normalized = "id"
+        suffix = hashlib.sha256(id_str.encode("utf-8")).hexdigest()[:8]
+        return f"{normalized}_{suffix}"
+
+    @staticmethod
+    def _created_at_utc(message: Any) -> datetime:
+        created_at = getattr(message, "created_at", None)
+        if isinstance(created_at, str) and created_at:
+            try:
+                created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                return datetime.min.replace(tzinfo=timezone.utc)
+        if not isinstance(created_at, datetime):
+            return datetime.min.replace(tzinfo=timezone.utc)
+        if created_at.tzinfo is None:
+            return created_at.replace(tzinfo=timezone.utc)
+        return created_at.astimezone(timezone.utc)
 
     def get_or_create(self, key: str) -> HonchoSession:
         """
@@ -310,17 +332,14 @@ class HonchoSessionManager:
         Returns:
             A fresh HonchoSession with no message history.
         """
-        import time
-
         # Remove old session from caches (but don't delete from Honcho)
         old_session = self._cache.pop(key, None)
         if old_session:
             self._sessions_cache.pop(old_session.honcho_session_id, None)
 
-        # Create new session with timestamp suffix
+        # Create new session with a unique suffix
         # This preserves old session in Honcho while starting fresh
-        timestamp = int(time.time())
-        new_key = f"{key}:{timestamp}"
+        new_key = f"{key}:{uuid.uuid4().hex}"
 
         # Get or create will create a fresh session
         session = self.get_or_create(new_key)

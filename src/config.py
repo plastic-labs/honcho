@@ -98,12 +98,16 @@ def _normalize_model_transport(data: Any) -> Any:
     update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
     model_value = update.get("model")
     transport_value = update.get("transport")
-    if isinstance(model_value, str) and "/" in model_value and transport_value is None:
+    if isinstance(model_value, str) and "/" in model_value:
         prefix, bare_model = model_value.split("/", 1)
         if prefix in {"anthropic", "openai", "gemini"}:
-            update["transport"] = prefix
-            update["model"] = bare_model
-        elif prefix in {"openai-codex", "codex"}:
+            if transport_value in {None, prefix}:
+                update["transport"] = prefix
+                update["model"] = bare_model
+        elif prefix in {"openai-codex", "codex"} and transport_value in {
+            None,
+            "openai",
+        }:
             update["transport"] = "openai"
             update["model"] = bare_model
             update["auth_mode"] = "codex_oauth"

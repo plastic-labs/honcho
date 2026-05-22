@@ -53,6 +53,26 @@ def test_resolve_codex_oauth_credentials_reads_codex_home(
     assert credentials.default_headers["ChatGPT-Account-ID"] == "acct_test"
 
 
+def test_resolve_codex_auth_path_respects_extensionless_file(
+    tmp_path: Path,
+) -> None:
+    auth_file = tmp_path / "codex-token"
+    auth_file.write_text("{}")
+
+    assert codex_oauth.resolve_codex_auth_path(str(auth_file)) == auth_file
+
+
+def test_resolve_codex_auth_path_accepts_configured_directory(
+    tmp_path: Path,
+) -> None:
+    auth_dir = tmp_path / "codex"
+    auth_dir.mkdir()
+
+    assert codex_oauth.resolve_codex_auth_path(str(auth_dir)) == (
+        auth_dir / "auth.json"
+    )
+
+
 def test_resolve_codex_oauth_credentials_refreshes_and_persists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -8,7 +8,7 @@ allowed-tools: Read, Glob, Grep, Bash(uv:*), Bash(bun:*), Bash(npm:*), Edit, Wri
 
 ## What is Honcho
 
-Honcho is an open source memory library for building stateful agents. It works with any model, framework, or architecture. You send Honcho the messages from your conversations, and custom reasoning models process them in the background — extracting premises, drawing conclusions, and building rich representations of each participant over time. Your agent can then query those representations on-demand ("What does this user care about?", "How technical is this person?") and get grounded, reasoned answers.
+Honcho is an open-source memory library for building stateful agents. It works with any model, framework, or architecture. You send Honcho the messages from your conversations, and custom reasoning models process them in the background — extracting premises, drawing conclusions, and building rich representations of each participant over time. Your agent can then query those representations on-demand ("What does this user care about?", "How technical is this person?") and get grounded, reasoned answers.
 
 The key mental model: **Peers** are any participant — human or AI. Both are represented the same way. Observation settings (`observe_me`, `observe_others`) control which peers Honcho reasons about. Typically you want Honcho to model your users (`observe_me=True`) but not your AI assistant (`observe_me=False`). **Sessions** scope conversations between peers. **Messages** are the raw data you feed in — Honcho reasons about them asynchronously and stores the results as the peer's **representation**. No messages means no reasoning means no memory.
 

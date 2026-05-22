@@ -44,7 +44,7 @@ def resolve_codex_auth_path(configured_path: str | None = None) -> Path:
     raw_path = (configured_path or "").strip()
     if raw_path:
         path = Path(raw_path).expanduser()
-        if path.name != "auth.json" and path.suffix == "":
+        if path.is_dir() or raw_path.endswith(("/", "\\")):
             path = path / "auth.json"
         return path
 

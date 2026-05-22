@@ -8,6 +8,7 @@ history adapter selection) lives here now.
 
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
 from typing import assert_never
 
@@ -178,6 +179,33 @@ def client_for_model_config(
     assert_never(provider)
 
 
+async def aclient_for_model_config(
+    provider: ModelTransport,
+    model_config: ModelConfig,
+) -> ProviderClient:
+    """Async request-path client resolver.
+
+    Codex OAuth credential refresh can perform network I/O. Keep that blocking
+    file/network path off the event loop while preserving the synchronous
+    resolver for CLI/test setup code.
+    """
+
+    if provider == "openai" and model_config.auth_mode == "codex_oauth":
+        credentials = await asyncio.to_thread(
+            resolve_codex_oauth_credentials,
+            auth_path=model_config.codex_auth_path,
+            base_url=model_config.base_url,
+            refresh_skew_seconds=model_config.codex_refresh_skew_seconds,
+            refresh_timeout_seconds=model_config.codex_refresh_timeout_seconds,
+        )
+        return get_codex_oauth_client(
+            credentials.base_url,
+            credentials.access_token,
+            tuple(sorted(credentials.default_headers.items())),
+        )
+    return client_for_model_config(provider, model_config)
+
+
 def backend_for_provider(
     provider: ModelTransport,
     client: ProviderClient,
@@ -223,6 +251,7 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
 
 __all__ = [
     "CLIENTS",
+    "aclient_for_model_config",
     "backend_for_provider",
     "client_for_model_config",
     "get_anthropic_client",
