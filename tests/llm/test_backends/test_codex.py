@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from openai import OpenAIError
 from pydantic import BaseModel
 
 from src.llm.backend import StreamChunk
@@ -23,9 +25,11 @@ class FakeResponsesStream:
         self,
         response: SimpleNamespace,
         events: list[SimpleNamespace] | None = None,
+        final_exception: Exception | None = None,
     ) -> None:
         self.response: SimpleNamespace = response
         self.events: list[SimpleNamespace] = list(events or [])
+        self.final_exception: Exception | None = final_exception
 
     async def __aenter__(self) -> FakeResponsesStream:
         return self
@@ -42,6 +46,8 @@ class FakeResponsesStream:
         return self.events.pop(0)
 
     async def get_final_response(self) -> SimpleNamespace:
+        if self.final_exception is not None:
+            raise self.final_exception
         return self.response
 
 
@@ -137,6 +143,33 @@ async def test_codex_backend_streams_and_normalizes_text() -> None:
     assert "max_output_tokens" not in call
     assert call["store"] is False
     assert call["reasoning"] == {"effort": "low", "summary": "auto"}
+
+
+@pytest.mark.asyncio
+async def test_codex_backend_logs_final_usage_openai_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = Mock()
+    client.responses.stream = Mock(
+        return_value=FakeResponsesStream(
+            SimpleNamespace(status="completed", output_text="", output=[], usage=None),
+            final_exception=OpenAIError("final response unavailable"),
+        )
+    )
+
+    backend = CodexResponsesBackend(client)
+    with caplog.at_level(logging.DEBUG, logger="src.llm.backends.codex"):
+        result: AsyncIterator[StreamChunk] = backend.stream(
+            model="gpt-5.5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+        )
+        chunks: list[StreamChunk] = [chunk async for chunk in result]
+
+    assert chunks[-1].is_done is True
+    assert chunks[-1].output_tokens is None
+    assert "OpenAI error" in caplog.text
+    assert "final response unavailable" in caplog.text
 
 
 @pytest.mark.asyncio

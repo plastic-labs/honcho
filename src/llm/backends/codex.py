@@ -5,6 +5,8 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
+import httpx
+from openai import OpenAIError
 from pydantic import BaseModel
 
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
@@ -122,8 +124,30 @@ class CodexResponsesBackend:
                         getattr(final_response, "usage", None)
                     )
                     finish_reason = finish_reason or self._finish_reason(final_response)
-                except Exception:
-                    logger.debug("Codex Responses stream did not expose final usage")
+                except OpenAIError as exc:
+                    logger.debug(
+                        "Codex Responses stream final usage failed with OpenAI error: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                except httpx.RequestError as exc:
+                    logger.debug(
+                        "Codex Responses stream final usage failed with request error: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                except httpx.HTTPError as exc:
+                    logger.debug(
+                        "Codex Responses stream final usage failed with HTTP error: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                except RuntimeError as exc:
+                    logger.debug(
+                        "Codex Responses stream final usage failed during stream finalization: %s",
+                        exc,
+                        exc_info=True,
+                    )
 
         yield StreamChunk(
             is_done=True,
