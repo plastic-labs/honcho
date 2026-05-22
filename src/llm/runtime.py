@@ -110,6 +110,10 @@ def select_model_config_for_attempt(
         fallback=None,
         api_key=fb.api_key,
         base_url=fb.base_url,
+        auth_mode=fb.auth_mode,
+        codex_auth_path=fb.codex_auth_path,
+        codex_refresh_skew_seconds=fb.codex_refresh_skew_seconds,
+        codex_refresh_timeout_seconds=fb.codex_refresh_timeout_seconds,
         temperature=fb.temperature,
         top_p=fb.top_p,
         top_k=fb.top_k,
@@ -226,7 +230,7 @@ def effective_temperature(temperature: float | None) -> float | None:
 
 def resolve_backend_for_plan(plan: AttemptPlan) -> Any:
     """Convenience helper: plan → ready-to-call ProviderBackend."""
-    return backend_for_provider(plan.provider, plan.client)
+    return backend_for_provider(plan.provider, plan.client, plan.selected_config)
 
 
 __all__ = [

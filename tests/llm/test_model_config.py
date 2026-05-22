@@ -215,6 +215,40 @@ def test_legacy_prefixed_model_strings_are_normalized() -> None:
     assert configured.model == "claude-haiku-4-5"
 
 
+def test_openai_codex_prefixed_model_enables_codex_oauth() -> None:
+    config = ModelConfig.model_validate({"model": "openai-codex/gpt-5.5"})
+    configured = ConfiguredModelSettings.model_validate(
+        {"model": "codex/gpt-5.5-pro"}
+    )
+
+    assert config.transport == "openai"
+    assert config.model == "gpt-5.5"
+    assert config.auth_mode == "codex_oauth"
+    assert configured.transport == "openai"
+    assert configured.model == "gpt-5.5-pro"
+    assert configured.overrides.auth_mode == "codex_oauth"
+
+
+def test_resolve_model_config_preserves_codex_oauth_overrides() -> None:
+    configured = ConfiguredModelSettings(
+        model="gpt-5.5",
+        transport="openai",
+        overrides=ModelOverrideSettings(
+            auth_mode="codex_oauth",
+            codex_auth_path="/tmp/codex-auth.json",
+            codex_refresh_skew_seconds=300,
+            codex_refresh_timeout_seconds=5.0,
+        ),
+    )
+
+    resolved = resolve_model_config(configured)
+
+    assert resolved.auth_mode == "codex_oauth"
+    assert resolved.codex_auth_path == "/tmp/codex-auth.json"
+    assert resolved.codex_refresh_skew_seconds == 300
+    assert resolved.codex_refresh_timeout_seconds == 5.0
+
+
 def test_dream_specialist_model_configs_are_independent() -> None:
     """Specialist configs carry their own defaults and don't inherit from a parent."""
 
@@ -377,6 +411,8 @@ def test_env_template_uses_nested_model_config_keys() -> None:
     assert "DIALECTIC_LEVELS__low__TOOL_CHOICE=auto" in env_template
     assert "SUMMARY_MODEL_CONFIG__MODEL" in env_template
     assert "DREAM_DEDUCTION_MODEL_CONFIG__MODEL" in env_template
+    assert "DERIVER_MODEL_CONFIG__OVERRIDES__AUTH_MODE=codex_oauth" in env_template
+    assert "DERIVER_MODEL_CONFIG__OVERRIDES__CODEX_AUTH_PATH" in env_template
 
     assert "DERIVER_PROVIDER=" not in env_template
     assert "SUMMARY_PROVIDER=" not in env_template

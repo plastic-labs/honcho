@@ -21,8 +21,10 @@ from src.exceptions import ValidationException
 
 from .backend import ProviderBackend
 from .backends.anthropic import AnthropicBackend
+from .backends.codex import CodexResponsesBackend
 from .backends.gemini import GeminiBackend
 from .backends.openai import OpenAIBackend
+from .codex_oauth import resolve_codex_oauth_credentials
 from .credentials import default_transport_api_key
 from .history_adapters import (
     AnthropicHistoryAdapter,
@@ -71,6 +73,20 @@ def get_openai_override_client(
 ) -> AsyncOpenAI:
     """OpenAI client for a specific (base_url, api_key) pair. Cached by key."""
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+
+@lru_cache(maxsize=128)
+def get_codex_oauth_client(
+    base_url: str,
+    api_key: str,
+    default_headers: tuple[tuple[str, str], ...],
+) -> AsyncOpenAI:
+    """OpenAI SDK client for ChatGPT Codex OAuth Responses calls."""
+    return AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        default_headers=dict(default_headers),
+    )
 
 
 @lru_cache(maxsize=128)
@@ -130,6 +146,19 @@ def client_for_model_config(
     CLIENTS (the test-mockable seam). Otherwise route through the cached
     override factories.
     """
+    if provider == "openai" and model_config.auth_mode == "codex_oauth":
+        credentials = resolve_codex_oauth_credentials(
+            auth_path=model_config.codex_auth_path,
+            base_url=model_config.base_url,
+            refresh_skew_seconds=model_config.codex_refresh_skew_seconds,
+            refresh_timeout_seconds=model_config.codex_refresh_timeout_seconds,
+        )
+        return get_codex_oauth_client(
+            credentials.base_url,
+            credentials.access_token,
+            tuple(sorted(credentials.default_headers.items())),
+        )
+
     if model_config.api_key is None and model_config.base_url is None:
         existing_client = CLIENTS.get(provider)
         if existing_client is not None:
@@ -152,10 +181,17 @@ def client_for_model_config(
 def backend_for_provider(
     provider: ModelTransport,
     client: ProviderClient,
+    model_config: ModelConfig | None = None,
 ) -> ProviderBackend:
     """Wrap a raw provider SDK client in the matching ProviderBackend adapter."""
     if provider == "anthropic":
         return AnthropicBackend(client)
+    if (
+        provider == "openai"
+        and model_config is not None
+        and model_config.auth_mode == "codex_oauth"
+    ):
+        return CodexResponsesBackend(client)
     if provider == "openai":
         return OpenAIBackend(client)
     if provider == "gemini":
@@ -182,7 +218,7 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
     validation behavior stays consistent.
     """
     client = client_for_model_config(config.transport, config)
-    return backend_for_provider(config.transport, client)
+    return backend_for_provider(config.transport, client, config)
 
 
 __all__ = [
@@ -192,6 +228,7 @@ __all__ = [
     "get_anthropic_client",
     "get_anthropic_override_client",
     "get_backend",
+    "get_codex_oauth_client",
     "get_gemini_client",
     "get_gemini_override_client",
     "get_openai_client",

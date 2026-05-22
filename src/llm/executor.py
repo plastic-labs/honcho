@@ -303,8 +303,6 @@ async def honcho_llm_call_inner(
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
 
-    backend = backend_for_provider(provider, client)
-
     effective_config = effective_config_for_call(
         selected_config=selected_config,
         provider=provider,
@@ -314,6 +312,7 @@ async def honcho_llm_call_inner(
         thinking_budget_tokens=thinking_budget_tokens,
         reasoning_effort=reasoning_effort,
     )
+    backend = backend_for_provider(provider, client, effective_config)
     # json_mode + verbosity are per-call transport toggles, not ModelConfig
     # knobs — they pass through extra_params. execute_completion merges
     # build_config_extra_params(effective_config) on top for top_p/seed/etc.

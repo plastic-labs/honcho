@@ -57,6 +57,10 @@ MAX_MESSAGE_CONTENT_CHARS = 2000  # Max chars per message in tool results
 # Base URLs are set per-module via model_config.overrides.base_url
 # Built-in text-generation defaults use openai / gpt-5.4-mini.
 # Embeddings default to openai / text-embedding-3-small.
+# To use a ChatGPT Codex subscription instead of an OpenAI API key for
+# text generation, set model_config.overrides.auth_mode = "codex_oauth"
+# on the relevant text-generation sections. Honcho reads the same OAuth
+# tokens as Codex CLI from $CODEX_HOME/auth.json or ~/.codex/auth.json.
 OPENAI_API_KEY = "your-api-key-here"
 # ANTHROPIC_API_KEY = "your-api-key"
 # GEMINI_API_KEY = "your-api-key"
@@ -105,6 +109,12 @@ model = "gpt-5.4-mini"
 # [deriver.model_config.overrides]
 # base_url = "https://llm.internal.example/v1"
 # api_key_env = "DERIVER_CUSTOM_API_KEY"
+
+# Optional Codex subscription OAuth for text generation. No API key is used.
+# model = "gpt-5.5"
+# [deriver.model_config.overrides]
+# auth_mode = "codex_oauth"
+# codex_auth_path = "~/.codex/auth.json"
 
 # Optional fallback model
 # [deriver.model_config.fallback]

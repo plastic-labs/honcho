@@ -282,7 +282,7 @@ Honcho is open source under AGPL-3.0. You can run the full server locally with D
 git clone https://github.com/plastic-labs/honcho.git
 cd honcho
 cp docker-compose.yml.example docker-compose.yml
-cp .env.template .env       # fill in LLM_GEMINI_API_KEY / LLM_ANTHROPIC_API_KEY / LLM_OPENAI_API_KEY
+cp .env.template .env       # fill in an LLM provider, or configure Codex OAuth for text generation
 docker compose up
 ```
 
@@ -367,6 +367,13 @@ LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for deriver, summary, and 
 LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic medium/high/max and dream by default)
 LLM_OPENAI_API_KEY= # API Key for OpenAI (used for embeddings when EMBED_MESSAGES=true)
 ```
+
+For text generation, Honcho can also use a ChatGPT Codex subscription via the
+same OAuth tokens as Codex CLI. Set the relevant
+`MODEL_CONFIG__OVERRIDES__AUTH_MODE=codex_oauth` override and ensure
+`$CODEX_HOME/auth.json` or `~/.codex/auth.json` exists. No OpenAI API key is
+used for those text-generation calls; embeddings still require a configured
+embedding provider.
 
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
 > function properly. This is a requirement brought by `sqlalchemy`
@@ -483,6 +490,7 @@ Examples:
 - `DERIVER_MODEL_CONFIG__TRANSPORT` - Transport for the background deriver
 - `SUMMARY_MODEL_CONFIG__MODEL` - Summary model override
 - `DIALECTIC_LEVELS__low__MODEL_CONFIG__MODEL` - Model for low reasoning level
+- `DERIVER_MODEL_CONFIG__OVERRIDES__AUTH_MODE` - Set to `codex_oauth` to use Codex CLI OAuth tokens for text generation
 - `LOG_LEVEL` - Application log level
 - `METRICS_ENABLED` - Enable Prometheus metrics
 - `TELEMETRY_ENABLED` - Enable CloudEvents telemetry
