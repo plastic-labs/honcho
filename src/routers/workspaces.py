@@ -1,3 +1,5 @@
+"""FastAPI routes for workspace resources and workspace-scoped operations."""
+
 import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
@@ -64,6 +66,7 @@ async def get_all_workspaces(
     options: schemas.WorkspaceGet | None = Body(
         None, description="Filtering and pagination options for the workspaces list"
     ),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = db,
 ):
     """Get all Workspaces, paginated with optional filters."""
@@ -75,7 +78,7 @@ async def get_all_workspaces(
 
     return await apaginate(
         db,
-        await crud.get_all_workspaces(filters=filter_param),
+        await crud.get_all_workspaces(filters=filter_param, reverse=reverse),
     )
 
 

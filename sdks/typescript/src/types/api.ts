@@ -35,6 +35,7 @@ export interface WorkspaceListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 // =============================================================================
@@ -64,6 +65,7 @@ export interface PeerListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 export interface PeerChatParams {
@@ -141,6 +143,7 @@ export interface SessionListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 export interface SessionCloneParams {
@@ -226,6 +229,7 @@ export interface MessageListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 export interface MessageSearchParams {
@@ -262,6 +266,7 @@ export interface ConclusionListParams {
   filters?: Record<string, unknown>
   page?: number
   size?: number
+  reverse?: boolean
 }
 
 export interface ConclusionQueryParams {
