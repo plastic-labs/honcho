@@ -226,6 +226,11 @@ async def get_or_create_session(
         try:
             async with db.begin_nested():
                 db.add(honcho_session)
+            # Flush so the session row exists in PostgreSQL before
+            # _get_or_add_peers_to_session tries to upsert session_peers
+            # (which has a FK to sessions). Without this flush, the Core-level
+            # pg_insert executes before the ORM flush (autoflush=False in db.py).
+            await db.flush()
             needs_cache_update = True
             created = True
 
