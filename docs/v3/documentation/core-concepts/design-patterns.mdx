@@ -5,9 +5,9 @@ icon: "cubes"
 ---
 
 <Info>
-This page is about **how to decide** — for the conceptual model of workspaces, peers, and sessions, start with [Architecture](/v3/documentation/core-concepts/architecture).
+This page covers **how to structure** workspaces, peers, and sessions for real applications. For the conceptual model behind them, start with [Architecture](/v3/documentation/core-concepts/architecture).
 
-Wanting to add Honcho to your product? The **`/honcho-integration` skill** walks you through this interactively.
+Ready to add Honcho to your codebase? The **`/honcho-integration` skill** applies these patterns for you — it explores your code, asks how your peers and sessions should map to your app, and wires in the Honcho SDK. Run it in any coding agent that supports skills (Claude Code, Cursor, and others).
 </Info>
 
 ## Quick Reference
@@ -26,7 +26,7 @@ Wanting to add Honcho to your product? The **`/honcho-integration` skill** walks
 
 ## Workspace Design
 
-A workspace is a hard isolation boundary — nothing inside one is visible to another. **Default to one workspace per application,** and split only at a real privacy, compliance, or product boundary (e.g. per-tenant SaaS, or a tool that needs intentionally isolated memory). Agents that collaborate over the same product, user, or game state belong in the *same* workspace so each can retrieve what the others produced.
+A workspace is a hard isolation boundary. **Default to one workspace per application,** and split only at a real privacy, compliance, or product boundary (e.g. per-tenant SaaS, or a tool that needs intentionally isolated memory). Agents that collaborate over the same product, user, or game state belong in the *same* workspace so each can retrieve what the others produced.
 
 Honcho plugins default to one workspace *per host* (`hermes`, `claude_code`, `cursor`, `opencode`). To unify memory across them, point each at the same workspace — see [Unified Memory Setup](/v3/guides/recipes/unified-memory-setup).
 
