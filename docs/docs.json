@@ -110,6 +110,7 @@
               {
                 "group": "Tutorials",
                 "pages": [
+                  "v3/guides/recipes/unified-memory-setup",
                   "v3/guides/discord",
                   "v3/guides/granola",
                   "v3/guides/telegram",

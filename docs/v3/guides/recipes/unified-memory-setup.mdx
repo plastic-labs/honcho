@@ -1,0 +1,186 @@
+---
+title: "Unified Memory Setup"
+sidebarTitle: "Unified Memory"
+icon: "diagram-project"
+description: "Wire one shared Honcho workspace across a chat companion, a coding agent, an autonomous agent, and a scheduled ingestion job"
+---
+<Info>
+This is a how-to, not an intro. It assumes you know what workspaces, peers, and
+sessions are. If you don't, start with [Core Concepts](/v3/documentation/core-concepts/).
+</Info>
+
+This guide wires four integration points into a single Honcho setup: a
+chat companion (Discord/Slack), a coding agent (Claude Code), an autonomous agent
+(Hermes), and a cron job that ingests external data. They share **one workspace** and
+**one peer** for the user, so everything Honcho learns about your user in one place is
+available everywhere else. Each section below notes the per-host setup.
+
+---
+
+## 1. Chat companion (Discord / Slack)
+
+**One session per conversation surface, one peer per participant.** The channel, thread,
+or DM is the session; everyone who speaks in it gets their own peer:
+
+- Channel → `discord-channel-{channel_id}`
+- Thread → `discord-thread-{thread_id}`
+- DM → `discord-dm-{user_id}`
+
+Derive each peer ID from the immutable platform ID (`discord-{user_id}`), not the
+display name (which can change). Keep the display name in peer metadata instead. A shared
+channel then naturally holds several human peers in one session, with the bot joining
+as its own peer (everyone observed on defaults):
+
+```python
+session = honcho.session(f"discord-channel-{channel_id}")
+session.add_peers([user, assistant])  # plus any other humans in the channel
+```
+
+Slack mirrors this with `slack_{user_id}` peers and `slack-{channel}` sessions. For a
+full bot walkthrough — message ingestion, watchlists, and storing turns — see the
+[Discord guide](/v3/guides/discord).
+
+---
+
+## 2. Coding agent (Claude Code)
+
+**Scope sessions per project directory, prefixed with the user** — `{USER_PEER_ID}-{repo_name}`
+— so multiple developers sharing the workspace don't collide on a session ID. Switch
+to a `git-branch` scope only when each branch is genuinely a separate line of work.
+
+The Claude Code plugin reads its workspace and peers from `.honcho/config.json`. Point
+each host at the same `workspace` and use the same top-level `peerName`, so every host
+attributes you to one peer:
+
+```json .honcho/config.json
+{
+  "peerName": "your-user-id",
+  "hosts": {
+    "claude_code": { "workspace": "my-product", "aiPeer": "claude" },
+    "opencode":    { "workspace": "my-product", "aiPeer": "opencode" }
+  }
+}
+```
+
+<Note>
+This is a minimal, illustrative snippet — the real config file carries more fields
+(session maps, recall mode, observation strategy, etc.). See the [integration](/v3/guides/overview/)
+guides for the full schema and per-host options.
+</Note>
+
+Add the user peer and the `claude` agent peer (no special observation config needed),
+then store turns — stripping `tool_use` blocks from the assistant message so only
+substantive explanation lands in the session.
+
+Because this uses the **same user peer** as the companion, a preference the user
+states while coding ("keep it simple, pass config directly") is queryable from the
+Discord bot via `user.chat(...)`, and vice versa — both write to the same peer
+representation.
+
+<Warning>
+**A shared workspace is not the default.** The Honcho plugins — Claude Code, OpenCode,
+Hermes, Cursor — each default to a *per-host* workspace (`Claude_Code`, `hermes`, …),
+keeping memory isolated per tool. The unification above only happens when you set the
+same workspace **and** the same user peer across all of them; otherwise each builds its
+own separate representation.
+</Warning>
+
+---
+
+## 3. Autonomous agent (Hermes)
+
+The Hermes Honcho plugin is configured through `honcho.json`, set its `workspace`
+and `aiPeer` there. See the [Hermes guide](/v3/guides/integrations/hermes) for the full config schema.
+
+- **Sessions** follow a `session_strategy` (default `per-directory`, like the coding
+  agent above; `per-repo` or `per-session` for a fresh Honcho session each run). The
+  user peer defaults to `user-{channel}-{chat_id}` unless you pin a `peerName`.
+- **Observation** defaults to `directional` — both the user and the `hermes` agent
+  peer are observed, consistent with the defaults above, so Hermes builds a
+  representation of itself as well as the user.
+- Hermes exposes Honcho as agent **tools** (`honcho_reasoning` for synthesized
+  answers, plus lighter `honcho_search` and `honcho_context` lookups) and decides when
+  to call them mid-task. Unlike other sources, you write no retrieval code —
+  the agent pulls cross-session context on its own.
+
+---
+
+## 4. Scheduled data ingestion (cron)
+
+A scheduled job feeds external data (emails, meeting notes, CRM records) into Honcho.
+Attribute the messages to the peer the data is *about* — not to an agent — and group
+them into a session. **How you scope that session is the main decision here**, because
+it controls when Honcho reasons over the data (more on that below).
+
+```python
+from datetime import datetime, timezone
+
+session = honcho.session(f"email-import-{datetime.now(timezone.utc):%Y-%m-%d}")
+session.add_peers([user])
+
+messages = [
+    user.message(
+        f"Subject: {e['subject']}\nFrom: {e['from']}\n\n{e['body']}",
+        metadata={"source": "gmail", "thread_id": e["thread_id"]},
+        created_at=e["timestamp"],  # the event's time, NOT import time
+    )
+    for e in emails
+]
+# add_messages accepts at most 100 messages per call — split into requests of 100
+for i in range(0, len(messages), 100):
+    session.add_messages(messages[i:i + 100])
+```
+
+Honcho only reasons over a peer once it accumulates ~1,000 tokens *within a single session*
+([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Scope
+the session to the volume you ingest:
+
+- **High-volume runs** (a day of emails, a CRM export) clear the threshold easily — a
+  per-run session like `email-import-{date}` is fine.
+- **Low-volume or trickle imports** (a few short records at a time) should append to
+  one **ongoing per-source session** (e.g. `email-import-gmail`), so content
+  accumulates across runs instead of fragmenting into thin sessions that each stall
+  below the threshold (nothing is lost — it just waits).
+
+The [Gmail](/v3/guides/gmail) and [Granola](/v3/guides/granola) guides are related
+import examples.
+
+<Tip>
+If a cron run also posts as a deterministic agent (a bot or tool agent whose behavior
+you fully control), set `observe_me=False` on that peer so Honcho doesn't spend
+reasoning modeling it. Its messages still land in the session for context.
+
+```python
+agent = honcho.peer("cron_agent", configuration=PeerConfig(observe_me=False))
+```
+</Tip>
+
+---
+
+## What you end up with
+
+From any integration, the same call — `user.chat("What is this user working on, and
+what do they care about?")` — draws on all four sources at once: Discord chats, coding
+decisions, Hermes task runs, and imported emails. They blend because:
+
+- **One workspace and one user peer**, so the representation accumulates in one place
+  instead of fragmenting into `user-discord`, `user-cursor`, etc.
+- **Sessions scoped to the live interaction** (channel, repo, task run, import batch),
+  so local context stays coherent while the user peer carries the long view.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Design Patterns" icon="cubes" href="/v3/documentation/core-concepts/design-patterns">
+    The reasoning behind every decision in this guide.
+  </Card>
+  <Card title="Get Context" icon="messages" href="/v3/documentation/features/get-context">
+    Pull session + cross-session context into your LLM calls.
+  </Card>
+  <Card title="Granola" icon="microphone" href="/v3/guides/granola">
+    An interactive import using the per-import session and created_at patterns.
+  </Card>
+  <Card title="OpenClaw" icon="lobster" href="/v3/guides/integrations/openclaw">
+    Production multi-platform companion with parent/subagent tracking.
+  </Card>
+</CardGroup>
