@@ -4,79 +4,22 @@ sidebarTitle: "Unified Memory"
 icon: "diagram-project"
 description: "Wire one shared Honcho workspace across a chat companion, a coding agent, an autonomous agent, and a scheduled ingestion job"
 ---
-
-This guide wires four integration points into a single Honcho setup: a
-chat companion (Discord/Slack), a coding agent (Claude Code), an autonomous agent
-(Hermes), and a cron job that ingests external data. They share one workspace and
-one user peer, so everything Honcho learns about your user in one place is
-available everywhere else.
-
 <Info>
 This is a how-to, not an intro. It assumes you know what workspaces, peers, and
 sessions are. If you don't, start with [Core Concepts](/v3/documentation/core-concepts/).
 </Info>
 
-## The shared configuration
-
-The unification comes from two choices applied everywhere: **one workspace** and
-**one peer for the human**. How you set them depends on the integration:
-
-- **Code you write yourself** passes them directly — `Honcho(workspace_id="my-product")` and `honcho.peer("your-user-id")`.
-- **The Honcho plugins** for Claude Code (and others!) read from `.honcho/config.json`.
-  Point each host at the same `workspace`, and use the same top-level `peerName` so
-  every host attributes you to one peer:
-
-```json .honcho/config.json
-{
-  "peerName": "your-user-id",
-  "hosts": {
-    "claude_code": { "workspace": "my-product", "aiPeer": "claude" },
-    "opencode":    { "workspace": "my-product", "aiPeer": "opencode" }
-  }
-}
-```
-
-<Note>
-This is a minimal, illustrative snippet — the real config file carries more fields
-(session maps, recall mode, observation strategy, etc.). See the [integration](/v3/guides/overview/)
-guides for the full schema and per-host options.
-</Note>
-
-- **Hermes** reads its own `honcho.json` (and falls back to the global
-  `~/.honcho/config.json`); **OpenClaw** uses its own configuration. Set the same
-  workspace and user peer there per their guides:
-  [Hermes](/v3/guides/integrations/hermes) and [OpenClaw](/v3/guides/integrations/openclaw).
-
-<Warning>
-**For the Honcho plugins, a shared workspace is not the default.** Claude Code,
-OpenCode, Hermes, and Cursor each default to a *per-host* workspace (`Claude_Code`,
-`hermes`, …), keeping memory isolated per tool. Unified memory only happens when
-you set the same workspace **and** the same user peer across all of them — otherwise
-each builds its own separate representation.
-</Warning>
-
-By default Honcho observes every peer — including agent peers like `claude`,
-`hermes`, and the companion `assistant` — building a representation of each. The
-default is the right starting point: you keep modeling of every participant and only
-opt out deliberately. So for each integration, the only thing that differs from here
-is **how it scopes its sessions**.
-
-<Tip>
-If you don't want Honcho modeling a deterministic agent (a bot or tool agent whose
-behavior you fully control), set `observe_me=False` on that peer. Its messages still
-land in the session for context, but Honcho won't spend reasoning building a
-representation of it.
-
-```python
-agent = honcho.peer("cron_agent", configuration=PeerConfig(observe_me=False))
-```
-</Tip>
+This guide wires four integration points into a single Honcho setup: a
+chat companion (Discord/Slack), a coding agent (Claude Code), an autonomous agent
+(Hermes), and a cron job that ingests external data. They share **one workspace** and
+**one peer** for the user, so everything Honcho learns about your user in one place is
+available everywhere else. Each section below notes the per-host setup.
 
 ---
 
 ## 1. Chat companion (Discord / Slack)
 
-**One session per conversation surface, one peer per human.** The channel, thread,
+**One session per conversation surface, one peer per participant.** The channel, thread,
 or DM is the session; everyone who speaks in it gets their own peer:
 
 - Channel → `discord-channel-{channel_id}`
@@ -84,7 +27,7 @@ or DM is the session; everyone who speaks in it gets their own peer:
 - DM → `discord-dm-{user_id}`
 
 Derive each peer ID from the immutable platform ID (`discord-{user_id}`), not the
-display name — names change. Keep the display name in peer metadata instead. A shared
+display name (which can change). Keep the display name in peer metadata instead. A shared
 channel then naturally holds several human peers in one session, with the bot joining
 as its own peer (everyone observed on defaults):
 
@@ -105,6 +48,26 @@ full bot walkthrough — message ingestion, watchlists, and storing turns — se
 — so multiple developers sharing the workspace don't collide on a session ID. Switch
 to a `git-branch` scope only when each branch is genuinely a separate line of work.
 
+The Claude Code plugin reads its workspace and peers from `.honcho/config.json`. Point
+each host at the same `workspace` and use the same top-level `peerName`, so every host
+attributes you to one peer:
+
+```json .honcho/config.json
+{
+  "peerName": "your-user-id",
+  "hosts": {
+    "claude_code": { "workspace": "my-product", "aiPeer": "claude" },
+    "opencode":    { "workspace": "my-product", "aiPeer": "opencode" }
+  }
+}
+```
+
+<Note>
+This is a minimal, illustrative snippet — the real config file carries more fields
+(session maps, recall mode, observation strategy, etc.). See the [integration](/v3/guides/overview/)
+guides for the full schema and per-host options.
+</Note>
+
 Add the user peer and the `claude` agent peer (no special observation config needed),
 then store turns — stripping `tool_use` blocks from the assistant message so only
 substantive explanation lands in the session.
@@ -113,6 +76,14 @@ Because this uses the **same user peer** as the companion, a preference the user
 states while coding ("keep it simple, pass config directly") is queryable from the
 Discord bot via `user.chat(...)`, and vice versa — both write to the same peer
 representation.
+
+<Warning>
+**A shared workspace is not the default.** The Honcho plugins — Claude Code, OpenCode,
+Hermes, Cursor — each default to a *per-host* workspace (`Claude_Code`, `hermes`, …),
+keeping memory isolated per tool. The unification above only happens when you set the
+same workspace **and** the same user peer across all of them; otherwise each builds its
+own separate representation.
+</Warning>
 
 ---
 
@@ -174,14 +145,23 @@ the session to the volume you ingest:
 The [Gmail](/v3/guides/gmail) and [Granola](/v3/guides/granola) guides are related
 import examples.
 
+<Tip>
+If a cron run also posts as a deterministic agent (a bot or tool agent whose behavior
+you fully control), set `observe_me=False` on that peer so Honcho doesn't spend
+reasoning modeling it. Its messages still land in the session for context.
+
+```python
+agent = honcho.peer("cron_agent", configuration=PeerConfig(observe_me=False))
+```
+</Tip>
+
 ---
 
 ## What you end up with
 
 From any integration, the same call — `user.chat("What is this user working on, and
 what do they care about?")` — draws on all four sources at once: Discord chats, coding
-decisions, Hermes task runs, and imported emails. They blend because of two choices
-applied everywhere:
+decisions, Hermes task runs, and imported emails. They blend because:
 
 - **One workspace and one user peer**, so the representation accumulates in one place
   instead of fragmenting into `user-discord`, `user-cursor`, etc.
