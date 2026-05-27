@@ -1,4 +1,6 @@
 import asyncio
+import json
+import re
 import logging
 import weakref
 from collections.abc import Callable
@@ -2064,11 +2066,59 @@ async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) ->
     )
 
 
+
+def _normalize_observation_ids(raw: Any) -> list[str]:
+    """Normalize observation_ids to a clean list of strings.
+
+    Handles cases where LLM tool-call output provides observation_ids as
+    a string or stringified list instead of a proper JSON array.
+    See: https://github.com/plastic-labs/honcho/issues/719
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, list | tuple | set):
+        ids = list(raw)
+    elif isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        # Try JSON parse first (handles '["a","b"]')
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                ids = parsed
+            else:
+                ids = [str(parsed)]
+        except (json.JSONDecodeError, ValueError):
+            # Strip surrounding brackets, split by comma/whitespace
+            s = s.strip("[]")
+            ids = re.split(r"[,\s]+", s) if s else []
+    else:
+        ids = [str(raw)]
+
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for item in ids:
+        if not isinstance(item, str):
+            item = str(item)
+        # Strip quotes and brackets
+        item = item.strip().strip('"\'[]')
+        # Strip leading "id:" prefix
+        item = re.sub(r"^id:", "", item)
+        # Validate against conservative charset
+        if item and re.fullmatch(r"[A-Za-z0-9_-]+", item) and item not in seen:
+            cleaned.append(item)
+            seen.add(item)
+    return cleaned
+
+
 async def _handle_delete_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
     """Handle delete_observations tool."""
-    observation_ids = tool_input.get("observation_ids", [])
+    observation_ids = _normalize_observation_ids(
+        tool_input.get("observation_ids")
+    )
     if not observation_ids:
         return "ERROR: observation_ids list is empty"
 

@@ -1762,3 +1762,49 @@ class TestObserverPeerNameWiring:
         await _handle_get_messages_by_date_range(ctx, {"after_date": "2024-01-01"})
 
         assert captured_kwargs["observer"] == ctx.observer
+
+
+class TestNormalizeObservationIds:
+    """Tests for _normalize_observation_ids helper."""
+
+    def _call(self, raw: Any) -> list[str]:
+        from src.utils.agent_tools import _normalize_observation_ids
+        return _normalize_observation_ids(raw)
+
+    def test_none_returns_empty(self):
+        assert self._call(None) == []
+
+    def test_empty_string_returns_empty(self):
+        assert self._call("") == []
+
+    def test_list_passthrough(self):
+        assert self._call(["abc123", "def456"]) == ["abc123", "def456"]
+
+    def test_json_string_list(self):
+        assert self._call('["abc123", "def456"]') == ["abc123", "def456"]
+
+    def test_bracketed_single_id(self):
+        assert self._call("[abc123]") == ["abc123"]
+
+    def test_id_prefix_stripped(self):
+        assert self._call("[id:abc123]") == ["abc123"]
+
+    def test_comma_separated_string(self):
+        assert self._call("abc123, def456") == ["abc123", "def456"]
+
+    def test_deduplicates(self):
+        assert self._call(["abc123", "abc123"]) == ["abc123"]
+
+    def test_invalid_chars_filtered(self):
+        result = self._call(["valid-id_123", "has spaces", ""])
+        assert result == ["valid-id_123"]
+
+    def test_tuple_and_set(self):
+        assert self._call(("abc", "def")) == ["abc", "def"]
+        assert self._call({"abc"}) == ["abc"]
+
+    def test_single_string_id(self):
+        assert self._call("abc123") == ["abc123"]
+
+    def test_quoted_bracketed_ids(self):
+        assert self._call('"[abc123]"') == ["abc123"]
