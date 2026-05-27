@@ -5,7 +5,7 @@ icon: "diagram-project"
 description: "Wire one shared Honcho workspace across a chat companion, a coding agent, an autonomous agent, and a scheduled ingestion job"
 ---
 
-This guide wires four integration points into a single coherent Honcho setup: a
+This guide wires four integration points into a single Honcho setup: a
 chat companion (Discord/Slack), a coding agent (Claude Code), an autonomous agent
 (Hermes), and a cron job that ingests external data. They share one workspace and
 one user peer, so everything Honcho learns about your user in one place is
@@ -13,8 +13,7 @@ available everywhere else.
 
 <Info>
 This is a how-to, not an intro. It assumes you know what workspaces, peers, and
-sessions are. If you don't, start with [Design Patterns](/v3/documentation/core-concepts/design-patterns)
-and come back.
+sessions are. If you don't, start with [Core Concepts](/v3/documentation/core-concepts/).
 </Info>
 
 ## The shared configuration
@@ -22,8 +21,7 @@ and come back.
 The unification comes from two choices applied everywhere: **one workspace** and
 **one peer for the human**. How you set them depends on the integration:
 
-- **Code you write yourself** (the companion and the ingestion job below) passes them
-  directly — `Honcho(workspace_id="my-product")` and `honcho.peer("your-user-id")`.
+- **Code you write yourself** passes them directly — `Honcho(workspace_id="my-product")` and `honcho.peer("your-user-id")`.
 - **The Honcho plugins** for Claude Code (and others!) read from `.honcho/config.json`.
   Point each host at the same `workspace`, and use the same top-level `peerName` so
   every host attributes you to one peer:
@@ -114,17 +112,14 @@ substantive explanation lands in the session.
 Because this uses the **same user peer** as the companion, a preference the user
 states while coding ("keep it simple, pass config directly") is queryable from the
 Discord bot via `user.chat(...)`, and vice versa — both write to the same peer
-representation. (Reasoning is async, so it surfaces once the observation is derived,
-not the same turn.) That's the whole point of the shared peer.
+representation.
 
 ---
 
 ## 3. Autonomous agent (Hermes)
 
-Hermes ships its own Honcho plugin, configured through `honcho.json`
-(`$HERMES_HOME/honcho.json`, falling back to the global `~/.honcho/config.json`).
-To fold it into this shared setup, set its `workspace` and `aiPeer` there —
-otherwise it defaults to the `hermes` workspace and a `hermes` agent peer.
+The Hermes Honcho plugin is configured through `honcho.json`, set its `workspace`
+and `aiPeer` there. See the [Hermes guide](/v3/guides/integrations/hermes) for the full config schema.
 
 - **Sessions** follow a `session_strategy` (default `per-directory`, like the coding
   agent above; `per-repo` or `per-session` for a fresh Honcho session each run). The
@@ -134,10 +129,8 @@ otherwise it defaults to the `hermes` workspace and a `hermes` agent peer.
   representation of itself as well as the user.
 - Hermes exposes Honcho as agent **tools** (`honcho_reasoning` for synthesized
   answers, plus lighter `honcho_search` and `honcho_context` lookups) and decides when
-  to call them mid-task. Unlike the companion and ingestion sections above, you write
-  no retrieval code — the agent pulls cross-session context on its own.
-
-See the [Hermes guide](/v3/guides/integrations/hermes) for the full config schema.
+  to call them mid-task. Unlike other sources, you write no retrieval code —
+  the agent pulls cross-session context on its own.
 
 ---
 
@@ -187,13 +180,11 @@ import examples.
 
 From any integration, the same call — `user.chat("What is this user working on, and
 what do they care about?")` — draws on all four sources at once: Discord chats, coding
-decisions, Hermes task runs, and imported emails. They blend because of three choices
+decisions, Hermes task runs, and imported emails. They blend because of two choices
 applied everywhere:
 
 - **One workspace and one user peer**, so the representation accumulates in one place
   instead of fragmenting into `user-discord`, `user-cursor`, etc.
-- **Every peer observed by default**, agents included — unless you deliberately set
-  `observe_me=False` on one you fully control.
 - **Sessions scoped to the live interaction** (channel, repo, task run, import batch),
   so local context stays coherent while the user peer carries the long view.
 
