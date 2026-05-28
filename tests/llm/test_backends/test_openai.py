@@ -228,6 +228,148 @@ async def test_openai_backend_skips_extra_body_when_thinking_budget_zero() -> No
 
 
 @pytest.mark.asyncio
+async def test_openai_backend_merges_caller_extra_body_alongside_reasoning() -> None:
+    """Caller-supplied `extra_body` keys (e.g. `provider`) flow through alongside
+    the `reasoning.max_tokens` block populated from `thinking_budget_tokens`."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="x-ai/grok-4.1-fast",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_budget_tokens=256,
+        extra_params={
+            "extra_body": {
+                "provider": {
+                    "ignore": ["alibaba", "novita"],
+                    "order": ["fireworks", "together"],
+                },
+            },
+        },
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["extra_body"] == {
+        "reasoning": {"max_tokens": 256},
+        "provider": {
+            "ignore": ["alibaba", "novita"],
+            "order": ["fireworks", "together"],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_deep_merges_caller_reasoning_without_clobbering_max_tokens() -> None:
+    """Caller-supplied `extra_body.reasoning` deep-merges with the
+    `reasoning.max_tokens` set from `thinking_budget_tokens` — does not clobber it."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="x-ai/grok-4.1-fast",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_budget_tokens=256,
+        extra_params={
+            "extra_body": {
+                "reasoning": {"exclude": True},
+            },
+        },
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["extra_body"] == {
+        "reasoning": {"max_tokens": 256, "exclude": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_ignores_non_dict_extra_body() -> None:
+    """A malformed (non-dict) caller-supplied `extra_body` is ignored, not crashed on."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="x-ai/grok-4.1-fast",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_budget_tokens=256,
+        extra_params={"extra_body": "not-a-dict"},
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    # thinking_budget reasoning block stays intact; bogus extra_body is dropped.
+    assert call["extra_body"] == {"reasoning": {"max_tokens": 256}}
+
+
+@pytest.mark.asyncio
 async def test_openai_backend_converts_anthropic_style_tools() -> None:
     client = Mock()
     client.chat.completions.create = AsyncMock(
