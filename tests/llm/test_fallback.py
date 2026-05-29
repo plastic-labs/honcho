@@ -7,12 +7,11 @@ Tests cover:
 - force_fallback ContextVar behavior
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 from src.config import (
-    ConfiguredModelSettings,
-    FallbackModelSettings,
     ModelConfig,
     ResolvedFallbackConfig,
 )
@@ -21,7 +20,6 @@ from src.llm.runtime import (
     plan_attempt,
     select_model_config_for_attempt,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -234,8 +232,8 @@ class TestIsRetryableError:
         """Mirror of src/llm/api.py _is_retryable_error()."""
         status = getattr(exc, "status_code", None)
         if status is not None:
-            return status == 429 or (500 <= status < 600)
-        if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+            return status in (408, 429) or (500 <= status < 600)
+        if isinstance(exc, (TimeoutError, ConnectionError)):
             return True
         return type(exc).__name__ in (
             "APIConnectionError",
@@ -345,13 +343,18 @@ class TestCrossProviderFallback:
 class TestForceFallbackContextVar:
     def test_default_is_false(self):
         """force_fallback ContextVar defaults to False."""
-        # Reset to default
-        force_fallback.set(False)
+        # Read default directly — do NOT mutate before asserting
         assert force_fallback.get() is False
 
     def test_set_and_get(self):
-        """force_fallback can be set and read."""
-        force_fallback.set(True)
-        assert force_fallback.get() is True
-        force_fallback.set(False)
-        assert force_fallback.get() is False
+        """force_fallback can be set and read, with proper cleanup."""
+        # Save original state
+        original = force_fallback.get()
+        try:
+            force_fallback.set(True)
+            assert force_fallback.get() is True
+            force_fallback.set(False)
+            assert force_fallback.get() is False
+        finally:
+            # Restore original state to avoid leaking between tests
+            force_fallback.set(original)

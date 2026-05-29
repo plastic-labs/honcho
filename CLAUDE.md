@@ -346,7 +346,6 @@ The following errors trigger fast fallback:
 - HTTP 5xx (Server Errors)
 - `TimeoutError`
 - `ConnectionError`
-- `OSError`
 - SDK-specific: `APIConnectionError`, `APITimeoutError`, `InternalServerError`, `ServiceUnavailableError`, `RateLimitError`
 
-Non-retryable errors (400, 200, ValueError, etc.) do NOT trigger fallback — they follow normal retry behavior.
+Non-retryable errors (e.g., HTTP 400, 422, or synchronous `ValueError`) do NOT trigger fallback — they are surfaced immediately and not retried.

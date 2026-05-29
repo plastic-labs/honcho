@@ -607,6 +607,7 @@ async def execute_tool_loop(
         )
 
     current_attempt.set(1)
+    force_fallback.set(False)
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         plan = get_attempt_plan()

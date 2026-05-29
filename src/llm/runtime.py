@@ -173,7 +173,7 @@ def plan_attempt(
         call_reasoning_effort if is_primary else selected.thinking_effort
     )
 
-    if not is_primary and runtime_model_config.fallback is not None:
+    if not is_primary and runtime_model_config.fallback is not None and attempt == 2:
         logger.warning(
             "LLM fallback activated: switching from "
             + f"{runtime_model_config.transport}/{runtime_model_config.model} to "
