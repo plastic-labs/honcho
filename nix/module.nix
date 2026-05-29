@@ -327,7 +327,7 @@ in
         StateDirectory = "honcho";
         WorkingDirectory = "/var/lib/honcho";
         ExecStartPre = "${cfg.package}/bin/python ${cfg.package}/scripts/provision_db.py ${cfg.database.name}";
-        ExecStart = "${cfg.package}/bin/fastapi run --host ${cfg.api.host} --port ${toString cfg.api.port} src.main:app";
+        ExecStart = "${cfg.package}/bin/python -m uvicorn src.main:app --host ${cfg.api.host} --port ${toString cfg.api.port}";
         EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
         Restart = "on-failure";
         RestartSec = "5s";
