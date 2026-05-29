@@ -1,0 +1,116 @@
+{{- if .Values.redis.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "honcho.redisName" . }}
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "redis") | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.redis.podSecurityContext | nindent 8 }}
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.redis.securityContext | nindent 12 }}
+          {{- if .Values.redis.auth.enabled }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.auth.secretName | quote }}
+                  key: {{ .Values.redis.auth.secretKey | quote }}
+          {{- end }}
+          command:
+            - sh
+            - -ec
+          args:
+            - |
+              {{- if .Values.redis.auth.enabled }}
+              exec redis-server --requirepass "$REDIS_PASSWORD" --appendonly {{ ternary "yes" "no" .Values.redis.persistence.enabled }}
+              {{- else }}
+              exec redis-server --appendonly {{ ternary "yes" "no" .Values.redis.persistence.enabled }}
+              {{- end }}
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.service.port }}
+              protocol: TCP
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -ec
+                - {{ ternary "redis-cli -a \"$REDIS_PASSWORD\" ping" "redis-cli ping" .Values.redis.auth.enabled | quote }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -ec
+                - {{ ternary "redis-cli -a \"$REDIS_PASSWORD\" ping" "redis-cli ping" .Values.redis.auth.enabled | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          {{- if .Values.redis.persistence.enabled }}
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          {{- end }}
+      {{- if .Values.redis.persistence.enabled }}
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: {{ include "honcho.redisName" . }}-data
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "honcho.redisName" . }}
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: redis
+      protocol: TCP
+  selector:
+    {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "redis") | nindent 4 }}
+{{- if .Values.redis.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "honcho.redisName" . }}-data
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.redis.persistence.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size | quote }}
+{{- end }}
+{{- end }}

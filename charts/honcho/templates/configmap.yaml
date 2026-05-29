@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "honcho.fullname" . }}-config
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config.env }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- if and .Values.redis.enabled (not .Values.redis.auth.enabled) (not (hasKey .Values.config.env "CACHE_URL")) }}
+  CACHE_URL: {{ printf "redis://%s:%v/0?suppress=true" (include "honcho.redisName" .) .Values.redis.service.port | quote }}
+  {{- end }}
