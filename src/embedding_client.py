@@ -271,10 +271,15 @@ class _EmbeddingClient:
                 _emit_embedding_call can time + emit + propagate errors."""
                 batch_embeddings: list[list[float]] = []
                 if isinstance(self.client, genai.Client):
-                    # Type cast needed due to genai type signature complexity
+                    # Wrap each string in Content+Part so gemini-embedding-2*
+                    # treats them as separate items, not a single document.
+                    gemini_contents = [
+                        genai_types.Content(parts=[genai_types.Part(text=t)])
+                        for t in batch
+                    ]
                     response = await self.client.aio.models.embed_content(
                         model=self.model,
-                        contents=batch,  # pyright: ignore[reportArgumentType]
+                        contents=gemini_contents,
                         config={"output_dimensionality": self.vector_dimensions},
                     )
                     if response.embeddings:
@@ -437,9 +442,15 @@ class _EmbeddingClient:
             item in analytics."""
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
             if isinstance(self.client, genai.Client):
+                # Wrap each string in Content+Part so gemini-embedding-2*
+                # treats them as separate items, not a single document.
+                gemini_contents = [
+                    genai_types.Content(parts=[genai_types.Part(text=item.text)])
+                    for item in batch
+                ]
                 response = await self.client.aio.models.embed_content(
                     model=self.model,
-                    contents=[item.text for item in batch],
+                    contents=gemini_contents,
                     config={"output_dimensionality": self.vector_dimensions},
                 )
                 if response.embeddings:
