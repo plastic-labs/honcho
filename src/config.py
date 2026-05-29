@@ -759,6 +759,20 @@ class DeriverSettings(HonchoSettings):
     # Whether to deduplicate documents when creating them
     DEDUPLICATE: bool = True
 
+    # Cosine distance threshold below which a new observation is treated as a
+    # duplicate of an existing one. Tighter values (0.05) only catch near-identical
+    # wording; looser values (0.20+) catch genuine paraphrases at some risk of
+    # conflating distinct events that share infrastructure.
+    DEDUPLICATE_MAX_DISTANCE: Annotated[float, Field(default=0.20, ge=0.0, le=1.0)] = (
+        0.20
+    )
+
+    # Peer names this deployment never forms a representation OF (observe_me forced
+    # false), regardless of per-peer or per-session config. Use for assistant/agent
+    # peers whose own turns would otherwise be distilled into useless self-observations.
+    # Set via env as JSON, e.g. DERIVER_UNOBSERVED_PEERS='["claude"]'.
+    UNOBSERVED_PEERS: list[str] = Field(default_factory=list)
+
     LOG_OBSERVATIONS: bool = False
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=25000, gt=0, le=25000)] = 25000

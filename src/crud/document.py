@@ -989,7 +989,7 @@ async def is_rejected_duplicate(
         query=doc.content,
         observer=observer,
         observed=observed,
-        max_distance=0.05,
+        max_distance=settings.DERIVER.DEDUPLICATE_MAX_DISTANCE,
         top_k=1,
         embedding=doc.embedding,
     )

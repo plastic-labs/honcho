@@ -1,0 +1,39 @@
+name: Rebuild and redeploy
+
+on:
+  push:
+    branches: [samdu/customizations]
+  workflow_dispatch: {}
+
+jobs:
+  rebuild:
+    runs-on: honcho
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubectl + crane + jq
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          curl -fsSL "https://dl.k8s.io/release/v1.33.4/bin/linux/amd64/kubectl" -o "$HOME/bin/kubectl"
+          chmod +x "$HOME/bin/kubectl"
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/v0.20.5/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xzC "$HOME/bin" crane
+          curl -fsSL "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64" -o "$HOME/bin/jq"
+          chmod +x "$HOME/bin/jq"
+
+      - name: Rebuild image
+        run: ./rebuild.sh
+
+      - name: Rollout restart
+        run: |
+          for d in honcho-api honcho-deriver; do
+            if kubectl -n apps get deployment "${d}" >/dev/null 2>&1; then
+              kubectl -n apps rollout restart deployment/"${d}"
+              kubectl -n apps rollout status deployment/"${d}" --timeout=300s
+            else
+              echo "deployment/${d} not present in apps ns; skipping rollout"
+            fi
+          done
