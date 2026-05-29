@@ -301,8 +301,8 @@ in
       );
     };
 
-    services.redis = mkIf cfg.cache.enable {
-      enable = true;
+    services.redis.servers."" = {
+      enable = cfg.cache.enable;
       bind = cfg.cache.host;
       port = cfg.cache.port;
       settings.save = "";
