@@ -297,3 +297,56 @@ src/
 ### Notes
 
 - Always use `uv run` or `uv` to prefix any commands related to python to ensure you use the virtual environment
+
+## LLM Model Fallback
+
+Honcho supports automatic fallback to a secondary LLM model when the primary model fails (rate limit, timeout, API error).
+
+### How It Works
+
+1. **First-failure trigger**: When the primary model returns a retryable error (429, 5xx, timeout, connection error), the system immediately switches to the fallback model on the next attempt — it does NOT wait for all retries to exhaust.
+2. **Per-agent configuration**: Each agent (Deriver, Dialectic, Dreamer, Summary) has independent fallback configuration.
+3. **Cross-provider support**: The fallback model can use a different provider (e.g., primary=openai, fallback=lmstudio).
+4. **Backward compatible**: If no fallback is configured, behavior is identical to before.
+
+### Configuration
+
+Set these environment variables for each agent:
+
+```bash
+# Deriver
+DERIVER_MODEL_CONFIG__FALLBACK__TRANSPORT=lmstudio
+DERIVER_MODEL_CONFIG__FALLBACK__MODEL=qwen/qwen3.5-9b
+
+# Dialectic (per reasoning level)
+DIALECTIC_LEVELS__low__MODEL_CONFIG__FALLBACK__TRANSPORT=lmstudio
+DIALECTIC_LEVELS__low__MODEL_CONFIG__FALLBACK__MODEL=qwen/qwen3.5-9b
+
+# Summary
+SUMMARY_MODEL_CONFIG__FALLBACK__TRANSPORT=lmstudio
+SUMMARY_MODEL_CONFIG__FALLBACK__MODEL=qwen/qwen3.5-9b
+
+# Dream
+DREAM_DEDUCTION_MODEL_CONFIG__FALLBACK__TRANSPORT=lmstudio
+DREAM_DEDUCTION_MODEL_CONFIG__FALLBACK__MODEL=qwen/qwen3.5-9b
+DREAM_INDUCTION_MODEL_CONFIG__FALLBACK__TRANSPORT=lmstudio
+DREAM_INDUCTION_MODEL_CONFIG__FALLBACK__MODEL=qwen/qwen3.5-9b
+```
+
+### Observability
+
+- **Logs**: WARNING-level log emitted when fallback is activated, including primary→fallback provider/model info
+- **Langfuse**: Generation span metadata includes `is_fallback: true` when fallback model is used
+- **No separate span**: Only the successful attempt's span is kept (failed attempts do not create separate spans)
+
+### Retryable Errors
+
+The following errors trigger fast fallback:
+- HTTP 429 (Too Many Requests / Rate Limit)
+- HTTP 5xx (Server Errors)
+- `TimeoutError`
+- `ConnectionError`
+- `OSError`
+- SDK-specific: `APIConnectionError`, `APITimeoutError`, `InternalServerError`, `ServiceUnavailableError`, `RateLimitError`
+
+Non-retryable errors (400, 200, ValueError, etc.) do NOT trigger fallback — they follow normal retry behavior.

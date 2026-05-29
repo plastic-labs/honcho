@@ -32,12 +32,18 @@ logger = logging.getLogger(__name__)
 # ContextVar tracking the current retry attempt for provider switching.
 current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
 
+# ContextVar tracking whether fallback should be forced on next attempt.
+# Set to True when a retryable error (429/5xx/timeout) is detected, enabling
+# fast failover on the first failure instead of waiting for final retry.
+force_fallback: ContextVar[bool] = ContextVar("force_fallback", default=False)
+
 
 def update_current_langfuse_observation(
     provider: ModelTransport,
     model: str,
     *,
     name: str | None = None,
+    is_fallback: bool = False,
 ) -> None:
     """Best-effort annotation of the current Langfuse span with LLM routing."""
     if not settings.LANGFUSE_PUBLIC_KEY:
@@ -46,16 +52,15 @@ def update_current_langfuse_observation(
     try:
         from langfuse import get_client
 
-        update_kwargs: dict[str, Any] = {
-            "metadata": {
-                "namespace": settings.NAMESPACE,
-                "provider": provider,
-                "model": model,
-            }
+        metadata = {
+            "namespace": settings.NAMESPACE,
+            "provider": provider,
+            "is_fallback": is_fallback,
         }
+        gen_kwargs: dict[str, Any] = {"model": model, "metadata": metadata}
         if name is not None:
-            update_kwargs["name"] = name
-        get_client().update_current_span(**update_kwargs)
+            gen_kwargs["name"] = name
+        get_client().update_current_generation(**gen_kwargs)
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         logger.debug("Failed to update Langfuse span metadata: %s", exc)
 
@@ -94,16 +99,27 @@ def select_model_config_for_attempt(
     *,
     attempt: int,
     retry_attempts: int,
+    force_fallback: bool = False,
 ) -> ModelConfig:
     """Pick the effective config for this attempt.
 
-    Primary config on all attempts except the last, which swaps to the
-    resolved fallback (if any).
+    Primary config on all attempts except when:
+    - force_fallback is True (first-failure fast failover), or
+    - this is the last attempt and a fallback is configured (legacy behavior).
+
+    When force_fallback is True, the fallback config is used immediately
+    regardless of attempt number, enabling fast failover on first failure.
     """
-    if attempt != retry_attempts or model_config.fallback is None:
+    use_fallback = force_fallback or (
+        attempt == retry_attempts and model_config.fallback is not None
+    )
+    if not use_fallback:
         return model_config
 
     fb = model_config.fallback
+    if fb is None:
+        return model_config
+
     return ModelConfig(
         model=fb.model,
         transport=fb.transport,
@@ -132,6 +148,7 @@ def plan_attempt(
     retry_attempts: int,
     call_thinking_budget_tokens: int | None,
     call_reasoning_effort: ReasoningEffortType,
+    force_fallback: bool = False,
 ) -> AttemptPlan:
     """Build the AttemptPlan for `attempt`.
 
@@ -143,6 +160,7 @@ def plan_attempt(
         runtime_model_config,
         attempt=attempt,
         retry_attempts=retry_attempts,
+        force_fallback=force_fallback,
     )
     provider = selected.transport
     client = client_for_model_config(provider, selected)
@@ -155,11 +173,11 @@ def plan_attempt(
         call_reasoning_effort if is_primary else selected.thinking_effort
     )
 
-    if attempt == retry_attempts and runtime_model_config.fallback is not None:
+    if not is_primary and runtime_model_config.fallback is not None:
         logger.warning(
-            f"Final retry attempt {attempt}/{retry_attempts}: switching from "
+            "LLM fallback activated: switching from "
             + f"{runtime_model_config.transport}/{runtime_model_config.model} to "
-            + f"backup {provider}/{selected.model}"
+            + f"{provider}/{selected.model} on attempt {attempt}/{retry_attempts}"
         )
 
     return AttemptPlan(
@@ -234,6 +252,7 @@ __all__ = [
     "current_attempt",
     "effective_config_for_call",
     "effective_temperature",
+    "force_fallback",
     "plan_attempt",
     "resolve_backend_for_plan",
     "resolve_runtime_model_config",
