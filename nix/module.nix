@@ -265,7 +265,7 @@ in
         StateDirectory = "honcho";
         WorkingDirectory = "/var/lib/honcho";
         ExecStartPre = "${cfg.package}/bin/python ${cfg.package}/scripts/provision_db.py ${cfg.database.name}";
-        ExecStart = "${cfg.package}/bin/fastapi run --host ${cfg.api.host} --port ${toString cfg.api.port} ${cfg.package}/src/main.py";
+        ExecStart = "${cfg.package}/bin/fastapi run --host ${cfg.api.host} --port ${toString cfg.api.port} src.main:app";
         Restart = "on-failure";
         RestartSec = "5s";
         TimeoutStartSec = "60s";
