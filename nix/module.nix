@@ -281,10 +281,14 @@ in
       package = pkgs.postgresql_16.withPackages (ps: [ ps.pgvector ]);
       ensureDatabases = [ cfg.database.name ];
       ensureUsers = [
-        {
-          name = cfg.database.user;
-          ensureDBOwnership = true;
-        }
+        ({ name = cfg.database.user; ensureDBOwnership = true; }
+          // (if cfg.database.password != "" then {
+            ensureClauses = {
+              login = true;
+              password = cfg.database.password;
+            };
+          } else { })
+        )
       ];
       initialScript = pkgs.writeText "honcho-init-vector.sql" ''
         CREATE EXTENSION IF NOT EXISTS vector;
