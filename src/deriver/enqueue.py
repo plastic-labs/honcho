@@ -265,6 +265,12 @@ def get_effective_observe_me(
     Returns:
         True if observe_me is enabled, False otherwise
     """
+    # Deployment-level policy: never form a representation of these peers (e.g. the
+    # assistant), regardless of per-peer/session config. Stops the deriver from
+    # distilling an agent's own turns into useless self-observations.
+    if observed in set(settings.DERIVER.UNOBSERVED_PEERS):
+        return False
+
     # If the sender is not in peers_with_configuration, they left after sending a message.
     # We'll use the default behavior of observing the sender by instantiating the default
     # peer-level and session-level configs.
