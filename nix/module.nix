@@ -8,14 +8,26 @@ let
     mkIf
     types
     literalExpression
+    escapeURL
+    hasPrefix
     ;
 
   tomlFormat = pkgs.formats.toml { };
 
+  # URL-encode user and password for safe URI interpolation
+  encodedUser = escapeURL cfg.database.user;
+  encodedPassword = escapeURL cfg.database.password;
+
+  # Detect Unix socket path (starts with "/")
+  isSocket = hasPrefix "/" cfg.database.host;
+
   # Build the connection URI from components
   dbConnectionURI =
     if cfg.database.password != "" then
-      "postgresql+psycopg://${cfg.database.user}:${cfg.database.password}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
+      if isSocket then
+        "postgresql+psycopg://${encodedUser}:${encodedPassword}@/${cfg.database.name}?host=${cfg.database.host}"
+      else
+        "postgresql+psycopg://${encodedUser}:${encodedPassword}@${cfg.database.host}:${toString cfg.database.port}/${cfg.database.name}"
     else
       "postgresql+psycopg:///${cfg.database.name}?host=${cfg.database.host}";
 
