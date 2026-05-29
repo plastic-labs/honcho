@@ -36,13 +36,17 @@ let
   # Write out the merged config.toml
   configFile = tomlFormat.generate "honcho-config.toml" cfg.settings;
 
-  # Environment shared across all honcho services
+  # Only non-secret env vars go in baseEnv — secrets leak into the world-readable
+  # Nix store via systemd unit derivations.  DB_CONNECTION_URI embeds
+  # cfg.database.password when one is set, so we exclude it here and expect the
+  # user to provide it through environmentFile (see services.honcho.environmentFile).
   baseEnv = {
-    DB_CONNECTION_URI = dbConnectionURI;
     CACHE_URL = cacheURL;
     CACHE_ENABLED = if cfg.cache.enable then "true" else "false";
     HONCHO_CONFIG = "/etc/honcho/config.toml";
-  } // cfg.environment;
+  }
+  // (if cfg.database.password == "" then { DB_CONNECTION_URI = dbConnectionURI; } else { })
+  // cfg.environment;
 in
 {
   options.services.honcho = {
@@ -66,7 +70,11 @@ in
       };
       description = ''
         Extra environment variables passed to both honcho services.
-        Use this to set LLM provider API keys and other secrets.
+
+        WARNING: these values are rendered into the world-readable Nix store
+        via the systemd unit derivation. Do NOT put secrets here.  Use
+        services.honcho.environmentFile for API keys, database passwords,
+        JWT secrets, and other sensitive values.
       '';
     };
 
@@ -89,6 +97,12 @@ in
       };
       description = ''
         Honcho configuration settings, serialised as config.toml.
+
+        WARNING: the generated file is a world-readable Nix store path. Do
+        NOT put secrets here — JWTs, API keys, and passwords are visible to
+        every user on the system.  Use services.honcho.environmentFile for
+        sensitive values instead.
+
         See config.toml.example in the source tree for all available options.
       '';
     };
@@ -205,6 +219,31 @@ in
         description = "Number of deriver worker processes (DERIVER_WORKERS).";
       };
     };
+
+    environmentFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      example = "/run/secrets/honcho.env";
+      description = ''
+        Path to a runtime environment file loaded by both systemd services via
+        EnvironmentFile.  Use this to provide secrets (database passwords, API
+        keys, JWT secrets) without embedding them in the world-readable Nix
+        store systemd unit derivations.
+
+        The file contains KEY=VALUE lines, one per secret:
+          DB_CONNECTION_URI=postgresql+psycopg://user:pass@host:5432/honcho
+          OPENAI_API_KEY=sk-...
+          JWT_SECRET=...
+
+        This path is typically managed by sops-nix, agenix, or similar secret
+        deployment tools and should have restricted permissions (mode 0600).
+
+        When database.password is non-empty, DB_CONNECTION_URI must be
+        provided through this file — it is intentionally excluded from the
+        systemd unit environment to avoid leaking the password into the Nix
+        store.
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -220,6 +259,17 @@ in
       {
         assertion = !cfg.deriver.enable || cfg.database.enable;
         message = "Honcho deriver requires a database. Set services.honcho.database.enable = true or disable the deriver.";
+      }
+      {
+        assertion = cfg.database.password == "" || cfg.environmentFile != null;
+        message = ''
+          Honcho has database.password set but no environmentFile.
+          DB_CONNECTION_URI would leak the password into the world-readable Nix store.
+          Either:
+          - Set services.honcho.environmentFile to a runtime secrets file
+            containing DB_CONNECTION_URI=postgresql+psycopg://..., or
+          - Leave database.password empty to use peer auth via Unix socket.
+        '';
       }
     ];
 
@@ -278,6 +328,7 @@ in
         WorkingDirectory = "/var/lib/honcho";
         ExecStartPre = "${cfg.package}/bin/python ${cfg.package}/scripts/provision_db.py ${cfg.database.name}";
         ExecStart = "${cfg.package}/bin/fastapi run --host ${cfg.api.host} --port ${toString cfg.api.port} src.main:app";
+        EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
         Restart = "on-failure";
         RestartSec = "5s";
         TimeoutStartSec = "60s";
@@ -301,6 +352,7 @@ in
         StateDirectory = "honcho";
         WorkingDirectory = "/var/lib/honcho";
         ExecStart = "${cfg.package}/bin/python -m src.deriver";
+        EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
         Restart = "on-failure";
         RestartSec = "5s";
         TimeoutStartSec = "60s";
