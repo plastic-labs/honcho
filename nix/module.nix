@@ -308,6 +308,27 @@ in
       settings.save = "";
     };
 
+    # ---------- DB provisioning (shared oneshot) ----------
+
+    systemd.services.honcho-db-provision = mkIf cfg.database.enable {
+      description = "Honcho Database Provisioning";
+      after = [ "postgresql.service" ];
+      requires = [ "postgresql.service" ];
+      before = [ "honcho-api.service" "honcho-deriver.service" ];
+
+      serviceConfig = {
+        Type = "oneshot";
+        User = "honcho";
+        Group = "honcho";
+        StateDirectory = "honcho";
+        WorkingDirectory = "/var/lib/honcho";
+        ExecStart = "${cfg.package}/bin/python ${cfg.package}/scripts/provision_db.py ${cfg.database.name}";
+        EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
+      };
+
+      environment = baseEnv;
+    };
+
     # ---------- configuration file ----------
 
     environment.etc."honcho/config.toml".source = configFile;
@@ -316,8 +337,8 @@ in
 
     systemd.services.honcho-api = mkIf cfg.api.enable {
       description = "Honcho API Server";
-      after = [ "postgresql.service" "redis.service" "network.target" ];
-      requires = [ "postgresql.service" "redis.service" ];
+      after = [ "postgresql.service" "redis.service" "network.target" "honcho-db-provision.service" ];
+      requires = [ "postgresql.service" "redis.service" "honcho-db-provision.service" ];
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {
@@ -326,7 +347,6 @@ in
         Group = "honcho";
         StateDirectory = "honcho";
         WorkingDirectory = "/var/lib/honcho";
-        ExecStartPre = "${cfg.package}/bin/python ${cfg.package}/scripts/provision_db.py ${cfg.database.name}";
         ExecStart = "${cfg.package}/bin/python -m uvicorn src.main:app --host ${cfg.api.host} --port ${toString cfg.api.port}";
         EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
         Restart = "on-failure";
@@ -341,8 +361,8 @@ in
 
     systemd.services.honcho-deriver = mkIf cfg.deriver.enable {
       description = "Honcho Deriver Worker (background queue consumer)";
-      after = [ "postgresql.service" "redis.service" "honcho-api.service" ];
-      requires = [ "postgresql.service" "redis.service" ];
+      after = [ "postgresql.service" "redis.service" "honcho-db-provision.service" ];
+      requires = [ "postgresql.service" "redis.service" "honcho-db-provision.service" ];
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {
