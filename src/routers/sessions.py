@@ -1,5 +1,8 @@
+"""FastAPI routes for session resources and session-scoped operations."""
+
 import logging
 from contextlib import suppress
+from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
@@ -18,10 +21,12 @@ from src.exceptions import (
     ValidationException,
 )
 from src.security import JWTParams, require_auth
+from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
 from src.utils.representation import Representation
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +83,8 @@ async def _get_working_representation_task(
         max_observations=max_observations
         if max_observations is not None
         else config.settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+        parent_category="api",
+        embedding_purpose=EmbeddingCallPurpose.SESSION_CONTEXT_SEARCH,
     )
 
 
@@ -243,6 +250,7 @@ async def get_sessions(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = db,
 ):
     """Get all Sessions for a Workspace, paginated with optional filters."""
@@ -254,7 +262,12 @@ async def get_sessions(
             filter_param = None
 
     return await apaginate(
-        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
+        db,
+        await crud.get_sessions(
+            workspace_name=workspace_id,
+            filters=filter_param,
+            reverse=reverse,
+        ),
     )
 
 
@@ -669,6 +682,7 @@ async def get_session_context(
     token_limit = (
         tokens if tokens is not None else config.settings.GET_CONTEXT_MAX_TOKENS
     )
+    context_started = perf_counter()
 
     if peer_perspective and not peer_target:
         raise ValidationException(
@@ -680,11 +694,30 @@ async def get_session_context(
         summary, messages = await _get_session_context_task(
             db, workspace_id, session_id, token_limit, include_summary
         )
-        return schemas.SessionContext(
+        response = schemas.SessionContext(
             name=session_id,
             messages=messages,
             summary=summary,
         )
+        emit(
+            GetContextEvent(
+                workspace_name=workspace_id,
+                context_scope="session",
+                session_name=session_id,
+                tokens_requested=tokens,
+                message_count=len(messages),
+                has_summary=summary is not None,
+                search_query_provided=search_query is not None,
+                search_top_k=search_top_k,
+                search_max_distance=search_max_distance,
+                include_most_frequent=include_most_frequent,
+                max_conclusions=max_conclusions,
+                include_summary=include_summary,
+                limit_to_session=limit_to_session,
+                total_duration_ms=(perf_counter() - context_started) * 1000,
+            )
+        )
+        return response
 
     observer = peer_perspective or peer_target
     observed = peer_target
@@ -692,7 +725,14 @@ async def get_session_context(
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
-        with suppress(Exception):
+        with (
+            suppress(Exception),
+            embedding_call_purpose(
+                EmbeddingCallPurpose.SESSION_CONTEXT_SEARCH.value,
+                workspace_name=workspace_id,
+                parent_category="api",
+            ),
+        ):
             embedding = await embedding_client.embed(search_query)
 
     # Sequential calls on shared DB session
@@ -731,13 +771,37 @@ async def get_session_context(
         db, workspace_id, session_id, messages_start_id, messages_budget
     )
 
-    return schemas.SessionContext(
+    response = schemas.SessionContext(
         name=session_id,
         messages=messages,
         summary=summary,
         peer_representation=representation.format_as_markdown(),
         peer_card=card,
     )
+    emit(
+        GetContextEvent(
+            workspace_name=workspace_id,
+            context_scope="session",
+            session_name=session_id,
+            peer_name=observer,
+            target_name=observed,
+            tokens_requested=tokens,
+            message_count=len(messages),
+            has_summary=summary is not None,
+            has_representation=bool(response.peer_representation),
+            has_peer_card=card is not None,
+            search_query_provided=search_query is not None,
+            search_top_k=search_top_k,
+            search_max_distance=search_max_distance,
+            include_most_frequent=include_most_frequent,
+            max_conclusions=max_conclusions,
+            include_summary=include_summary,
+            limit_to_session=limit_to_session,
+            peer_perspective_provided=peer_perspective is not None,
+            total_duration_ms=(perf_counter() - context_started) * 1000,
+        )
+    )
+    return response
 
 
 @router.get(

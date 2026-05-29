@@ -9,7 +9,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-09T19:09:35.818254Z"
+exclude-newer = "2026-05-16T17:58:57.678125Z"
 exclude-newer-span = "P5D"
 
 [manifest]
@@ -1224,7 +1224,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "3.0.6"
+version = "3.0.7"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -1337,7 +1337,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "2.1.1"
+version = "2.1.2"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "httpx" },

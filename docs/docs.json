@@ -24,7 +24,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v3.0.6",
+        "version": "v3.0.7",
         "api": {
           "openapi": ["v3/openapi.json"]
         },
@@ -110,6 +110,7 @@
               {
                 "group": "Tutorials",
                 "pages": [
+                  "v3/guides/recipes/unified-memory-setup",
                   "v3/guides/discord",
                   "v3/guides/granola",
                   "v3/guides/telegram",

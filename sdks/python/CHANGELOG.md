@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.2] - 2026-05-21
+
+### Added
+
+- `page`, `size`, and `reverse` pagination parameters on `Honcho.workspaces()` and `HonchoAio.workspaces()`, closing the gap from 2.1.0 which added these to `peers()`, `sessions()`, `messages()`, and `conclusions.list()` but not to `workspaces()`. Honoring `reverse` on the workspace/peer/session list routes also requires a Honcho server with the matching API fix; older servers silently ignore the parameter.
+- `peers` parameter on `Honcho.session()` and `HonchoAio.session()` — attach peers to a session at creation time instead of needing a follow-up `session.add_peers()` call. Accepts the same shapes as `Session.add_peers` (peer ID string, `Peer` object, list of either, or tuples with `SessionPeerConfig`).
+
+### Changed
+
+- `WorkspaceCreateParams`, `PeerCreateParams`, and `SessionCreateParams` now accept IDs up to 512 characters (was 100), matching the server-side schema change in Honcho v3.0.7.
+
 ## [2.1.1] - 2026-04-01
 
 ### Fixed

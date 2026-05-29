@@ -1,6 +1,10 @@
+"""FastAPI routes for peer resources and peer-scoped operations."""
+
 import json
 import logging
 from collections.abc import AsyncIterator
+from contextlib import suppress
+from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
@@ -12,10 +16,13 @@ from src import crud, schemas
 from src.config import settings
 from src.dependencies import db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
+from src.embedding_client import embedding_client
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
+from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils.search import search
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +42,7 @@ async def get_peers(
     options: schemas.PeerGet | None = Body(
         None, description="Filtering options for the peers list"
     ),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = db,
 ):
     """Get all Peers for a Workspace, paginated with optional filters."""
@@ -46,7 +54,11 @@ async def get_peers(
 
     return await apaginate(
         db,
-        await crud.get_peers(workspace_name=workspace_id, filters=filter_param),
+        await crud.get_peers(
+            workspace_name=workspace_id,
+            filters=filter_param,
+            reverse=reverse,
+        ),
     )
 
 
@@ -121,6 +133,7 @@ async def get_sessions_for_peer(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering options for the sessions list"
     ),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = db,
 ):
     """Get all Sessions for a Peer, paginated with optional filters."""
@@ -137,6 +150,7 @@ async def get_sessions_for_peer(
             workspace_name=workspace_id,
             peer_name=peer_id,
             filters=filter_param,
+            reverse=reverse,
         ),
     )
 
@@ -252,6 +266,18 @@ async def get_representation(
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
     try:
+        embedding: list[float] | None = None
+        if options.search_query:
+            with (
+                suppress(Exception),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.SEARCH_MEMORY.value,
+                    workspace_name=workspace_id,
+                    parent_category="api",
+                ),
+            ):
+                embedding = await embedding_client.embed(options.search_query)
+
         # If no target specified, get global representation (omniscient Honcho perspective)
         representation = await crud.get_working_representation(
             workspace_id,
@@ -259,6 +285,7 @@ async def get_representation(
             observed=options.target if options.target is not None else peer_id,
             session_name=options.session_id,
             include_semantic_query=options.search_query,
+            embedding=embedding,
             semantic_search_top_k=options.search_top_k,
             semantic_search_max_distance=options.search_max_distance,
             include_most_derived=options.include_most_frequent
@@ -267,6 +294,7 @@ async def get_representation(
             max_observations=options.max_conclusions
             if options.max_conclusions is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+            parent_category="api",
         )
         return schemas.RepresentationResponse(
             representation=representation.format_as_markdown()
@@ -399,8 +427,21 @@ async def get_peer_context(
     """
     # If no target specified, get the peer's own context (self-observation)
     observed = target if target is not None else peer_id
+    context_started = perf_counter()
 
     try:
+        embedding: list[float] | None = None
+        if search_query:
+            with (
+                suppress(Exception),
+                embedding_call_purpose(
+                    EmbeddingCallPurpose.SEARCH_MEMORY.value,
+                    workspace_name=workspace_id,
+                    parent_category="api",
+                ),
+            ):
+                embedding = await embedding_client.embed(search_query)
+
         # Get the working representation
         representation = await crud.get_working_representation(
             workspace_id,
@@ -408,12 +449,14 @@ async def get_peer_context(
             observed=observed,
             session_name=None,  # Peer context is global, not session-scoped
             include_semantic_query=search_query,
+            embedding=embedding,
             semantic_search_top_k=search_top_k,
             semantic_search_max_distance=search_max_distance,
             include_most_derived=include_most_frequent,
             max_observations=max_conclusions
             if max_conclusions is not None
             else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+            parent_category="api",
         )
 
         # Get the peer card
@@ -421,12 +464,29 @@ async def get_peer_context(
             db, workspace_id, observer=peer_id, observed=observed
         )
 
-        return schemas.PeerContext(
+        response = schemas.PeerContext(
             peer_id=peer_id,
             target_id=observed,
             representation=representation.format_as_markdown(),
             peer_card=peer_card,
         )
+        emit(
+            GetContextEvent(
+                workspace_name=workspace_id,
+                context_scope="peer",
+                peer_name=peer_id,
+                target_name=observed,
+                has_representation=bool(response.representation),
+                has_peer_card=peer_card is not None,
+                search_query_provided=search_query is not None,
+                search_top_k=search_top_k,
+                search_max_distance=search_max_distance,
+                include_most_frequent=include_most_frequent,
+                max_conclusions=max_conclusions,
+                total_duration_ms=(perf_counter() - context_started) * 1000,
+            )
+        )
+        return response
     except ValueError as e:
         logger.warning(f"Failed to get context for peer {peer_id}: {str(e)}")
         raise ResourceNotFoundException("Peer not found") from e

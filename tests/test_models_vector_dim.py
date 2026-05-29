@@ -1,4 +1,4 @@
-"""Phase 1: verify src/models.py honors EMBEDDING_VECTOR_DIMENSIONS at import time."""
+"""Verify src/models.py honors EMBEDDING_VECTOR_DIMENSIONS at import time."""
 
 from __future__ import annotations
 

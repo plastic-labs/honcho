@@ -634,7 +634,7 @@ class MolecularJudge:
             "required": ["analyses"],
         }
 
-        props_text = "\n".join(f'{i+1}. "{p}"' for i, p in enumerate(propositions))
+        props_text = "\n".join(f'{i + 1}. "{p}"' for i, p in enumerate(propositions))
 
         result = await self._call_llm(
             AMBIGUITY_DETECTION_PROMPT,
@@ -717,7 +717,7 @@ class MolecularJudge:
             "required": ["analyses"],
         }
 
-        props_text = "\n".join(f'{i+1}. "{p}"' for i, p in enumerate(propositions))
+        props_text = "\n".join(f'{i + 1}. "{p}"' for i, p in enumerate(propositions))
 
         result = await self._call_llm(
             DECONTEXTUALITY_PROMPT,
@@ -814,7 +814,7 @@ class MolecularJudge:
             "required": ["analyses"],
         }
 
-        props_text = "\n".join(f'{i+1}. "{p}"' for i, p in enumerate(propositions))
+        props_text = "\n".join(f'{i + 1}. "{p}"' for i, p in enumerate(propositions))
 
         result = await self._call_llm(
             MINIMALITY_PROMPT,
@@ -996,16 +996,16 @@ def print_report(report: MolecularReport) -> None:
     print("CLASSIFICATION DISTRIBUTION:")
     total = report.proposition_count
     print(
-        f"  ✓ Molecular:    {report.molecular_count:3d} ({report.molecular_count/total*100:5.1f}%)"
+        f"  ✓ Molecular:    {report.molecular_count:3d} ({report.molecular_count / total * 100:5.1f}%)"
     )
     print(
-        f"  ⚠ Too Atomic:   {report.too_atomic_count:3d} ({report.too_atomic_count/total*100:5.1f}%)"
+        f"  ⚠ Too Atomic:   {report.too_atomic_count:3d} ({report.too_atomic_count / total * 100:5.1f}%)"
     )
     print(
-        f"  ⚠ Too Verbose:  {report.too_verbose_count:3d} ({report.too_verbose_count/total*100:5.1f}%)"
+        f"  ⚠ Too Verbose:  {report.too_verbose_count:3d} ({report.too_verbose_count / total * 100:5.1f}%)"
     )
     print(
-        f"  ~ Borderline:   {report.borderline_count:3d} ({report.borderline_count/total*100:5.1f}%)"
+        f"  ~ Borderline:   {report.borderline_count:3d} ({report.borderline_count / total * 100:5.1f}%)"
     )
 
     # Show top issues
@@ -1135,7 +1135,7 @@ async def main():
         peer = extract_peer_name(trace)
         conv_id = extract_conversation_id(trace, idx)
 
-        print(f"[{idx+1}/{len(all_traces)}] {conv_id} ({len(props)} props)...")
+        print(f"[{idx + 1}/{len(all_traces)}] {conv_id} ({len(props)} props)...")
 
         try:
             report = await judge.evaluate(props, msgs, peer, conv_id)
@@ -1208,7 +1208,7 @@ async def main():
             print("\nClassification:")
             total_props = sum(r.proposition_count for r in results)
             for k, v in agg["classification_totals"].items():
-                print(f"  {k:<15} {v:4d} ({v/total_props*100:5.1f}%)")
+                print(f"  {k:<15} {v:4d} ({v / total_props * 100:5.1f}%)")
         else:
             print(f"Duration: {format_duration(total_duration)}")
     else:
