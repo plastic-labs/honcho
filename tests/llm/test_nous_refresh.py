@@ -1,21 +1,19 @@
 """Tests for nous_refresh module — isolated via httpx mocking."""
 
-import json
-import os
+import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
 from src.llm.nous_refresh import (
-    STATE_FILE,
+    _find_project_root,
     load_state,
+    refresh_nous_credentials,
     save_state,
     update_env_key,
-    refresh_nous_credentials,
-    _find_project_root,
 )
-
 
 # ── State management ─────────────────────────────────────────────────────────
 
@@ -98,6 +96,11 @@ async def test_refresh_nous_credentials_success(
 
     monkeypatch.setenv("NOUS_OAUTH_STATE_PATH", str(state_file))
 
+    # Stub load_state so refresh_nous_credentials finds a refresh_token
+    import src.llm.nous_refresh as refresh_mod
+    original_load_state = refresh_mod.load_state
+    refresh_mod.load_state = lambda: {"refresh_token": "test_refresh_token"}
+
     saved_state = {}
 
     def fake_save_state(**kw):
@@ -144,6 +147,7 @@ async def test_refresh_nous_credentials_success(
         result = await refresh_nous_credentials()
     finally:
         # Restore
+        refresh_mod.load_state = original_load_state
         refresh_mod.save_state = original_save
         refresh_mod.update_env_key = original_update_env
         refresh_mod._find_project_root = original_find_root
@@ -152,8 +156,3 @@ async def test_refresh_nous_credentials_success(
     assert saved_state["refresh_token"] == "new_refresh_token"
     assert saved_state["agent_key"] == "new_agent_key_123"
 
-
-# Helper for SimpleNamespace
-from types import SimpleNamespace
-from unittest.mock import Mock
-import sys

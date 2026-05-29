@@ -133,10 +133,11 @@ class VectorStoreError(HonchoException):
     detail = "Vector store operation failed"
 
 
-class NousAuthError(Exception):
+class NousAuthError(HonchoException):
     """Raised when Nous OAuth operations fail (token refresh or agent key mint)."""
 
-    pass
+    status_code = 401
+    detail = "Nous authentication failed"
 
 
 class LLMError(Exception):

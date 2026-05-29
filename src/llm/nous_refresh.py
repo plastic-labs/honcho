@@ -50,7 +50,7 @@ def load_state() -> dict[str, Any]:
     if STATE_FILE.exists():
         try:
             return json.loads(STATE_FILE.read_text())
-        except Exception as exc:
+        except (OSError, json.JSONDecodeError) as exc:
             logger.warning("Failed to parse %s: %s", STATE_FILE, exc)
     # State file missing or corrupt — try env var first (Docker env_file)
     env_token = os.getenv("NOUS_REFRESH_TOKEN")
@@ -76,6 +76,7 @@ def save_state(**fields: Any) -> None:
     state.update({k: v for k, v in fields.items() if v is not None})
     state["updated_at"] = datetime.now(timezone.utc).isoformat()
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(STATE_FILE.parent, 0o700)
     # Atomic write via temp file + rename
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2))
@@ -98,7 +99,7 @@ def _load_from_hermes_auth() -> dict[str, Any] | None:
         refresh = provider.get("refresh_token")
         if refresh:
             return {"refresh_token": refresh}
-    except Exception as exc:
+    except (OSError, json.JSONDecodeError) as exc:
         logger.debug("Failed to read Hermes auth.json: %s", exc)
     return None
 
@@ -174,7 +175,7 @@ async def refresh_access_token(refresh_token: str) -> tuple[str, str]:
     if resp.status_code != 200:
         raise NousAuthError(f"Token refresh failed {resp.status_code}: {resp.text}")
     data = resp.json()
-    return data["access_token"], data["refresh_token"]
+    return data["access_token"], data.get("refresh_token", refresh_token)
 
 
 async def mint_agent_key(access_token: str) -> str:
