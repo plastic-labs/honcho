@@ -10,6 +10,7 @@ let
     literalExpression
     escapeURL
     hasPrefix
+    optionals
     ;
 
   tomlFormat = pkgs.formats.toml { };
@@ -337,8 +338,8 @@ in
 
     systemd.services.honcho-api = mkIf cfg.api.enable {
       description = "Honcho API Server";
-      after = [ "postgresql.service" "redis.service" "network.target" "honcho-db-provision.service" ];
-      requires = [ "postgresql.service" "redis.service" "honcho-db-provision.service" ];
+      after = [ "postgresql.service" "network.target" "honcho-db-provision.service" ] ++ optionals cfg.cache.enable [ "redis.service" ];
+      requires = [ "postgresql.service" "honcho-db-provision.service" ] ++ optionals cfg.cache.enable [ "redis.service" ];
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {
@@ -361,8 +362,8 @@ in
 
     systemd.services.honcho-deriver = mkIf cfg.deriver.enable {
       description = "Honcho Deriver Worker (background queue consumer)";
-      after = [ "postgresql.service" "redis.service" "honcho-db-provision.service" ];
-      requires = [ "postgresql.service" "redis.service" "honcho-db-provision.service" ];
+      after = [ "postgresql.service" "honcho-db-provision.service" ] ++ optionals cfg.cache.enable [ "redis.service" ];
+      requires = [ "postgresql.service" "honcho-db-provision.service" ] ++ optionals cfg.cache.enable [ "redis.service" ];
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {
