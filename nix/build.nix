@@ -1,71 +1,52 @@
-{ lib, python, src }:
+{
+  lib,
+  stdenv,
+  honchoLib,
+  python,
+  makeWrapper,
+  pythonSet,
+  src,
+}:
 
-python.pkgs.buildPythonApplication rec {
+stdenv.mkDerivation {
   pname = "honcho";
   version = "3.0.7";
-  pyproject = true;
 
   inherit src;
 
-  # The root pyproject.toml lacks a [build-system] section (uv-managed),
-  # so we inject one during the build.
-  postPatch = ''
-    if ! grep -q '\\[build-system\\]' pyproject.toml; then
-      cat >> pyproject.toml << 'PYEOF'
+  dontUnpack = true;
+  dontBuild = true;
+  dontFixup = true;
 
-[build-system]
-requires = ["setuptools>=75.0", "wheel"]
-build-backend = "setuptools.build_meta"
-PYEOF
+  nativeBuildInputs = [ makeWrapper python ];
+
+  installPhase = ''
+    mkdir -p $out/lib/python3.13/site-packages $out/bin $out/scripts
+
+    # Copy the uv2nix-built library
+    cp -r --no-preserve=mode ${honchoLib}/lib/python3.13/site-packages/* \
+      $out/lib/python3.13/site-packages/
+
+    # Copy scripts from source (provision_db.py)
+    cp -r $src/scripts/* $out/scripts/
+
+    # Wrap python with the right PYTHONPATH
+    makeWrapper ${python}/bin/python $out/bin/python \
+      --set PYTHONPATH $out/lib/python3.13/site-packages \
+      --set-default HONCHO_CONFIG /etc/honcho/config.toml
+
+    # Symlink fastapi CLI (comes from the fastapi[standard] dep)
+    ln -s ${pythonSet.fastapi}/bin/fastapi $out/bin/fastapi
+
+    # Wrap remaining entry points from site-packages bin dir
+    if [ -d "${honchoLib}/bin" ]; then
+      for f in ${honchoLib}/bin/*; do
+        name=$(basename "$f")
+        makeWrapper "$f" "$out/bin/$name" \
+          --set PYTHONPATH $out/lib/python3.13/site-packages
+      done
     fi
   '';
-
-  nativeBuildInputs = with python.pkgs; [
-    setuptools
-    wheel
-  ];
-
-  propagatedBuildInputs = with python.pkgs; [
-    alembic
-    cashews
-    cloudevents
-    fastapi
-    fastapi-pagination
-    google-genai
-    greenlet
-    httpx
-    json-repair
-    langfuse
-    lancedb
-    nanoid
-    openai
-    pdfplumber
-    pgvector
-    prometheus-client
-    psycopg
-    pyarrow
-    pydantic
-    pydantic-settings
-    pyjwt
-    python-dotenv
-    redis
-    rich
-    scikit-learn
-    sentry-sdk
-    sqlalchemy
-    tenacity
-    tiktoken
-    typing-extensions
-  ] ++ lib.optional (builtins.hasAttr "turbopuffer" python.pkgs) python.pkgs.turbopuffer;
-
-  pythonImportsCheck = [ ];
-
-  # Tests require a running PostgreSQL + Redis + LLM API keys
-  doCheck = false;
-
-  # turbopuffer is listed in pyproject.toml but only conditionally
-  # available in nixpkgs. Skip the runtime deps check.
-  dontCheckRuntimeDeps = true;
 
   meta = {
     description = "Infrastructure for AI agents with memory and social cognition";
@@ -73,6 +54,5 @@ PYEOF
     license = lib.licenses.asl20;
     maintainers = with lib.maintainers; [ ];
     platforms = lib.platforms.linux;
-    mainProgram = "honcho";
   };
 }
