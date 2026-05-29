@@ -193,3 +193,6 @@ metrics.jsonl
 AGENTS.md
 lancedb_data/
 grafana-data/
+
+# Nix build result symlink
+/result
