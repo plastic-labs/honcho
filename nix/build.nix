@@ -30,6 +30,10 @@ stdenv.mkDerivation {
     # Copy scripts from source (provision_db.py)
     cp -r $src/scripts/* $out/scripts/
 
+    # Copy Alembic configuration for database migrations
+    cp $src/alembic.ini $out/alembic.ini
+    cp -r $src/migrations $out/migrations
+
     # Wrap python with the right PYTHONPATH
     makeWrapper ${python}/bin/python $out/bin/python \
       --set PYTHONPATH $out/lib/python3.13/site-packages \

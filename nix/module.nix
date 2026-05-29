@@ -326,8 +326,8 @@ in
         User = "honcho";
         Group = "honcho";
         StateDirectory = "honcho";
-        WorkingDirectory = "/var/lib/honcho";
-        ExecStart = "${cfg.package}/bin/python ${cfg.package}/scripts/provision_db.py ${cfg.database.name}";
+        WorkingDirectory = "${cfg.package}";
+        ExecStart = "${cfg.package}/bin/python ${cfg.package}/scripts/provision_db.py";
         EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
       };
 
