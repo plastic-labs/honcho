@@ -88,7 +88,10 @@ def verify_jwt(token: str) -> JWTParams:
         if not settings.AUTH.JWT_SECRET:
             raise ValueError("AUTH_JWT_SECRET is not set, cannot verify JWT.")
         decoded = jwt.decode(
-            token, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
+            token,
+            settings.AUTH.JWT_SECRET.encode("utf-8"),
+            algorithms=["HS256"],
+            options={"verify_exp": False},
         )
         if "t" in decoded:
             params.t = decoded["t"]
