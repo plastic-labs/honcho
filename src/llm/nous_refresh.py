@@ -227,9 +227,20 @@ async def refresh_nous_credentials() -> str | None:
             expires_at=expires_at,
         )
 
-        # 5. Update .env on disk
-        project_root = _find_project_root()
-        update_env_key(project_root / ".env", agent_key)
+        # 5. Update .env on disk (skip in containerized environments)
+        # In Docker/k8s, .env is baked into the image or mounted read-only.
+        # The persisted state file (save_state above) is sufficient for runtime
+        # credential management; load_state() checks it before falling back to .env.
+        is_container = (
+            os.path.exists("/.dockerenv")
+            or os.environ.get("KUBERNETES_SERVICE_HOST")
+            or os.environ.get("CONTAINER")
+        )
+        if not is_container:
+            project_root = _find_project_root()
+            update_env_key(project_root / ".env", agent_key)
+        else:
+            logger.info("Running in container — skipping .env update (state persisted to disk)")
 
         # 6. Update in-memory settings globally (if Honcho is running)
         try:

@@ -305,7 +305,7 @@ async def honcho_llm_call(
             if status is not None:
                 return status in (408, 429) or (500 <= status < 600)
             # Timeout / connection errors
-            if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+            if isinstance(exc, (TimeoutError, ConnectionError)):
                 return True
             # OpenAI/Anthropic SDK specific retryable errors
             return type(exc).__name__ in (
@@ -336,10 +336,13 @@ async def honcho_llm_call(
                     and _is_retryable_error(exc)
                 ):
                     force_fallback.set(True)
+                    agent_label = track_name or "unknown"
                     logger.warning(
-                        "Fast fallback triggered: will use fallback model "
+                        f"[{agent_label}] Fast fallback triggered: will use fallback model "
                         + f"{runtime_model_config.fallback.transport}/{runtime_model_config.fallback.model} "
-                        + f"on attempt {next_attempt}/{retry_attempts}"
+                        + f"on attempt {next_attempt}/{retry_attempts}, "
+                        + f"primary={runtime_model_config.transport}/{runtime_model_config.model}, "
+                        + f"reason={type(exc).__name__}: {exc}"
                     )
                 else:
                     logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
