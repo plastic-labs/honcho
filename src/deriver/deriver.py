@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -5,6 +6,7 @@ from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
+from src.external_telemetry import log_llm_call as _external_telemetry_log
 from src.llm import honcho_llm_call
 from src.models import Message
 from src.schemas import ResolvedConfiguration
@@ -148,6 +150,18 @@ async def process_representation_tasks_batch(
         "llm_call_duration",
         llm_duration,
         "ms",
+    )
+
+    # Optional external telemetry. Errors are swallowed inside log_llm_call.
+    asyncio.create_task(
+        _external_telemetry_log(
+            component="honcho-deriver",
+            model=settings.DERIVER.MODEL,
+            prompt_tokens=getattr(response, "input_tokens", None),
+            completion_tokens=getattr(response, "output_tokens", None),
+            latency_s=llm_duration / 1000.0,
+            session_id=latest_message.session_name,
+        )
     )
 
     # Prometheus metrics
