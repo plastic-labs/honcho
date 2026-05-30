@@ -49,6 +49,16 @@ Messages to analyze:
 <messages>
 {messages}
 </messages>
+
+Return a JSON object with this exact schema:
+{{
+  "explicit": [
+    {{"content": "one atomic fact about {peer_id}"}},
+    {{"content": "another atomic fact about {peer_id}"}}
+  ]
+}}
+Each item inside the "explicit" array MUST be an object with a "content" string field (not a bare string).
+If there are no observations to extract, return {{"explicit": []}}.
 """
     )
 
