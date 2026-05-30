@@ -133,6 +133,12 @@ class VectorStoreError(HonchoException):
     detail = "Vector store operation failed"
 
 
+class NousAuthError(Exception):
+    """Raised when Nous OAuth operations fail (token refresh or agent key mint)."""
+
+    pass
+
+
 class LLMError(Exception):
     """Exception raised when an LLM call fails.
 
