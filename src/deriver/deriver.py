@@ -169,6 +169,7 @@ async def process_representation_tasks_batch(
         latest_message.created_at,
     )
 
+    save_errors: list[str] = []
     if observations.is_empty() or not message_ids:
         logger.warning(
             "Deriver generated zero observations for messages %s:%s in %s/%s!",
@@ -198,6 +199,7 @@ async def process_representation_tasks_batch(
                 logger.error(
                     "Failed to save representation for observer %s: %s", observer, e
                 )
+                save_errors.append(f"{observer}: {e.__class__.__name__}: {e}")
 
     # Log metrics
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -252,3 +254,15 @@ async def process_representation_tasks_batch(
             output_tokens=response.output_tokens,
         )
     )
+
+    # HERMES-PATCH 2026-05-03: surface save_representation failures to the
+    # queue manager so the queue row's `error` column is populated. Without
+    # this, transient backend errors (e.g. Gemini embedding quota) cause
+    # silent data loss: rows get processed=true with error=null. Raising
+    # after the metrics emit means partial successes still record metrics,
+    # but at least one observer's failure is now visible.
+    if save_errors:
+        raise RuntimeError(
+            f"save_representation failed for {len(save_errors)} observer(s): "
+            + "; ".join(save_errors)
+        )
