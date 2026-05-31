@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.llm.backends.openai import OpenAIBackend
+from src.llm.backends.openai import OpenAIBackend, _local_ollama_base_url
 
 
 @pytest.mark.asyncio
@@ -238,6 +238,8 @@ async def test_openai_backend_merges_extra_params_into_native_ollama_options() -
     await_args = httpx_client.post.await_args
     if await_args is None:
         raise AssertionError("Expected native Ollama post call")
+    expected_url = f"{_local_ollama_base_url(client)}/api/chat"
+    assert await_args.args[0] == expected_url
     call = await_args.kwargs
     assert call["json"]["think"] is False
     assert call["json"]["format"] == "json"
