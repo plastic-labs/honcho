@@ -6,6 +6,7 @@ import pytest
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel
 
+from src.exceptions import ValidationException
 from src.llm.backends.anthropic import AnthropicBackend
 
 
@@ -332,3 +333,56 @@ async def test_anthropic_backend_maps_budget_to_effort(
     call = _create_call_kwargs(client)
     assert call["thinking"] == {"type": "adaptive"}
     assert call["output_config"] == {"effort": expected_effort}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_rejects_unknown_thinking_effort() -> None:
+    # An unrecognized effort is a caller error, not a silent fallback.
+    backend = AnthropicBackend(_text_response_client())
+    with pytest.raises(ValidationException):
+        await backend.complete(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=32000,
+            thinking_budget_tokens=16000,
+            thinking_effort="turbo",
+        )
+
+
+@pytest.mark.parametrize("model", ["claude-opus-4-8", "claude-opus-4-6"])
+@pytest.mark.asyncio
+async def test_anthropic_backend_rejects_negative_budget(model: str) -> None:
+    # Negative budgets must not be bucketed (adaptive) or forwarded (legacy).
+    backend = AnthropicBackend(_text_response_client())
+    with pytest.raises(ValidationException):
+        await backend.complete(
+            model=model,
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=32000,
+            thinking_budget_tokens=-1,
+        )
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-opus-4-8", "claude-opus-4-6", "claude-haiku-4-5"],
+)
+@pytest.mark.parametrize("thinking_budget_tokens", [None, 0])
+@pytest.mark.asyncio
+async def test_anthropic_backend_no_thinking_for_zero_or_none_budget(
+    model: str, thinking_budget_tokens: int | None
+) -> None:
+    # 0 is a valid "disable thinking" sentinel (config permits it); neither 0
+    # nor None raises, and no thinking params are sent.
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model=model,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=32000,
+        thinking_budget_tokens=thinking_budget_tokens,
+    )
+
+    call = _create_call_kwargs(client)
+    assert "thinking" not in call
+    assert "output_config" not in call

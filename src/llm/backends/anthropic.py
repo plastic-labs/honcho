@@ -9,6 +9,7 @@ from typing import Any
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel, ValidationError
 
+from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.structured_output import repair_response_model_json
 
@@ -76,12 +77,19 @@ def _adaptive_effort(
     An explicit ``thinking_effort`` wins; otherwise the legacy
     ``thinking_budget_tokens`` is bucketed so existing budget-based configs keep
     a comparable thinking depth. Returns None to fall back to the API default
-    (``high``).
+    (``high``). A budget of 0 (or None) means "no effort hint"; a negative
+    budget or an unrecognized effort is a caller error and raises
+    ``ValidationException`` rather than being silently coerced.
     """
-    if thinking_effort and thinking_effort != "none":
+    if thinking_budget_tokens is not None and thinking_budget_tokens < 0:
+        raise ValidationException("thinking_budget_tokens must be >= 0")
+    if thinking_effort is not None and thinking_effort != "none":
         normalized = _EFFORT_ALIASES.get(thinking_effort, thinking_effort)
-        if normalized in _ANTHROPIC_EFFORTS:
-            return normalized
+        if normalized not in _ANTHROPIC_EFFORTS:
+            raise ValidationException(
+                f"Unsupported thinking_effort: {thinking_effort!r}"
+            )
+        return normalized
     if thinking_budget_tokens:
         return _budget_to_effort(thinking_budget_tokens)
     return None
@@ -96,8 +104,13 @@ def _build_thinking_params(
 
     Opus 4.7+ reject the legacy ``{"type": "enabled", "budget_tokens": N}`` shape
     with HTTP 400 and require adaptive thinking; older models keep the legacy
-    shape unchanged. Returns an empty dict when thinking is not requested.
+    shape unchanged. A budget of 0 (or None) means "no thinking"; a negative
+    budget raises ``ValidationException`` rather than being forwarded. Returns
+    an empty dict when thinking is not requested.
     """
+    if thinking_budget_tokens is not None and thinking_budget_tokens < 0:
+        raise ValidationException("thinking_budget_tokens must be >= 0")
+
     if not _requires_adaptive_thinking(model):
         if thinking_budget_tokens:
             return {
