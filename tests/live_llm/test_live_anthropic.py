@@ -3,6 +3,10 @@ from __future__ import annotations
 import pytest
 
 from src.llm.backend import CompletionResult
+from src.llm.backends.anthropic import (
+    _budget_to_effort,  # pyright: ignore[reportPrivateUsage]
+    _requires_adaptive_thinking,  # pyright: ignore[reportPrivateUsage]
+)
 from src.llm.history_adapters import AnthropicHistoryAdapter
 from src.llm.request_builder import execute_completion
 
@@ -18,6 +22,20 @@ from .conftest import (
 from .model_matrix import LiveModelSpec, get_live_model_specs
 
 pytestmark = [pytest.mark.live_llm, pytest.mark.requires_anthropic]
+
+
+def _expected_thinking_kwargs(model: str, budget_tokens: int) -> dict[str, object]:
+    """The ``thinking`` request param honcho should send for ``model``.
+
+    Opus 4.7+ are adaptive-only: the backend sends ``{"type": "adaptive"}`` and
+    moves the depth hint to ``output_config.effort`` (a bucketed ``budget_tokens``).
+    Older models (e.g. Sonnet 4.5/4.6) keep the legacy budget shape. Mirroring
+    the backend's own branch here keeps this live assertion correct across the
+    whole ``claude_4_5_plus`` family instead of hard-coding one shape.
+    """
+    if _requires_adaptive_thinking(model):
+        return {"type": "adaptive"}
+    return {"type": "enabled", "budget_tokens": budget_tokens}
 
 
 @pytest.mark.asyncio
@@ -115,10 +133,14 @@ async def test_live_anthropic_thinking_and_tool_replay(
         tools=tools,
     )
 
-    assert create_calls[0]["kwargs"]["thinking"] == {
-        "type": "enabled",
-        "budget_tokens": 1024,
-    }
+    assert (
+        create_calls[0]["kwargs"]["thinking"]
+        == _expected_thinking_kwargs(model_spec.model, 1024)
+    )
+    if _requires_adaptive_thinking(model_spec.model):
+        assert create_calls[0]["kwargs"]["output_config"] == {
+            "effort": _budget_to_effort(1024)
+        }
     assert first.tool_calls, "Anthropic should issue a tool call in the first turn"
     assert first.thinking_blocks, "Anthropic thinking blocks should be preserved"
 
@@ -145,10 +167,14 @@ async def test_live_anthropic_thinking_and_tool_replay(
         tools=tools,
     )
 
-    assert create_calls[1]["kwargs"]["thinking"] == {
-        "type": "enabled",
-        "budget_tokens": 1024,
-    }
+    assert (
+        create_calls[1]["kwargs"]["thinking"]
+        == _expected_thinking_kwargs(model_spec.model, 1024)
+    )
+    if _requires_adaptive_thinking(model_spec.model):
+        assert create_calls[1]["kwargs"]["output_config"] == {
+            "effort": _budget_to_effort(1024)
+        }
     assert isinstance(second.content, str)
     assert "13" in second.content
     assert "prime" in second.content.lower()
