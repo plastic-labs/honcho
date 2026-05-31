@@ -2,7 +2,7 @@ name: Rebuild and redeploy
 
 on:
   push:
-    branches: [samdu/customizations]
+    branches: [main]
   workflow_dispatch: {}
 
 jobs:
