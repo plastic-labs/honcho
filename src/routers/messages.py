@@ -26,6 +26,7 @@ from src.security import require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import FileUploadedEvent, MessageCreatedEvent, emit
 from src.utils.files import process_file_uploads_for_messages
+from src.utils.message_filter import filter_tool_run_breadcrumbs
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +96,25 @@ async def create_messages_for_session(
 ):
     """Add new message(s) to a session."""
     try:
+        # Drop tool-run breadcrumb noise (e.g. "[Tool] Ran: ...") before it ever
+        # enters the message store. Filtering here keeps the persistence layer,
+        # telemetry, and the enqueue payload below all aligned on the same set of
+        # messages we actually intend to keep.
+        messages_to_create = (
+            filter_tool_run_breadcrumbs(
+                messages.messages, content_of=lambda m: m.content
+            )
+            if settings.FILTER_TOOL_BREADCRUMBS
+            else list(messages.messages)
+        )
+
+        # Every inbound message was a breadcrumb: nothing to persist or enqueue.
+        if not messages_to_create:
+            return []
+
         created_messages = await crud.create_messages(
             db,
-            messages=messages.messages,
+            messages=messages_to_create,
             workspace_name=workspace_id,
             session_name=session_id,
         )
@@ -134,7 +151,7 @@ async def create_messages_for_session(
                 "configuration": original.configuration,
             }
             for message, original in zip(
-                created_messages, messages.messages, strict=True
+                created_messages, messages_to_create, strict=True
             )
         ]
 
