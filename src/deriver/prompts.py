@@ -67,6 +67,12 @@ RULES:
 - Extract ALL observations from {peer_id} messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
+OUTPUT FORMAT:
+Return ONLY a valid JSON object with this exact shape:
+{{"explicit":[{{"content":"self-contained explicit fact"}}]}}
+If there are no explicit facts, return {{"explicit":[]}}.
+Do not include Markdown, prose, code fences, or hidden reasoning text.
+
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
