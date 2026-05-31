@@ -105,7 +105,6 @@ def main():
         exp_str = format_datetime_utc(expiry)
 
     params = JWTParams(
-        t="",
         ad=True if args.admin else None,
         w=args.workspace,
         p=args.peer,
