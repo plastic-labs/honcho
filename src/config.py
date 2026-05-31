@@ -1285,6 +1285,14 @@ class AppSettings(HonchoSettings):
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
     EMBED_MESSAGES: bool = True
+    FILTER_TOOL_BREADCRUMBS: bool = Field(
+        default=True,
+        description=(
+            "Skip persisting tool-run breadcrumb messages (e.g. '[Tool] Ran: ...') "
+            "at ingestion. These dominate the message store by volume and dilute "
+            "search and distillation."
+        ),
+    )
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 
