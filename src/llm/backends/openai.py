@@ -62,6 +62,30 @@ def _local_ollama_base_url(client: Any) -> str | None:
     return base_url
 
 
+def _ollama_native_options(
+    max_tokens: int,
+    temperature: float | None,
+    stop: list[str] | None,
+    extra_params: dict[str, Any] | None,
+) -> dict[str, Any]:
+    options: dict[str, Any] = {"num_predict": max_tokens}
+    if temperature is not None:
+        options["temperature"] = temperature
+    if stop:
+        options["stop"] = stop
+    if extra_params:
+        for key in (
+            "top_p",
+            "top_k",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+        ):
+            if key in extra_params:
+                options[key] = extra_params[key]
+    return options
+
+
 def extract_openai_reasoning_content(response: Any) -> str | None:
     try:
         message = response.choices[0].message
@@ -179,6 +203,7 @@ class OpenAIBackend:
                 stop=stop,
                 response_format=response_format,
                 json_mode=bool(extra_params and extra_params.get("json_mode")),
+                extra_params=extra_params,
             )
 
         if isinstance(response_format, type):
@@ -269,12 +294,14 @@ class OpenAIBackend:
         stop: list[str] | None,
         response_format: type[BaseModel] | dict[str, Any] | None,
         json_mode: bool,
+        extra_params: dict[str, Any] | None,
     ) -> CompletionResult:
-        options: dict[str, Any] = {"num_predict": max_tokens}
-        if temperature is not None:
-            options["temperature"] = temperature
-        if stop:
-            options["stop"] = stop
+        options = _ollama_native_options(
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stop=stop,
+            extra_params=extra_params,
+        )
 
         payload: dict[str, Any] = {
             "model": model,

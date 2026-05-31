@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -187,6 +187,70 @@ async def test_openai_backend_passes_thinking_budget_via_extra_body() -> None:
         raise AssertionError("Expected OpenAI create call")
     call = await_args.kwargs
     assert call["extra_body"] == {"reasoning": {"max_tokens": 256}}
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_merges_extra_params_into_native_ollama_options() -> None:
+    client = Mock()
+    client.base_url = "http://localhost:11434/v1"
+    client.chat.completions.create = AsyncMock()
+
+    response_payload = {
+        "message": {"content": "ok"},
+        "prompt_eval_count": 12,
+        "eval_count": 3,
+        "done_reason": "stop",
+    }
+    response = SimpleNamespace(
+        raise_for_status=Mock(),
+        json=Mock(return_value=response_payload),
+    )
+
+    httpx_client = AsyncMock()
+    httpx_client.__aenter__.return_value = httpx_client
+    httpx_client.__aexit__.return_value = None
+    httpx_client.post = AsyncMock(return_value=response)
+
+    with patch("src.llm.backends.openai.httpx.AsyncClient", return_value=httpx_client):
+        backend = OpenAIBackend(client)
+        result = await backend.complete(
+            model="qwen3.5:9b-fixed",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            temperature=0.2,
+            stop=["END"],
+            extra_params={
+                "top_p": 0.9,
+                "top_k": 40,
+                "frequency_penalty": 0.1,
+                "presence_penalty": 0.2,
+                "seed": 1234,
+                "json_mode": True,
+                "cache_policy": object(),
+            },
+        )
+
+    assert result.content == "ok"
+    assert result.input_tokens == 12
+    assert result.output_tokens == 3
+    assert client.chat.completions.create.await_count == 0
+
+    await_args = httpx_client.post.await_args
+    if await_args is None:
+        raise AssertionError("Expected native Ollama post call")
+    call = await_args.kwargs
+    assert call["json"]["think"] is False
+    assert call["json"]["format"] == "json"
+    assert call["json"]["options"] == {
+        "num_predict": 100,
+        "temperature": 0.2,
+        "stop": ["END"],
+        "top_p": 0.9,
+        "top_k": 40,
+        "frequency_penalty": 0.1,
+        "presence_penalty": 0.2,
+        "seed": 1234,
+    }
 
 
 @pytest.mark.asyncio
