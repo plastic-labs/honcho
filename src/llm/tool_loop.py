@@ -18,15 +18,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, ParamSpec, TypeVar
 
 from pydantic import BaseModel
-from tenacity import (
-    retry,
-    retry_if_not_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from src.config import ModelTransport
-from src.exceptions import HonchoException, ValidationException
+from src.exceptions import ValidationException
 from src.utils.types import (
     get_last_tool_metadata,
     iteration_scope,
@@ -41,6 +35,7 @@ from .runtime import (
     AttemptPlan,
     current_attempt,
     effective_temperature,
+    with_llm_retry,
 )
 from .types import (
     HonchoLLMCallResponse,
@@ -261,14 +256,11 @@ async def stream_final_response(
         )
 
     if enable_retry:
-        wrapped = retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            # Deterministic input/config errors (HonchoException) fail fast
-            # rather than being retried and re-wrapped as RetryError → 500.
-            retry=retry_if_not_exception_type(HonchoException),
-            before_sleep=before_retry_callback,
-        )(_setup_stream)
+        wrapped = with_llm_retry(
+            _setup_stream,
+            retry_attempts=retry_attempts,
+            before_retry_callback=before_retry_callback,
+        )
         stream = await wrapped()
     else:
         stream = await _setup_stream()
@@ -385,12 +377,11 @@ async def execute_tool_loop(
             )
 
         if enable_retry:
-            call_func = retry(
-                stop=stop_after_attempt(retry_attempts),
-                wait=wait_exponential(multiplier=1, min=4, max=10),
-                retry=retry_if_not_exception_type(HonchoException),
-                before_sleep=before_retry_callback,
-            )(_call_with_messages)
+            call_func = with_llm_retry(
+                _call_with_messages,
+                retry_attempts=retry_attempts,
+                before_retry_callback=before_retry_callback,
+            )
         else:
             call_func = _call_with_messages
 
@@ -640,12 +631,11 @@ async def execute_tool_loop(
         )
 
     if enable_retry:
-        final_call_func = retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry=retry_if_not_exception_type(HonchoException),
-            before_sleep=before_retry_callback,
-        )(_final_call)
+        final_call_func = with_llm_retry(
+            _final_call,
+            retry_attempts=retry_attempts,
+            before_retry_callback=before_retry_callback,
+        )
     else:
         final_call_func = _final_call
 
