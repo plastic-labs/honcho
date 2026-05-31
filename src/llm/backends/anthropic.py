@@ -104,9 +104,11 @@ def _build_thinking_params(
 
     Opus 4.7+ reject the legacy ``{"type": "enabled", "budget_tokens": N}`` shape
     with HTTP 400 and require adaptive thinking; older models keep the legacy
-    shape unchanged. A budget of 0 (or None) means "no thinking"; a negative
-    budget raises ``ValidationException`` rather than being forwarded. Returns
-    an empty dict when thinking is not requested.
+    shape unchanged. A budget of 0 (or None) with no explicit effort means no
+    thinking; an explicit ``thinking_effort`` enables adaptive thinking
+    regardless of budget. A negative budget raises ``ValidationException``
+    rather than being forwarded. Returns an empty dict when thinking is not
+    requested.
     """
     if thinking_budget_tokens is not None and thinking_budget_tokens < 0:
         raise ValidationException("thinking_budget_tokens must be >= 0")

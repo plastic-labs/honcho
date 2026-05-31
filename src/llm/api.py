@@ -17,10 +17,15 @@ from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel
 from sentry_sdk.ai.monitoring import ai_track
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_not_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src.config import ConfiguredModelSettings, ModelConfig
-from src.exceptions import ValidationException
+from src.exceptions import HonchoException, ValidationException
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 
@@ -290,6 +295,11 @@ async def honcho_llm_call(
         decorated = retry(
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=1, min=4, max=10),
+            # HonchoExceptions are deterministic input/config errors (e.g. an
+            # invalid thinking budget/effort raised by a backend): fail fast so
+            # they propagate with their own status_code instead of being
+            # retried, wrapped in RetryError, and surfaced as a generic 500.
+            retry=retry_if_not_exception_type(HonchoException),
             before_sleep=before_retry_callback,
         )(decorated)
 
@@ -403,6 +413,7 @@ async def honcho_llm_call(
                 wrapped = retry(
                     stop=stop_after_attempt(retry_attempts),
                     wait=wait_exponential(multiplier=1, min=4, max=10),
+                    retry=retry_if_not_exception_type(HonchoException),
                     before_sleep=before_retry_callback,
                 )(wrapped)
             result: (
