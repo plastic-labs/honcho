@@ -88,6 +88,13 @@ model = "text-embedding-3-small"
 ENABLED = true
 WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
+# Adaptive polling: when idle/erroring, the sleep interval grows from
+# POLLING_SLEEP_INTERVAL_SECONDS toward POLLING_SLEEP_MAX_INTERVAL_SECONDS by
+# POLLING_BACKOFF_MULTIPLIER each cycle, then snaps back to base when work is
+# found. Cuts steady-state query load against the shared DB/pooler.
+POLLING_BACKOFF_ENABLED = true
+POLLING_SLEEP_MAX_INTERVAL_SECONDS = 30.0
+POLLING_BACKOFF_MULTIPLIER = 2.0
 STALE_SESSION_TIMEOUT_MINUTES = 5
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
 DEDUPLICATE = true
