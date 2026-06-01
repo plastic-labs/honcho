@@ -70,6 +70,12 @@ def get_openai_override_client(
     base_url: str | None, api_key: str | None
 ) -> AsyncOpenAI:
     """OpenAI client for a specific (base_url, api_key) pair. Cached by key."""
+    if base_url and "api.kimi.com/coding" in base_url:
+        return AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            default_headers={"User-Agent": "KimiCLI/1.5"},
+        )
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
 
 
