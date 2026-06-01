@@ -444,7 +444,10 @@ class RepresentationManager:
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
             )
-            .order_by(models.Document.times_derived.desc())
+            .order_by(
+                models.Document.times_derived.desc(),
+                models.Document.created_at.desc(),
+            )
         )
 
         result = await db.execute(stmt)

@@ -186,7 +186,10 @@ async def query_documents_most_derived(
             models.Document.observed == observed,
             models.Document.deleted_at.is_(None),
         )
-        .order_by(models.Document.times_derived.desc())
+        .order_by(
+            models.Document.times_derived.desc(),
+            models.Document.created_at.desc(),
+        )
         .limit(limit)
     )
 
@@ -1014,12 +1017,18 @@ async def is_rejected_duplicate(
         logger.warning(
             f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
         )
+        # Carry the reinforcement count forward so replacing a duplicate counts as
+        # another derivation rather than resetting times_derived to 1.
+        doc.times_derived = max(doc.times_derived, existing_doc.times_derived + 1)
         # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
         existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
         await db.flush()
         return False  # Don't reject the new document
 
-    # Existing document has more information, reject the new one
+    # Existing document has more information, reject the new one but record the
+    # reinforcement: a semantic duplicate was derived again.
+    existing_doc.times_derived += 1
+    await db.flush()
     logger.warning(
         f"[DUPLICATE DETECTION] Rejecting new in favor of existing. new='{doc.content}', existing='{existing_doc.content}'."
     )
