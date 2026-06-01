@@ -408,10 +408,9 @@ class QueueManager:
         try:
             while not self.shutdown_event.is_set():
                 if self.queue_empty_flag.is_set():
-                    # logger.debug("Queue empty flag set, waiting")
-                    # Sleep the already-grown interval; the backoff is advanced
-                    # once per empty-detection below, not here.
-                    await asyncio.sleep(self._current_poll_interval)
+                    # The empty-poll branch below already slept this cycle's
+                    # interval; just clear the flag and re-query (no second
+                    # sleep — that would double the effective idle interval).
                     self.queue_empty_flag.clear()
                     continue
 

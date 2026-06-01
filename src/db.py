@@ -59,12 +59,8 @@ engine = create_async_engine(
     **engine_kwargs,
 )
 
-SessionLocal = async_sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    expire_on_commit=False,
-    bind=engine,
-)
+# NOTE: SessionLocal is defined further down, after HonchoAsyncSession (its
+# session class) and acquire_connection_with_retry (which that class calls).
 
 # Errors worth retrying when acquiring a pooled connection: SQLAlchemy's local
 # pool-checkout timeout, and OperationalError (how a saturated transaction
@@ -99,11 +95,13 @@ def get_pool_stats() -> dict[str, int]:
     if not isinstance(pool, QueuePool):
         return zeros
     try:
+        # overflow() is negative until the base pool fills (it starts at
+        # -pool_size); clamp to the count of overflow connections actually open.
         return {
             "checked_out": pool.checkedout(),
             "checked_in": pool.checkedin(),
             "size": pool.size(),
-            "overflow": pool.overflow(),
+            "overflow": max(0, pool.overflow()),
         }
     except Exception:
         return zeros
@@ -164,6 +162,93 @@ async def acquire_connection_with_retry(db: AsyncSession, context: str) -> None:
         _record_acquisition_outcome("ok" if attempts <= 1 else "retried")
 
 
+class HonchoAsyncSession(AsyncSession):
+    """AsyncSession that lazily checks out its connection, with retry.
+
+    The pool checkout — and any pooler-rejection retry via
+    ``acquire_connection_with_retry`` — happens on the FIRST DB-touching call,
+    not at construction. So a request handler that does non-DB work (embedding,
+    file processing, an LLM call) before its first query does NOT pin a
+    connection across that work, while still getting checkout retry on the
+    request path.
+
+    Only the checkout is retried; the SQL statement itself runs exactly once
+    (we never retry ``super().execute`` after a broad OperationalError), so
+    writes are never duplicated. The context for tracing is read from the
+    ``request_context`` ContextVar, which the request/task scope has already set.
+    """
+
+    # Class-level default; per-instance assignment shadows it (the subclass has
+    # a __dict__ even though AsyncSession declares __slots__).
+    _honcho_acquired: bool = False
+
+    async def _ensure_acquired(self) -> None:
+        if self._honcho_acquired:
+            return
+        context = request_context.get() or "unknown"
+        await acquire_connection_with_retry(self, context)
+        self._honcho_acquired = True
+        if settings.DB.TRACING:
+            # Forced checkout already happened above; this rides the same
+            # connection. super() to avoid re-entering _ensure_acquired.
+            await super().execute(
+                text("SELECT set_config('application_name', :name, false)"),
+                {"name": context},
+            )
+
+    # The overrides below are thin: ensure the connection is checked out (once,
+    # with retry) before delegating to AsyncSession. Signatures are widened to
+    # *args/**kwargs because we only forward; call sites are typed against the
+    # AsyncSession base, so this does not weaken type-checking elsewhere.
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        await self._ensure_acquired()
+        return await super().execute(*args, **kwargs)
+
+    async def scalar(self, *args: Any, **kwargs: Any) -> Any:
+        await self._ensure_acquired()
+        return await super().scalar(*args, **kwargs)
+
+    async def scalars(self, *args: Any, **kwargs: Any) -> Any:
+        await self._ensure_acquired()
+        return await super().scalars(*args, **kwargs)
+
+    async def flush(self, *args: Any, **kwargs: Any) -> None:
+        await self._ensure_acquired()
+        await super().flush(*args, **kwargs)
+
+    async def merge(self, *args: Any, **kwargs: Any) -> Any:
+        await self._ensure_acquired()
+        return await super().merge(*args, **kwargs)
+
+    async def refresh(self, *args: Any, **kwargs: Any) -> None:
+        await self._ensure_acquired()
+        await super().refresh(*args, **kwargs)
+
+    async def commit(self) -> None:
+        # Ensures the add()->commit() path (autoflush on commit) also retries.
+        await self._ensure_acquired()
+        try:
+            await super().commit()
+        finally:
+            # Transaction ended; a later op must re-acquire (and re-wrap retry).
+            self._honcho_acquired = False
+
+    async def rollback(self) -> None:
+        try:
+            await super().rollback()
+        finally:
+            self._honcho_acquired = False
+
+
+SessionLocal = async_sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=engine,
+    class_=HonchoAsyncSession,
+)
+
+
 class DBQueryInflightTracker:
     """Tracks statements executing on the wire via SQLAlchemy cursor events.
 
@@ -208,15 +293,20 @@ class DBQueryInflightTracker:
 _inflight_tracker: DBQueryInflightTracker | None = None
 
 
+_db_query_instrumentation_registered = False
+
+
 def register_db_query_instrumentation(instance_type: str) -> None:
     """Attach per-statement in-flight tracking to the engine (no-op if off).
 
     Gated on METRICS.ENABLED so there is zero overhead — not even attached event
-    listeners — when metrics are disabled. Safe to call once per process.
+    listeners — when metrics are disabled. Idempotent: repeated calls (e.g. a
+    re-run lifespan or test startup) won't attach duplicate listeners, which
+    would double-count in-flight statements.
     """
-    global _db_instance_type, _inflight_tracker
+    global _db_instance_type, _inflight_tracker, _db_query_instrumentation_registered
     _db_instance_type = instance_type
-    if not settings.METRICS.ENABLED:
+    if not settings.METRICS.ENABLED or _db_query_instrumentation_registered:
         return
     child = db_queries_in_flight_gauge.labels(instance_type=instance_type)
     _inflight_tracker = DBQueryInflightTracker(child)
@@ -224,6 +314,7 @@ def register_db_query_instrumentation(instance_type: str) -> None:
     event.listen(sync_engine, "before_cursor_execute", _inflight_tracker.on_before)
     event.listen(sync_engine, "after_cursor_execute", _inflight_tracker.on_after)
     event.listen(sync_engine, "handle_error", _inflight_tracker.on_error)
+    _db_query_instrumentation_registered = True
 
 
 # Define your naming convention

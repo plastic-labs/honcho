@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.db as db_module
 from src.config import settings
@@ -105,6 +106,115 @@ async def test_acquire_disabled_calls_once(monkeypatch: pytest.MonkeyPatch) -> N
     assert session.calls == 1
 
 
+# --- HonchoAsyncSession: lazy checkout with retry on first DB use ------------
+
+
+@pytest.mark.asyncio
+async def test_session_lazy_acquires_on_first_db_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No checkout at construction; acquisition (with retry) happens once on the
+    first execute, and the statement itself runs exactly once."""
+    monkeypatch.setattr(settings.DB, "TRACING", False)
+    acquired: list[str] = []
+    executed: list[Any] = []
+
+    async def fake_acquire(_session: Any, context: str) -> None:
+        acquired.append(context)
+
+    async def fake_super_execute(_self: Any, *args: Any, **_kw: Any) -> str:
+        executed.append(args[0] if args else None)
+        return "result"
+
+    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
+    monkeypatch.setattr(AsyncSession, "execute", fake_super_execute)
+
+    session = db_module.SessionLocal()
+    assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
+    assert acquired == []  # constructing the session does NOT check out
+
+    result = await session.execute("SELECT 1")
+    assert result == "result"
+    assert acquired == ["unknown"]  # acquired exactly once, on first use
+    assert session._honcho_acquired is True  # pyright: ignore[reportPrivateUsage]
+    assert executed == ["SELECT 1"]  # statement ran once (not retried)
+
+    await session.execute("SELECT 2")
+    assert acquired == ["unknown"]  # still once — no re-acquire on later use
+
+
+@pytest.mark.asyncio
+async def test_session_tracing_sets_application_name_on_acquire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings.DB, "TRACING", True)
+    calls: list[tuple[Any, ...]] = []
+
+    async def fake_acquire(_session: Any, _context: str) -> None:
+        return None
+
+    async def fake_super_execute(_self: Any, *args: Any, **_kw: Any) -> None:
+        calls.append(args)
+
+    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
+    monkeypatch.setattr(AsyncSession, "execute", fake_super_execute)
+
+    token = db_module.request_context.set("request:trace-ctx")
+    try:
+        session = db_module.SessionLocal()
+        await session.execute("SELECT 1")
+    finally:
+        db_module.request_context.reset(token)
+
+    # First super().execute is the set_config, then the real statement.
+    assert any("set_config" in str(c[0]) for c in calls)
+    set_config_call = next(c for c in calls if "set_config" in str(c[0]))
+    assert set_config_call[1] == {"name": "request:trace-ctx"}
+
+
+@pytest.mark.asyncio
+async def test_session_commit_and_rollback_reset_acquired_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_acquire(_session: Any, _context: str) -> None:
+        return None
+
+    async def noop(_self: Any) -> None:
+        return None
+
+    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
+    monkeypatch.setattr(AsyncSession, "commit", noop)
+    monkeypatch.setattr(AsyncSession, "rollback", noop)
+
+    session = db_module.SessionLocal()
+    await session.commit()  # ensures acquired, commits, then resets
+    assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
+
+    session._honcho_acquired = True  # pyright: ignore[reportPrivateUsage]
+    await session.rollback()
+    assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_get_db_does_not_acquire_at_dependency_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.dependencies import get_db as real_get_db
+
+    acquired: list[str] = []
+
+    async def fake_acquire(_session: Any, context: str) -> None:
+        acquired.append(context)
+
+    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
+
+    dep_gen = real_get_db()
+    await anext(dep_gen)
+    assert acquired == []  # yielding the session must not check out
+    await dep_gen.aclose()
+    assert acquired == []  # finally rollback/close must not check out either
+
+
 def test_polling_backoff_sequence_and_reset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_ENABLED", True)
     monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
@@ -131,6 +241,71 @@ def test_polling_backoff_disabled_stays_constant(
 
     qm = QueueManager()
     assert [qm._advance_poll_interval() for _ in range(3)] == [1.0, 1.0, 1.0]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_pool_timeout_must_be_under_retry_budget() -> None:
+    """A pooled QueuePool checkout that can block past the retry budget is a
+    contradiction (no retry ever happens) and must fail config validation."""
+    from src.config import DBSettings
+
+    # Contradiction: pooled + retry on, but POOL_TIMEOUT >= budget.
+    with pytest.raises(ValueError, match="DB_POOL_TIMEOUT"):
+        DBSettings(
+            POOL_CLASS="default",
+            POOL_TIMEOUT=30,
+            CONNECTION_RETRY_ENABLED=True,
+            CONNECTION_RETRY_MAX_DELAY_SECONDS=10.0,
+        )
+
+    # NullPool has no queue wait, so POOL_TIMEOUT is irrelevant -> allowed.
+    DBSettings(
+        POOL_CLASS="null",
+        POOL_TIMEOUT=30,
+        CONNECTION_RETRY_ENABLED=True,
+        CONNECTION_RETRY_MAX_DELAY_SECONDS=10.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_polling_loop_idle_sleeps_once_per_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive the real loop on an empty queue: exactly one (growing, capped)
+    sleep per empty poll — no double-sleep from the queue_empty_flag branch."""
+    monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_ENABLED", True)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_MULTIPLIER", 2.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_MAX_INTERVAL_SECONDS", 8.0)
+
+    import asyncio
+
+    from src.deriver import queue_manager as qm_mod
+
+    qm = qm_mod.QueueManager()
+    sleeps: list[float] = []
+    polls = {"n": 0}
+
+    async def fake_cleanup() -> None:
+        return None
+
+    async def fake_claim() -> dict[str, str]:
+        polls["n"] += 1
+        if polls["n"] >= 5:
+            qm.shutdown_event.set()  # stop after 5 empty polls
+        return {}
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(qm, "cleanup_stale_work_units", fake_cleanup)
+    monkeypatch.setattr(qm, "get_and_claim_work_units", fake_claim)
+    # queue_manager calls asyncio.sleep on the stdlib module; patch it there.
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    await qm.polling_loop()
+
+    # One sleep per empty poll, growing 1->2->4->8 then capped at 8 (not doubled).
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 8.0]
 
 
 def test_inflight_gauge_no_drift(monkeypatch: pytest.MonkeyPatch) -> None:
