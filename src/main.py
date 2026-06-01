@@ -19,7 +19,7 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from src._version import HONCHO_VERSION
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.db import engine, request_context
+from src.db import engine, register_db_query_instrumentation, request_context
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
@@ -134,6 +134,7 @@ async def lifespan(_: FastAPI):
 
     # Expose DB connection-pool stats for this API instance (no-op if metrics off)
     register_db_pool_collector("api")
+    register_db_query_instrumentation("api")
 
     # Validate embedding schema before serving any traffic. Fails closed: if
     # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical

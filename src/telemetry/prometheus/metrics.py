@@ -127,6 +127,23 @@ telemetry_buffer_size_gauge = NamespacedGauge(
     ["namespace"],
 )
 
+# DB connection-pool health. The acquisitions counter measures how often we hit
+# (and retry through) transaction-pooler saturation; the in-flight gauge counts
+# statements actually executing on the wire, so checked_out minus in_flight
+# reveals connections held but parked (the "idle in transaction during an
+# external call" antipattern).
+db_connection_acquisitions_counter = NamespacedCounter(
+    "db_connection_acquisitions",
+    "DB connection acquisitions by outcome (ok=first try, retried, exhausted)",
+    ["namespace", "instance_type", "outcome"],
+)
+
+db_queries_in_flight_gauge = NamespacedGauge(
+    "db_queries_in_flight",
+    "DB statements currently executing on a connection for this instance",
+    ["namespace", "instance_type"],
+)
+
 
 @final
 class PrometheusMetrics:
@@ -276,6 +293,18 @@ class PrometheusMetrics:
             telemetry_buffer_size_gauge.labels().set(size)
         except Exception as e:
             self._handle_metric_error("set_telemetry_buffer_size", e)
+
+    def record_db_connection_acquisition(
+        self, *, instance_type: str, outcome: str
+    ) -> None:
+        # outcome is one of "ok" | "retried" | "exhausted".
+        try:
+            db_connection_acquisitions_counter.labels(
+                instance_type=instance_type,
+                outcome=outcome,
+            ).inc()
+        except Exception as e:
+            self._handle_metric_error("record_db_connection_acquisition", e)
 
 
 prometheus_metrics = PrometheusMetrics()

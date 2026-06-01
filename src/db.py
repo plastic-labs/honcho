@@ -1,7 +1,9 @@
 import contextvars
+import logging
+from typing import Any
 
 import sentry_sdk
-from sqlalchemy import MetaData, text
+from sqlalchemy import MetaData, event, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import (
@@ -19,6 +21,12 @@ from tenacity import (
 )
 
 from src.config import settings
+from src.telemetry.prometheus.metrics import (
+    db_queries_in_flight_gauge,
+    prometheus_metrics,
+)
+
+logger = logging.getLogger(__name__)
 
 connect_args = {"prepare_threshold": None}
 
@@ -63,6 +71,18 @@ SessionLocal = async_sessionmaker(
 # pooler surfaces "too many clients" / connection refusals).
 RETRYABLE_DB_CONNECTION_ERRORS = (SQLAlchemyTimeoutError, OperationalError)
 
+# Identifies this process ("api" | "deriver") on DB metrics. Set once at startup
+# by register_db_query_instrumentation; stays "unknown" if metrics are disabled.
+_db_instance_type: str = "unknown"
+
+
+def _record_acquisition_outcome(outcome: str) -> None:
+    """Record a connection-acquisition outcome (no-op when metrics disabled)."""
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_db_connection_acquisition(
+            instance_type=_db_instance_type, outcome=outcome
+        )
+
 
 def get_pool_stats() -> dict[str, int]:
     """Return live connection-pool stats for this process.
@@ -106,6 +126,7 @@ async def acquire_connection_with_retry(db: AsyncSession, context: str) -> None:
         if not settings.DB.CONNECTION_RETRY_ENABLED:
             await db.connection()
             return
+        attempts = 0
         try:
             async for attempt in AsyncRetrying(
                 wait=wait_exponential_jitter(
@@ -117,12 +138,78 @@ async def acquire_connection_with_retry(db: AsyncSession, context: str) -> None:
                 reraise=True,
             ):
                 with attempt:
+                    attempts += 1
                     await db.connection()
         except RETRYABLE_DB_CONNECTION_ERRORS as e:
+            _record_acquisition_outcome("exhausted")
             if settings.SENTRY.ENABLED:
                 sentry_sdk.set_context("db_pool", get_pool_stats())
                 sentry_sdk.capture_exception(e)
             raise
+        # "ok" on first try, "retried" if backoff was needed before success.
+        _record_acquisition_outcome("ok" if attempts <= 1 else "retried")
+
+
+class DBQueryInflightTracker:
+    """Tracks statements executing on the wire via SQLAlchemy cursor events.
+
+    Drift-proof: marks ``Connection.info`` when a statement starts and clears it
+    on completion OR error, so the gauge can't leak upward (an errored statement
+    skips ``after_cursor_execute``) or go negative (a connect-time error has no
+    matching start). Bound to a pre-resolved labeled gauge child so the
+    per-statement hot path does no label resolution.
+    """
+
+    # Marker on Connection.info recording that we incremented for the current
+    # statement, so we decrement exactly once on completion or error.
+    INFLIGHT_KEY: str = "_honcho_inflight"
+
+    def __init__(self, gauge_child: Any) -> None:
+        self._child: Any = gauge_child
+
+    def on_before(self, conn: Any, *_: Any) -> None:
+        try:
+            conn.info[self.INFLIGHT_KEY] = True
+            self._child.inc()
+        except Exception:
+            logger.debug("in-flight gauge inc failed", exc_info=True)
+
+    def on_after(self, conn: Any, *_: Any) -> None:
+        try:
+            if conn.info.pop(self.INFLIGHT_KEY, False):
+                self._child.dec()
+        except Exception:
+            logger.debug("in-flight gauge dec failed", exc_info=True)
+
+    def on_error(self, exception_context: Any) -> None:
+        try:
+            conn = exception_context.connection
+            if conn is not None and conn.info.pop(self.INFLIGHT_KEY, False):
+                self._child.dec()
+        except Exception:
+            logger.debug("in-flight gauge error-path dec failed", exc_info=True)
+
+
+# Process-wide tracker, created at registration (None until then / if metrics off).
+_inflight_tracker: DBQueryInflightTracker | None = None
+
+
+def register_db_query_instrumentation(instance_type: str) -> None:
+    """Attach per-statement in-flight tracking to the engine (no-op if off).
+
+    Gated on METRICS.ENABLED so there is zero overhead — not even attached event
+    listeners — when metrics are disabled. Safe to call once per process.
+    """
+    global _db_instance_type, _inflight_tracker
+    _db_instance_type = instance_type
+    if not settings.METRICS.ENABLED:
+        return
+    child = db_queries_in_flight_gauge.labels(instance_type=instance_type)
+    _inflight_tracker = DBQueryInflightTracker(child)
+    sync_engine = engine.sync_engine
+    event.listen(sync_engine, "before_cursor_execute", _inflight_tracker.on_before)
+    event.listen(sync_engine, "after_cursor_execute", _inflight_tracker.on_after)
+    event.listen(sync_engine, "handle_error", _inflight_tracker.on_error)
 
 
 # Define your naming convention
