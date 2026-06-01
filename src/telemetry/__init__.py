@@ -12,13 +12,18 @@ This module consolidates all telemetry, metrics, and observability functionality
 """
 
 from src.telemetry.events import emit
-from src.telemetry.prometheus import metrics_endpoint, prometheus_metrics
+from src.telemetry.prometheus import (
+    metrics_endpoint,
+    prometheus_metrics,
+    register_db_pool_collector,
+)
 
 __all__ = [
     "emit",
     "initialize_telemetry_async",
     "metrics_endpoint",
     "prometheus_metrics",
+    "register_db_pool_collector",
     "shutdown_telemetry",
 ]
 

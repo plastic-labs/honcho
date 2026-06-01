@@ -8,7 +8,11 @@ from prometheus_client import start_http_server
 from src.config import settings
 from src.db import engine
 from src.startup import validate_embedding_schema
-from src.telemetry import initialize_telemetry_async, shutdown_telemetry
+from src.telemetry import (
+    initialize_telemetry_async,
+    register_db_pool_collector,
+    shutdown_telemetry,
+)
 
 from .queue_manager import main
 
@@ -18,6 +22,8 @@ logger = logging.getLogger(__name__)
 def start_metrics_server() -> None:
     """Start the Prometheus metrics HTTP server on port 9090."""
     start_http_server(9090)
+    # Expose DB connection-pool stats for this deriver instance.
+    register_db_pool_collector("deriver")
     logger.info("Prometheus metrics server started on port 9090")
 
 

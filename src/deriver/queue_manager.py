@@ -11,6 +11,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
@@ -125,6 +126,12 @@ class QueueManager:
         self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
 
+        # Current adaptive polling interval; grows while idle/erroring and
+        # resets to the base interval as soon as work is claimed.
+        self._current_poll_interval: float = (
+            settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
+        )
+
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
@@ -147,7 +154,9 @@ class QueueManager:
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
-            initialize_sentry(integrations=[AsyncioIntegration()])
+            initialize_sentry(
+                integrations=[AsyncioIntegration(), SqlalchemyIntegration()]
+            )
 
     def add_task(self, task: asyncio.Task[None]) -> None:
         """Track a new task"""
@@ -378,6 +387,21 @@ class QueueManager:
         )
         return claimed_mapping
 
+    def _reset_poll_interval(self) -> None:
+        """Snap the polling interval back to the base after finding work."""
+        self._current_poll_interval = settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
+
+    def _advance_poll_interval(self) -> float:
+        """Return the current idle/backoff sleep, then grow it toward the cap."""
+        interval = self._current_poll_interval
+        if settings.DERIVER.POLLING_BACKOFF_ENABLED:
+            self._current_poll_interval = min(
+                self._current_poll_interval
+                * settings.DERIVER.POLLING_BACKOFF_MULTIPLIER,
+                settings.DERIVER.POLLING_SLEEP_MAX_INTERVAL_SECONDS,
+            )
+        return interval
+
     async def polling_loop(self) -> None:
         """Main polling loop to find and process new work units"""
         logger.debug("Starting polling loop")
@@ -385,11 +409,15 @@ class QueueManager:
             while not self.shutdown_event.is_set():
                 if self.queue_empty_flag.is_set():
                     # logger.debug("Queue empty flag set, waiting")
-                    await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
+                    # Sleep the already-grown interval; the backoff is advanced
+                    # once per empty-detection below, not here.
+                    await asyncio.sleep(self._current_poll_interval)
                     self.queue_empty_flag.clear()
                     continue
 
-                # Check if we have capacity before querying
+                # Check if we have capacity before querying. There is work to do
+                # (workers are busy), so keep the base interval for fast pickup
+                # when capacity frees rather than backing off.
                 if self.semaphore.locked():
                     # logger.debug("All workers busy, waiting")
                     await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
@@ -399,6 +427,7 @@ class QueueManager:
                     await self.cleanup_stale_work_units()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
+                        self._reset_poll_interval()
                         for work_unit_key, aqs_id in claimed_work_units.items():
                             # Create a new task for processing this work unit
                             if not self.shutdown_event.is_set():
@@ -414,15 +443,14 @@ class QueueManager:
                                 self.add_task(task)
                     else:
                         self.queue_empty_flag.set()
-                        await asyncio.sleep(
-                            settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
-                        )
+                        await asyncio.sleep(self._advance_poll_interval())
                 except Exception as e:
                     logger.exception("Error in polling loop")
                     if settings.SENTRY.ENABLED:
                         sentry_sdk.capture_exception(e)
-                    # Note: rollback is handled by tracked_db dependency
-                    await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
+                    # Note: rollback is handled by tracked_db dependency.
+                    # Back off so a down/saturated DB isn't hammered every cycle.
+                    await asyncio.sleep(self._advance_poll_interval())
         finally:
             logger.info("Polling loop stopped")
 

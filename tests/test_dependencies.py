@@ -16,6 +16,12 @@ class FakeSession:
         self.execute_calls: list[tuple[Any, ...]] = []
         self.rollback_calls: int = 0
         self.close_calls: int = 0
+        self.connection_calls: int = 0
+
+    async def connection(self) -> None:
+        # acquire_connection_with_retry forces the (otherwise lazy) pool
+        # checkout via this call before any query runs.
+        self.connection_calls += 1
 
     async def execute(self, statement: Any, params: Any = None) -> None:
         self.execute_calls.append((statement, params))
@@ -44,6 +50,7 @@ async def test_get_db_sets_application_name_when_tracing_enabled(
     try:
         db = await anext(dep_gen)
         assert db is fake_db
+        assert fake_db.connection_calls == 1  # eager pool checkout with retry
         assert len(fake_db.execute_calls) == 1
         stmt, params = fake_db.execute_calls[0]
         assert "set_config" in str(stmt)

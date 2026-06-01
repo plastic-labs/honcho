@@ -1,9 +1,22 @@
 import contextvars
 
+import sentry_sdk
 from sqlalchemy import MetaData, text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_delay,
+    wait_exponential_jitter,
+)
 
 from src.config import settings
 
@@ -44,6 +57,73 @@ SessionLocal = async_sessionmaker(
     expire_on_commit=False,
     bind=engine,
 )
+
+# Errors worth retrying when acquiring a pooled connection: SQLAlchemy's local
+# pool-checkout timeout, and OperationalError (how a saturated transaction
+# pooler surfaces "too many clients" / connection refusals).
+RETRYABLE_DB_CONNECTION_ERRORS = (SQLAlchemyTimeoutError, OperationalError)
+
+
+def get_pool_stats() -> dict[str, int]:
+    """Return live connection-pool stats for this process.
+
+    ``engine.pool`` is the AsyncEngine's pool (the same object as
+    ``engine.sync_engine.pool``); its stat methods are synchronous counter
+    reads with no I/O, so they are safe to call without ``await``. Returns
+    zeros for pools that do not track connections (e.g. ``NullPool``).
+    """
+    zeros = {"checked_out": 0, "checked_in": 0, "size": 0, "overflow": 0}
+    pool = engine.pool
+    # Only QueuePool (and its AsyncAdaptedQueuePool subclass) tracks connection
+    # counts; NullPool and others have no meaningful stats.
+    if not isinstance(pool, QueuePool):
+        return zeros
+    try:
+        return {
+            "checked_out": pool.checkedout(),
+            "checked_in": pool.checkedin(),
+            "size": pool.size(),
+            "overflow": pool.overflow(),
+        }
+    except Exception:
+        return zeros
+
+
+async def acquire_connection_with_retry(db: AsyncSession, context: str) -> None:
+    """Force pool checkout (which ``SessionLocal()`` defers) with bounded backoff.
+
+    ``SessionLocal()`` is lazy: the pool checkout — and any pooler rejection —
+    happens on the first query. We force it here inside a retry block so that
+    transient saturation of the transaction pooler is retried with exponential
+    backoff rather than surfacing as an immediate error. The checkout is wrapped
+    in a Sentry span so wait time is visible in traces; on budget exhaustion the
+    original error is reraised after capturing live pool stats to Sentry.
+
+    Retrying the same session is safe: no connection is bound until checkout
+    succeeds, so each attempt re-attempts the checkout cleanly.
+    """
+    with sentry_sdk.start_span(op="db.pool.acquire", name=context):
+        if not settings.DB.CONNECTION_RETRY_ENABLED:
+            await db.connection()
+            return
+        try:
+            async for attempt in AsyncRetrying(
+                wait=wait_exponential_jitter(
+                    initial=settings.DB.CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS,
+                    max=settings.DB.CONNECTION_RETRY_BACKOFF_MAX_SECONDS,
+                ),
+                stop=stop_after_delay(settings.DB.CONNECTION_RETRY_MAX_DELAY_SECONDS),
+                retry=retry_if_exception_type(RETRYABLE_DB_CONNECTION_ERRORS),
+                reraise=True,
+            ):
+                with attempt:
+                    await db.connection()
+        except RETRYABLE_DB_CONNECTION_ERRORS as e:
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.set_context("db_pool", get_pool_stats())
+                sentry_sdk.capture_exception(e)
+            raise
+
 
 # Define your naming convention
 convention = {

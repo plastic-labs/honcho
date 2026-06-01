@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src._version import HONCHO_VERSION
@@ -34,6 +35,7 @@ from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
     prometheus_metrics,
+    register_db_pool_collector,
     shutdown_telemetry,
 )
 from src.telemetry.logging import get_route_template
@@ -117,6 +119,9 @@ if SENTRY_ENABLED:
             FastApiIntegration(
                 transaction_style="endpoint",
             ),
+            # Explicit so DB-query spans (and our db.pool.acquire span) are not
+            # reliant on auto-enabling.
+            SqlalchemyIntegration(),
         ],
         before_send=before_send,
     )
@@ -126,6 +131,9 @@ if SENTRY_ENABLED:
 async def lifespan(_: FastAPI):
     # Initialize CloudEvents telemetry
     await initialize_telemetry_async()
+
+    # Expose DB connection-pool stats for this API instance (no-op if metrics off)
+    register_db_pool_collector("api")
 
     # Validate embedding schema before serving any traffic. Fails closed: if
     # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical

@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.db import SessionLocal, request_context
+from src.db import SessionLocal, acquire_connection_with_retry, request_context
 
 
 async def get_db():
@@ -16,6 +16,7 @@ async def get_db():
 
     db: AsyncSession = SessionLocal()
     try:
+        await acquire_connection_with_retry(db, context)
         if settings.DB.TRACING:
             await db.execute(
                 text("SELECT set_config('application_name', :name, false)"),
@@ -50,6 +51,7 @@ async def tracked_db(operation_name: str | None = None):
     db = SessionLocal()
 
     try:
+        await acquire_connection_with_retry(db, context or f"task:{operation_name}")
         if settings.DB.TRACING:
             await db.execute(
                 text("SELECT set_config('application_name', :name, false)"),

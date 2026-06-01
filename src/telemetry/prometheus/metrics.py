@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from enum import Enum
 from typing import cast, final
 
@@ -14,6 +15,7 @@ from prometheus_client import (
     disable_created_metrics,
     generate_latest,
 )
+from prometheus_client.core import GaugeMetricFamily
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -277,6 +279,46 @@ class PrometheusMetrics:
 
 
 prometheus_metrics = PrometheusMetrics()
+
+
+class DBPoolCollector:
+    """Scrape-time collector for SQLAlchemy connection-pool stats.
+
+    Computed live on each /metrics scrape from the async engine's pool, so it
+    is always current with no background task or sampling lag. One instance is
+    registered per process (the API server or a deriver worker).
+    """
+
+    def __init__(self, instance_type: str) -> None:
+        # instance_type: "api" | "deriver"
+        self.instance_type: str = instance_type
+
+    def collect(self) -> Iterator[GaugeMetricFamily]:
+        # Lazy import to avoid an import cycle at module load (db imports config,
+        # telemetry is imported widely). Reads the async engine.pool directly.
+        from src.db import get_pool_stats
+
+        namespace = settings.METRICS.NAMESPACE or ""
+        gauge = GaugeMetricFamily(
+            "db_pool_connections",
+            "DB connections held by this instance, by pool state",
+            labels=["namespace", "instance_type", "state"],
+        )
+        for state, value in get_pool_stats().items():
+            gauge.add_metric([namespace, self.instance_type, state], value)
+        yield gauge
+
+
+_db_pool_collector_registered = False
+
+
+def register_db_pool_collector(instance_type: str) -> None:
+    """Register the DB pool collector once per process (no-op if metrics off)."""
+    global _db_pool_collector_registered
+    if _db_pool_collector_registered or not settings.METRICS.ENABLED:
+        return
+    REGISTRY.register(DBPoolCollector(instance_type))
+    _db_pool_collector_registered = True
 
 
 async def metrics_endpoint(_request: Request) -> Response:

@@ -622,6 +622,21 @@ class DBSettings(HonchoSettings):
     SQL_DEBUG: bool = False
     TRACING: bool = False
 
+    # Bounded exponential-backoff retry around connection acquisition. Guards
+    # against transient transaction-pooler saturation (e.g. Supavisor rejecting
+    # with "too many clients") by retrying the pool checkout instead of failing
+    # the request immediately. Applied to both the API and background paths.
+    CONNECTION_RETRY_ENABLED: bool = True
+    CONNECTION_RETRY_MAX_DELAY_SECONDS: Annotated[
+        float, Field(default=10.0, gt=0.0, le=120.0)
+    ] = 10.0
+    CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS: Annotated[
+        float, Field(default=0.1, gt=0.0, le=10.0)
+    ] = 0.1
+    CONNECTION_RETRY_BACKOFF_MAX_SECONDS: Annotated[
+        float, Field(default=2.0, gt=0.0, le=30.0)
+    ] = 2.0
+
 
 class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore
@@ -737,6 +752,18 @@ class DeriverSettings(HonchoSettings):
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
         float, Field(default=1.0, gt=0.0, le=60.0)
     ] = 1.0
+    # Adaptive polling: when the queue is idle (or the loop is erroring) the
+    # sleep interval grows from POLLING_SLEEP_INTERVAL_SECONDS toward
+    # POLLING_SLEEP_MAX_INTERVAL_SECONDS by POLLING_BACKOFF_MULTIPLIER each
+    # cycle, then snaps back to the base interval as soon as work is found.
+    # Reduces steady-state query load against the (shared) DB/pooler.
+    POLLING_BACKOFF_ENABLED: bool = True
+    POLLING_SLEEP_MAX_INTERVAL_SECONDS: Annotated[
+        float, Field(default=30.0, gt=0.0, le=300.0)
+    ] = 30.0
+    POLLING_BACKOFF_MULTIPLIER: Annotated[
+        float, Field(default=2.0, ge=1.0, le=10.0)
+    ] = 2.0
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
     # Retention window (seconds) for keeping errored items in the queue
