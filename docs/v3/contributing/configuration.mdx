@@ -354,6 +354,12 @@ DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000
 # Worker settings
 DERIVER_WORKERS=1  # Increase for higher throughput
 DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0
+# Adaptive polling: when idle/erroring, the sleep interval grows from the base
+# toward DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS by the multiplier each cycle,
+# then snaps back to base when work is found. Cuts steady-state query load.
+DERIVER_POLLING_BACKOFF_ENABLED=true
+DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS=30.0
+DERIVER_POLLING_BACKOFF_MULTIPLIER=2.0
 DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5
 
 # Queue management

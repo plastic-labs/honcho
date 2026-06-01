@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.8] - 2026-06-01
+
+### Added
+
+- Connection-checkout retry with bounded exponential backoff (tenacity) on `get_db`/`tracked_db`: transient transaction-pooler (Supavisor) rejections — SQLAlchemy `TimeoutError` and `OperationalError` — now retry with backoff instead of surfacing as 500s under client-connection saturation. Gated by
+  `DB_CONNECTION_RETRY_ENABLED` with configurable delay/backoff knobs; ~10s default budget (#758)
+- `HonchoAsyncSession` — a lazy `AsyncSession` that checks out its pooled connection (with retry) on the first DB-touching call rather than at construction. Request handlers doing non-DB work (embedding, file, LLM) before their first query no longer pin a pooler connection across it. Only the checkout is retried;
+  the statement still runs exactly once, so writes are never duplicated (#758)
+- Adaptive deriver queue polling: the poll interval backs off when the queue is idle or erroring (base → max, doubling each cycle) and snaps back to base the moment work is claimed, cutting steady-state query load against the DB. Gated by `DERIVER_POLLING_BACKOFF_ENABLED` with configurable max/multiplier (#758)
+- New Prometheus `db_pool_connections` gauge (checked_out / checked_in / size / overflow), labeled `api`|`deriver`, registered in both the API lifespan and the deriver metrics server (#758)
+- New Prometheus `db_connection_acquisitions{outcome=ok|retried|exhausted}` counter — the alertable early-warning signal that connection checkouts are retrying through pooler rejection, before requests start failing (#758)
+- New Prometheus `db_queries_in_flight` gauge — statements actually executing on the wire (via SQLAlchemy cursor-execute events). Paired with `checked_out`, the gap reveals connections held but parked (the "idle in transaction during an external call" antipattern). Gated on `METRICS.ENABLED` for zero overhead when
+  off (#758)
+- Explicit `SqlalchemyIntegration` in both the API and deriver Sentry inits; connection acquisition wrapped in a `db.pool.acquire` span with live pool stats captured on retry exhaustion (#758)
+
+### Changed
+
+- Default `POOL_TIMEOUT` lowered to 5s, with validation that it stays under the connection-retry budget when a pooled (non-null) `POOL_CLASS` is configured; `config.toml.example` and the v2/v3 configuration docs updated to match (#758)
+- `HonchoAsyncSession` wraps every DB-touching session method (execute / scalar / scalars / flush / merge / refresh / commit / get / get_one / stream / stream_scalars / delete) so the lazy-checkout-with-retry guarantee has no holes; the acquired flag resets on `close()`/`reset()` so a reused session re-acquires on
+  next use (#758)
+
+### Fixed
+
+- Roll the session back on a retryable checkout failure before retrying — a failed autobegin could otherwise leave it pending-rollback, making the next connection attempt raise instead of cleanly re-checking-out (#758)
+- Guard `DBPoolCollector.collect()` so a pool-read/import hiccup can't raise and abort the entire `/metrics` scrape (Prometheus drops all metrics if any collector raises) (#758)
+- Clamp the pool overflow gauge to ≥ 0 (it could report negative before the pool fills) (#758)
+- Removed a double-sleep in the deriver idle poll so the backoff cap is a true cap rather than 2× (#758)
+
 ## [3.0.7] - 2026-05-21
 
 ### Added
