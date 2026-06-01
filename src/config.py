@@ -612,8 +612,9 @@ class DBSettings(HonchoSettings):
     POOL_PRE_PING: bool = True
     POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
     MAX_OVERFLOW: Annotated[int, Field(default=20, ge=0, le=1000)] = 20
-    POOL_TIMEOUT: Annotated[int, Field(default=30, gt=0, le=300)] = (
-        30  # seconds (max 5 minutes)
+    POOL_TIMEOUT: Annotated[int, Field(default=5, gt=0, le=300)] = (
+        5  # seconds; kept under CONNECTION_RETRY_MAX_DELAY_SECONDS so a pool
+        # checkout fails fast enough to allow a retry within the budget
     )
     POOL_RECYCLE: Annotated[int, Field(default=300, gt=0, le=7200)] = (
         300  # seconds (max 2 hours)
@@ -621,6 +622,48 @@ class DBSettings(HonchoSettings):
     POOL_USE_LIFO: bool = True
     SQL_DEBUG: bool = False
     TRACING: bool = False
+
+    # Bounded exponential-backoff retry around connection acquisition. Applied
+    # lazily on the first DB use of any session (HonchoAsyncSession) — both the
+    # request path and background/tracked_db scopes — without forcing an eager
+    # checkout. Guards against transient transaction-pooler saturation (e.g.
+    # Supavisor rejecting with "too many clients") by retrying the checkout
+    # instead of failing immediately. CONNECTION_RETRY_MAX_DELAY_SECONDS is the
+    # TOTAL retry
+    # budget; with a real QueuePool, a single checkout can block up to
+    # POOL_TIMEOUT, so POOL_TIMEOUT must stay below the budget for a retry to be
+    # possible (enforced below). With NullPool (the transaction-pooler setup)
+    # there is no local queue wait, so saturation is a fast OperationalError and
+    # POOL_TIMEOUT does not apply.
+    CONNECTION_RETRY_ENABLED: bool = True
+    CONNECTION_RETRY_MAX_DELAY_SECONDS: Annotated[
+        float, Field(default=10.0, gt=0.0, le=120.0)
+    ] = 10.0
+    CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS: Annotated[
+        float, Field(default=0.1, gt=0.0, le=10.0)
+    ] = 0.1
+    CONNECTION_RETRY_BACKOFF_MAX_SECONDS: Annotated[
+        float, Field(default=2.0, gt=0.0, le=30.0)
+    ] = 2.0
+
+    @model_validator(mode="after")
+    def _validate_retry_budget_vs_pool_timeout(self) -> "DBSettings":
+        # Only meaningful for a real local pool: NullPool has no queue wait, so
+        # POOL_TIMEOUT is unused there. For a QueuePool, a checkout can block up
+        # to POOL_TIMEOUT, so it must be < the total retry budget or the first
+        # attempt consumes the whole budget and no retry ever happens.
+        if (
+            self.POOL_CLASS != "null"
+            and self.CONNECTION_RETRY_ENABLED
+            and self.POOL_TIMEOUT >= self.CONNECTION_RETRY_MAX_DELAY_SECONDS
+        ):
+            raise ValueError(
+                f"DB_POOL_TIMEOUT ({self.POOL_TIMEOUT}s) must be less than "
+                + "DB_CONNECTION_RETRY_MAX_DELAY_SECONDS "
+                + f"({self.CONNECTION_RETRY_MAX_DELAY_SECONDS}s) so a pooled checkout "
+                + "can fail fast enough to be retried within the budget."
+            )
+        return self
 
 
 class AuthSettings(HonchoSettings):
@@ -737,6 +780,18 @@ class DeriverSettings(HonchoSettings):
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
         float, Field(default=1.0, gt=0.0, le=60.0)
     ] = 1.0
+    # Adaptive polling: when the queue is idle (or the loop is erroring) the
+    # sleep interval grows from POLLING_SLEEP_INTERVAL_SECONDS toward
+    # POLLING_SLEEP_MAX_INTERVAL_SECONDS by POLLING_BACKOFF_MULTIPLIER each
+    # cycle, then snaps back to the base interval as soon as work is found.
+    # Reduces steady-state query load against the (shared) DB/pooler.
+    POLLING_BACKOFF_ENABLED: bool = True
+    POLLING_SLEEP_MAX_INTERVAL_SECONDS: Annotated[
+        float, Field(default=30.0, gt=0.0, le=300.0)
+    ] = 30.0
+    POLLING_BACKOFF_MULTIPLIER: Annotated[
+        float, Field(default=2.0, ge=1.0, le=10.0)
+    ] = 2.0
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
     # Retention window (seconds) for keeping errored items in the queue
