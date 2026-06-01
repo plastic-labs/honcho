@@ -31,11 +31,15 @@ class _FlakyConnSession:
         self.fail_times: int = fail_times
         self.always_fail: bool = always_fail
         self.calls: int = 0
+        self.rollback_calls: int = 0
 
     async def connection(self) -> None:
         self.calls += 1
         if self.always_fail or self.calls <= self.fail_times:
             raise _make_operational_error()
+
+    async def rollback(self) -> None:
+        self.rollback_calls += 1
 
 
 def _acq_count(outcome: str) -> float:
@@ -73,6 +77,8 @@ async def test_acquire_retries_then_succeeds_records_retried() -> None:
     session = _FlakyConnSession(fail_times=2)
     await acquire_connection_with_retry(session, "request:test")  # pyright: ignore[reportArgumentType]
     assert session.calls == 3  # two failures then success
+    # Session is reset after each failed checkout before the next attempt.
+    assert session.rollback_calls == 2
     assert _acq_count("retried") == before + 1
 
 

@@ -323,17 +323,25 @@ class DBPoolCollector:
         self.instance_type: str = instance_type
 
     def collect(self) -> Iterator[GaugeMetricFamily]:
-        # Lazy import to avoid an import cycle at module load (db imports config,
-        # telemetry is imported widely). Reads the async engine.pool directly.
-        from src.db import get_pool_stats
-
         namespace = settings.METRICS.NAMESPACE or ""
         gauge = GaugeMetricFamily(
             "db_pool_connections",
             "DB connections held by this instance, by pool state",
             labels=["namespace", "instance_type", "state"],
         )
-        for state, value in get_pool_stats().items():
+        # Fail soft: Prometheus aborts the entire scrape (dropping ALL metrics)
+        # if any collector raises, so never let a pool/import hiccup here sink
+        # the whole /metrics response.
+        try:
+            # Lazy import to avoid an import cycle at module load (db imports
+            # config, telemetry is imported widely). Reads engine.pool directly.
+            from src.db import get_pool_stats
+
+            stats = get_pool_stats()
+        except Exception:
+            logger.warning("Failed to collect DB pool stats", exc_info=True)
+            stats = {}
+        for state, value in stats.items():
             gauge.add_metric([namespace, self.instance_type, state], value)
         yield gauge
 

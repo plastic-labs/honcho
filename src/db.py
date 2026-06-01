@@ -119,8 +119,11 @@ async def acquire_connection_with_retry(db: AsyncSession, context: str) -> None:
     in a Sentry span so wait time is visible in traces; on budget exhaustion the
     original error is reraised after capturing live pool stats to Sentry.
 
-    Retrying the same session is safe: no connection is bound until checkout
-    succeeds, so each attempt re-attempts the checkout cleanly.
+    Each attempt rolls the session back on a retryable failure before retrying:
+    a failed checkout can leave the autobegun transaction in a pending-rollback
+    state, which would make the next ``db.connection()`` raise instead of
+    re-checking-out cleanly. The rollback is pure Python-side state cleanup when
+    no connection was bound, so it is cheap and safe.
     """
     with sentry_sdk.start_span(op="db.pool.acquire", name=context):
         if not settings.DB.CONNECTION_RETRY_ENABLED:
@@ -139,7 +142,18 @@ async def acquire_connection_with_retry(db: AsyncSession, context: str) -> None:
             ):
                 with attempt:
                     attempts += 1
-                    await db.connection()
+                    try:
+                        await db.connection()
+                    except RETRYABLE_DB_CONNECTION_ERRORS:
+                        # Reset session state so the next attempt starts clean.
+                        try:
+                            await db.rollback()
+                        except Exception:
+                            logger.debug(
+                                "rollback after failed checkout failed",
+                                exc_info=True,
+                            )
+                        raise
         except RETRYABLE_DB_CONNECTION_ERRORS as e:
             _record_acquisition_outcome("exhausted")
             if settings.SENTRY.ENABLED:
