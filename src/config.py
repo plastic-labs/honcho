@@ -623,11 +623,13 @@ class DBSettings(HonchoSettings):
     SQL_DEBUG: bool = False
     TRACING: bool = False
 
-    # Bounded exponential-backoff retry around connection acquisition (used by
-    # tracked_db for short, DB-only background scopes — NOT the request path).
-    # Guards against transient transaction-pooler saturation (e.g. Supavisor
-    # rejecting with "too many clients") by retrying the checkout instead of
-    # failing immediately. CONNECTION_RETRY_MAX_DELAY_SECONDS is the TOTAL retry
+    # Bounded exponential-backoff retry around connection acquisition. Applied
+    # lazily on the first DB use of any session (HonchoAsyncSession) — both the
+    # request path and background/tracked_db scopes — without forcing an eager
+    # checkout. Guards against transient transaction-pooler saturation (e.g.
+    # Supavisor rejecting with "too many clients") by retrying the checkout
+    # instead of failing immediately. CONNECTION_RETRY_MAX_DELAY_SECONDS is the
+    # TOTAL retry
     # budget; with a real QueuePool, a single checkout can block up to
     # POOL_TIMEOUT, so POOL_TIMEOUT must stay below the budget for a retry to be
     # possible (enforced below). With NullPool (the transaction-pooler setup)

@@ -197,9 +197,12 @@ class HonchoAsyncSession(AsyncSession):
             )
 
     # The overrides below are thin: ensure the connection is checked out (once,
-    # with retry) before delegating to AsyncSession. Signatures are widened to
-    # *args/**kwargs because we only forward; call sites are typed against the
-    # AsyncSession base, so this does not weaken type-checking elsewhere.
+    # with retry) before delegating to AsyncSession. They cover every public
+    # DB-touching async method so the "lazy retry on first DB use" guarantee has
+    # no holes. Signatures are widened to *args/**kwargs because we only forward;
+    # call sites are typed against the AsyncSession base, so this does not weaken
+    # type-checking elsewhere. (connection() is intentionally NOT wrapped —
+    # acquire_connection_with_retry calls it, so wrapping would recurse.)
     async def execute(self, *args: Any, **kwargs: Any) -> Any:
         await self._ensure_acquired()
         return await super().execute(*args, **kwargs)
@@ -211,6 +214,22 @@ class HonchoAsyncSession(AsyncSession):
     async def scalars(self, *args: Any, **kwargs: Any) -> Any:
         await self._ensure_acquired()
         return await super().scalars(*args, **kwargs)
+
+    async def get(self, *args: Any, **kwargs: Any) -> Any:
+        await self._ensure_acquired()
+        return await super().get(*args, **kwargs)
+
+    async def get_one(self, *args: Any, **kwargs: Any) -> Any:
+        await self._ensure_acquired()
+        return await super().get_one(*args, **kwargs)
+
+    async def stream(self, *args: Any, **kwargs: Any) -> Any:
+        await self._ensure_acquired()
+        return await super().stream(*args, **kwargs)
+
+    async def stream_scalars(self, *args: Any, **kwargs: Any) -> Any:
+        await self._ensure_acquired()
+        return await super().stream_scalars(*args, **kwargs)
 
     async def flush(self, *args: Any, **kwargs: Any) -> None:
         await self._ensure_acquired()
@@ -224,6 +243,10 @@ class HonchoAsyncSession(AsyncSession):
         await self._ensure_acquired()
         await super().refresh(*args, **kwargs)
 
+    async def delete(self, *args: Any, **kwargs: Any) -> None:
+        await self._ensure_acquired()
+        await super().delete(*args, **kwargs)
+
     async def commit(self) -> None:
         # Ensures the add()->commit() path (autoflush on commit) also retries.
         await self._ensure_acquired()
@@ -236,6 +259,19 @@ class HonchoAsyncSession(AsyncSession):
     async def rollback(self) -> None:
         try:
             await super().rollback()
+        finally:
+            self._honcho_acquired = False
+
+    async def close(self) -> None:
+        try:
+            await super().close()
+        finally:
+            # The connection is released; a reused session must re-acquire.
+            self._honcho_acquired = False
+
+    async def reset(self) -> None:
+        try:
+            await super().reset()
         finally:
             self._honcho_acquired = False
 

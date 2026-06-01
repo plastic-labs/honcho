@@ -19,8 +19,8 @@ class FakeSession:
         self.connection_calls: int = 0
 
     async def connection(self) -> None:
-        # acquire_connection_with_retry forces the (otherwise lazy) pool
-        # checkout via this call before any query runs.
+        # Tracks checkout attempts so tests can assert get_db/tracked_db stay
+        # lazy (they should never force a checkout themselves).
         self.connection_calls += 1
 
     async def execute(self, statement: Any, params: Any = None) -> None:

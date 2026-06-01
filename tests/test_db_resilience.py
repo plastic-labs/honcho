@@ -173,7 +173,7 @@ async def test_session_tracing_sets_application_name_on_acquire(
 
 
 @pytest.mark.asyncio
-async def test_session_commit_and_rollback_reset_acquired_flag(
+async def test_session_lifecycle_methods_reset_acquired_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_acquire(_session: Any, _context: str) -> None:
@@ -183,16 +183,46 @@ async def test_session_commit_and_rollback_reset_acquired_flag(
         return None
 
     monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
-    monkeypatch.setattr(AsyncSession, "commit", noop)
-    monkeypatch.setattr(AsyncSession, "rollback", noop)
+    for method in ("commit", "rollback", "close", "reset"):
+        monkeypatch.setattr(AsyncSession, method, noop)
 
     session = db_module.SessionLocal()
     await session.commit()  # ensures acquired, commits, then resets
     assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
 
-    session._honcho_acquired = True  # pyright: ignore[reportPrivateUsage]
-    await session.rollback()
-    assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
+    # rollback/close/reset must each clear the flag so a reused session
+    # re-acquires (and re-wraps retry) on its next DB use.
+    for method in ("rollback", "close", "reset"):
+        session._honcho_acquired = True  # pyright: ignore[reportPrivateUsage]
+        await getattr(session, method)()
+        assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_session_get_and_delete_also_acquire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lazy-acquire guarantee covers get/delete, not just execute."""
+    monkeypatch.setattr(settings.DB, "TRACING", False)
+    acquired: list[str] = []
+
+    async def fake_acquire(_session: Any, context: str) -> None:
+        acquired.append(context)
+
+    async def fake_get(_self: Any, *_a: Any, **_k: Any) -> str:
+        return "row"
+
+    async def fake_delete(_self: Any, *_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
+    monkeypatch.setattr(AsyncSession, "get", fake_get)
+    monkeypatch.setattr(AsyncSession, "delete", fake_delete)
+
+    session = db_module.SessionLocal()
+    await session.get(object, 1)
+    await session.delete(object())
+    assert acquired == ["unknown"]  # acquired once on the first DB-touching call
 
 
 @pytest.mark.asyncio
