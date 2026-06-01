@@ -322,6 +322,14 @@ class OpenAIBackend:
             ):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            if "extra_body" in extra_params:
+                params.setdefault("extra_body", {}).update(extra_params["extra_body"])
+            if "thinking" in extra_params:
+                params.setdefault("extra_body", {})["thinking"] = extra_params[
+                    "thinking"
+                ]
+            if "extra_headers" in extra_params:
+                params["extra_headers"] = extra_params["extra_headers"]
         return params
 
     def _normalize_response(
