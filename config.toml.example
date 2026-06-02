@@ -26,11 +26,14 @@ POOL_CLASS = "default"
 POOL_PRE_PING = true
 POOL_SIZE = 10
 MAX_OVERFLOW = 20
-POOL_TIMEOUT = 30  # seconds
+POOL_TIMEOUT = 5  # seconds a pooled checkout waits for a free connection (QueuePool only)
 POOL_RECYCLE = 300  # seconds
 POOL_USE_LIFO = true
 SQL_DEBUG = false
 TRACING = false
+# Per-connection establish timeout (seconds) so a single connection attempt
+# fails fast instead of hanging when the server/pooler is unreachable.
+CONNECT_TIMEOUT_SECONDS = 2
 
 # Authentication settings
 [auth]
@@ -81,6 +84,19 @@ model = "text-embedding-3-small"
 ENABLED = true
 WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
+# Adaptive polling: when idle/erroring, the sleep interval grows from
+# POLLING_SLEEP_INTERVAL_SECONDS toward POLLING_SLEEP_MAX_INTERVAL_SECONDS by
+# POLLING_BACKOFF_MULTIPLIER each cycle, then snaps back to base when work is
+# found. Cuts steady-state query load against the shared DB/pooler.
+POLLING_BACKOFF_ENABLED = true
+POLLING_SLEEP_MAX_INTERVAL_SECONDS = 30.0
+POLLING_BACKOFF_MULTIPLIER = 2.0
+# Jitter so instances that start together don't poll in lockstep. Startup:
+# sleep a random delay in [0, POLLING_STARTUP_JITTER_SECONDS] before the first
+# poll (0.0 disables). Per-cycle: multiply every poll sleep by a random factor
+# in [1 - ratio, 1 + ratio] (0.5 -> [0.5x, 1.5x]; 0.0 disables).
+POLLING_STARTUP_JITTER_SECONDS = 30.0
+POLLING_JITTER_RATIO = 0.5
 STALE_SESSION_TIMEOUT_MINUTES = 5
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
 DEDUPLICATE = true

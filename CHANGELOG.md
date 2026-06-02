@@ -5,38 +5,116 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
-
-### Added
-
-- New `src/llm/` package as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy
-- `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback
-- Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends
-- Dreamer specialists derive `effective_max_tokens` from `model_config.max_output_tokens` with a per-specialist default fallback
-- Regression tests covering fallback-config thinking-param reach, provider_params → extra_params boundary, OpenAI reasoning-model parameter routing, Gemini blocked finish_reason handling, and fail-fast `max_tool_iterations` validation
+## [3.0.9] - 2026-06-02
 
 ### Changed
 
-- All LLM orchestration moved out of `src/utils/clients.py` into `src/llm/` with modules split by responsibility (api, executor, tool_loop, runtime, registry, conversation, request_builder, credentials, caching, backends, history_adapters)
-- Default `ModelConfig` factories (deriver, summary, dreamer specialists, dialectic levels) normalized to `openai/gpt-5.4-mini` with no extra parameters set by default; operators add transport/thinking overrides explicitly
-- OpenAI reasoning-model routing widened via `_uses_max_completion_tokens` heuristic covering `gpt-5.x` and `o1/o3/o4` — these models receive `max_completion_tokens` instead of `max_tokens`
-- Override client factories switched from unbounded `@cache` to `@lru_cache(maxsize=128)` for predictable memory growth on long-running processes
-- `get_backend` now delegates to `client_for_model_config`, so the live-test path and production path share one missing-API-key validation
-- Blocked Gemini responses (`SAFETY`, `RECITATION`, `PROHIBITED_CONTENT`, `BLOCKLIST`) raise `LLMError` in the streaming path too (previously only the non-streaming path), ensuring retry/fallback logic fires uniformly
-- Transport-change env overrides now strip transport-specific thinking params (thinking_budget_tokens vs. reasoning_effort) during config merge, including at the dialectic-level merge, so switching from Anthropic → OpenAI doesn't leave orphaned Anthropic-only params that the OpenAI backend would reject
-- `max_tool_iterations` out-of-range inputs now raise `ValidationException` instead of being silently clamped
-- Troubleshooting docs updated to reflect nested-env-var form for per-component thinking-budget overrides
+- Connection acquisition is now a single attempt with no server-side retry, on a vanilla `AsyncSession`. A new `DB_CONNECT_TIMEOUT_SECONDS` (default 2s) bounds the attempt so a saturated or unreachable pooler fails fast instead of holding a client connection open to re-knock. A saturated DB now surfaces to the caller — the API returns an error and the deriver backs off and retries on a later poll — which lets the pooler drain rather than amplifying saturation.
 
-### Fixed
+### Added
 
-- Fallback `ModelConfig` temperature and `thinking_budget_tokens` reach the backend on the final retry — previously the primary's values were pre-populated into caller kwargs early and clobbered fallback values via `effective_config_for_call(update=...)`
-- Stream-final retries pin to the `AttemptPlan` that succeeded rather than re-running provider selection through the outer `current_attempt` ContextVar (which could roll streaming back to primary after the tool loop had already switched to fallback)
-- OpenAI structured-output calls continue to use `chat.completions.parse()` with strict schema enforcement, while tool-calling paths use `chat.completions.create()` without `strict:True` for broader proxy compatibility (OpenRouter, vLLM, Ollama)
-- Gemini `cached_content` reuse keys now include `system_instruction` and `tool_config` so cache hits don't cross configurations that differ only in those fields
+- Deriver poll jitter so instances that start together don't poll in lockstep: `DERIVER_POLLING_STARTUP_JITTER_SECONDS` (random delay before the first poll, default 30s) and `DERIVER_POLLING_JITTER_RATIO` (±fraction applied to every poll sleep, default 0.5). Both disable at `0.0`; the underlying backoff schedule is unchanged.
 
 ### Removed
 
-- `src/utils/clients.py` deleted; its responsibilities are split across `src/llm/registry.py`, `src/llm/credentials.py`, and the backend-specific modules
+- Reverted the connection-checkout retry and `HonchoAsyncSession` custom session introduced in 3.0.8. Removed the `DB_CONNECTION_RETRY_ENABLED` / `DB_CONNECTION_RETRY_MAX_DELAY_SECONDS` / `DB_CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS` / `DB_CONNECTION_RETRY_BACKOFF_MAX_SECONDS` settings, the `db_connection_acquisitions{outcome=...}` Prometheus counter, and the `db.pool.acquire` Sentry span. Alerting built on `db_connection_acquisitions` should migrate to `db_pool_connections` / `db_queries_in_flight`.
+
+## [3.0.8] - 2026-06-01
+
+### Added
+
+- Connection-checkout retry with bounded exponential backoff (tenacity) on `get_db`/`tracked_db`: transient transaction-pooler (Supavisor) rejections — SQLAlchemy `TimeoutError` and `OperationalError` — now retry with backoff instead of surfacing as 500s under client-connection saturation. Gated by
+  `DB_CONNECTION_RETRY_ENABLED` with configurable delay/backoff knobs; ~10s default budget (#758)
+- `HonchoAsyncSession` — a lazy `AsyncSession` that checks out its pooled connection (with retry) on the first DB-touching call rather than at construction. Request handlers doing non-DB work (embedding, file, LLM) before their first query no longer pin a pooler connection across it. Only the checkout is retried;
+  the statement still runs exactly once, so writes are never duplicated (#758)
+- Adaptive deriver queue polling: the poll interval backs off when the queue is idle or erroring (base → max, doubling each cycle) and snaps back to base the moment work is claimed, cutting steady-state query load against the DB. Gated by `DERIVER_POLLING_BACKOFF_ENABLED` with configurable max/multiplier (#758)
+- New Prometheus `db_pool_connections` gauge (checked_out / checked_in / size / overflow), labeled `api`|`deriver`, registered in both the API lifespan and the deriver metrics server (#758)
+- New Prometheus `db_connection_acquisitions{outcome=ok|retried|exhausted}` counter — the alertable early-warning signal that connection checkouts are retrying through pooler rejection, before requests start failing (#758)
+- New Prometheus `db_queries_in_flight` gauge — statements actually executing on the wire (via SQLAlchemy cursor-execute events). Paired with `checked_out`, the gap reveals connections held but parked (the "idle in transaction during an external call" antipattern). Gated on `METRICS.ENABLED` for zero overhead when
+  off (#758)
+- Explicit `SqlalchemyIntegration` in both the API and deriver Sentry inits; connection acquisition wrapped in a `db.pool.acquire` span with live pool stats captured on retry exhaustion (#758)
+
+### Changed
+
+- Default `POOL_TIMEOUT` lowered to 5s, with validation that it stays under the connection-retry budget when a pooled (non-null) `POOL_CLASS` is configured; `config.toml.example` and the v2/v3 configuration docs updated to match (#758)
+- `HonchoAsyncSession` wraps every DB-touching session method (execute / scalar / scalars / flush / merge / refresh / commit / get / get_one / stream / stream_scalars / delete) so the lazy-checkout-with-retry guarantee has no holes; the acquired flag resets on `close()`/`reset()` so a reused session re-acquires on
+  next use (#758)
+
+### Fixed
+
+- Roll the session back on a retryable checkout failure before retrying — a failed autobegin could otherwise leave it pending-rollback, making the next connection attempt raise instead of cleanly re-checking-out (#758)
+- Guard `DBPoolCollector.collect()` so a pool-read/import hiccup can't raise and abort the entire `/metrics` scrape (Prometheus drops all metrics if any collector raises) (#758)
+- Clamp the pool overflow gauge to ≥ 0 (it could report negative before the pool fills) (#758)
+- Removed a double-sleep in the deriver idle poll so the backoff cap is a true cap rather than 2× (#758)
+
+## [3.0.7] - 2026-05-21
+
+### Added
+
+- New `src/llm/` module as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy (#459)
+- `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback (#459)
+- Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends (#459)
+- Dreamer specialists derive `effective_max_tokens` from `model_config.max_output_tokens` with a per-specialist default fallback (#459)
+- New cloudevent `LLMCallCompletedEvent` (`llm.call.completed`) fires once per provider hit with full cost-attribution context: transport/provider_label, model, token counts with cache breakdown, finish_reason, outcome, `is_final_attempt`, retry/fallback state, duration, tool-call shape, streaming flag, and agent correlation (`run_id` + iteration). Includes a `CallPurpose` closed enum (`deriver.representation`, `dialectic.answer`, `dream.deduction|induction`, `summary.short|long`) (#637)
+- `RepresentationCompletedEvent` now carries `total_input_tokens` for full-trace cost attribution (#637)
+- Per-emitter `honcho_version` injection on all CloudEvents plus emitter health metrics (#637)
+- `TelemetrySettings.HIGH_VOLUME_SAMPLE_RATE` (default 1.0) — deterministic per-`run_id` sampler so an entire agent trace is kept or dropped together; aggregate envelopes bypass the sampler (#637)
+- Deriver custom instructions: per-workspace/peer guidance threaded into the deriver prompt with a `MAX_CUSTOM_INSTRUCTIONS_TOKENS` budget (default 2000); deriver `MAX_INPUT_TOKENS` raised 23000 → 25000 to make room (#609)
+- Configurable embedding dimensions: `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE` (`auto`/`always`/`never`) controls whether the OpenAI `dimensions=` parameter is forwarded; `auto` (default) sends it when the operator explicitly set `EMBEDDING_VECTOR_DIMENSIONS` and the model is not on the known-rejecting allowlist (#678)
+- New `honcho-cli` package — Python CLI for inspecting and managing peers, sessions, and configuration against a Honcho deployment (#424)
+- `HONCHO_API_URL` env var support in the MCP Worker, enabling self-hosted Honcho deployments to point the Worker at their own instance instead of `https://api.honcho.dev` (#575)
+- API ID `max_length` increased from 100 to 512 across `WorkspaceCreate`, `PeerCreate`, and `SessionCreate` to align the API contract with the underlying DB schema (#684)
+- Regression tests covering fallback-config thinking-param reach, provider_params → extra_params boundary, OpenAI reasoning-model parameter routing, Gemini blocked finish_reason handling, and fail-fast `max_tool_iterations` validation (#459)
+
+### Changed
+
+- All LLM orchestration moved out of `src/utils/clients.py` into `src/llm/` with modules split by responsibility (api, executor, tool_loop, runtime, registry, conversation, request_builder, credentials, caching, backends, history_adapters) (#459)
+- Default `ModelConfig` factories (deriver, summary, dreamer specialists, dialectic levels) normalized to `openai/gpt-5.4-mini` with no extra parameters set by default; operators add transport/thinking overrides explicitly (#459)
+- OpenAI reasoning-model routing widened via `_uses_max_completion_tokens` heuristic covering `gpt-5.x` and `o1/o3/o4` — these models receive `max_completion_tokens` instead of `max_tokens` (#459)
+- Override client factories switched from unbounded `@cache` to `@lru_cache(maxsize=128)` for predictable memory growth on long-running processes (#459)
+- `get_backend` now delegates to `client_for_model_config`, so the live-test path and production path share one missing-API-key validation (#459)
+- Blocked Gemini responses (`SAFETY`, `RECITATION`, `PROHIBITED_CONTENT`, `BLOCKLIST`) raise `LLMError` in the streaming path too (previously only the non-streaming path), ensuring retry/fallback logic fires uniformly (#459)
+- Transport-change env overrides now strip transport-specific thinking params (thinking_budget_tokens vs. reasoning_effort) during config merge, including at the dialectic-level merge, so switching from Anthropic → OpenAI doesn't leave orphaned Anthropic-only params that the OpenAI backend would reject (#459)
+- `max_tool_iterations` out-of-range inputs now raise `ValidationException` instead of being silently clamped (#459)
+- Public API schemas (`WorkspaceCreate`, `PeerCreate`, `SessionCreate`) and SDK validation (`api_types.py`, `validation.ts`) accept IDs up to 512 chars (was 100) (#684)
+- Peer card prompts reframed as stable identity markers (replaces the prior "biographical/profile facts" language). Induction specialist is now opted out of peer card writes (`can_update_peer_card = False`) so only deduction touches the card (#686)
+- Vector store queries no longer fetch embedding vectors — only document metadata is returned, reducing payload size and DB load (pgvector, lancedb, turbopuffer) (#682)
+- Langfuse trace metadata now includes `namespace`, `model`, and `provider` so traces can be filtered by deployment slice (#565)
+- Deriver: model-aware tokenizer (replaces the previously hardcoded encoding) and explicit guard on empty message content (#647)
+- Dialectic level defaults now merge correctly with per-level overrides in `src/config` (DEV-1733) (#656)
+- Default dialectic tool choice switched from forced/required to `auto` (#630)
+- Vector sync given a substantial retry budget to tolerate transient embedding provider outages (#604)
+- `AgentToolConclusionsDeletedEvent` payload now carries `levels` for parity with the rest of the conclusion event surface (#612)
+- Turbopuffer vector store: `InternalServerError` caught and surfaced as a warning rather than a hard failure; unused `upsert_with_retry` and `VectorUpsertResult` removed; explicit silent and explicit-error paths for vector DB server errors (#561)
+- Troubleshooting docs updated to reflect nested-env-var form for per-component thinking-budget overrides (#459)
+- README refresh (#681)
+- CLAUDE.md refreshed against the current `src/` layout (#680)
+
+### Fixed
+
+- Fallback `ModelConfig` temperature and `thinking_budget_tokens` reach the backend on the final retry — previously the primary's values were pre-populated into caller kwargs early and clobbered fallback values via `effective_config_for_call(update=...)` (#459)
+- Stream-final retries pin to the `AttemptPlan` that succeeded rather than re-running provider selection through the outer `current_attempt` ContextVar (which could roll streaming back to primary after the tool loop had already switched to fallback) (#459)
+- OpenAI structured-output calls continue to use `chat.completions.parse()` with strict schema enforcement, while tool-calling paths use `chat.completions.create()` without `strict:True` for broader proxy compatibility (OpenRouter, vLLM, Ollama) (#459)
+- Gemini `cached_content` reuse keys now include `system_instruction` and `tool_config` so cache hits don't cross configurations that differ only in those fields (#459)
+- Removed strict parameter validation for thinking params on Anthropic and OpenAI transports — was rejecting valid per-transport configs (#686)
+- `reverse` query parameter is now honored on the v3 workspace list (`POST /v3/workspaces/list`), peer list (`POST /v3/workspaces/{workspace_id}/peers/list`), workspace-scoped session list (`POST /v3/workspaces/{workspace_id}/sessions/list`), and peer-scoped session list (`POST /v3/workspaces/{workspace_id}/peers/{peer_id}/sessions`). Honcho SDKs at 2.1.0+ were already sending `reverse=true` for these routes but the server silently ignored it. Ties on `created_at` now fall back to the internal nanoid `id` so ordering remains stable across pages (#685)
+- LLM client factories now receive `base_url` from `LLMSettings` for default providers — previously the override path honored `base_url` but the default path didn't, so operators pointing at OpenAI-compatible proxies via `LLM__OPENAI_BASE_URL` were ignored (#643, fixes #641)
+- Internal N+1 query in dialectic agent tool execution (DEV-1721) — collapsed per-iteration DB lookups into a single fetch (#652)
+- Dreamer threshold and time-guard semantics: `check_and_schedule_dream` count filter now includes only `documents.level == 'explicit'` (dreamer-created levels are output, not input, and were inflating the threshold and creating a feedback loop); `last_dream_at` write relocated from `enqueue_dream` into `process_dream` so duplicate enqueues or failed runs no longer reset the 8-hour time guard (#573)
+- Deriver: blank observations are filtered out before embedding (previously triggered noisy embedding calls and persisted empty rows); blank-observation filtering unified across tool paths (#615)
+- Surprisal module: filter for level observations changed from `{"level": levels}` to `{"level": {"in": levels}}` — `apply_filter()` requires operator syntax, so the prior call silently returned 0 results and made the entire Surprisal phase of the Dream cycle a no-op (#581, fixes #559)
+- Removed hardcoded `stop_sequences` override from Deriver `ModelConfig` (was clobbering operator-configured stop sequences) (#587)
+- Removed stale `stop_sequences` from tests (#607)
+- Embedding client: `embed()` now wraps single-string input in an array, restoring compatibility with OpenAI-compatible third-party providers that reject scalar input (#586)
+- Docker Compose: deriver service startup gated on the API service healthcheck (prevents races where the deriver starts before the API has run migrations) (#689)
+- Docker image: `HEALTHCHECK` directive removed from the shared base image — it probed an HTTP endpoint only the API serves, permanently marking deriver containers as unhealthy. Service-level health checks now belong in each service's own configuration (k8s readiness/liveness probes on the API Deployment only) (#530)
+- `tests/unified`: `--test-dir`/`--test-file` arguments now use an argparse mutually-exclusive group instead of manual validation (#650)
+- CrewAI example updated for the latest CrewAI protocol (#631)
+
+### Removed
+
+- `src/utils/clients.py` deleted; its responsibilities are split across `src/llm/registry.py`, `src/llm/credentials.py`, and the backend-specific modules (#459)
+- `HEALTHCHECK` directive removed from the shared Docker image (#530)
 
 ## [3.0.6] - 2026-04-10
 

@@ -16,6 +16,12 @@ class FakeSession:
         self.execute_calls: list[tuple[Any, ...]] = []
         self.rollback_calls: int = 0
         self.close_calls: int = 0
+        self.connection_calls: int = 0
+
+    async def connection(self) -> None:
+        # Tracks checkout attempts so tests can assert get_db/tracked_db stay
+        # lazy (they should never force a checkout themselves).
+        self.connection_calls += 1
 
     async def execute(self, statement: Any, params: Any = None) -> None:
         self.execute_calls.append((statement, params))
@@ -31,26 +37,24 @@ class FakeSession:
 
 
 @pytest.mark.asyncio
-async def test_get_db_sets_application_name_when_tracing_enabled(
+async def test_get_db_yields_lazily_without_checkout_or_tracing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # get_db must NOT touch the connection or run set_config itself — checkout
+    # happens lazily inside the AsyncSession on first DB use, so a handler doing
+    # non-DB work before its first query never pins a connection.
     fake_db = FakeSession()
     monkeypatch.setattr(dependencies_module, "SessionLocal", lambda: fake_db)
-    monkeypatch.setattr(settings.DB, "TRACING", True)
+    monkeypatch.setattr(settings.DB, "TRACING", True)  # still no set_config here
 
-    context_token = request_context.set("request:test-ctx")
     dep_gen = real_get_db()
-
     try:
         db = await anext(dep_gen)
         assert db is fake_db
-        assert len(fake_db.execute_calls) == 1
-        stmt, params = fake_db.execute_calls[0]
-        assert "set_config" in str(stmt)
-        assert params == {"name": "request:test-ctx"}
+        assert fake_db.connection_calls == 0  # no eager checkout
+        assert fake_db.execute_calls == []  # no set_config in get_db
     finally:
         await dep_gen.aclose()
-        request_context.reset(context_token)
 
     assert fake_db.rollback_calls == 1  # unconditional rollback in finally
     assert fake_db.close_calls == 1
@@ -80,7 +84,6 @@ async def test_tracked_db_creates_and_resets_task_context(
 ) -> None:
     fake_db = FakeSession()
     monkeypatch.setattr(dependencies_module, "SessionLocal", lambda: fake_db)
-    monkeypatch.setattr(settings.DB, "TRACING", True)
     monkeypatch.setattr(
         uuid,
         "uuid4",
@@ -90,15 +93,12 @@ async def test_tracked_db_creates_and_resets_task_context(
     clear_token = request_context.set(None)
     try:
         async with real_tracked_db("cleanup_job"):
+            # tracked_db sets the task context so the lazy session can read it.
             assert request_context.get() == "task:cleanup_job:12345678"
     finally:
         request_context.reset(clear_token)
 
     assert request_context.get() is None
-    assert len(fake_db.execute_calls) == 1
-    stmt, params = fake_db.execute_calls[0]
-    assert "set_config" in str(stmt)
-    assert params == {"name": "task:cleanup_job:12345678"}
     assert fake_db.rollback_calls == 1  # unconditional rollback in finally
     assert fake_db.close_calls == 1
 
@@ -109,7 +109,6 @@ async def test_tracked_db_preserves_existing_request_context(
 ) -> None:
     fake_db = FakeSession()
     monkeypatch.setattr(dependencies_module, "SessionLocal", lambda: fake_db)
-    monkeypatch.setattr(settings.DB, "TRACING", True)
 
     context_token = request_context.set("request:existing")
     try:
@@ -118,10 +117,6 @@ async def test_tracked_db_preserves_existing_request_context(
     finally:
         request_context.reset(context_token)
 
-    assert len(fake_db.execute_calls) == 1
-    stmt, params = fake_db.execute_calls[0]
-    assert "set_config" in str(stmt)
-    assert params == {"name": "request:existing"}
     assert fake_db.rollback_calls == 1  # unconditional rollback in finally
     assert fake_db.close_calls == 1
 

@@ -612,8 +612,9 @@ class DBSettings(HonchoSettings):
     POOL_PRE_PING: bool = True
     POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
     MAX_OVERFLOW: Annotated[int, Field(default=20, ge=0, le=1000)] = 20
-    POOL_TIMEOUT: Annotated[int, Field(default=30, gt=0, le=300)] = (
-        30  # seconds (max 5 minutes)
+    POOL_TIMEOUT: Annotated[int, Field(default=5, gt=0, le=300)] = (
+        5  # seconds a pooled checkout may wait for a free connection (QueuePool
+        # only; NullPool has no local queue wait)
     )
     POOL_RECYCLE: Annotated[int, Field(default=300, gt=0, le=7200)] = (
         300  # seconds (max 2 hours)
@@ -621,6 +622,13 @@ class DBSettings(HonchoSettings):
     POOL_USE_LIFO: bool = True
     SQL_DEBUG: bool = False
     TRACING: bool = False
+
+    # Per-connection establish timeout (seconds) passed to the driver, so a
+    # single connection attempt fails fast instead of hanging when the server or
+    # pooler is unreachable or stalled. Connection acquisition is a single
+    # attempt with no retry; callers handle failure (the API surfaces it, the
+    # deriver backs off and retries on a later poll).
+    CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
 
 class AuthSettings(HonchoSettings):
@@ -740,6 +748,29 @@ class DeriverSettings(HonchoSettings):
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
         float, Field(default=1.0, gt=0.0, le=60.0)
     ] = 1.0
+    # Adaptive polling: when the queue is idle (or the loop is erroring) the
+    # sleep interval grows from POLLING_SLEEP_INTERVAL_SECONDS toward
+    # POLLING_SLEEP_MAX_INTERVAL_SECONDS by POLLING_BACKOFF_MULTIPLIER each
+    # cycle, then snaps back to the base interval as soon as work is found.
+    # Reduces steady-state query load against the (shared) DB/pooler.
+    POLLING_BACKOFF_ENABLED: bool = True
+    POLLING_SLEEP_MAX_INTERVAL_SECONDS: Annotated[
+        float, Field(default=30.0, gt=0.0, le=300.0)
+    ] = 30.0
+    POLLING_BACKOFF_MULTIPLIER: Annotated[
+        float, Field(default=2.0, ge=1.0, le=10.0)
+    ] = 2.0
+    # Sleep a uniform-random delay in [0, POLLING_STARTUP_JITTER_SECONDS] before
+    # the first poll so instances that start together don't poll in lockstep.
+    # Set to 0.0 to disable.
+    POLLING_STARTUP_JITTER_SECONDS: Annotated[
+        float, Field(default=30.0, ge=0.0, le=300.0)
+    ] = 30.0
+    # Multiply every poll sleep by a random factor in [1 - ratio, 1 + ratio]
+    # (0.5 -> [0.5x, 1.5x]) so poll loops don't re-converge over time. The
+    # backoff schedule is unchanged; only the returned sleep is scattered. Set
+    # to 0.0 to disable.
+    POLLING_JITTER_RATIO: Annotated[float, Field(default=0.5, ge=0.0, le=1.0)] = 0.5
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
     # Retention window (seconds) for keeping errored items in the queue

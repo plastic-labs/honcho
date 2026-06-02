@@ -1,8 +1,12 @@
+import datetime
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import models
 from src.models import Peer, Workspace
 
 
@@ -221,6 +225,160 @@ def test_get_sessions_with_empty_filter(
     data = response.json()
     assert "items" in data
     assert isinstance(data["items"], list)
+
+
+def test_get_sessions_with_reverse(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session listing with reverse creation-time ordering."""
+    test_workspace, test_peer = sample_data
+    reverse_group = f"reverse-sessions-{generate_nanoid()}"
+    first_session = f"reverse-session-a-{generate_nanoid()}"
+    second_session = f"reverse-session-b-{generate_nanoid()}"
+
+    first_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": first_session,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"reverse_group": reverse_group},
+        },
+    )
+    assert first_response.status_code in [200, 201]
+
+    second_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": second_session,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"reverse_group": reverse_group},
+        },
+    )
+    assert second_response.status_code in [200, 201]
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        first_session,
+        second_session,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        second_session,
+        first_session,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_reverse_uses_id_tiebreaker(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Sessions with identical created_at fall back to ordering by id (nanoid PK)."""
+    test_workspace, _ = sample_data
+    reverse_group = f"tiebreaker-sessions-{generate_nanoid()}"
+    shared_created_at = datetime.datetime(
+        2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
+    )
+
+    low_id = "A" * 21
+    high_id = "z" * 21
+    low_name = f"tie-low-{generate_nanoid()}"
+    high_name = f"tie-high-{generate_nanoid()}"
+
+    db_session.add(
+        models.Session(
+            id=low_id,
+            name=low_name,
+            workspace_name=test_workspace.name,
+            created_at=shared_created_at,
+            h_metadata={"reverse_group": reverse_group},
+        )
+    )
+    db_session.add(
+        models.Session(
+            id=high_id,
+            name=high_name,
+            workspace_name=test_workspace.name,
+            created_at=shared_created_at,
+            h_metadata={"reverse_group": reverse_group},
+        )
+    )
+    await db_session.commit()
+
+    normal_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    # When created_at ties, ordering falls back to the nanoid id: low_id < high_id
+    # lexicographically, so low sorts first ascending and last descending.
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        low_name,
+        high_name,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        high_name,
+        low_name,
+    ]
+
+
+def test_get_sessions_reverse_with_pagination(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Paged reverse listing returns newest-first across consecutive pages."""
+    test_workspace, test_peer = sample_data
+    reverse_group = f"paged-reverse-sessions-{generate_nanoid()}"
+    session_names = [f"paged-reverse-session-{i}-{generate_nanoid()}" for i in range(3)]
+
+    for session_name in session_names:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions",
+            json={
+                "id": session_name,
+                "peer_names": {test_peer.name: {}},
+                "metadata": {"reverse_group": reverse_group},
+            },
+        )
+        assert response.status_code in [200, 201]
+
+    page_one = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true&page=1&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_one.status_code == 200
+    page_two = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true&page=2&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_two.status_code == 200
+    page_three = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/list?reverse=true&page=3&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_three.status_code == 200
+
+    assert page_one.json()["total"] == 3
+    assert [item["id"] for item in page_one.json()["items"]] == [session_names[2]]
+    assert [item["id"] for item in page_two.json()["items"]] == [session_names[1]]
+    assert [item["id"] for item in page_three.json()["items"]] == [session_names[0]]
 
 
 def test_update_delete_metadata(
