@@ -26,11 +26,18 @@ POOL_CLASS = "default"
 POOL_PRE_PING = true
 POOL_SIZE = 10
 MAX_OVERFLOW = 20
-POOL_TIMEOUT = 30  # seconds
+POOL_TIMEOUT = 5  # seconds; must stay under CONNECTION_RETRY_MAX_DELAY_SECONDS
 POOL_RECYCLE = 300  # seconds
 POOL_USE_LIFO = true
 SQL_DEBUG = false
 TRACING = false
+# Bounded retry around connection checkout (used by background/tracked_db and
+# the lazy request session). For a pooled (non-null) POOL_CLASS, POOL_TIMEOUT
+# must be < CONNECTION_RETRY_MAX_DELAY_SECONDS or startup validation fails.
+CONNECTION_RETRY_ENABLED = true
+CONNECTION_RETRY_MAX_DELAY_SECONDS = 10.0
+CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS = 0.1
+CONNECTION_RETRY_BACKOFF_MAX_SECONDS = 2.0
 
 # Authentication settings
 [auth]
@@ -81,6 +88,13 @@ model = "text-embedding-3-small"
 ENABLED = true
 WORKERS = 1
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
+# Adaptive polling: when idle/erroring, the sleep interval grows from
+# POLLING_SLEEP_INTERVAL_SECONDS toward POLLING_SLEEP_MAX_INTERVAL_SECONDS by
+# POLLING_BACKOFF_MULTIPLIER each cycle, then snaps back to base when work is
+# found. Cuts steady-state query load against the shared DB/pooler.
+POLLING_BACKOFF_ENABLED = true
+POLLING_SLEEP_MAX_INTERVAL_SECONDS = 30.0
+POLLING_BACKOFF_MULTIPLIER = 2.0
 STALE_SESSION_TIMEOUT_MINUTES = 5
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
 DEDUPLICATE = true
