@@ -469,12 +469,9 @@ DB_POOL_TIMEOUT=5
 DB_POOL_RECYCLE=300
 DB_POOL_USE_LIFO=true
 DB_SQL_DEBUG=false
-# Bounded retry around connection checkout. For a pooled (non-null) DB_POOL_CLASS,
-# DB_POOL_TIMEOUT must be < DB_CONNECTION_RETRY_MAX_DELAY_SECONDS or startup fails.
-DB_CONNECTION_RETRY_ENABLED=true
-DB_CONNECTION_RETRY_MAX_DELAY_SECONDS=10.0
-DB_CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS=0.1
-DB_CONNECTION_RETRY_BACKOFF_MAX_SECONDS=2.0
+# Per-connection establish timeout (seconds) so a single connection attempt
+# fails fast instead of hanging when the server/pooler is unreachable.
+DB_CONNECT_TIMEOUT_SECONDS=2
 ```
 
 ### Authentication

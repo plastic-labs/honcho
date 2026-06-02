@@ -26,18 +26,14 @@ POOL_CLASS = "default"
 POOL_PRE_PING = true
 POOL_SIZE = 10
 MAX_OVERFLOW = 20
-POOL_TIMEOUT = 5  # seconds; must stay under CONNECTION_RETRY_MAX_DELAY_SECONDS
+POOL_TIMEOUT = 5  # seconds a pooled checkout waits for a free connection (QueuePool only)
 POOL_RECYCLE = 300  # seconds
 POOL_USE_LIFO = true
 SQL_DEBUG = false
 TRACING = false
-# Bounded retry around connection checkout (used by background/tracked_db and
-# the lazy request session). For a pooled (non-null) POOL_CLASS, POOL_TIMEOUT
-# must be < CONNECTION_RETRY_MAX_DELAY_SECONDS or startup validation fails.
-CONNECTION_RETRY_ENABLED = true
-CONNECTION_RETRY_MAX_DELAY_SECONDS = 10.0
-CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS = 0.1
-CONNECTION_RETRY_BACKOFF_MAX_SECONDS = 2.0
+# Per-connection establish timeout (seconds) so a single connection attempt
+# fails fast instead of hanging when the server/pooler is unreachable.
+CONNECT_TIMEOUT_SECONDS = 2
 
 # Authentication settings
 [auth]

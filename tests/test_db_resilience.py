@@ -1,248 +1,96 @@
 """Unit tests for DB connection resilience + observability.
 
-These are DB-free: they exercise the retry helper against a fake session, the
-deriver polling backoff math, and the in-flight gauge listeners directly.
+These are DB-free: they exercise the application_name checkout hook against a
+fake DBAPI connection, the deriver polling backoff math, and the in-flight gauge
+listeners directly.
 """
 
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import src.db as db_module
 from src.config import settings
-from src.db import DBQueryInflightTracker, acquire_connection_with_retry
-from src.telemetry.prometheus.metrics import (
-    db_connection_acquisitions_counter,
-    db_queries_in_flight_gauge,
-)
+from src.db import DBQueryInflightTracker
+from src.telemetry.prometheus.metrics import db_queries_in_flight_gauge
 
 
-def _make_operational_error() -> OperationalError:
-    """A stand-in for how a saturated pooler surfaces ('too many clients')."""
-    return OperationalError("SELECT 1", {}, Exception("too many clients"))
+def test_session_local_uses_vanilla_async_session() -> None:
+    """Regression guard: no custom session subclass / acquisition logic.
 
-
-class _FlakyConnSession:
-    """Fake AsyncSession whose connection() fails N times then succeeds."""
-
-    def __init__(self, fail_times: int, *, always_fail: bool = False) -> None:
-        self.fail_times: int = fail_times
-        self.always_fail: bool = always_fail
-        self.calls: int = 0
-        self.rollback_calls: int = 0
-
-    async def connection(self) -> None:
-        self.calls += 1
-        if self.always_fail or self.calls <= self.fail_times:
-            raise _make_operational_error()
-
-    async def rollback(self) -> None:
-        self.rollback_calls += 1
-
-
-def _acq_count(outcome: str) -> float:
-    child = db_connection_acquisitions_counter.labels(
-        instance_type="api", outcome=outcome
-    )
-    return float(child._value.get())  # pyright: ignore[reportPrivateUsage, reportUnknownArgumentType]
-
-
-@pytest.fixture
-def metrics_on(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(settings.METRICS, "ENABLED", True)
-    monkeypatch.setattr(settings.METRICS, "NAMESPACE", "test")
-    monkeypatch.setattr(db_module, "_db_instance_type", "api")
-    # Fast, deterministic backoff so retry tests don't sleep.
-    monkeypatch.setattr(settings.DB, "CONNECTION_RETRY_ENABLED", True)
-    monkeypatch.setattr(settings.DB, "CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS", 0.001)
-    monkeypatch.setattr(settings.DB, "CONNECTION_RETRY_BACKOFF_MAX_SECONDS", 0.01)
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("metrics_on")
-async def test_acquire_succeeds_first_try_records_ok() -> None:
-    before = _acq_count("ok")
-    session = _FlakyConnSession(fail_times=0)
-    await acquire_connection_with_retry(session, "request:test")  # pyright: ignore[reportArgumentType]
-    assert session.calls == 1
-    assert _acq_count("ok") == before + 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("metrics_on")
-async def test_acquire_retries_then_succeeds_records_retried() -> None:
-    before = _acq_count("retried")
-    session = _FlakyConnSession(fail_times=2)
-    await acquire_connection_with_retry(session, "request:test")  # pyright: ignore[reportArgumentType]
-    assert session.calls == 3  # two failures then success
-    # Session is reset after each failed checkout before the next attempt.
-    assert session.rollback_calls == 2
-    assert _acq_count("retried") == before + 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.usefixtures("metrics_on")
-async def test_acquire_exhausts_budget_reraises_and_records(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Tiny budget so the loop gives up quickly under sustained failure.
-    monkeypatch.setattr(settings.DB, "CONNECTION_RETRY_MAX_DELAY_SECONDS", 0.05)
-    before = _acq_count("exhausted")
-    session = _FlakyConnSession(fail_times=0, always_fail=True)
-    with pytest.raises(OperationalError):
-        await acquire_connection_with_retry(session, "request:test")  # pyright: ignore[reportArgumentType]
-    assert session.calls >= 1
-    assert _acq_count("exhausted") == before + 1
-
-
-@pytest.mark.asyncio
-async def test_acquire_disabled_calls_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings.DB, "CONNECTION_RETRY_ENABLED", False)
-    session = _FlakyConnSession(fail_times=0)
-    await acquire_connection_with_retry(session, "request:test")  # pyright: ignore[reportArgumentType]
-    assert session.calls == 1
-
-
-# --- HonchoAsyncSession: lazy checkout with retry on first DB use ------------
-
-
-@pytest.mark.asyncio
-async def test_session_lazy_acquires_on_first_db_use(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No checkout at construction; acquisition (with retry) happens once on the
-    first execute, and the statement itself runs exactly once."""
-    monkeypatch.setattr(settings.DB, "TRACING", False)
-    acquired: list[str] = []
-    executed: list[Any] = []
-
-    async def fake_acquire(_session: Any, context: str) -> None:
-        acquired.append(context)
-
-    async def fake_super_execute(_self: Any, *args: Any, **_kw: Any) -> str:
-        executed.append(args[0] if args else None)
-        return "result"
-
-    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
-    monkeypatch.setattr(AsyncSession, "execute", fake_super_execute)
-
+    Connection acquisition is a single lazy checkout owned by AsyncSession; there
+    must be no re-introduced eager-checkout or retry hooks on the session.
+    """
     session = db_module.SessionLocal()
-    assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
-    assert acquired == []  # constructing the session does NOT check out
-
-    result = await session.execute("SELECT 1")
-    assert result == "result"
-    assert acquired == ["unknown"]  # acquired exactly once, on first use
-    assert session._honcho_acquired is True  # pyright: ignore[reportPrivateUsage]
-    assert executed == ["SELECT 1"]  # statement ran once (not retried)
-
-    await session.execute("SELECT 2")
-    assert acquired == ["unknown"]  # still once — no re-acquire on later use
+    assert type(session) is AsyncSession
+    assert not hasattr(session, "_ensure_acquired")
+    assert not hasattr(session, "_honcho_acquired")
 
 
-@pytest.mark.asyncio
-async def test_session_tracing_sets_application_name_on_acquire(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(settings.DB, "TRACING", True)
-    calls: list[tuple[Any, ...]] = []
+# --- application_name checkout hook ------------------------------------------
 
-    async def fake_acquire(_session: Any, _context: str) -> None:
-        return None
 
-    async def fake_super_execute(_self: Any, *args: Any, **_kw: Any) -> None:
-        calls.append(args)
+class _FakeCursor:
+    def __init__(self, recorder: list[Any], raise_exc: Exception | None) -> None:
+        self.recorder: list[Any] = recorder
+        self.raise_exc: Exception | None = raise_exc
+        self.closed: bool = False
 
-    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
-    monkeypatch.setattr(AsyncSession, "execute", fake_super_execute)
+    def execute(self, sql: str, params: Any = None) -> None:
+        if self.raise_exc is not None:
+            raise self.raise_exc
+        self.recorder.append((sql, params))
 
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeDBAPIConn:
+    def __init__(self, recorder: list[Any], raise_exc: Exception | None = None) -> None:
+        self._cursor: _FakeCursor = _FakeCursor(recorder, raise_exc)
+
+    def cursor(self) -> _FakeCursor:
+        return self._cursor
+
+
+def test_checkout_hook_sets_application_name_from_request_context() -> None:
+    recorder: list[Any] = []
+    conn = _FakeDBAPIConn(recorder)
     token = db_module.request_context.set("request:trace-ctx")
     try:
-        session = db_module.SessionLocal()
-        await session.execute("SELECT 1")
+        db_module._set_application_name_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
     finally:
         db_module.request_context.reset(token)
 
-    # First super().execute is the set_config, then the real statement.
-    assert any("set_config" in str(c[0]) for c in calls)
-    set_config_call = next(c for c in calls if "set_config" in str(c[0]))
-    assert set_config_call[1] == {"name": "request:trace-ctx"}
+    assert len(recorder) == 1
+    sql, params = recorder[0]
+    assert "set_config" in sql and "application_name" in sql
+    assert params == ("request:trace-ctx",)
+    assert conn._cursor.closed is True  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.asyncio
-async def test_session_lifecycle_methods_reset_acquired_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_acquire(_session: Any, _context: str) -> None:
-        return None
+def test_checkout_hook_defaults_to_unknown_without_context() -> None:
+    recorder: list[Any] = []
+    conn = _FakeDBAPIConn(recorder)
+    token = db_module.request_context.set(None)
+    try:
+        db_module._set_application_name_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        db_module.request_context.reset(token)
 
-    async def noop(_self: Any) -> None:
-        return None
-
-    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
-    for method in ("commit", "rollback", "close", "reset"):
-        monkeypatch.setattr(AsyncSession, method, noop)
-
-    session = db_module.SessionLocal()
-    await session.commit()  # ensures acquired, commits, then resets
-    assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
-
-    # rollback/close/reset must each clear the flag so a reused session
-    # re-acquires (and re-wraps retry) on its next DB use.
-    for method in ("rollback", "close", "reset"):
-        session._honcho_acquired = True  # pyright: ignore[reportPrivateUsage]
-        await getattr(session, method)()
-        assert session._honcho_acquired is False  # pyright: ignore[reportPrivateUsage]
+    assert recorder[0][1] == ("unknown",)
 
 
-@pytest.mark.asyncio
-async def test_session_get_and_delete_also_acquire(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The lazy-acquire guarantee covers get/delete, not just execute."""
-    monkeypatch.setattr(settings.DB, "TRACING", False)
-    acquired: list[str] = []
-
-    async def fake_acquire(_session: Any, context: str) -> None:
-        acquired.append(context)
-
-    async def fake_get(_self: Any, *_a: Any, **_k: Any) -> str:
-        return "row"
-
-    async def fake_delete(_self: Any, *_a: Any, **_k: Any) -> None:
-        return None
-
-    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
-    monkeypatch.setattr(AsyncSession, "get", fake_get)
-    monkeypatch.setattr(AsyncSession, "delete", fake_delete)
-
-    session = db_module.SessionLocal()
-    await session.get(object, 1)
-    await session.delete(object())
-    assert acquired == ["unknown"]  # acquired once on the first DB-touching call
+def test_checkout_hook_swallows_errors() -> None:
+    """A failure tagging the connection must never break the checkout."""
+    conn = _FakeDBAPIConn([], raise_exc=RuntimeError("boom"))
+    # Must not raise.
+    db_module._set_application_name_on_checkout(conn, None, None)  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.asyncio
-async def test_get_db_does_not_acquire_at_dependency_entry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from src.dependencies import get_db as real_get_db
-
-    acquired: list[str] = []
-
-    async def fake_acquire(_session: Any, context: str) -> None:
-        acquired.append(context)
-
-    monkeypatch.setattr(db_module, "acquire_connection_with_retry", fake_acquire)
-
-    dep_gen = real_get_db()
-    await anext(dep_gen)
-    assert acquired == []  # yielding the session must not check out
-    await dep_gen.aclose()
-    assert acquired == []  # finally rollback/close must not check out either
+# --- deriver polling backoff math --------------------------------------------
 
 
 def test_polling_backoff_sequence_and_reset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -250,6 +98,9 @@ def test_polling_backoff_sequence_and_reset(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
     monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_MULTIPLIER", 2.0)
     monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_MAX_INTERVAL_SECONDS", 30.0)
+    # Disable jitter so the schedule is asserted exactly (jitter is tested
+    # separately in tests/deriver/test_queue_processing.py::TestPollingJitter).
+    monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
 
     from src.deriver.queue_manager import QueueManager
 
@@ -266,34 +117,12 @@ def test_polling_backoff_disabled_stays_constant(
 ) -> None:
     monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_ENABLED", False)
     monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
 
     from src.deriver.queue_manager import QueueManager
 
     qm = QueueManager()
     assert [qm._advance_poll_interval() for _ in range(3)] == [1.0, 1.0, 1.0]  # pyright: ignore[reportPrivateUsage]
-
-
-def test_pool_timeout_must_be_under_retry_budget() -> None:
-    """A pooled QueuePool checkout that can block past the retry budget is a
-    contradiction (no retry ever happens) and must fail config validation."""
-    from src.config import DBSettings
-
-    # Contradiction: pooled + retry on, but POOL_TIMEOUT >= budget.
-    with pytest.raises(ValueError, match="DB_POOL_TIMEOUT"):
-        DBSettings(
-            POOL_CLASS="default",
-            POOL_TIMEOUT=30,
-            CONNECTION_RETRY_ENABLED=True,
-            CONNECTION_RETRY_MAX_DELAY_SECONDS=10.0,
-        )
-
-    # NullPool has no queue wait, so POOL_TIMEOUT is irrelevant -> allowed.
-    DBSettings(
-        POOL_CLASS="null",
-        POOL_TIMEOUT=30,
-        CONNECTION_RETRY_ENABLED=True,
-        CONNECTION_RETRY_MAX_DELAY_SECONDS=10.0,
-    )
 
 
 @pytest.mark.asyncio
@@ -306,6 +135,7 @@ async def test_polling_loop_idle_sleeps_once_per_cycle(
     monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
     monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_MULTIPLIER", 2.0)
     monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_MAX_INTERVAL_SECONDS", 8.0)
+    monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
 
     import asyncio
 

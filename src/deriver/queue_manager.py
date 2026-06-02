@@ -1,4 +1,6 @@
 import asyncio
+import contextlib
+import random
 import signal
 from asyncio import Task
 from collections.abc import Sequence
@@ -205,6 +207,7 @@ class QueueManager:
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
         try:
+            await self._sleep_startup_jitter()
             await self.polling_loop()
         finally:
             await self.cleanup()
@@ -391,6 +394,35 @@ class QueueManager:
         """Snap the polling interval back to the base after finding work."""
         self._current_poll_interval = settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
 
+    def _jitter(self, seconds: float) -> float:
+        """Scatter a sleep by +/- POLLING_JITTER_RATIO to avoid lockstep polling.
+
+        Returns a uniform-random value in [(1-ratio)*seconds, (1+ratio)*seconds].
+        Only the returned sleep is scattered; the underlying backoff schedule is
+        left unchanged. A ratio of 0.0 returns ``seconds`` unchanged.
+        """
+        ratio = settings.DERIVER.POLLING_JITTER_RATIO
+        if ratio <= 0.0:
+            return seconds
+        # Scheduling jitter, not security/crypto — stdlib random is appropriate.
+        return seconds * random.uniform(1.0 - ratio, 1.0 + ratio)  # nosec B311
+
+    async def _sleep_startup_jitter(self) -> None:
+        """Sleep a random delay before the first poll so instances that start
+        together don't poll in lockstep. Interruptible by shutdown so a signal
+        during the delay exits promptly. No-op when the window is 0.0.
+        """
+        window = settings.DERIVER.POLLING_STARTUP_JITTER_SECONDS
+        if window <= 0.0:
+            return
+        # Scheduling jitter, not security/crypto — stdlib random is appropriate.
+        delay = random.uniform(0.0, window)  # nosec B311
+        logger.debug(f"Startup poll jitter: sleeping {delay:.1f}s before first poll")
+        # Timeout (slept the full delay without a shutdown) is the normal path;
+        # an early return means shutdown fired and polling_loop will exit at once.
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(self.shutdown_event.wait(), timeout=delay)
+
     def _advance_poll_interval(self) -> float:
         """Return the current idle/backoff sleep, then grow it toward the cap."""
         interval = self._current_poll_interval
@@ -400,7 +432,7 @@ class QueueManager:
                 * settings.DERIVER.POLLING_BACKOFF_MULTIPLIER,
                 settings.DERIVER.POLLING_SLEEP_MAX_INTERVAL_SECONDS,
             )
-        return interval
+        return self._jitter(interval)
 
     async def polling_loop(self) -> None:
         """Main polling loop to find and process new work units"""
@@ -419,7 +451,9 @@ class QueueManager:
                 # when capacity frees rather than backing off.
                 if self.semaphore.locked():
                     # logger.debug("All workers busy, waiting")
-                    await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
+                    await asyncio.sleep(
+                        self._jitter(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
+                    )
                     continue
 
                 try:
