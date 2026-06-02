@@ -18,9 +18,10 @@ def create_tree(tree_type: str, **kwargs: Any) -> SurprisalTree:
     """
     Factory function to create different tree types.
 
-    Only forwards keyword arguments that each tree constructor accepts.
-    This prevents ``TypeError`` when ``k=`` (passed by ``_build_tree``) is
-    forwarded to tree types that do not use a k-NN parameter.
+    Strips the ``k`` parameter before passing kwargs to tree types that
+    do not use a k-NN parameter (RPTree, CoverTree, LSHSurprisal,
+    PrototypeSurprisal). All other keyword arguments are forwarded
+    unchanged.
 
     Args:
         tree_type: Type of tree to create ('rptree', 'kdtree', 'balltree',
