@@ -18,6 +18,10 @@ def create_tree(tree_type: str, **kwargs: Any) -> SurprisalTree:
     """
     Factory function to create different tree types.
 
+    Only forwards keyword arguments that each tree constructor accepts.
+    This prevents ``TypeError`` when ``k=`` (passed by ``_build_tree``) is
+    forwarded to tree types that do not use a k-NN parameter.
+
     Args:
         tree_type: Type of tree to create ('rptree', 'kdtree', 'balltree',
                    'covertree', 'lsh', 'graph', 'prototype')
@@ -30,18 +34,22 @@ def create_tree(tree_type: str, **kwargs: Any) -> SurprisalTree:
         ValueError: If tree_type is not recognized
     """
     if tree_type == "rptree":
+        kwargs.pop("k", None)
         return RPTree(**kwargs)
     elif tree_type == "kdtree":
         return SklearnTreeWrapper(tree_type="kd", **kwargs)
     elif tree_type == "balltree":
         return SklearnTreeWrapper(tree_type="ball", **kwargs)
     elif tree_type == "covertree":
+        kwargs.pop("k", None)
         return CoverTree(**kwargs)
     elif tree_type == "lsh":
+        kwargs.pop("k", None)
         return LSHSurprisal(**kwargs)
     elif tree_type == "graph":
         return GraphSurprisal(**kwargs)
     elif tree_type == "prototype":
+        kwargs.pop("k", None)
         return PrototypeSurprisal(**kwargs)
     else:
         raise ValueError(f"Unknown tree type: {tree_type}")
