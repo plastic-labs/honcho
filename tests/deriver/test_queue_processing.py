@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
@@ -1583,3 +1584,62 @@ class TestQueueProcessing:
         claimed = await qm.get_and_claim_work_units()
         assert work_unit_key is not None
         assert work_unit_key in claimed
+
+
+class TestPollingJitter:
+    """Polling jitter: desynchronize poll loops without changing the schedule."""
+
+    def test_jitter_stays_within_ratio_bounds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.5)
+        qm = QueueManager()
+        samples = [qm._jitter(10.0) for _ in range(1000)]  # pyright: ignore[reportPrivateUsage]
+        assert all(5.0 <= s <= 15.0 for s in samples)
+        # A 0.5 ratio over 1000 samples should produce real spread, not a constant.
+        assert max(samples) - min(samples) > 1.0
+
+    def test_jitter_ratio_zero_is_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
+        qm = QueueManager()
+        assert all(qm._jitter(7.5) == 7.5 for _ in range(50))  # pyright: ignore[reportPrivateUsage]
+
+    def test_advance_jitters_return_but_keeps_deterministic_schedule(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.5)
+        monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_ENABLED", True)
+        monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_MULTIPLIER", 2.0)
+        monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
+        monkeypatch.setattr(
+            settings.DERIVER, "POLLING_SLEEP_MAX_INTERVAL_SECONDS", 30.0
+        )
+        qm = QueueManager()
+
+        # The underlying schedule advances 1 -> 2 -> 4 -> ... -> 30 deterministically;
+        # each returned sleep is jittered within [0.5x, 1.5x] of the pre-advance step.
+        expected_schedule = [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
+        for step in expected_schedule:
+            returned = qm._advance_poll_interval()  # pyright: ignore[reportPrivateUsage]
+            assert 0.5 * step <= returned <= 1.5 * step
+
+    @pytest.mark.asyncio
+    async def test_startup_jitter_disabled_returns_immediately(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_STARTUP_JITTER_SECONDS", 0.0)
+        qm = QueueManager()
+        # Window 0.0 must not sleep at all.
+        await qm._sleep_startup_jitter()  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
+    async def test_startup_jitter_interrupted_by_shutdown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_STARTUP_JITTER_SECONDS", 300.0)
+        qm = QueueManager()
+        qm.shutdown_event.set()
+        # A shutdown already signalled must short-circuit the (long) jitter sleep.
+        await asyncio.wait_for(qm._sleep_startup_jitter(), timeout=1.0)  # pyright: ignore[reportPrivateUsage]

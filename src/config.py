@@ -613,8 +613,8 @@ class DBSettings(HonchoSettings):
     POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
     MAX_OVERFLOW: Annotated[int, Field(default=20, ge=0, le=1000)] = 20
     POOL_TIMEOUT: Annotated[int, Field(default=5, gt=0, le=300)] = (
-        5  # seconds; kept under CONNECTION_RETRY_MAX_DELAY_SECONDS so a pool
-        # checkout fails fast enough to allow a retry within the budget
+        5  # seconds a pooled checkout may wait for a free connection (QueuePool
+        # only; NullPool has no local queue wait)
     )
     POOL_RECYCLE: Annotated[int, Field(default=300, gt=0, le=7200)] = (
         300  # seconds (max 2 hours)
@@ -623,47 +623,12 @@ class DBSettings(HonchoSettings):
     SQL_DEBUG: bool = False
     TRACING: bool = False
 
-    # Bounded exponential-backoff retry around connection acquisition. Applied
-    # lazily on the first DB use of any session (HonchoAsyncSession) — both the
-    # request path and background/tracked_db scopes — without forcing an eager
-    # checkout. Guards against transient transaction-pooler saturation (e.g.
-    # Supavisor rejecting with "too many clients") by retrying the checkout
-    # instead of failing immediately. CONNECTION_RETRY_MAX_DELAY_SECONDS is the
-    # TOTAL retry
-    # budget; with a real QueuePool, a single checkout can block up to
-    # POOL_TIMEOUT, so POOL_TIMEOUT must stay below the budget for a retry to be
-    # possible (enforced below). With NullPool (the transaction-pooler setup)
-    # there is no local queue wait, so saturation is a fast OperationalError and
-    # POOL_TIMEOUT does not apply.
-    CONNECTION_RETRY_ENABLED: bool = True
-    CONNECTION_RETRY_MAX_DELAY_SECONDS: Annotated[
-        float, Field(default=10.0, gt=0.0, le=120.0)
-    ] = 10.0
-    CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS: Annotated[
-        float, Field(default=0.1, gt=0.0, le=10.0)
-    ] = 0.1
-    CONNECTION_RETRY_BACKOFF_MAX_SECONDS: Annotated[
-        float, Field(default=2.0, gt=0.0, le=30.0)
-    ] = 2.0
-
-    @model_validator(mode="after")
-    def _validate_retry_budget_vs_pool_timeout(self) -> "DBSettings":
-        # Only meaningful for a real local pool: NullPool has no queue wait, so
-        # POOL_TIMEOUT is unused there. For a QueuePool, a checkout can block up
-        # to POOL_TIMEOUT, so it must be < the total retry budget or the first
-        # attempt consumes the whole budget and no retry ever happens.
-        if (
-            self.POOL_CLASS != "null"
-            and self.CONNECTION_RETRY_ENABLED
-            and self.POOL_TIMEOUT >= self.CONNECTION_RETRY_MAX_DELAY_SECONDS
-        ):
-            raise ValueError(
-                f"DB_POOL_TIMEOUT ({self.POOL_TIMEOUT}s) must be less than "
-                + "DB_CONNECTION_RETRY_MAX_DELAY_SECONDS "
-                + f"({self.CONNECTION_RETRY_MAX_DELAY_SECONDS}s) so a pooled checkout "
-                + "can fail fast enough to be retried within the budget."
-            )
-        return self
+    # Per-connection establish timeout (seconds) passed to the driver, so a
+    # single connection attempt fails fast instead of hanging when the server or
+    # pooler is unreachable or stalled. Connection acquisition is a single
+    # attempt with no retry; callers handle failure (the API surfaces it, the
+    # deriver backs off and retries on a later poll).
+    CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
 
 class AuthSettings(HonchoSettings):
@@ -792,6 +757,17 @@ class DeriverSettings(HonchoSettings):
     POLLING_BACKOFF_MULTIPLIER: Annotated[
         float, Field(default=2.0, ge=1.0, le=10.0)
     ] = 2.0
+    # Sleep a uniform-random delay in [0, POLLING_STARTUP_JITTER_SECONDS] before
+    # the first poll so instances that start together don't poll in lockstep.
+    # Set to 0.0 to disable.
+    POLLING_STARTUP_JITTER_SECONDS: Annotated[
+        float, Field(default=30.0, ge=0.0, le=300.0)
+    ] = 30.0
+    # Multiply every poll sleep by a random factor in [1 - ratio, 1 + ratio]
+    # (0.5 -> [0.5x, 1.5x]) so poll loops don't re-converge over time. The
+    # backoff schedule is unchanged; only the returned sleep is scattered. Set
+    # to 0.0 to disable.
+    POLLING_JITTER_RATIO: Annotated[float, Field(default=0.5, ge=0.0, le=1.0)] = 0.5
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
     # Retention window (seconds) for keeping errored items in the queue

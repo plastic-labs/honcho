@@ -2,10 +2,7 @@ import contextvars
 import logging
 from typing import Any
 
-import sentry_sdk
 from sqlalchemy import MetaData, event, text
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -13,22 +10,18 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool, QueuePool
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_delay,
-    wait_exponential_jitter,
-)
 
 from src.config import settings
-from src.telemetry.prometheus.metrics import (
-    db_queries_in_flight_gauge,
-    prometheus_metrics,
-)
+from src.telemetry.prometheus.metrics import db_queries_in_flight_gauge
 
 logger = logging.getLogger(__name__)
 
-connect_args = {"prepare_threshold": None}
+connect_args = {
+    "prepare_threshold": None,
+    # Bound a single connection attempt so it fails fast instead of hanging when
+    # the server/pooler is unreachable or stalled (psycopg, seconds).
+    "connect_timeout": settings.DB.CONNECT_TIMEOUT_SECONDS,
+}
 
 # Context variable to store request context
 request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -59,25 +52,46 @@ engine = create_async_engine(
     **engine_kwargs,
 )
 
-# NOTE: SessionLocal is defined further down, after HonchoAsyncSession (its
-# session class) and acquire_connection_with_retry (which that class calls).
+# A vanilla AsyncSession is lazy: it checks out a pooled connection on the first
+# DB-touching call (not at construction) and couples the checkout to the
+# statement, so a handler doing non-DB work (embedding/file/LLM) before its
+# first query does not pin a connection across it. Connection acquisition is a
+# single attempt with no retry — callers handle a saturated/unreachable DB (the
+# API surfaces the error; the deriver backs off and retries on a later poll).
+SessionLocal = async_sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=engine,
+    class_=AsyncSession,
+)
 
-# Errors worth retrying when acquiring a pooled connection: SQLAlchemy's local
-# pool-checkout timeout, and OperationalError (how a saturated transaction
-# pooler surfaces "too many clients" / connection refusals).
-RETRYABLE_DB_CONNECTION_ERRORS = (SQLAlchemyTimeoutError, OperationalError)
 
-# Identifies this process ("api" | "deriver") on DB metrics. Set once at startup
-# by register_db_query_instrumentation; stays "unknown" if metrics are disabled.
-_db_instance_type: str = "unknown"
+def _set_application_name_on_checkout(
+    dbapi_connection: Any, _connection_record: Any, _connection_proxy: Any
+) -> None:
+    """Tag each checked-out connection with the current request context.
+
+    Registered only when ``DB.TRACING`` is on. Fires on every pool checkout (so a
+    reused pooled connection is re-tagged for the new caller), reading the
+    per-task ``request_context`` the request/task scope has already set.
+    Best-effort: a failure here must never break the checkout.
+    """
+    context = request_context.get() or "unknown"
+    try:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(
+                "SELECT set_config('application_name', %s, false)", (context,)
+            )
+        finally:
+            cursor.close()
+    except Exception:
+        logger.debug("setting application_name on checkout failed", exc_info=True)
 
 
-def _record_acquisition_outcome(outcome: str) -> None:
-    """Record a connection-acquisition outcome (no-op when metrics disabled)."""
-    if settings.METRICS.ENABLED:
-        prometheus_metrics.record_db_connection_acquisition(
-            instance_type=_db_instance_type, outcome=outcome
-        )
+if settings.DB.TRACING:
+    event.listen(engine.sync_engine, "checkout", _set_application_name_on_checkout)
 
 
 def get_pool_stats() -> dict[str, int]:
@@ -105,184 +119,6 @@ def get_pool_stats() -> dict[str, int]:
         }
     except Exception:
         return zeros
-
-
-async def acquire_connection_with_retry(db: AsyncSession, context: str) -> None:
-    """Force pool checkout (which ``SessionLocal()`` defers) with bounded backoff.
-
-    ``SessionLocal()`` is lazy: the pool checkout — and any pooler rejection —
-    happens on the first query. We force it here inside a retry block so that
-    transient saturation of the transaction pooler is retried with exponential
-    backoff rather than surfacing as an immediate error. The checkout is wrapped
-    in a Sentry span so wait time is visible in traces; on budget exhaustion the
-    original error is reraised after capturing live pool stats to Sentry.
-
-    Each attempt rolls the session back on a retryable failure before retrying:
-    a failed checkout can leave the autobegun transaction in a pending-rollback
-    state, which would make the next ``db.connection()`` raise instead of
-    re-checking-out cleanly. The rollback is pure Python-side state cleanup when
-    no connection was bound, so it is cheap and safe.
-    """
-    with sentry_sdk.start_span(op="db.pool.acquire", name=context):
-        if not settings.DB.CONNECTION_RETRY_ENABLED:
-            await db.connection()
-            return
-        attempts = 0
-        try:
-            async for attempt in AsyncRetrying(
-                wait=wait_exponential_jitter(
-                    initial=settings.DB.CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS,
-                    max=settings.DB.CONNECTION_RETRY_BACKOFF_MAX_SECONDS,
-                ),
-                stop=stop_after_delay(settings.DB.CONNECTION_RETRY_MAX_DELAY_SECONDS),
-                retry=retry_if_exception_type(RETRYABLE_DB_CONNECTION_ERRORS),
-                reraise=True,
-            ):
-                with attempt:
-                    attempts += 1
-                    try:
-                        await db.connection()
-                    except RETRYABLE_DB_CONNECTION_ERRORS:
-                        # Reset session state so the next attempt starts clean.
-                        try:
-                            await db.rollback()
-                        except Exception:
-                            logger.debug(
-                                "rollback after failed checkout failed",
-                                exc_info=True,
-                            )
-                        raise
-        except RETRYABLE_DB_CONNECTION_ERRORS as e:
-            _record_acquisition_outcome("exhausted")
-            if settings.SENTRY.ENABLED:
-                sentry_sdk.set_context("db_pool", get_pool_stats())
-                sentry_sdk.capture_exception(e)
-            raise
-        # "ok" on first try, "retried" if backoff was needed before success.
-        _record_acquisition_outcome("ok" if attempts <= 1 else "retried")
-
-
-class HonchoAsyncSession(AsyncSession):
-    """AsyncSession that lazily checks out its connection, with retry.
-
-    The pool checkout — and any pooler-rejection retry via
-    ``acquire_connection_with_retry`` — happens on the FIRST DB-touching call,
-    not at construction. So a request handler that does non-DB work (embedding,
-    file processing, an LLM call) before its first query does NOT pin a
-    connection across that work, while still getting checkout retry on the
-    request path.
-
-    Only the checkout is retried; the SQL statement itself runs exactly once
-    (we never retry ``super().execute`` after a broad OperationalError), so
-    writes are never duplicated. The context for tracing is read from the
-    ``request_context`` ContextVar, which the request/task scope has already set.
-    """
-
-    # Class-level default; per-instance assignment shadows it (the subclass has
-    # a __dict__ even though AsyncSession declares __slots__).
-    _honcho_acquired: bool = False
-
-    async def _ensure_acquired(self) -> None:
-        if self._honcho_acquired:
-            return
-        context = request_context.get() or "unknown"
-        await acquire_connection_with_retry(self, context)
-        self._honcho_acquired = True
-        if settings.DB.TRACING:
-            # Forced checkout already happened above; this rides the same
-            # connection. super() to avoid re-entering _ensure_acquired.
-            await super().execute(
-                text("SELECT set_config('application_name', :name, false)"),
-                {"name": context},
-            )
-
-    # The overrides below are thin: ensure the connection is checked out (once,
-    # with retry) before delegating to AsyncSession. They cover every public
-    # DB-touching async method so the "lazy retry on first DB use" guarantee has
-    # no holes. Signatures are widened to *args/**kwargs because we only forward;
-    # call sites are typed against the AsyncSession base, so this does not weaken
-    # type-checking elsewhere. (connection() is intentionally NOT wrapped —
-    # acquire_connection_with_retry calls it, so wrapping would recurse.)
-    async def execute(self, *args: Any, **kwargs: Any) -> Any:
-        await self._ensure_acquired()
-        return await super().execute(*args, **kwargs)
-
-    async def scalar(self, *args: Any, **kwargs: Any) -> Any:
-        await self._ensure_acquired()
-        return await super().scalar(*args, **kwargs)
-
-    async def scalars(self, *args: Any, **kwargs: Any) -> Any:
-        await self._ensure_acquired()
-        return await super().scalars(*args, **kwargs)
-
-    async def get(self, *args: Any, **kwargs: Any) -> Any:
-        await self._ensure_acquired()
-        return await super().get(*args, **kwargs)
-
-    async def get_one(self, *args: Any, **kwargs: Any) -> Any:
-        await self._ensure_acquired()
-        return await super().get_one(*args, **kwargs)
-
-    async def stream(self, *args: Any, **kwargs: Any) -> Any:
-        await self._ensure_acquired()
-        return await super().stream(*args, **kwargs)
-
-    async def stream_scalars(self, *args: Any, **kwargs: Any) -> Any:
-        await self._ensure_acquired()
-        return await super().stream_scalars(*args, **kwargs)
-
-    async def flush(self, *args: Any, **kwargs: Any) -> None:
-        await self._ensure_acquired()
-        await super().flush(*args, **kwargs)
-
-    async def merge(self, *args: Any, **kwargs: Any) -> Any:
-        await self._ensure_acquired()
-        return await super().merge(*args, **kwargs)
-
-    async def refresh(self, *args: Any, **kwargs: Any) -> None:
-        await self._ensure_acquired()
-        await super().refresh(*args, **kwargs)
-
-    async def delete(self, *args: Any, **kwargs: Any) -> None:
-        await self._ensure_acquired()
-        await super().delete(*args, **kwargs)
-
-    async def commit(self) -> None:
-        # Ensures the add()->commit() path (autoflush on commit) also retries.
-        await self._ensure_acquired()
-        try:
-            await super().commit()
-        finally:
-            # Transaction ended; a later op must re-acquire (and re-wrap retry).
-            self._honcho_acquired = False
-
-    async def rollback(self) -> None:
-        try:
-            await super().rollback()
-        finally:
-            self._honcho_acquired = False
-
-    async def close(self) -> None:
-        try:
-            await super().close()
-        finally:
-            # The connection is released; a reused session must re-acquire.
-            self._honcho_acquired = False
-
-    async def reset(self) -> None:
-        try:
-            await super().reset()
-        finally:
-            self._honcho_acquired = False
-
-
-SessionLocal = async_sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    expire_on_commit=False,
-    bind=engine,
-    class_=HonchoAsyncSession,
-)
 
 
 class DBQueryInflightTracker:
@@ -340,8 +176,7 @@ def register_db_query_instrumentation(instance_type: str) -> None:
     re-run lifespan or test startup) won't attach duplicate listeners, which
     would double-count in-flight statements.
     """
-    global _db_instance_type, _inflight_tracker, _db_query_instrumentation_registered
-    _db_instance_type = instance_type
+    global _inflight_tracker, _db_query_instrumentation_registered
     if not settings.METRICS.ENABLED or _db_query_instrumentation_registered:
         return
     child = db_queries_in_flight_gauge.labels(instance_type=instance_type)

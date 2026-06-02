@@ -10,11 +10,10 @@ from src.db import SessionLocal, request_context
 async def get_db():
     """FastAPI Dependency Generator for Database.
 
-    The session is lazy: it does NOT check out a pooled connection here.
-    HonchoAsyncSession acquires it (with retry) on the first DB-touching call,
-    so a handler doing non-DB work (embedding/file/LLM) before its first query
-    does not pin a connection across it. Tracing's application_name and the
-    checkout retry both live in the session, keyed off request_context.
+    The session is lazy: it does NOT check out a pooled connection here. The
+    AsyncSession checks one out on the first DB-touching call, so a handler doing
+    non-DB work (embedding/file/LLM) before its first query does not pin a
+    connection across it.
     """
     db: AsyncSession = SessionLocal()
     try:

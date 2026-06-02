@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.9] - 2026-06-02
+
+### Changed
+
+- Connection acquisition is now a single attempt with no server-side retry, on a vanilla `AsyncSession`. A new `DB_CONNECT_TIMEOUT_SECONDS` (default 2s) bounds the attempt so a saturated or unreachable pooler fails fast instead of holding a client connection open to re-knock. A saturated DB now surfaces to the caller — the API returns an error and the deriver backs off and retries on a later poll — which lets the pooler drain rather than amplifying saturation.
+
+### Added
+
+- Deriver poll jitter so instances that start together don't poll in lockstep: `DERIVER_POLLING_STARTUP_JITTER_SECONDS` (random delay before the first poll, default 30s) and `DERIVER_POLLING_JITTER_RATIO` (±fraction applied to every poll sleep, default 0.5). Both disable at `0.0`; the underlying backoff schedule is unchanged.
+
+### Removed
+
+- Reverted the connection-checkout retry and `HonchoAsyncSession` custom session introduced in 3.0.8. Removed the `DB_CONNECTION_RETRY_ENABLED` / `DB_CONNECTION_RETRY_MAX_DELAY_SECONDS` / `DB_CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS` / `DB_CONNECTION_RETRY_BACKOFF_MAX_SECONDS` settings, the `db_connection_acquisitions{outcome=...}` Prometheus counter, and the `db.pool.acquire` Sentry span. Alerting built on `db_connection_acquisitions` should migrate to `db_pool_connections` / `db_queries_in_flight`.
+
 ## [3.0.8] - 2026-06-01
 
 ### Added

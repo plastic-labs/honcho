@@ -40,8 +40,8 @@ class FakeSession:
 async def test_get_db_yields_lazily_without_checkout_or_tracing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # get_db must NOT touch the connection or run set_config itself — those now
-    # happen lazily inside HonchoAsyncSession on first DB use, so a handler doing
+    # get_db must NOT touch the connection or run set_config itself — checkout
+    # happens lazily inside the AsyncSession on first DB use, so a handler doing
     # non-DB work before its first query never pins a connection.
     fake_db = FakeSession()
     monkeypatch.setattr(dependencies_module, "SessionLocal", lambda: fake_db)

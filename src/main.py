@@ -119,8 +119,7 @@ if SENTRY_ENABLED:
             FastApiIntegration(
                 transaction_style="endpoint",
             ),
-            # Explicit so DB-query spans (and our db.pool.acquire span) are not
-            # reliant on auto-enabling.
+            # Explicit so DB-query spans are not reliant on auto-enabling.
             SqlalchemyIntegration(),
         ],
         before_send=before_send,
