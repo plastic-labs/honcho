@@ -107,6 +107,14 @@ def verify_jwt(token: str) -> JWTParams:
             params.p = decoded["p"]
         if "s" in decoded:
             params.s = decoded["s"]
+        # Token-shape invariant: a peer- or session-scoped token MUST also
+        # carry its parent workspace. Without `w`, the route-level check
+        # cannot rule out cross-workspace use (a `{p: "alice"}` token would
+        # match `alice` in any workspace).
+        if (params.s is not None or params.p is not None) and params.w is None:
+            raise AuthenticationException(
+                "Invalid JWT scope: peer/session token missing workspace"
+            )
         return params
     except jwt.PyJWTError:
         raise AuthenticationException("Invalid JWT") from None
@@ -171,30 +179,40 @@ async def auth(
 
     jwt_params = verify_jwt(credentials.credentials)
 
-    # based on api operation, verify api key based on that key's permissions
+    # Authorize by the token's narrowest scope, not by the route's. A
+    # narrower-than-workspace token must NOT fall back to workspace access:
+    # `{w: ws, p: alice}` may only act on `alice`, never on a sibling peer.
     if jwt_params.ad:
         return jwt_params
     if admin:
         raise AuthenticationException("Resource requires admin privileges")
 
-    # For session level access
-    if session_name and jwt_params.s == session_name:
+    if not any([session_name, peer_name, workspace_name]):
+        # Self-authorizing routes decode the token here and compare the claims
+        # against body/path data inside the handler. This is needed for routes
+        # whose resource identifier is not available to require_auth().
+        return jwt_params
+
+    if jwt_params.s is not None:
+        if not session_name or jwt_params.s != session_name:
+            raise AuthenticationException("JWT not permissioned for this resource")
         if workspace_name and jwt_params.w != workspace_name:
             raise AuthenticationException("JWT not permissioned for this resource")
         return jwt_params
 
-    # For peer level access
-    if peer_name and jwt_params.p == peer_name:
+    if jwt_params.p is not None:
+        if not peer_name or jwt_params.p != peer_name:
+            raise AuthenticationException("JWT not permissioned for this resource")
         if workspace_name and jwt_params.w != workspace_name:
             raise AuthenticationException("JWT not permissioned for this resource")
         return jwt_params
 
-    # For workspace level access - can access all peers/sessions under this workspace
-    if workspace_name and jwt_params.w == workspace_name:
+    if jwt_params.w is not None:
+        # Workspace tokens reach any route inside their workspace. Routes
+        # without a declared workspace (e.g. POST /v3/workspaces) self-authorize
+        # by reading jwt_params.w themselves.
+        if workspace_name and jwt_params.w != workspace_name:
+            raise AuthenticationException("JWT not permissioned for this resource")
         return jwt_params
 
-    if any([session_name, peer_name, workspace_name]):
-        raise AuthenticationException("JWT not permissioned for this resource")
-
-    # Route did not specify any parameters, so it should parse parameters itself
-    return jwt_params
+    raise AuthenticationException("JWT not permissioned for this resource")
