@@ -21,6 +21,7 @@ from src.config import settings
 from src.dependencies import db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
+from src.reconciler.embed_now import embed_messages_now
 from src.security import require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import FileUploadedEvent, MessageCreatedEvent, emit
@@ -140,6 +141,13 @@ async def create_messages_for_session(
         # Enqueue all messages in one call
         background_tasks.add_task(enqueue, payloads)
 
+        # Embed immediately so messages are searchable within seconds; the
+        # reconciler is the fallback for anything left pending.
+        if settings.EMBED_MESSAGES and created_messages:
+            background_tasks.add_task(
+                embed_messages_now, [m.public_id for m in created_messages]
+            )
+
         return created_messages
     except ValueError as e:
         logger.warning(f"Failed to create messages for session {session_id}: {str(e)}")
@@ -206,6 +214,14 @@ async def create_messages_with_file(
     ]
 
     background_tasks.add_task(enqueue, payloads)
+
+    # Embed immediately so messages are searchable within seconds; the
+    # reconciler is the fallback for anything left pending.
+    if settings.EMBED_MESSAGES and created_messages:
+        background_tasks.add_task(
+            embed_messages_now, [m.public_id for m in created_messages]
+        )
+
     logger.debug(
         "Batch of %s messages created from file uploads and queued for processing",
         len(created_messages),
