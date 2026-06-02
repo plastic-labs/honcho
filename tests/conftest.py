@@ -797,7 +797,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         yield
         return
 
-    from contextlib import asynccontextmanager
+    from contextlib import ExitStack, asynccontextmanager
 
     db_engine = request.getfixturevalue("db_engine")
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
@@ -807,28 +807,35 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         async with session_factory() as session:
             yield session
 
-    with (
-        patch("src.dependencies.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
-        patch("src.routers.peers.tracked_db", mock_tracked_db_context),
-        patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.orchestrator.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
-        patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
-        patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
-        patch("src.webhooks.webhook_delivery.tracked_db", mock_tracked_db_context),
-        patch("src.utils.agent_tools.tracked_db", mock_tracked_db_context),
-        patch("src.utils.search.tracked_db", mock_tracked_db_context),
-        patch("src.crud.document.tracked_db", mock_tracked_db_context),
-        patch("src.crud.message.tracked_db", mock_tracked_db_context),
-        patch("src.reconciler.sync_vectors.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.core.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.specialists.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.surprisal.tracked_db", mock_tracked_db_context),
-    ):
+    # Each module imports tracked_db by name, so patch every import site.
+    # Use ExitStack (not a parenthesized `with`) to stay under CPython's
+    # 20-statically-nested-block limit as this list grows.
+    tracked_db_targets = [
+        "src.dependencies.tracked_db",
+        "src.deriver.queue_manager.tracked_db",
+        "src.deriver.consumer.tracked_db",
+        "src.deriver.enqueue.tracked_db",
+        "src.routers.peers.tracked_db",
+        "src.crud.representation.tracked_db",
+        "src.dreamer.orchestrator.tracked_db",
+        "src.dreamer.dream_scheduler.tracked_db",
+        "src.dialectic.chat.tracked_db",
+        "src.utils.summarizer.tracked_db",
+        "src.webhooks.events.tracked_db",
+        "src.webhooks.webhook_delivery.tracked_db",
+        "src.utils.agent_tools.tracked_db",
+        "src.utils.search.tracked_db",
+        "src.crud.document.tracked_db",
+        "src.crud.message.tracked_db",
+        "src.reconciler.sync_vectors.tracked_db",
+        "src.reconciler.embed_now.tracked_db",
+        "src.dialectic.core.tracked_db",
+        "src.dreamer.specialists.tracked_db",
+        "src.dreamer.surprisal.tracked_db",
+    ]
+    with ExitStack() as stack:
+        for target in tracked_db_targets:
+            stack.enter_context(patch(target, mock_tracked_db_context))
         yield
 
 

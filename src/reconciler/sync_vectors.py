@@ -204,6 +204,63 @@ async def _bump_message_embedding_sync_attempts(
         )
 
 
+async def compute_chunk_positions(
+    db: AsyncSession, message_ids: list[str]
+) -> dict[int, int]:
+    """Map each MessageEmbedding row id to its 0-indexed chunk position within
+    its message.
+
+    Positions are derived from the full set of sibling rows for each message,
+    ordered by ``(message_id, id)`` — never from a partial subset — so the
+    ``{message_id}_{chunk_position}`` vector id stays stable no matter which
+    rows a given caller claimed. Shared by the reconciler and the immediate
+    embed path so the two writers always agree on vector ids.
+    """
+    if not message_ids:
+        return {}
+
+    sibling_stmt = (
+        select(models.MessageEmbedding.id, models.MessageEmbedding.message_id)
+        .where(models.MessageEmbedding.message_id.in_(message_ids))
+        .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
+    )
+    sibling_rows = (await db.execute(sibling_stmt)).all()
+
+    embs_by_message: dict[str, list[int]] = {}
+    for emb_id, msg_id in sibling_rows:
+        embs_by_message.setdefault(msg_id, []).append(emb_id)
+
+    chunk_position: dict[int, int] = {}
+    for emb_ids in embs_by_message.values():
+        for pos, emb_id in enumerate(emb_ids):
+            chunk_position[emb_id] = pos
+    return chunk_position
+
+
+def build_message_vector_record(
+    *,
+    message_id: str,
+    chunk_position: int,
+    session_name: str | None,
+    peer_name: str | None,
+    embedding: list[float],
+) -> VectorRecord:
+    """Build the external-store record for one message-embedding chunk.
+
+    Single source of the ``{message_id}_{chunk_position}`` vector id and the
+    metadata shape, shared by the reconciler and the immediate embed path.
+    """
+    return VectorRecord(
+        id=f"{message_id}_{chunk_position}",
+        embedding=[float(x) for x in embedding],
+        metadata={
+            "message_id": message_id,
+            "session_name": session_name,
+            "peer_name": peer_name,
+        },
+    )
+
+
 async def _sync_documents(
     db: AsyncSession,
     documents: list[models.Document],
@@ -374,9 +431,7 @@ async def _sync_message_embeddings(
             workspaces = {emb.workspace_name for emb in embs_needing_embed}
             with embedding_call_purpose(
                 EmbeddingCallPurpose.MESSAGE_CREATE.value,
-                workspace_name=workspaces.pop()
-                if len(workspaces) == 1
-                else None,
+                workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
                 parent_category="reconciliation",
             ):
                 new_embeddings = await embedding_client.simple_batch_embed(contents)
@@ -443,21 +498,7 @@ async def _sync_message_embeddings(
     # 2. Removing MessageEmbedding table entirely if it becomes unnecessary
     # See: https://github.com/plastic-labs/honcho/issues/XXX
     message_ids = list({emb.message_id for emb in embeddings})
-    sibling_stmt = (
-        select(models.MessageEmbedding.id, models.MessageEmbedding.message_id)
-        .where(models.MessageEmbedding.message_id.in_(message_ids))
-        .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
-    )
-    sibling_rows = (await db.execute(sibling_stmt)).all()
-
-    embs_by_message: dict[str, list[int]] = {}
-    for emb_id, msg_id in sibling_rows:
-        embs_by_message.setdefault(msg_id, []).append(emb_id)
-
-    chunk_position: dict[int, int] = {}
-    for emb_ids in embs_by_message.values():
-        for pos, emb_id in enumerate(emb_ids):
-            chunk_position[emb_id] = pos
+    chunk_position = await compute_chunk_positions(db, message_ids)
 
     # Step 3: Build vector records and upsert to external store (all cases)
     by_namespace: dict[str, list[models.MessageEmbedding]] = {}
@@ -479,14 +520,12 @@ async def _sync_message_embeddings(
                 continue
 
             vector_records.append(
-                VectorRecord(
-                    id=f"{emb.message_id}_{chunk_position[emb.id]}",
-                    embedding=[float(x) for x in embedding],
-                    metadata={
-                        "message_id": emb.message_id,
-                        "session_name": emb.session_name,
-                        "peer_name": emb.peer_name,
-                    },
+                build_message_vector_record(
+                    message_id=emb.message_id,
+                    chunk_position=chunk_position[emb.id],
+                    session_name=emb.session_name,
+                    peer_name=emb.peer_name,
+                    embedding=embedding,
                 )
             )
             embs_to_sync.append(emb)

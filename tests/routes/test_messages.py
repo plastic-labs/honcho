@@ -1,5 +1,5 @@
 import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,6 +44,57 @@ async def test_create_message(
     assert message["session_id"] == test_session.name
     assert message["metadata"] == {"message_key": "message_value"}
     assert "id" in message
+
+
+@pytest.mark.asyncio
+async def test_create_message_schedules_immediate_embed(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Creating messages should schedule the immediate-embed background task with
+    the created messages' public ids."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    with patch(
+        "src.routers.messages.embed_messages_now", new=AsyncMock()
+    ) as mock_embed_now:
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+            json={"messages": [{"content": "hello", "peer_id": test_peer.name}]},
+        )
+    assert response.status_code == 201
+    public_id = response.json()[0]["id"]
+    mock_embed_now.assert_awaited_once_with([public_id])
+
+
+@pytest.mark.asyncio
+async def test_create_message_skips_embed_when_disabled(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """When EMBED_MESSAGES is disabled, the immediate-embed task is not scheduled."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    with (
+        patch("src.config.settings.EMBED_MESSAGES", False),
+        patch(
+            "src.routers.messages.embed_messages_now", new=AsyncMock()
+        ) as mock_embed_now,
+    ):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+            json={"messages": [{"content": "hello", "peer_id": test_peer.name}]},
+        )
+    assert response.status_code == 201
+    mock_embed_now.assert_not_called()
 
 
 @pytest.mark.asyncio
