@@ -284,7 +284,7 @@ cp .env.template .env       # fill in LLM_GEMINI_API_KEY / LLM_ANTHROPIC_API_KEY
 docker compose up
 ```
 
-> **Note:** To use a different port (e.g., if 8000 conflicts with another service like Ollama), set `PORT=8080` in your `.env` file before running `docker compose up`.
+> **Note:** To use a different port (e.g., if 8000 conflicts with another service like Ollama), set `PORT={your desired port}` in your `.env` file before running `docker compose up`, then point SDKs to `http://localhost:{your desired port}`.
 
 Then point the SDKs at it:
 
