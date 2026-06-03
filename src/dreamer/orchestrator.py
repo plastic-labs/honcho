@@ -26,6 +26,7 @@ from sqlalchemy import func, select
 from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
+from src.dreamer.biographical_refresh import run_biographical_refresh
 from src.dreamer.specialists import SPECIALISTS, SpecialistResult
 from src.dreamer.surprisal import SurprisalScore  # type: ignore
 from src.exceptions import SurprisalError
@@ -239,6 +240,35 @@ async def run_dream(
         except Exception as e:
             logger.error(f"[{run_id}] Induction specialist failed: {e}", exc_info=True)
             accumulate_metric(task_name, "induction_error", str(e), "blob")
+
+        # Biographical-refresh pass: reconcile the peer card (the biographical
+        # Profile) against recent messages and supersede stale facts. A single
+        # structured-output LLM call, gated by config; failures are isolated so
+        # they never abort the dream.
+        if settings.DREAM.BIOGRAPHICAL_REFRESH.ENABLED:
+            logger.info(f"[{run_id}] Running biographical refresh")
+            try:
+                refresh_result = await run_biographical_refresh(
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    configuration=configuration,
+                    parent_run_id=run_id,
+                )
+                if refresh_result is not None:
+                    accumulate_metric(
+                        task_name,
+                        "biographical_refresh_card_updated",
+                        refresh_result.card_updated,
+                        "blob",
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[{run_id}] Biographical refresh failed: {e}", exc_info=True
+                )
+                accumulate_metric(
+                    task_name, "biographical_refresh_error", str(e), "blob"
+                )
 
         # Log final metrics
         duration_ms = (time.perf_counter() - start_time) * 1000

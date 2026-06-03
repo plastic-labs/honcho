@@ -64,6 +64,39 @@ def _validate_peer_card_entry(line: str) -> bool:
     return False
 
 
+def normalize_peer_card_entries(items: list[Any]) -> tuple[list[str], list[str]]:
+    """Validate, dedupe, and order-preserve a list of peer card entries.
+
+    Shared by the `update_peer_card` tool handler and the biographical-refresh
+    pass so both enforce identical card rules. Structural validation is
+    form-only (see `_validate_peer_card_entry`); subject-substance correctness
+    is left to the prompt.
+
+    Returns ``(normalized, rejected)`` where ``normalized`` is the list of valid,
+    case-insensitively de-duplicated entries in first-seen order — NOT yet capped
+    to ``MAX_PEER_CARD_FACTS`` (callers apply the cap so they can log truncation
+    in their own context) — and ``rejected`` is the raw lines that failed
+    structural validation.
+    """
+    normalized: list[str] = []
+    seen: set[str] = set()
+    rejected: list[str] = []
+    for item in items:
+        line = str(item).strip()
+        if not line:
+            continue
+        if not _validate_peer_card_entry(line):
+            rejected.append(line)
+            continue
+        # Case-insensitive dedupe with whitespace normalization.
+        normalized_key = " ".join(line.lower().split())
+        if normalized_key in seen:
+            continue
+        seen.add(normalized_key)
+        normalized.append(line)
+    return normalized, rejected
+
+
 def _normalized_observation_input(
     obs: schemas.ObservationInput,
 ) -> schemas.ObservationInput:
@@ -1464,13 +1497,8 @@ async def _handle_update_peer_card(
         return "Peer card content was empty, no update performed."
 
     # Normalize, validate structure, and deduplicate to keep peer cards bounded
-    # and on-spec.
-    normalized_peer_card: list[str] = []
-    seen: set[str] = set()
-    rejected_count = 0
-    # Keep a small sample of rejected entries to surface back to the model so it
-    # can self-correct on a retry. Capped to avoid bloating the tool response.
-    rejected_samples: list[str] = []
+    # and on-spec. Shared with the biographical-refresh pass via
+    # `normalize_peer_card_entries`.
     _REJECTED_SAMPLE_CAP = 3
     _REJECTED_SAMPLE_LINE_LIMIT = 120
     items = (
@@ -1478,27 +1506,14 @@ async def _handle_update_peer_card(
         if isinstance(raw_peer_card_content, list)
         else [str(raw_peer_card_content)]
     )
-    for item in items:
-        line = str(item).strip()
-        if not line:
-            continue
-
-        if not _validate_peer_card_entry(line):
-            rejected_count += 1
-            if len(rejected_samples) < _REJECTED_SAMPLE_CAP:
-                rejected_samples.append(line[:_REJECTED_SAMPLE_LINE_LIMIT])
-            logger.info(
-                "Rejecting peer card entry (no allowed prefix, empty body, or over length cap): %r",
-                line[:80],
-            )
-            continue
-
-        # Case-insensitive dedupe with whitespace normalization.
-        normalized_key = " ".join(line.lower().split())
-        if normalized_key in seen:
-            continue
-        seen.add(normalized_key)
-        normalized_peer_card.append(line)
+    normalized_peer_card, rejected_lines = normalize_peer_card_entries(items)
+    rejected_count = len(rejected_lines)
+    # Keep a small sample of rejected entries to surface back to the model so it
+    # can self-correct on a retry. Capped to avoid bloating the tool response.
+    rejected_samples: list[str] = [
+        line[:_REJECTED_SAMPLE_LINE_LIMIT]
+        for line in rejected_lines[:_REJECTED_SAMPLE_CAP]
+    ]
 
     if rejected_count:
         logger.info(

@@ -1180,6 +1180,38 @@ class SurprisalSettings(BaseModel):
     INCLUDE_LEVELS: list[str] = ["explicit", "deductive"]
 
 
+class BiographicalRefreshSettings(BaseModel):
+    """Settings for the biographical-refresh pass.
+
+    A focused reconciliation pass that runs as part of the dream cycle: it diffs
+    the stored peer card (the biographical Profile) against recent messages
+    authored by the observed peer and supersedes facts that have gone stale
+    (e.g. a card that still says "close to accepting a role" long after messages
+    confirmed the role was accepted). It is a single structured-output LLM call,
+    not an agentic loop — predictable cost, runs at most once per dream.
+
+    Reuses DreamSettings.DEDUCTION_MODEL_CONFIG for the LLM call; no separate
+    model config is required.
+    """
+
+    ENABLED: bool = True
+
+    # Cap on how many recent messages (authored by the observed peer) to pull as
+    # the reconciliation signal. Also bounded by MAX_INPUT_TOKENS.
+    MAX_RECENT_MESSAGES: Annotated[int, Field(default=100, gt=0, le=1000)] = 100
+
+    # Token budget for the recent-message block fed to the LLM. The most recent
+    # messages are kept until this budget is reached.
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=16_000, gt=0, le=200_000)] = 16_000
+
+    # Skip the pass when the card has fewer than this many entries — there is
+    # nothing meaningful to reconcile against.
+    MIN_CARD_ENTRIES: Annotated[int, Field(default=1, gt=0, le=40)] = 1
+
+    # Cap on output tokens for the reconciliation call.
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4_096, gt=0, le=32_000)] = 4_096
+
+
 class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(  # pyright: ignore
         env_prefix="DREAM_", env_nested_delimiter="__", extra="ignore"
@@ -1225,6 +1257,11 @@ class DreamSettings(HonchoSettings):
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
+
+    # Biographical-refresh pass (peer card vs recent messages reconciliation)
+    BIOGRAPHICAL_REFRESH: BiographicalRefreshSettings = Field(
+        default_factory=BiographicalRefreshSettings
+    )
 
     @model_validator(mode="before")
     @classmethod
