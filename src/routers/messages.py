@@ -16,7 +16,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from src import crud, schemas
+from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import db
 from src.deriver import enqueue
@@ -92,7 +92,7 @@ async def create_messages_for_session(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     db: AsyncSession = db,
-):
+) -> list[models.Message]:
     """Add new message(s) to a session."""
     try:
         # Drop tool-run breadcrumb noise (e.g. "[Tool] Ran: ...") before it ever

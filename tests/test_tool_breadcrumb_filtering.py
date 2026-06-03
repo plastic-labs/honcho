@@ -1,7 +1,7 @@
 """Tests for ingestion-time filtering of tool-run breadcrumb messages."""
 
 import pytest
-from httpx import AsyncClient
+from fastapi.testclient import TestClient
 
 from src import models
 from src.utils.message_filter import (
@@ -68,11 +68,11 @@ def test_filter_all_breadcrumbs_returns_empty():
 
 @pytest.mark.asyncio
 async def test_create_messages_skips_tool_breadcrumbs(
-    client: AsyncClient, sample_data: tuple[models.Workspace, models.Peer]
+    client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
 ):
     """A mixed batch persists only the real messages; breadcrumbs are dropped."""
     test_workspace, test_peer = sample_data
-    response = await client.post(
+    response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/breadcrumb-session/messages/",
         json={
             "messages": [
@@ -90,11 +90,11 @@ async def test_create_messages_skips_tool_breadcrumbs(
 
 @pytest.mark.asyncio
 async def test_create_messages_all_breadcrumbs_persists_nothing(
-    client: AsyncClient, sample_data: tuple[models.Workspace, models.Peer]
+    client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
 ):
     """A batch that is entirely breadcrumbs persists nothing and returns []."""
     test_workspace, test_peer = sample_data
-    response = await client.post(
+    response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions/all-breadcrumb-session/messages/",
         json={
             "messages": [
