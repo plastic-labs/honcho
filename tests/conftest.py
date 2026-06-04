@@ -795,7 +795,10 @@ def mock_tracked_db(request: pytest.FixtureRequest):
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def mock_tracked_db_context(_: str | None = None):
+    async def mock_tracked_db_context(_: str | None = None, *, read_only: bool = False):
+        # read_only is accepted (and ignored): in tests both engines resolve to
+        # the same per-test database session.
+        del read_only
         async with session_factory() as session:
             yield session
 

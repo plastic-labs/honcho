@@ -6,7 +6,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import require_auth
 from src.telemetry.events import EmbeddingCallPurpose
@@ -67,7 +67,7 @@ async def list_conclusions(
         False,
         description="Whether to reverse the order of results",
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """
     List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.
@@ -97,7 +97,7 @@ async def query_conclusions(
         ...,
         description="Semantic search parameters for Conclusions",
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ) -> list[schemas.Conclusion]:
     """
     Query Conclusions using semantic search. Use `top_k` to control the number of results returned.
