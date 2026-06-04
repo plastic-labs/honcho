@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import random
 import signal
+import time
 from asyncio import Task
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -134,6 +135,11 @@ class QueueManager:
             settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
         )
 
+        # Monotonic timestamp of the last stale-work-unit cleanup ATTEMPT.
+        # None -> the first poll always runs cleanup (recovers rows left stale
+        # by a crashed predecessor immediately).
+        self._last_stale_cleanup_attempt: float | None = None
+
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
@@ -257,6 +263,31 @@ class QueueManager:
     ##########################
     # Polling and Scheduling #
     ##########################
+
+    async def _maybe_cleanup_stale_work_units(self) -> None:
+        """Run stale-work-unit cleanup at most once per (jittered) interval.
+
+        Staleness is a minutes-timescale condition (STALE_SESSION_TIMEOUT_MINUTES),
+        but the polling loop fires on a seconds timescale on every deriver
+        instance — running cleanup unconditionally per poll multiplies into
+        unnecessary write transactions. Gate it locally:
+        concurrent cleaners on other instances remain safe via FOR UPDATE SKIP
+        LOCKED, so no cross-instance coordination is required, and the jittered
+        gate keeps instances from re-synchronizing their cleanup runs. The gate
+        tracks the last ATTEMPT (set before running), so a failing cleanup waits
+        a full interval instead of retrying every poll against a DB that is
+        already struggling. An interval of 0 preserves run-every-poll behavior.
+        """
+        interval = settings.DERIVER.STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS
+        if (
+            interval > 0.0
+            and self._last_stale_cleanup_attempt is not None
+            and time.monotonic() - self._last_stale_cleanup_attempt
+            < self._jitter(interval)
+        ):
+            return
+        self._last_stale_cleanup_attempt = time.monotonic()
+        await self.cleanup_stale_work_units()
 
     async def cleanup_stale_work_units(self) -> None:
         """Clean up stale work units"""
@@ -457,7 +488,7 @@ class QueueManager:
                     continue
 
                 try:
-                    await self.cleanup_stale_work_units()
+                    await self._maybe_cleanup_stale_work_units()
                     claimed_work_units = await self.get_and_claim_work_units()
                     if claimed_work_units:
                         self._reset_poll_interval()

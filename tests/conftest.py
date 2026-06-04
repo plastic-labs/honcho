@@ -32,7 +32,7 @@ from src import models
 from src.cache.client import cache
 from src.config import settings
 from src.db import Base
-from src.dependencies import get_db
+from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
 from src.main import app
 from src.models import Peer, Workspace
@@ -339,6 +339,10 @@ async def client(
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    # Read-only routes use get_read_db (AUTOCOMMIT engine) in production; in
+    # tests they must see the same per-test database/session as writes, both
+    # for isolation and so data written by a test is visible to its reads.
+    app.dependency_overrides[get_read_db] = override_get_db
 
     # No-op the startup embedding-schema validator inside the lifespan. The
     # global `engine` it would inspect points to a DB that isn't migrated in

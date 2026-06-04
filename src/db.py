@@ -66,6 +66,24 @@ SessionLocal = async_sessionmaker(
     class_=AsyncSession,
 )
 
+# Read-only engine: shares `engine`'s pool, but checks connections out in DBAPI
+# AUTOCOMMIT mode, so psycopg emits NO BEGIN — a SELECT never autobegins a
+# transaction. The backend therefore returns to state 'idle' (not 'idle in
+# transaction') the moment a statement completes.
+read_engine = engine.execution_options(isolation_level="AUTOCOMMIT")
+
+# Sessions for SELECT-only work (same lazy-checkout semantics as SessionLocal).
+# MUST NOT be used for writes: with no enclosing transaction, begin_nested()
+# savepoints (see the crud get-or-create paths) break, and every flush would
+# commit immediately. Use SessionLocal for anything that mutates.
+ReadSessionLocal = async_sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+    bind=read_engine,
+    class_=AsyncSession,
+)
+
 
 def _set_application_name_on_checkout(
     dbapi_connection: Any, _connection_record: Any, _connection_proxy: Any
