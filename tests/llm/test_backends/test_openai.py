@@ -228,6 +228,44 @@ async def test_openai_backend_skips_extra_body_when_thinking_budget_zero() -> No
 
 
 @pytest.mark.asyncio
+async def test_openai_backend_passes_request_metadata() -> None:
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"metadata": {"namespace": "honcho"}},
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["metadata"] == {"namespace": "honcho"}
+
+
+@pytest.mark.asyncio
 async def test_openai_backend_converts_anthropic_style_tools() -> None:
     client = Mock()
     client.chat.completions.create = AsyncMock(

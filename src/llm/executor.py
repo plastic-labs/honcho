@@ -210,6 +210,7 @@ async def honcho_llm_call_inner(
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    request_metadata: dict[str, str] | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -234,6 +235,7 @@ async def honcho_llm_call_inner(
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    request_metadata: dict[str, str] | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -258,6 +260,7 @@ async def honcho_llm_call_inner(
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    request_metadata: dict[str, str] | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
@@ -281,6 +284,7 @@ async def honcho_llm_call_inner(
     selected_config: ModelConfig | None = None,
     plan: AttemptPlan | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    request_metadata: dict[str, str] | None = None,
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     """One backend call. No retry, no fallback, no tool loop.
 
@@ -318,6 +322,8 @@ async def honcho_llm_call_inner(
     # knobs — they pass through extra_params. execute_completion merges
     # build_config_extra_params(effective_config) on top for top_p/seed/etc.
     call_extras: dict[str, Any] = {"json_mode": json_mode, "verbosity": verbosity}
+    if request_metadata is not None:
+        call_extras["metadata"] = request_metadata
 
     if stream:
         # Stream path: setup must run inside the awaited coroutine so it

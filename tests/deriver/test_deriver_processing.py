@@ -64,6 +64,7 @@ class TestDeriverProcessing:
             == expected_config.thinking_budget_tokens
         )
         assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
+        assert kwargs["request_metadata"] == {"namespace": settings.NAMESPACE}
         assert "llm_settings" not in kwargs
 
     async def test_process_representation_tasks_batch_passes_custom_instructions_into_prompt(

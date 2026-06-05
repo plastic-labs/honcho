@@ -322,6 +322,8 @@ class OpenAIBackend:
             ):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            if "metadata" in extra_params:
+                params["metadata"] = extra_params["metadata"]
         return params
 
     def _normalize_response(

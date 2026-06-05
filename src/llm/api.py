@@ -75,6 +75,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    request_metadata: dict[str, str] | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
 
 
@@ -105,6 +106,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    request_metadata: dict[str, str] | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
 
 
@@ -135,6 +137,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    request_metadata: dict[str, str] | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
@@ -165,6 +168,7 @@ async def honcho_llm_call(
     trace_name: str | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    request_metadata: dict[str, str] | None = None,
 ) -> (
     HonchoLLMCallResponse[Any]
     | AsyncIterator[HonchoLLMCallStreamChunk]
@@ -243,6 +247,7 @@ async def honcho_llm_call(
                 selected_config=plan.selected_config,
                 plan=plan,
                 telemetry=telemetry,
+                request_metadata=request_metadata,
             )
         return await honcho_llm_call_inner(
             plan.provider,
@@ -263,6 +268,7 @@ async def honcho_llm_call(
             selected_config=plan.selected_config,
             plan=plan,
             telemetry=telemetry,
+            request_metadata=request_metadata,
         )
 
     decorated = _call_with_provider_selection
@@ -373,6 +379,7 @@ async def honcho_llm_call(
                         plan=plan,
                         telemetry=telemetry,
                         messages=captured_messages,
+                        request_metadata=request_metadata,
                     )
                 return await honcho_llm_call_inner(
                     plan.provider,
@@ -394,6 +401,7 @@ async def honcho_llm_call(
                     plan=plan,
                     telemetry=telemetry,
                     messages=captured_messages,
+                    request_metadata=request_metadata,
                 )
 
             wrapped = _toolless_call

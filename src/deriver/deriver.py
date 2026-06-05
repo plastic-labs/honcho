@@ -154,6 +154,7 @@ async def process_representation_tasks_batch(
         enable_retry=True,
         retry_attempts=3,
         trace_name="minimal_deriver",
+        request_metadata={"namespace": settings.NAMESPACE},
         telemetry=LLMTelemetryContext(
             workspace_name=latest_message.workspace_name,
             call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
