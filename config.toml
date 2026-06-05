@@ -38,7 +38,7 @@ DEFAULT_MAX_TOKENS = 2500
 
 [embedding.MODEL_CONFIG]
 transport = "openai"
-model = "bge-m3"
+model = "mxbai-embed-large"
 dimensions_mode = "never"
 
 [embedding.MODEL_CONFIG.overrides]
