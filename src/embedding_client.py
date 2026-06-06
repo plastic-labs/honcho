@@ -152,6 +152,9 @@ class _EmbeddingClient:
         self.model: str = config.model
         self.vector_dimensions: int = vector_dimensions
         self.send_dimensions: bool = send_dimensions
+        # Optional `input_type` to forward to the embedding endpoint. Required
+        # by some asymmetric-encoder providers (notably NVIDIA NIM models).
+        self.input_type: str | None = config.input_type
 
         if self.transport == "gemini":
             if not config.api_key:
@@ -237,6 +240,8 @@ class _EmbeddingClient:
             openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
+            if self.input_type is not None:
+                openai_kwargs["input_type"] = self.input_type
             response = await openai_client.embeddings.create(**openai_kwargs)
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
@@ -290,6 +295,8 @@ class _EmbeddingClient:
                     }
                     if self.send_dimensions:
                         openai_kwargs["dimensions"] = self.vector_dimensions
+                    if self.input_type is not None:
+                        openai_kwargs["input_type"] = self.input_type
                     response = await self.client.embeddings.create(**openai_kwargs)
                     batch_embeddings.extend(
                         [
@@ -455,6 +462,8 @@ class _EmbeddingClient:
                 }
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
+                if self.input_type is not None:
+                    openai_kwargs["input_type"] = self.input_type
                 response = await self.client.embeddings.create(**openai_kwargs)
                 for item, embedding_data in zip(batch, response.data, strict=True):
                     result[item.text_id][item.chunk_index] = (
