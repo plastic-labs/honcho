@@ -2,7 +2,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pydantic import BaseModel
 
+from src.exceptions import ValidationException
 from src.llm.backends.openai import OpenAIBackend
 
 
@@ -288,6 +290,90 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
         }
     ]
     assert call["tool_choice"] == "required"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response",
+    [
+        SimpleNamespace(choices=[], usage=None),
+        SimpleNamespace(choices=None, usage=None),
+        SimpleNamespace(usage=None),
+        SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop", message=None)],
+            usage=None,
+        ),
+    ],
+)
+async def test_openai_backend_raises_controlled_error_on_malformed_response(
+    response: SimpleNamespace,
+) -> None:
+    """OpenAI-compatible gateways can return technically-successful responses
+    with no choices / no message. These must surface as a controlled
+    ValidationException rather than a raw AttributeError/IndexError/TypeError."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(return_value=response)
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(ValidationException):
+        await backend.complete(
+            model="some-proxy-model",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+        )
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_tolerates_missing_usage() -> None:
+    """A response missing the ``usage`` attribute entirely should still return a
+    result with token counts defaulted to 0, not crash."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(content="ok", tool_calls=[]),
+                )
+            ],
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="some-proxy-model",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+    )
+
+    assert result.content == "ok"
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_raises_controlled_error_on_malformed_structured_response() -> (
+    None
+):
+    """The structured-output ``parse()`` path must also guard against empty
+    ``choices`` from OpenAI-compatible providers."""
+
+    class _Schema(BaseModel):
+        value: str
+
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=SimpleNamespace(choices=[], usage=None)
+    )
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(ValidationException):
+        await backend.complete(
+            model="some-proxy-model",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=_Schema,
+        )
 
 
 @pytest.mark.parametrize(

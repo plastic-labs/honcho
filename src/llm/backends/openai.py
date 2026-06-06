@@ -18,6 +18,36 @@ from src.llm.structured_output import (
 logger = logging.getLogger(__name__)
 
 
+def _first_choice(response: Any) -> Any:
+    """Return the first choice from an OpenAI(-compatible) chat response.
+
+    OpenAI-compatible gateways (OpenRouter, vLLM, DashScope, LiteLLM, ...)
+    sometimes return a technically-successful HTTP response whose body is
+    missing ``choices`` or carries an empty list. Indexing
+    ``response.choices[0]`` directly turns that into a raw
+    ``AttributeError``/``IndexError``/``TypeError`` deep in the backend; raise a
+    controlled ``ValidationException`` instead so callers treat it as a provider
+    failure (and can fall back) rather than crashing.
+    """
+    choices = getattr(response, "choices", None)
+    if not choices:
+        raise ValidationException(
+            "OpenAI-compatible response did not include any choices"
+        )
+    return choices[0]
+
+
+def _first_message(response: Any) -> Any:
+    """Return the ``message`` of the first choice, guarding against malformed
+    OpenAI-compatible responses (see :func:`_first_choice`)."""
+    message = getattr(_first_choice(response), "message", None)
+    if message is None:
+        raise ValidationException(
+            "OpenAI-compatible response choice did not include a message"
+        )
+    return message
+
+
 def _uses_max_completion_tokens(model: str) -> bool:
     """OpenAI reasoning models (gpt-5 family + o-series) require
     ``max_completion_tokens`` instead of the classic ``max_tokens`` parameter.
@@ -171,8 +201,9 @@ class OpenAIBackend:
                     fallback_response,
                     content_override=content,
                 )
-            parsed = response.choices[0].message.parsed
-            raw_content = response.choices[0].message.content or ""
+            message = _first_message(response)
+            parsed = getattr(message, "parsed", None)
+            raw_content = getattr(message, "content", None) or ""
             if parsed is None and raw_content:
                 content = repair_response_model_json(
                     raw_content,
@@ -181,7 +212,7 @@ class OpenAIBackend:
                 )
                 return self._normalize_response(response, content_override=content)
             if parsed is None:
-                refusal = getattr(response.choices[0].message, "refusal", None)
+                refusal = getattr(message, "refusal", None)
                 if refusal:
                     return self._normalize_response(
                         response,
@@ -330,10 +361,15 @@ class OpenAIBackend:
         *,
         content_override: Any | None = None,
     ) -> CompletionResult:
-        usage = response.usage
-        finish_reason = response.choices[0].finish_reason
+        usage = getattr(response, "usage", None)
+        choice = _first_choice(response)
+        finish_reason = getattr(choice, "finish_reason", None)
         tool_calls: list[ToolCallResult] = []
-        message = response.choices[0].message
+        message = getattr(choice, "message", None)
+        if message is None:
+            raise ValidationException(
+                "OpenAI-compatible response choice did not include a message"
+            )
         if getattr(message, "tool_calls", None):
             for tool_call in message.tool_calls:
                 tool_input: dict[str, Any] = {}
@@ -362,7 +398,7 @@ class OpenAIBackend:
         return CompletionResult(
             content=content_override
             if content_override is not None
-            else (message.content or ""),
+            else (getattr(message, "content", None) or ""),
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             cache_creation_input_tokens=cache_creation,
@@ -396,10 +432,11 @@ class OpenAIBackend:
         response_format: type[BaseModel],
         model: str,
     ) -> BaseModel | str:
-        raw_content = response.choices[0].message.content or ""
+        message = _first_message(response)
+        raw_content = getattr(message, "content", None) or ""
         if raw_content:
             return repair_response_model_json(raw_content, response_format, model)
-        refusal = getattr(response.choices[0].message, "refusal", None)
+        refusal = getattr(message, "refusal", None)
         if refusal:
             return refusal
         raise ValidationException(
