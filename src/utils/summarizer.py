@@ -58,6 +58,7 @@ class Summary(TypedDict):
 
 
 def to_schema_summary(s: Summary) -> schemas.Summary:
+    """Convert a Summary TypedDict to a Pydantic Summary schema object."""
     return schemas.Summary(
         content=s["content"],
         message_id=s["message_id"],
@@ -82,6 +83,7 @@ __all__ = [
 
 
 def _get_summary_model_config() -> ConfiguredModelSettings:
+    """Return the configured model settings for summary generation."""
     return settings.SUMMARY.MODEL_CONFIG
 
 
@@ -213,6 +215,19 @@ async def create_short_summary(
     *,
     workspace_name: str | None = None,
 ) -> HonchoLLMCallResponse[str]:
+    """
+    Generate a short summary via an LLM call.
+
+    Args:
+        formatted_messages: Pre-formatted conversation messages.
+        input_tokens: Token count of the input (messages + previous summary).
+        previous_summary: Previous summary text for continuity, if any.
+        custom_instructions: Optional custom instructions from configuration.
+        workspace_name: Workspace name for telemetry attribution.
+
+    Returns:
+        The LLM response containing the short summary text and token counts.
+    """
     # input_tokens indicates how many tokens the message list + previous summary take up
     # we want to optimize short summaries to be smaller than the actual content being summarized
     # so we ask the agent to produce a word count roughly equal to either the input, or the max
@@ -252,6 +267,18 @@ async def create_long_summary(
     *,
     workspace_name: str | None = None,
 ) -> HonchoLLMCallResponse[str]:
+    """
+    Generate a comprehensive long summary via an LLM call.
+
+    Args:
+        formatted_messages: Pre-formatted conversation messages.
+        previous_summary: Previous summary text for continuity, if any.
+        custom_instructions: Optional custom instructions from configuration.
+        workspace_name: Workspace name for telemetry attribution.
+
+    Returns:
+        The LLM response containing the long summary text and token counts.
+    """
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
     output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
