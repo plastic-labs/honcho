@@ -158,6 +158,12 @@ class OpenAIBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
+        """Run a single chat completion and return a normalized result.
+
+        Handles the structured-output ``parse()`` path (with repair/fallback)
+        when ``response_format`` is a Pydantic model, and the plain
+        ``create()`` path otherwise.
+        """
         params = self._build_params(
             model=model,
             messages=messages,
@@ -361,6 +367,8 @@ class OpenAIBackend:
         *,
         content_override: Any | None = None,
     ) -> CompletionResult:
+        """Convert a raw OpenAI(-compatible) response into a ``CompletionResult``,
+        extracting content, tool calls, usage, and reasoning details."""
         usage = getattr(response, "usage", None)
         choice = _first_choice(response)
         finish_reason = getattr(choice, "finish_reason", None)
@@ -432,6 +440,8 @@ class OpenAIBackend:
         response_format: type[BaseModel],
         model: str,
     ) -> BaseModel | str:
+        """Repair structured content from a fallback response, returning the
+        repaired model, a refusal string, or raising if neither is available."""
         message = _first_message(response)
         raw_content = getattr(message, "content", None) or ""
         if raw_content:

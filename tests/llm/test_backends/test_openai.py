@@ -349,6 +349,8 @@ async def test_openai_backend_tolerates_missing_usage() -> None:
     assert result.content == "ok"
     assert result.input_tokens == 0
     assert result.output_tokens == 0
+    assert result.cache_creation_input_tokens == 0
+    assert result.cache_read_input_tokens == 0
 
 
 @pytest.mark.asyncio
@@ -359,6 +361,8 @@ async def test_openai_backend_raises_controlled_error_on_malformed_structured_re
     ``choices`` from OpenAI-compatible providers."""
 
     class _Schema(BaseModel):
+        """Minimal structured-output schema used to exercise the parse path."""
+
         value: str
 
     client = Mock()
