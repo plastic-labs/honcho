@@ -14,7 +14,7 @@ This skill is for when Honcho is **already connected** to you and you want to us
 ## The mental model
 
 - **Peer** — any participant, human or AI. You and the user are both peers. Honcho builds a representation of peers it observes (typically the user, not you).
-- **Session** — one conversation thread; messages live in sessions. Reasoning runs on **token-batched** input: Honcho only reasons over a peer once that peer accumulates **~1,000 tokens within a single session** (it queues short turns like "yes"/"ok" until the batch is meaningful — nothing is lost, it just waits). Scope sessions so each observed peer clears that bar; don't fragment a continuous conversation across many thin sessions, or each one stalls below the threshold. For low-volume or trickle inputs, append to one ongoing session rather than spinning up a new one each time. See [design patterns](https://honcho.dev/docs/v3/documentation/core-concepts/design-patterns#session-design) and [token batching](https://honcho.dev/docs/v3/documentation/core-concepts/reasoning#token-batching).
+- **Session** — one conversation thread; messages live in sessions. Reasoning runs on **token-batched** input: Honcho only reasons over a peer once that peer accumulates **~1,000 tokens within a single session** (it queues short turns like "yes"/"ok" until the batch is meaningful — nothing is lost, it just waits). Scope sessions so each observed peer clears that bar; don't fragment a continuous conversation across many thin sessions, or each one stalls below the threshold. For low-volume or trickle inputs, append to one ongoing session rather than spinning up a new one each time. See [design patterns](https://honcho.dev/docs/v3/documentation/core-concepts/design-patterns.md) and [token batching](https://honcho.dev/docs/v3/documentation/core-concepts/reasoning.md).
 - **Message** — the raw turns you feed in. No messages → no reasoning → no memory.
 - **Conclusion** — a fact Honcho derived (or you stored) about a peer. Conclusions power the representation.
 - **Representation / peer card** — the synthesized understanding of a peer, queryable via `chat`. A peer's representation **accumulates across every session** it appears in — that's the cross-conversation memory. Session-scoped data (recent messages, summaries) stays local to one session.
@@ -79,7 +79,6 @@ add_messages_to_session   session_id: "<session-id>"
 | `create_conclusions` | Store a fact directly instead of waiting for background reasoning. |
 | `list_conclusions` / `query_conclusions` | Review what's known (check before storing duplicates) or find one to delete. |
 | `delete_conclusion` | Remove an incorrect or outdated fact. |
-| `schedule_dream` | Trigger background consolidation after a long conversation. |
 
 `chat` accepts an optional `reasoning_level` (`minimal` → `max`). Use `minimal`/`low` for quick lookups, `high`/`max` when depth genuinely matters — higher is slower and costs more.
 
@@ -115,7 +114,7 @@ You need a Honcho API key — get one free at <https://app.honcho.dev>. It start
 
 Before hand-rolling raw MCP or CLI, see whether your environment already has a first-class Honcho integration or plugin — it'll handle session mapping, peer setup, and the record loop for you.
 
-**Fetch the integrations overview for the current list:** <https://honcho.dev/docs/v3/guides/overview>. It's the authoritative, always-current index — the specific integrations and install commands change often, so read it there rather than trusting any list baked into this skill. Broadly, it spans:
+**Fetch the integrations overview for the current list:** <https://honcho.dev/docs/v3/guides/overview.md>. It's the authoritative, always-current index — the specific integrations and install commands change often, so read it there rather than trusting any list baked into this skill. Broadly, it spans:
 
 - **Coding agents** (e.g. Claude Code, OpenCode plugins)
 - **MCP clients** (Claude Desktop, Cursor, Windsurf, Cline, VS Code, and any MCP client)
@@ -131,7 +130,7 @@ If a purpose-built integration fits your environment, follow its guide from that
 - `Authorization: Bearer hch-your-key-here`
 - `X-Honcho-User-Name: YourName` (what Honcho should call the user)
 
-Optional headers: `X-Honcho-Assistant-Name` (default `Assistant`) and `X-Honcho-Workspace-ID` (default `default`; set it to isolate memory per project). Client-specific config snippets (Claude Desktop, Claude Code, Cursor, Codex, Windsurf, VS Code, Cline, Zed) are in the [MCP integration guide](https://honcho.dev/docs/v3/guides/integrations/mcp). Restart the client fully after adding config.
+Optional headers: `X-Honcho-Assistant-Name` (default `Assistant`) and `X-Honcho-Workspace-ID` (default `default`; set it to isolate memory per project). Client-specific config snippets (Claude Desktop, Claude Code, Cursor, Codex, Windsurf, VS Code, Cline, Zed) are in the [MCP integration guide](https://honcho.dev/docs/v3/guides/integrations/mcp.md). Restart the client fully after adding config.
 
 **CLI** — `uv tool install honcho-cli`, then `honcho init` (stores `apiKey` + `environmentUrl` in `~/.honcho/config.json`), then `honcho doctor` to verify connectivity.
 
@@ -150,8 +149,11 @@ Optional headers: `X-Honcho-Assistant-Name` (default `Assistant`) and `X-Honcho-
 
 ## Resources
 
-- All integrations & plugins: <https://honcho.dev/docs/v3/guides/overview>
-- MCP server & client setup: <https://honcho.dev/docs/v3/guides/integrations/mcp>
+These are the LLM-friendly Markdown versions (append `.md` to any Honcho docs URL to get the raw Markdown; the full machine-readable index is at <https://honcho.dev/docs/llms.txt>).
+
+- Full docs index (for agents): <https://honcho.dev/docs/llms.txt>
+- All integrations & plugins: <https://honcho.dev/docs/v3/guides/overview.md>
+- MCP server & client setup: <https://honcho.dev/docs/v3/guides/integrations/mcp.md>
 - Full MCP usage walkthrough: <https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md>
-- Agent development overview: <https://honcho.dev/docs/v3/documentation/introduction/vibecoding>
-- CLI reference: <https://honcho.dev/docs/v3/documentation/reference/cli>
+- Agent development overview: <https://honcho.dev/docs/v3/documentation/introduction/vibecoding.md>
+- CLI reference: <https://honcho.dev/docs/v3/documentation/reference/cli.md>

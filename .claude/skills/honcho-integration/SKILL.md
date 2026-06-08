@@ -102,7 +102,7 @@ Based on interview responses, implement the integration:
 
 ## Before You Start
 
-1. **Check the latest SDK versions** at <https://honcho.dev/docs/changelog/introduction>
+1. **Check the latest SDK versions** at <https://honcho.dev/docs/changelog/introduction.md>
    - Python SDK: `honcho-ai`
    - TypeScript SDK: `@honcho-ai/sdk`
 
@@ -549,6 +549,8 @@ When integrating Honcho into an existing codebase:
 
 ## Resources
 
-- Documentation: <https://honcho.dev/docs>
-- Latest SDK versions: <https://honcho.dev/docs/changelog/introduction>
-- API Reference: <https://honcho.dev/docs/v3/api-reference/introduction>
+- Documentation (LLM-friendly index): <https://honcho.dev/docs/llms.txt>
+- Latest SDK versions: <https://honcho.dev/docs/changelog/introduction.md>
+- API Reference: <https://honcho.dev/docs/v3/api-reference/introduction.md>
+
+> Tip: append `.md` to any Honcho docs URL to fetch the raw Markdown version.
