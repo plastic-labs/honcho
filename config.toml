@@ -38,10 +38,9 @@ DEFAULT_MAX_TOKENS = 2500
 
 [embedding.MODEL_CONFIG]
 transport = "openai"
-# mxbai-embed-large returns NaN embeddings on this Pi/Ollama build even with
-# flash attention disabled. bge-m3 is the verified 1024-dim multilingual local
-# embedding model for Hermes/Honcho.
-model = "bge-m3"
+# bge-m3 returns NaN embeddings on this Pi/Ollama 0.24.0 build. mxbai-embed-large
+# is the verified 1024-dim local embedding model for Hermes/Honcho.
+model = "mxbai-embed-large"
 dimensions_mode = "never"
 
 [embedding.MODEL_CONFIG.overrides]
