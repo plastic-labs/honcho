@@ -9,7 +9,7 @@ history adapter selection) lives here now.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import assert_never
+from typing import assert_never, cast
 
 from anthropic import AsyncAnthropic
 from google import genai
@@ -23,6 +23,7 @@ from .backend import ProviderBackend
 from .backends.anthropic import AnthropicBackend
 from .backends.gemini import GeminiBackend
 from .backends.openai import OpenAIBackend
+from .backends.openai_codex import OpenAICodexBackend, OpenAICodexClient
 from .credentials import default_transport_api_key
 from .history_adapters import (
     AnthropicHistoryAdapter,
@@ -49,6 +50,15 @@ def get_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
+    )
+
+
+def get_openai_codex_client() -> OpenAICodexClient:
+    """Default Codex client built from settings.LLM.OPENAI_CODEX_* values."""
+    return OpenAICodexClient(
+        api_key=settings.LLM.OPENAI_CODEX_API_KEY or "",
+        refresh_token=settings.LLM.OPENAI_CODEX_REFRESH_TOKEN,
+        base_url=settings.LLM.OPENAI_CODEX_BASE_URL,
     )
 
 
@@ -80,6 +90,19 @@ def get_anthropic_override_client(
 ) -> AsyncAnthropic:
     """Anthropic client for a specific (base_url, api_key) pair. Cached by key."""
     return AsyncAnthropic(api_key=api_key, base_url=base_url, timeout=600.0)
+
+
+def get_openai_codex_override_client(
+    base_url: str | None,
+    api_key: str | None,
+    refresh_token: str | None = None,
+) -> OpenAICodexClient:
+    """Codex client for a specific access-token/refresh-token pair."""
+    return OpenAICodexClient(
+        api_key=api_key or "",
+        refresh_token=refresh_token,
+        base_url=base_url,
+    )
 
 
 @lru_cache(maxsize=128)
@@ -130,6 +153,28 @@ def client_for_model_config(
     CLIENTS (the test-mockable seam). Otherwise route through the cached
     override factories.
     """
+    if provider == "openai_codex":
+        api_key = model_config.api_key or default_transport_api_key(provider)
+        if not api_key:
+            raise ValidationException(f"Missing API key for {provider} model config")
+        refresh_token = model_config.provider_params.get("refresh_token")
+        if not isinstance(refresh_token, str) or not refresh_token.strip():
+            refresh_token = None
+            refresh_token_env = model_config.provider_params.get("refresh_token_env")
+            if isinstance(refresh_token_env, str) and refresh_token_env.strip():
+                import os
+
+                env_refresh_token = os.getenv(refresh_token_env.strip())
+                if isinstance(env_refresh_token, str) and env_refresh_token.strip():
+                    refresh_token = env_refresh_token.strip()
+            if refresh_token is None:
+                refresh_token = settings.LLM.OPENAI_CODEX_REFRESH_TOKEN
+        return get_openai_codex_override_client(
+            model_config.base_url,
+            api_key,
+            refresh_token,
+        )
+
     if model_config.api_key is None and model_config.base_url is None:
         existing_client = CLIENTS.get(provider)
         if existing_client is not None:
@@ -158,6 +203,8 @@ def backend_for_provider(
         return AnthropicBackend(client)
     if provider == "openai":
         return OpenAIBackend(client)
+    if provider == "openai_codex":
+        return OpenAICodexBackend(cast(OpenAICodexClient, client))
     if provider == "gemini":
         return GeminiBackend(client)
     assert_never(provider)
@@ -194,6 +241,8 @@ __all__ = [
     "get_backend",
     "get_gemini_client",
     "get_gemini_override_client",
+    "get_openai_codex_client",
+    "get_openai_codex_override_client",
     "get_openai_client",
     "get_openai_override_client",
     "history_adapter_for_provider",

@@ -22,7 +22,7 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "openai_codex"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 
@@ -95,7 +95,7 @@ def _normalize_model_transport(data: Any) -> Any:
     transport_value = update.get("transport")
     if isinstance(model_value, str) and "/" in model_value and transport_value is None:
         prefix, bare_model = model_value.split("/", 1)
-        if prefix in {"anthropic", "openai", "gemini"}:
+        if prefix in {"anthropic", "openai", "gemini", "openai_codex"}:
             update["transport"] = prefix
             update["model"] = bare_model
     return update
@@ -662,12 +662,15 @@ class LLMSettings(HonchoSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
+    OPENAI_CODEX_API_KEY: str | None = None
+    OPENAI_CODEX_REFRESH_TOKEN: str | None = None
 
     # Base URLs for LLM providers (for OpenAI-compatible proxies like
     # OpenRouter, vLLM, Together, Anyscale, self-hosted, etc.)
     ANTHROPIC_BASE_URL: str | None = None
     OPENAI_BASE_URL: str | None = None
     GEMINI_BASE_URL: str | None = None
+    OPENAI_CODEX_BASE_URL: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500

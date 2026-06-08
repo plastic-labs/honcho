@@ -15,6 +15,8 @@ from google import genai
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
+from .backends.openai_codex import OpenAICodexClient
+
 T = TypeVar("T")
 
 # OpenAI GPT-5 specific reasoning levels.
@@ -24,7 +26,7 @@ ReasoningEffortType = (
 VerbosityType = Literal["low", "medium", "high"] | None
 
 # Raw SDK client union used by the provider-selection layer.
-ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client
+ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client | OpenAICodexClient
 
 
 @dataclass
