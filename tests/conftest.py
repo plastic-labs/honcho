@@ -73,6 +73,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/alembic/",
     "tests/unified/",
     "tests/live_llm/",
+    # Pure runtime introspection route tests do not touch DB/runtime services.
+    "tests/routes/test_runtime.py",
     # Pure llm unit tests should stay isolated from the broader app/runtime fixtures.
     "tests/llm/",
     # LLM transport tests mock providers directly and don't need database/runtime setup.

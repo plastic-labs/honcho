@@ -25,6 +25,7 @@ from src.routers import (
     keys,
     messages,
     peers,
+    runtime,
     sessions,
     webhooks,
     workspaces,
@@ -199,6 +200,7 @@ app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
 app.include_router(webhooks.router, prefix="/v3")
+app.include_router(runtime.router, prefix="/v3")
 
 # Prometheus metrics endpoint
 app.add_route("/metrics", metrics_endpoint, methods=["GET"])

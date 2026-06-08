@@ -594,6 +594,49 @@ class DialecticStreamChunk(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Runtime introspection schemas
+# ---------------------------------------------------------------------------
+
+
+class RuntimeModelInfo(BaseModel):
+    """Provider, model, and auth metadata for a runtime model path."""
+
+    model: str = Field(description="Configured model name")
+    provider: str = Field(description="Effective provider label")
+    transport: str = Field(description="Configured transport adapter")
+    auth_mechanism: str = Field(description="Credential mechanism in use")
+    base_url: str | None = Field(
+        default=None,
+        description="Configured provider base URL, when overridden",
+    )
+
+
+class LLMRuntimeInfo(BaseModel):
+    """Configured LLM models currently used by Honcho agents."""
+
+    current_source: str = Field(description="Default synchronous chat model source")
+    current: RuntimeModelInfo = Field(description="Default synchronous chat model")
+    models: dict[str, RuntimeModelInfo] = Field(
+        description="All configured LLM model paths"
+    )
+
+
+class EmbeddingRuntimeInfo(RuntimeModelInfo):
+    """Configured embedding model currently used by Honcho."""
+
+    vector_dimensions: int = Field(description="Configured embedding vector dimension")
+    dimensions_mode: str = Field(description="Embedding dimensions forwarding mode")
+
+
+class RuntimeAuthInfo(BaseModel):
+    """Provider and auth metadata for the primary model paths."""
+
+    llm_source: str = Field(description="Default synchronous chat model source")
+    llm: RuntimeModelInfo = Field(description="Default LLM provider/auth metadata")
+    embeddings: RuntimeModelInfo = Field(description="Embedding provider/auth metadata")
+
+
+# ---------------------------------------------------------------------------
 # Queue status schemas
 # ---------------------------------------------------------------------------
 
