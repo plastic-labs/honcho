@@ -282,6 +282,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                     run_id=run_id,
                     observer=observer,
                     observed=observed,
+                    langfuse_session_id=f"dream-{run_id}" if run_id else None,
                 ),
             )
 

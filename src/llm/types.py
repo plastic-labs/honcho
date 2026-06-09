@@ -75,6 +75,10 @@ class LLMTelemetryContext:
     # agent — dialectic/deduction/induction. Used by agent iteration
     # event and tool call event.
     agent_type: str | None = None
+    # Langfuse trace grouping: when set, passed as `metadata.session_id` to
+    # LiteLLM proxy so all LLM calls within the same agent operation (dream
+    # cycle, dialectic request, deriver batch) appear under one Langfuse session.
+    langfuse_session_id: str | None = None
 
 
 IterationCallback = Callable[[IterationData], None]

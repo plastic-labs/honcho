@@ -89,6 +89,7 @@ def _telemetry_for_iteration(
         observed=base.observed,
         peer_name=base.peer_name,
         agent_type=base.agent_type,
+        langfuse_session_id=base.langfuse_session_id,
     )
 
 

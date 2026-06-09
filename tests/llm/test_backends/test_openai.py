@@ -334,3 +334,120 @@ def test_openai_classic_models_use_max_tokens(model: str) -> None:
     )
 
     assert _uses_max_completion_tokens(model) is False
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_includes_langfuse_session_id_in_extra_body() -> None:
+    """When langfuse_session_id is provided in extra_params, the backend
+    should pass it as metadata.session_id via extra_body so LiteLLM proxy's
+    Langfuse callback can group traces from the same agent operation."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="Hello",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=5,
+                completion_tokens=1,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="test-model",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"langfuse_session_id": "dream-abc123"},
+    )
+
+    await_args = client.chat.completions.create.await_args
+    assert await_args is not None
+    call = await_args.kwargs
+    assert call["extra_body"] == {"metadata": {"session_id": "dream-abc123"}}
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_omits_extra_body_without_langfuse_session_id() -> None:
+    """When no langfuse_session_id is present, extra_body should not be set."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="Hello",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=5,
+                completion_tokens=1,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="test-model",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+    )
+
+    await_args = client.chat.completions.create.await_args
+    assert await_args is not None
+    call = await_args.kwargs
+    assert "extra_body" not in call
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_omits_extra_body_when_langfuse_session_id_is_none() -> (
+    None
+):
+    """When langfuse_session_id is explicitly None, extra_body should not be set."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="Hello",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=5,
+                completion_tokens=1,
+                prompt_tokens_details=SimpleNamespace(cached_tokens=0),
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="test-model",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"langfuse_session_id": None},
+    )
+
+    await_args = client.chat.completions.create.await_args
+    assert await_args is not None
+    call = await_args.kwargs
+    assert "extra_body" not in call
