@@ -21,17 +21,15 @@ Examples:
 
 import argparse
 import datetime
+import os
 import re
 import sys
 
 # Allow running from repo root without installing
-import os
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.security import JWTParams, create_jwt
 from src.utils.formatting import format_datetime_utc
-
 
 DURATION_UNITS = {
     "s": datetime.timedelta(seconds=1),
@@ -95,6 +93,9 @@ def main():
 
     if not args.admin and not any([args.workspace, args.peer, args.session]):
         parser.error("Specify --admin or at least one of --workspace, --peer, --session")
+
+    if args.admin and any([args.workspace, args.peer, args.session]):
+        parser.error("--admin cannot be combined with --workspace, --peer, or --session")
 
     if (args.peer or args.session) and not args.workspace:
         parser.error("--peer and --session require --workspace")

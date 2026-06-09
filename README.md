@@ -268,7 +268,7 @@ uv run python scripts/generate_jwt.py --workspace my-workspace --expires 30d
 
 # Capture a token for use in curl/scripts
 TOKEN=$(uv run python scripts/generate_jwt.py --admin --print-only)
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/v1/workspaces
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/v3/workspaces
 ```
 
 Duration units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks), `y` (years).
