@@ -93,16 +93,26 @@ async def embed_messages_now(message_ids: list[str]) -> None:
     if not message_ids:
         return
 
-    claimed = await _claim_and_lease(message_ids)
-    if not claimed:
-        return
+    # Runs as a fire-and-forget background task, so guard the whole flow: an
+    # unhandled error here would escape into the server's task runner and be
+    # lost. Any failure just leaves rows pending (claimed rows stay leased),
+    # and the reconciler heals them on its next cycle.
+    try:
+        claimed = await _claim_and_lease(message_ids)
+        if not claimed:
+            return
 
-    vectors = await _embed_chunks(claimed)
-    if vectors is None:
-        # Embedding failed; rows stay pending + leased, reconciler will retry.
-        return
+        vectors = await _embed_chunks(claimed)
+        if vectors is None:
+            # Embedding failed; rows stay pending + leased, reconciler will retry.
+            return
 
-    await _persist(message_ids, claimed, vectors)
+        await _persist(message_ids, claimed, vectors)
+    except Exception:
+        logger.exception(
+            "Immediate embed failed for %s message(s); reconciler will retry",
+            len(message_ids),
+        )
 
 
 async def _claim_and_lease(message_ids: list[str]) -> list[_ClaimedChunk]:

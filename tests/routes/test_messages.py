@@ -98,6 +98,35 @@ async def test_create_message_skips_embed_when_disabled(
 
 
 @pytest.mark.asyncio
+async def test_file_upload_schedules_immediate_embed(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """The file-upload path schedules the immediate-embed task with the created
+    messages' public ids, mirroring the session-message path."""
+    import io
+
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    with patch(
+        "src.routers.messages.embed_messages_now", new=AsyncMock()
+    ) as mock_embed_now:
+        files = {"file": ("note.txt", io.BytesIO(b"hello world"), "text/plain")}
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+            files=files,
+            data={"peer_id": test_peer.name},
+        )
+    assert response.status_code == 201
+    expected_ids = [m["id"] for m in response.json()]
+    mock_embed_now.assert_awaited_once_with(expected_ids)
+
+
+@pytest.mark.asyncio
 async def test_create_batch_messages_with_metadata(
     client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):

@@ -23,6 +23,8 @@ from src.reconciler.sync_vectors import (
     _reconcile_message_embeddings_batch,  # pyright: ignore[reportPrivateUsage]
     _sync_documents,  # pyright: ignore[reportPrivateUsage]
     _sync_message_embeddings,  # pyright: ignore[reportPrivateUsage]
+    build_message_vector_record,
+    compute_chunk_positions,
     run_vector_reconciliation_cycle,
 )
 from src.vector_store import (
@@ -989,3 +991,90 @@ class TestEndToEndReconciliation:
         mock_reconcile_docs.assert_awaited_once()
         mock_reconcile_embs.assert_awaited_once()
         mock_cleanup_docs.assert_awaited_once()
+
+
+def test_build_message_vector_record() -> None:
+    """The shared vector-id/metadata builder: id is {message_id}_{position},
+    embeddings are coerced to float, metadata shape is fixed."""
+    record = build_message_vector_record(
+        message_id="msg_abc",
+        chunk_position=2,
+        session_name="sess",
+        peer_name="peer",
+        embedding=[1, 2, 3],  # ints, must be coerced
+    )
+    assert record.id == "msg_abc_2"
+    assert record.embedding == [1.0, 2.0, 3.0]
+    assert all(isinstance(x, float) for x in record.embedding)
+    assert record.metadata == {
+        "message_id": "msg_abc",
+        "session_name": "sess",
+        "peer_name": "peer",
+    }
+
+
+@pytest.mark.asyncio
+class TestComputeChunkPositions:
+    """Direct coverage for compute_chunk_positions, the source of truth for
+    {message_id}_{position} vector ids shared by the reconciler and embed_now."""
+
+    async def test_empty_input_returns_empty(self, db_session: AsyncSession) -> None:
+        assert await compute_chunk_positions(db_session, []) == {}
+
+    async def test_positions_are_per_message_zero_indexed(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """Each message's rows are numbered from 0 in (message_id, id) order,
+        independent of how rows from other messages interleave."""
+        workspace, peer = sample_data
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        # msg_a has 2 chunks, msg_b has 1 chunk.
+        msg_a = str(generate_nanoid())
+        msg_b = str(generate_nanoid())
+        for seq, mid in enumerate((msg_a, msg_b), start=1):
+            db_session.add(
+                models.Message(
+                    public_id=mid,
+                    session_name=session.name,
+                    workspace_name=workspace.name,
+                    peer_name=peer.name,
+                    content="content",
+                    seq_in_session=seq,
+                )
+            )
+        await db_session.commit()
+
+        rows = [
+            models.MessageEmbedding(
+                content=content,
+                message_id=mid,
+                workspace_name=workspace.name,
+                session_name=session.name,
+                peer_name=peer.name,
+                sync_state="pending",
+                embedding=None,
+            )
+            for mid, content in (
+                (msg_a, "a0"),
+                (msg_a, "a1"),
+                (msg_b, "b0"),
+            )
+        ]
+        db_session.add_all(rows)
+        await db_session.commit()
+        for row in rows:
+            await db_session.refresh(row)
+        a0, a1, b0 = (row.id for row in rows)
+
+        positions = await compute_chunk_positions(db_session, [msg_a, msg_b])
+
+        assert positions[a0] == 0
+        assert positions[a1] == 1
+        assert positions[b0] == 0

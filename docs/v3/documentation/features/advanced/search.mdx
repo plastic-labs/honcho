@@ -6,6 +6,10 @@ icon: 'magnifying-glass'
 
 Honcho's search functionality allows you to find relevant messages and conversations across different scopes - from entire workspaces down to specific peers or sessions.
 
+<Note>
+Search is hybrid: it combines full-text (keyword) matching with semantic (vector) similarity. Keyword matches are available the instant a message is created. Semantic matches depend on the message's embedding, which is generated in the background, so a freshly created message may take a few seconds to surface in semantic results. If you need to assert on semantic results immediately after writing (for example in tests), wait briefly or poll.
+</Note>
+
 ## Search Scopes
 
 ### Workspace Search

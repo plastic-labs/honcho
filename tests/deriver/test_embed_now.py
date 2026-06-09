@@ -233,3 +233,36 @@ class TestEmbedMessagesNow:
             assert row is not None
             await db_session.refresh(row)
             assert row.sync_state == "synced"
+
+    async def test_external_store_unavailable_leaves_rows_pending(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        mock_vector_store: VectorStore,
+    ) -> None:
+        """External-store mode: if upsert_many raises VectorStoreError, rows must
+        stay pending with no vector and untouched attempts, so the reconciler
+        heals them. embed_now never bumps sync_attempts."""
+        from src.exceptions import VectorStoreError
+
+        workspace, peer = sample_data
+        message_id, emb_ids = await _create_message_with_pending_chunks(
+            db_session, workspace, peer, ["chunk a", "chunk b"]
+        )
+
+        upsert_mock: AsyncMock = mock_vector_store.upsert_many  # pyright: ignore[reportAssignmentType]
+        upsert_mock.side_effect = VectorStoreError("vector store down")
+
+        with patch(
+            "src.reconciler.embed_now.get_external_vector_store",
+            return_value=mock_vector_store,
+        ):
+            await embed_messages_now([message_id])
+
+        for emb_id in emb_ids:
+            row = await db_session.get(models.MessageEmbedding, emb_id)
+            assert row is not None
+            await db_session.refresh(row)
+            assert row.sync_state == "pending"
+            assert row.embedding is None
+            assert row.sync_attempts == 0  # embed_now never bumps attempts
