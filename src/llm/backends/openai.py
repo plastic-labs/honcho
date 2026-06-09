@@ -142,6 +142,31 @@ class OpenAIBackend:
         )
 
         if isinstance(response_format, type):
+            if extra_params and extra_params.get("json_mode"):
+                # Some providers (e.g. DeepSeek, Ollama, vLLM) don't support
+                # json_schema structured output. Skip directly to json_object
+                # with the schema injected into the prompt.
+                params["response_format"] = {"type": "json_object"}
+                schema_json = response_format.model_json_schema()
+                schema_prompt = (
+                    f"You MUST respond with valid JSON that conforms to this JSON Schema:\n"
+                    f"{json.dumps(schema_json, indent=2)}\n\n"
+                    f"Return ONLY valid JSON, no markdown, no explanation."
+                )
+                messages = list(params.get("messages", []))
+                if messages and messages[-1]["role"] == "user":
+                    messages[-1]["content"] = (
+                        str(messages[-1]["content"]) + "\n\n" + schema_prompt
+                    )
+                else:
+                    messages.append({"role": "user", "content": schema_prompt})
+                params["messages"] = messages
+                response = await self._client.chat.completions.create(**params)
+                content = self._parse_or_repair_structured_content(
+                    response, response_format, model,
+                )
+                return self._normalize_response(response, content_override=content)
+
             params["response_format"] = response_format
             try:
                 response = await self._client.chat.completions.parse(**params)
@@ -381,14 +406,40 @@ class OpenAIBackend:
         response_format: type[BaseModel],
     ) -> Any:
         structured_params = dict(params)
+        schema_json = response_format.model_json_schema()
         structured_params["response_format"] = {
             "type": "json_schema",
             "json_schema": {
                 "name": response_format.__name__,
-                "schema": response_format.model_json_schema(),
+                "schema": schema_json,
             },
         }
-        return await self._client.chat.completions.create(**structured_params)
+        try:
+            return await self._client.chat.completions.create(**structured_params)
+        except BadRequestError:
+            # Some providers (e.g. DeepSeek) don't support json_schema type.
+            # Fall back to json_object + inject schema into the system prompt.
+            logger.info(
+                "json_schema not supported by provider, falling back to json_object for %s",
+                response_format.__name__,
+            )
+            schema_prompt = (
+                f"You MUST respond with valid JSON that conforms to this JSON Schema:\n"
+                f"{json.dumps(schema_json, indent=2)}\n\n"
+                f"Return ONLY valid JSON, no markdown, no explanation."
+            )
+            json_params = dict(params)
+            json_params["response_format"] = {"type": "json_object"}
+            messages = list(json_params.get("messages", []))
+            # Inject schema into the last user message or append a system instruction
+            if messages and messages[-1]["role"] == "user":
+                messages[-1]["content"] = (
+                    str(messages[-1]["content"]) + "\n\n" + schema_prompt
+                )
+            else:
+                messages.append({"role": "user", "content": schema_prompt})
+            json_params["messages"] = messages
+            return await self._client.chat.completions.create(**json_params)
 
     @staticmethod
     def _parse_or_repair_structured_content(
