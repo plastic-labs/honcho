@@ -281,7 +281,7 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
         read_engine,
     )
 
-    request_context.set("tracing-regression")
+    context_token = request_context.set("tracing-regression")
     event.listen(engine.sync_engine, "checkout", _set_application_name_on_checkout)
     try:
         async with real_tracked_db("read_op", read_only=True) as db:
@@ -307,3 +307,4 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
             assert state == "idle"
     finally:
         event.remove(engine.sync_engine, "checkout", _set_application_name_on_checkout)
+        request_context.reset(context_token)
