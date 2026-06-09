@@ -322,6 +322,24 @@ class OpenAIBackend:
             ):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            extra_body_in = extra_params.get("extra_body")
+            if isinstance(extra_body_in, dict):
+                base_extra_body = params.setdefault("extra_body", {})
+                for key, value in extra_body_in.items():
+                    # Deep-merge `reasoning` so a caller-supplied `reasoning` dict
+                    # does not clobber `reasoning.max_tokens` that the
+                    # thinking_budget_tokens block above may have populated.
+                    if (
+                        key == "reasoning"
+                        and isinstance(value, dict)
+                        and isinstance(base_extra_body.get("reasoning"), dict)
+                    ):
+                        base_extra_body["reasoning"] = {
+                            **base_extra_body["reasoning"],
+                            **value,
+                        }
+                    else:
+                        base_extra_body[key] = value
         return params
 
     def _normalize_response(
