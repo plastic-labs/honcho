@@ -301,6 +301,13 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     transport: EmbeddingTransport = "openai"
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
     dimensions_mode: EmbeddingDimensionsMode = "auto"
+    # Optional `input_type` to forward to the embedding endpoint. Required by
+    # some asymmetric-encoder providers — notably NVIDIA NIM models such as
+    # `nvidia/llama-nemotron-embed-1b-v2` which fail with HTTP 400 when this
+    # field is missing. Common values: "query", "passage" (NIM), or
+    # provider-specific equivalents. Default `None` preserves the historical
+    # behaviour for plain OpenAI / Gemini, which don't accept this parameter.
+    input_type: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -337,6 +344,7 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    input_type: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -459,6 +467,7 @@ def resolve_embedding_model_config(
         transport=configured.transport,
         api_key=api_key,
         base_url=configured.overrides.base_url,
+        input_type=configured.input_type,
     )
 
 

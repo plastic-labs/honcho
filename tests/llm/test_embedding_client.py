@@ -328,6 +328,27 @@ def test_resolve_send_dimensions_always_overrides_ada_rejecting_allowlist(
     assert s.resolve_send_dimensions() is True
 
 
+def test_input_type_default_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """By default no input_type is sent — preserves OpenAI / Gemini behaviour."""
+    s = _build_embedding_settings({}, monkeypatch)
+    assert s.MODEL_CONFIG.input_type is None
+
+
+def test_input_type_propagates_through_resolved_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When configured, input_type is preserved end-to-end through resolution."""
+    from src.config import resolve_embedding_model_config
+
+    s = _build_embedding_settings(
+        {"EMBEDDING_MODEL_CONFIG__INPUT_TYPE": "query"},
+        monkeypatch,
+    )
+    assert s.MODEL_CONFIG.input_type == "query"
+    resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
+    assert resolved.input_type == "query"
+
+
 def test_resolve_send_dimensions_never_returns_false_regardless(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
