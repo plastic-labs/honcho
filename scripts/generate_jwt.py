@@ -64,22 +64,26 @@ def main():
         help="Generate an admin JWT (full access)",
     )
     parser.add_argument(
-        "--workspace", "-w",
+        "--workspace",
+        "-w",
         metavar="NAME",
         help="Scope the JWT to a workspace",
     )
     parser.add_argument(
-        "--peer", "-p",
+        "--peer",
+        "-p",
         metavar="NAME",
         help="Scope the JWT to a peer (requires --workspace)",
     )
     parser.add_argument(
-        "--session", "-s",
+        "--session",
+        "-s",
         metavar="NAME",
         help="Scope the JWT to a session (requires --workspace)",
     )
     parser.add_argument(
-        "--expires", "-e",
+        "--expires",
+        "-e",
         metavar="DURATION",
         type=parse_duration,
         help="Token expiry duration. Units: s=seconds, m=minutes, h=hours, d=days, w=weeks, y=years. E.g. 5h, 30d, 1y",
@@ -92,10 +96,14 @@ def main():
     args = parser.parse_args()
 
     if not args.admin and not any([args.workspace, args.peer, args.session]):
-        parser.error("Specify --admin or at least one of --workspace, --peer, --session")
+        parser.error(
+            "Specify --admin or at least one of --workspace, --peer, --session"
+        )
 
     if args.admin and any([args.workspace, args.peer, args.session]):
-        parser.error("--admin cannot be combined with --workspace, --peer, or --session")
+        parser.error(
+            "--admin cannot be combined with --workspace, --peer, or --session"
+        )
 
     if (args.peer or args.session) and not args.workspace:
         parser.error("--peer and --session require --workspace")
@@ -118,7 +126,7 @@ def main():
     if args.print_only:
         print(token)
     else:
-        scope_parts = []
+        scope_parts: list[str] = []
         if args.admin:
             scope_parts.append("admin")
         if args.workspace:
