@@ -261,3 +261,49 @@ async def test_write_session_holds_idle_in_transaction_after_select() -> None:
                 )
             ).scalar()
         assert state == "idle in transaction"
+
+
+@pytest.mark.asyncio
+async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
+    # Regression: the DB.TRACING checkout hook runs set_config() at pool
+    # checkout, BEFORE the dialect applies the read engine's AUTOCOMMIT
+    # isolation level. If that statement is allowed to autobegin a transaction,
+    # psycopg then refuses to switch the connection into AUTOCOMMIT
+    # ("can't change 'autocommit' now: connection in transaction") and every
+    # read_only session 500s under TRACING. The hook must run in autocommit so
+    # it leaves the connection idle. This combination is otherwise untested
+    # because DB.TRACING defaults to false.
+    from sqlalchemy import event, text
+
+    from src.db import (
+        _set_application_name_on_checkout,  # pyright: ignore[reportPrivateUsage]
+        engine,
+        read_engine,
+    )
+
+    request_context.set("tracing-regression")
+    event.listen(engine.sync_engine, "checkout", _set_application_name_on_checkout)
+    try:
+        async with real_tracked_db("read_op", read_only=True) as db:
+            pid = (await db.execute(text("SELECT pg_backend_pid()"))).scalar()
+            app_name = (await db.execute(text("SHOW application_name"))).scalar()
+            conn = await db.connection()
+            raw = (await conn.get_raw_connection()).driver_connection
+            assert raw is not None
+            # AUTOCOMMIT was applied despite the checkout hook running first.
+            assert raw.autocommit is True
+            # The hook still tagged the connection (set_config is session-scoped,
+            # so it survives the autocommit boundary).
+            assert app_name == "tracing-regression"
+            # Backend is idle, not idle-in-transaction: the no-BEGIN guarantee
+            # holds even with the hook firing.
+            async with read_engine.connect() as observer:
+                state = (
+                    await observer.execute(
+                        text("SELECT state FROM pg_stat_activity WHERE pid = :p"),
+                        {"p": pid},
+                    )
+                ).scalar()
+            assert state == "idle"
+    finally:
+        event.remove(engine.sync_engine, "checkout", _set_application_name_on_checkout)

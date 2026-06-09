@@ -94,16 +94,30 @@ def _set_application_name_on_checkout(
     reused pooled connection is re-tagged for the new caller), reading the
     per-task ``request_context`` the request/task scope has already set.
     Best-effort: a failure here must never break the checkout.
+
+    Runs in autocommit so it never leaves the connection 'idle in transaction'
+    at checkout: this hook fires BEFORE the dialect applies execution-option
+    isolation levels, and psycopg refuses to switch a connection into AUTOCOMMIT
+    (which the read engine does) while a transaction opened by this statement is
+    still in progress. set_config(..., is_local=false) is session-scoped, so it
+    persists past the autocommit boundary.
     """
     context = request_context.get() or "unknown"
     try:
-        cursor = dbapi_connection.cursor()
+        previous_autocommit = dbapi_connection.autocommit
+        if not previous_autocommit:
+            dbapi_connection.autocommit = True
         try:
-            cursor.execute(
-                "SELECT set_config('application_name', %s, false)", (context,)
-            )
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute(
+                    "SELECT set_config('application_name', %s, false)", (context,)
+                )
+            finally:
+                cursor.close()
         finally:
-            cursor.close()
+            if not previous_autocommit:
+                dbapi_connection.autocommit = False
     except Exception:
         logger.debug("setting application_name on checkout failed", exc_info=True)
 

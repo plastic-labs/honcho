@@ -50,6 +50,11 @@ class _FakeCursor:
 class _FakeDBAPIConn:
     def __init__(self, recorder: list[Any], raise_exc: Exception | None = None) -> None:
         self._cursor: _FakeCursor = _FakeCursor(recorder, raise_exc)
+        # Real pooled connections are checked out in non-autocommit mode; the
+        # hook flips this to True for its statement then restores it so it never
+        # leaves an open transaction that would block the read engine's
+        # AUTOCOMMIT switch.
+        self.autocommit: bool = False
 
     def cursor(self) -> _FakeCursor:
         return self._cursor
@@ -69,6 +74,8 @@ def test_checkout_hook_sets_application_name_from_request_context() -> None:
     assert "set_config" in sql and "application_name" in sql
     assert params == ("request:trace-ctx",)
     assert conn._cursor.closed is True  # pyright: ignore[reportPrivateUsage]
+    # The hook restored the original (non-autocommit) mode after its statement.
+    assert conn.autocommit is False
 
 
 def test_checkout_hook_defaults_to_unknown_without_context() -> None:
