@@ -226,6 +226,12 @@ async def get_or_create_session(
         try:
             async with db.begin_nested():
                 db.add(honcho_session)
+                # Flush inside the savepoint so any IntegrityError (race condition)
+                # is confined to the nested transaction and the retry logic stays valid.
+                # Without this flush, the Core-level pg_insert in
+                # _get_or_add_peers_to_session executes before the ORM flush
+                # (autoflush=False in db.py), causing a FK violation on session_peers.
+                await db.flush()
             needs_cache_update = True
             created = True
 
