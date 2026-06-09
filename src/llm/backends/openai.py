@@ -148,28 +148,22 @@ class OpenAIBackend:
             except LengthFinishReasonError as exc:
                 truncated = exc.completion
                 raw_content = truncated.choices[0].message.content or ""
-                content = repair_response_model_json(
-                    raw_content,
-                    response_format,
-                    model,
-                )
-                return self._normalize_response(
-                    truncated,
-                    content_override=content,
+                if raw_content:
+                    content = repair_response_model_json(
+                        raw_content,
+                        response_format,
+                        model,
+                    )
+                    return self._normalize_response(
+                        truncated,
+                        content_override=content,
+                    )
+                return await self._json_object_fallback(
+                    params, response_format, model,
                 )
             except (BadRequestError, json.JSONDecodeError, ValidationError):
-                fallback_response = await self._create_structured_response(
-                    params=params,
-                    response_format=response_format,
-                )
-                content = self._parse_or_repair_structured_content(
-                    fallback_response,
-                    response_format,
-                    model,
-                )
-                return self._normalize_response(
-                    fallback_response,
-                    content_override=content,
+                return await self._json_object_fallback(
+                    params, response_format, model,
                 )
             parsed = response.choices[0].message.parsed
             raw_content = response.choices[0].message.content or ""
@@ -187,7 +181,9 @@ class OpenAIBackend:
                         response,
                         content_override=refusal,
                     )
-                raise ValidationException("No parsed content in structured response")
+                return await self._json_object_fallback(
+                    params, response_format, model,
+                )
             return self._normalize_response(
                 response,
                 content_override=validate_structured_output(parsed, response_format),
@@ -372,6 +368,49 @@ class OpenAIBackend:
             thinking_content=extract_openai_reasoning_content(response),
             reasoning_details=extract_openai_reasoning_details(response),
             raw_response=response,
+        )
+
+    async def _json_object_fallback(
+        self,
+        params: dict[str, Any],
+        response_format: type[BaseModel],
+        model: str,
+    ) -> CompletionResult:
+        """Fallback for OpenAI-compatible providers without structured output.
+
+        Uses ``{"type": "json_object"}`` + a system-message schema hint
+        instead of ``json_schema``.  Works with providers that support the
+        basic ``json_object`` response format (Z.AI, Ollama, vLLM, etc.)
+        but not the full native structured-output API.
+        """
+        fallback_params = dict(params)
+        fallback_params.pop("response_format", None)
+        fallback_params["response_format"] = {"type": "json_object"}
+
+        import json as _json
+
+        schema = response_format.model_json_schema()
+        schema_hint = (
+            "You MUST respond with ONLY a valid JSON object matching this exact schema: "
+            + _json.dumps(schema)
+            + ". Do not wrap in markdown code fences."
+        )
+        msgs = list(fallback_params.get("messages", []))
+        msgs.insert(0, {"role": "system", "content": schema_hint})
+        fallback_params["messages"] = msgs
+
+        response = await self._client.chat.completions.create(**fallback_params)
+        raw_content = response.choices[0].message.content or ""
+        if raw_content:
+            content = repair_response_model_json(
+                raw_content,
+                response_format,
+                model,
+            )
+            return self._normalize_response(response, content_override=content)
+        return self._normalize_response(
+            response,
+            content_override=response_format.model_construct(),
         )
 
     async def _create_structured_response(
