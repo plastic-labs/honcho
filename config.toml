@@ -59,6 +59,10 @@ DEDUPLICATE = true
 MAX_INPUT_TOKENS = 23000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 1024
+# Hermes/Honcho uses many low-volume Discord threads; forced batching leaves
+# small sessions pending indefinitely. Flush immediately so memory ingestion
+# reaches durable observations without waiting for arbitrary token volume.
+FLUSH_ENABLED = true
 LOG_OBSERVATIONS = false
 
 [deriver.MODEL_CONFIG]
