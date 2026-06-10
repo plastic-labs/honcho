@@ -174,7 +174,7 @@ Hard limit: {output_words} words maximum. If needed, drop lower-priority detail 
 
 @cache
 def estimate_short_summary_prompt_tokens() -> int:
-    """Estimate tokens for the short summary prompt (without messages/previous_summary)."""
+    """Estimate tokens for the short summary prompt (without messages/previous_summary or custom instructions)."""
     try:
         return estimate_tokens(
             short_summary_prompt(
@@ -189,9 +189,26 @@ def estimate_short_summary_prompt_tokens() -> int:
         return 200
 
 
+def estimate_short_summary_prompt_tokens_with_custom_instructions(
+    custom_instructions: str | None,
+) -> int:
+    """Estimate short summary prompt tokens, including custom instructions if present."""
+    if custom_instructions is None:
+        return estimate_short_summary_prompt_tokens()
+
+    return estimate_tokens(
+        short_summary_prompt(
+            formatted_messages="",
+            output_words=0,
+            previous_summary_text="",
+            custom_instructions=custom_instructions,
+        )
+    )
+
+
 @cache
 def estimate_long_summary_prompt_tokens() -> int:
-    """Estimate tokens for the long summary prompt (without messages/previous_summary)."""
+    """Estimate tokens for the long summary prompt (without messages/previous_summary or custom instructions)."""
     try:
         return estimate_tokens(
             long_summary_prompt(
@@ -204,6 +221,23 @@ def estimate_long_summary_prompt_tokens() -> int:
     except Exception:
         # Return a rough estimate if estimation fails
         return 200
+
+
+def estimate_long_summary_prompt_tokens_with_custom_instructions(
+    custom_instructions: str | None,
+) -> int:
+    """Estimate long summary prompt tokens, including custom instructions if present."""
+    if custom_instructions is None:
+        return estimate_long_summary_prompt_tokens()
+
+    return estimate_tokens(
+        long_summary_prompt(
+            formatted_messages="",
+            output_words=0,
+            previous_summary_text="",
+            custom_instructions=custom_instructions,
+        )
+    )
 
 
 @conditional_observe(name="Create Short Summary")
@@ -483,11 +517,12 @@ async def _create_and_save_summary(
         previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
         input_tokens = messages_tokens + previous_summary_tokens
 
-    # Extract custom_instructions from configuration for the summarizer prompt.
-    # This mirrors the deriver pattern in src/deriver/prompts.py.
+    # Extract custom_instructions from the summarizer's own configuration.
+    # This is separate from reasoning custom_instructions — workspace
+    # operators may want summaries in a different style than deriver output.
     custom_instructions: str | None = None
-    if configuration.reasoning and configuration.reasoning.custom_instructions:
-        custom_instructions = configuration.reasoning.custom_instructions
+    if configuration.summary and configuration.summary.custom_instructions:
+        custom_instructions = configuration.summary.custom_instructions
 
     (
         new_summary,
@@ -511,9 +546,13 @@ async def _create_and_save_summary(
     # save-summary path and the telemetry emit below can use it
     # without basedpyright tripping on a possibly-unbound name.
     if summary_type == SummaryType.SHORT:
-        prompt_tokens = estimate_short_summary_prompt_tokens()
+        prompt_tokens = estimate_short_summary_prompt_tokens_with_custom_instructions(
+            custom_instructions
+        )
     else:
-        prompt_tokens = estimate_long_summary_prompt_tokens()
+        prompt_tokens = estimate_long_summary_prompt_tokens_with_custom_instructions(
+            custom_instructions
+        )
 
     # Step 3: Save to database with new transaction
     if not is_fallback:
@@ -619,6 +658,8 @@ async def _create_summary(
         last_message_id: ID of the last message
         last_message_content_preview: Preview of last message content for fallback
         message_count: Number of messages for fallback
+        custom_instructions: Optional workspace-level custom instructions for prompt
+        workspace_name: Optional workspace name for telemetry
 
     Returns:
         A tuple of (Summary, is_fallback, llm_input_tokens, llm_output_tokens)
