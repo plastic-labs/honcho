@@ -98,6 +98,10 @@ POLLING_BACKOFF_MULTIPLIER = 2.0
 POLLING_STARTUP_JITTER_SECONDS = 30.0
 POLLING_JITTER_RATIO = 0.5
 STALE_SESSION_TIMEOUT_MINUTES = 5
+# Minimum (jittered) spacing between stale-work-unit cleanup runs per instance.
+# Staleness is a minutes-timescale condition, so cleanup doesn't need to run on
+# every seconds-scale poll (0.0 = run every poll, legacy behavior).
+STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS = 60.0
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
 DEDUPLICATE = true
 LOG_OBSERVATIONS = false

@@ -276,7 +276,7 @@ class RepresentationManager:
             )
 
         async with tracked_db(
-            "representation_manager.get_working_representation"
+            "representation_manager.get_working_representation", read_only=True
         ) as new_db:
             return await self._get_working_representation_internal(
                 new_db,

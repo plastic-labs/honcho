@@ -121,7 +121,7 @@ class DialecticAgent:
             token_limit=max_tokens,
             reverse=False,  # chronological order
         )
-        async with tracked_db("dialectic.session_history") as db:
+        async with tracked_db("dialectic.session_history", read_only=True) as db:
             result = await db.execute(stmt)
             messages = result.scalars().all()
 
