@@ -378,6 +378,77 @@ async def test_semantic_search_when_embeddings_enabled(
 
 
 @pytest.mark.asyncio
+async def test_pgvector_search_excludes_pending_unembedded_rows(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Pending MessageEmbedding rows (embedding=None, awaiting the immediate
+    path or reconciler) must not appear in pgvector semantic search results:
+    their NULL distance sorts last and would pad the window with unranked
+    messages."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    embedded_id = str(generate_nanoid())
+    pending_id = str(generate_nanoid())
+    for seq, (mid, content) in enumerate(
+        ((embedded_id, "embedded message"), (pending_id, "pending message")), start=1
+    ):
+        db_session.add(
+            models.Message(
+                public_id=mid,
+                session_name=test_session.name,
+                workspace_name=test_workspace.name,
+                peer_name=test_peer.name,
+                content=content,
+                seq_in_session=seq,
+            )
+        )
+    await db_session.commit()
+
+    dims = settings.EMBEDDING.VECTOR_DIMENSIONS
+    db_session.add_all(
+        [
+            models.MessageEmbedding(
+                content="embedded message",
+                message_id=embedded_id,
+                workspace_name=test_workspace.name,
+                session_name=test_session.name,
+                peer_name=test_peer.name,
+                sync_state="synced",
+                embedding=[0.1] * dims,
+            ),
+            models.MessageEmbedding(
+                content="pending message",
+                message_id=pending_id,
+                workspace_name=test_workspace.name,
+                session_name=test_session.name,
+                peer_name=test_peer.name,
+                sync_state="pending",
+                embedding=None,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    snippets = await message_crud._search_messages_pgvector(  # pyright: ignore[reportPrivateUsage]
+        db_session,
+        test_workspace.name,
+        test_session.name,
+        query_embedding=[0.1] * dims,
+        limit=10,
+    )
+
+    matched_ids = {msg.public_id for matched, _context in snippets for msg in matched}
+    assert embedded_id in matched_ids
+    assert pending_id not in matched_ids
+
+
+@pytest.mark.asyncio
 async def test_build_merged_snippets_batches_context_query_across_sessions():
     """Context expansion should not issue one DB query per matched session."""
     matched_messages = [

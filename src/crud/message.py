@@ -648,6 +648,9 @@ async def _search_messages_pgvector(
             models.MessageEmbedding,
             models.Message.public_id == models.MessageEmbedding.message_id,
         )
+        # Exclude pending rows that haven't been embedded yet: their NULL
+        # distance sorts last and would pad the window with unranked messages.
+        .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
         .order_by(models.MessageEmbedding.embedding.cosine_distance(query_embedding))
         .limit(limit * 2)
