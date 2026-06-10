@@ -786,6 +786,16 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=100, gt=0, le=1000)
     ] = 100
 
+    # Upper bound on how many observations a single session may contribute to a
+    # given (observer, observed) collection. Without this, one long or
+    # information-dense session can dump a burst of conclusions in a single
+    # distillation pass and dominate the representation — recency-ordered recall
+    # then surfaces mostly that one session's facts, distorting the peer model.
+    # The deriver counts existing non-deleted observations for the session and
+    # drops new ones once the cap is reached (dedup still runs first). Set to 0
+    # to disable the cap (unbounded, legacy behavior).
+    MAX_OBSERVATIONS_PER_SESSION: Annotated[int, Field(default=50, ge=0, le=10_000)] = 50
+
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
         Field(default=1024, ge=128, le=16_384),

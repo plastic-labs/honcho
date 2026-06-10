@@ -89,6 +89,76 @@ class TestDocumentCRUD:
         assert documents[0].content in ["Test observation 1", "Test observation 2"]
 
     @pytest.mark.asyncio
+    async def test_count_documents_for_session(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """count_documents_for_session counts only live docs for the given session."""
+        from sqlalchemy import func, update
+
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # A second session in the same collection — must not be counted.
+        other_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(other_session)
+        await db_session.flush()
+
+        live_a = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="live a",
+            session_name=test_session.name,
+        )
+        live_b = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="live b",
+            session_name=test_session.name,
+        )
+        soft_deleted = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="deleted",
+            session_name=test_session.name,
+        )
+        other = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="other session",
+            session_name=other_session.name,
+        )
+        db_session.add_all([live_a, live_b, soft_deleted, other])
+        await db_session.flush()
+
+        await db_session.execute(
+            update(models.Document)
+            .where(models.Document.id == soft_deleted.id)
+            .values(deleted_at=func.now())
+        )
+        await db_session.commit()
+
+        count = await crud.count_documents_for_session(
+            db_session,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            session_name=test_session.name,
+        )
+
+        # 2 live in-session docs; soft-deleted and other-session docs excluded.
+        assert count == 2
+
+    @pytest.mark.asyncio
     async def test_query_documents(
         self,
         db_session: AsyncSession,
