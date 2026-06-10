@@ -63,7 +63,7 @@ class SummaryConfiguration(BaseModel):
     )
     custom_instructions: str | None = Field(
         default=None,
-        description="Optional custom instructions for session summaries. Rejected if they exceed the summarizer custom-instruction token cap.",
+        description="Optional custom instructions for session summaries. Validated against DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS.",
     )
 
     @field_validator("custom_instructions")
