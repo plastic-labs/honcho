@@ -4,7 +4,10 @@ from typing import Any
 import pytest
 
 from src.config import EmbeddingModelConfig
-from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
+from src.embedding_client import (  # pyright: ignore[reportPrivateUsage]
+    EmbeddingTokenLimitError,
+    _EmbeddingClient,
+)
 
 
 class FakeOpenAIEmbeddingsAPI:
@@ -239,6 +242,77 @@ async def test_openai_simple_batch_embed_forwards_dimensions(
     assert len(fake.calls) == 1
     assert fake.calls[0]["dimensions"] == 768
     assert fake.calls[0]["input"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_raises_token_limit_error_without_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 768,
+        model="text-embedding-3-small",
+        send_dimensions=True,
+        vector_dimensions=768,
+    )
+
+    oversized_text = "word " * 9000  # well over the 8192 token limit
+
+    with pytest.raises(EmbeddingTokenLimitError, match=r"got \d+ tokens"):
+        await client.simple_batch_embed(["short text", oversized_text])
+
+    # Pre-check should reject before ever calling the provider.
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_propagates_non_token_errors_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EmptyResponseEmbeddingsAPI:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create(
+            self,
+            *,
+            model: str,
+            input: str | list[str],
+            **kwargs: Any,
+        ) -> SimpleNamespace:
+            call: dict[str, Any] = {"model": model, "input": input}
+            call.update(kwargs)
+            self.calls.append(call)
+            # Mirrors the OpenAI SDK's parser when a provider (e.g. OpenRouter)
+            # returns HTTP 200 with an empty `data: []` body.
+            raise ValueError("No embedding data received")
+
+    fake_embeddings = EmptyResponseEmbeddingsAPI()
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: EmptyResponseEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        ),
+        vector_dimensions=768,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    with pytest.raises(ValueError, match="No embedding data received") as exc_info:
+        await client.simple_batch_embed(["a", "b"])
+
+    # The error must propagate as-is, not be relabeled as a token-limit error.
+    assert not isinstance(exc_info.value, EmbeddingTokenLimitError)
+    assert len(fake_embeddings.calls) == 1
 
 
 @pytest.mark.asyncio
