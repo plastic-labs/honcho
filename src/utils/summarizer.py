@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 from enum import Enum
-from functools import cache
+from functools import cache, lru_cache
 from inspect import cleandoc as c
 from typing import TypedDict
 
@@ -173,7 +173,7 @@ Hard limit: {output_words} words maximum. If needed, drop lower-priority detail 
 """)
 
 
-@cache
+@lru_cache(maxsize=128)
 def estimate_short_summary_prompt_tokens(custom_instructions: str | None = None) -> int:
     """Estimate tokens for the short summary prompt, optionally including custom instructions."""
     try:
@@ -189,7 +189,7 @@ def estimate_short_summary_prompt_tokens(custom_instructions: str | None = None)
         return 200
 
 
-@cache
+@lru_cache(maxsize=128)
 def estimate_long_summary_prompt_tokens(custom_instructions: str | None = None) -> int:
     """Estimate tokens for the long summary prompt, optionally including custom instructions."""
     try:
@@ -198,7 +198,7 @@ def estimate_long_summary_prompt_tokens(custom_instructions: str | None = None) 
                 formatted_messages="",
                 output_words=0,
                 previous_summary_text="",
-                custom_instructions=None,
+                custom_instructions=custom_instructions,
             )
         )
     except Exception:
