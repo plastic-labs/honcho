@@ -93,6 +93,18 @@ class RepresentationManager:
             logger.debug("No non-empty observations to save")
             return new_documents
 
+        # Per-session burst cap: bound how many observations one session may
+        # contribute to this collection so a single distillation burst can't
+        # dominate or distort the representation. The count is a short, DB-only
+        # read closed before the embedding call below — we never hold a session
+        # open across the embed (see CLAUDE.md). Dropping surplus here also
+        # avoids embedding observations we'd discard anyway.
+        all_observations = await self._apply_session_observation_cap(
+            all_observations, session_name
+        )
+        if not all_observations:
+            return new_documents
+
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
 
@@ -142,6 +154,52 @@ class RepresentationManager:
         )
 
         return new_documents
+
+    async def _apply_session_observation_cap(
+        self,
+        all_observations: list[ExplicitObservation | DeductiveObservation],
+        session_name: str,
+    ) -> list[ExplicitObservation | DeductiveObservation]:
+        """
+        Trim a batch of observations to the per-session cap for this collection.
+
+        Counts the observations this session has already contributed to the
+        (observer, observed) collection and drops surplus observations from the
+        incoming batch once the cap is reached. Returns the (possibly trimmed)
+        list to persist. A cap of 0 disables the limit entirely.
+        """
+        cap = settings.DERIVER.MAX_OBSERVATIONS_PER_SESSION
+        if cap <= 0:
+            return all_observations
+
+        async with tracked_db(
+            "representation_manager.count_session_observations"
+        ) as db:
+            existing = await crud.count_documents_for_session(
+                db,
+                self.workspace_name,
+                observer=self.observer,
+                observed=self.observed,
+                session_name=session_name,
+            )
+
+        headroom = max(0, cap - existing)
+        if headroom >= len(all_observations):
+            return all_observations
+
+        dropped = len(all_observations) - headroom
+        logger.warning(
+            "Per-session observation cap reached for %s/%s (observer=%s, observed=%s): %d existing, cap=%d — dropping %d of %d new observations from this burst",
+            self.workspace_name,
+            session_name,
+            self.observer,
+            self.observed,
+            existing,
+            cap,
+            dropped,
+            len(all_observations),
+        )
+        return all_observations[:headroom]
 
     async def _save_representation_internal(
         self,

@@ -8,6 +8,7 @@ from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.schemas.configuration import (
     ResolvedConfiguration,
@@ -262,6 +263,10 @@ class TestRepresentationManagerSave:
         with (
             patch("src.crud.representation.tracked_db", _fake_tracked_db),
             patch(
+                "src.crud.representation.crud.count_documents_for_session",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
                 "src.crud.representation.embedding_client.simple_batch_embed",
                 new=AsyncMock(return_value=[[0.1]]),
             ) as mock_embed,
@@ -316,6 +321,10 @@ class TestRepresentationManagerSave:
         with (
             patch("src.crud.representation.tracked_db", _fake_tracked_db),
             patch(
+                "src.crud.representation.crud.count_documents_for_session",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
                 "src.crud.representation.embedding_client.simple_batch_embed",
                 new=AsyncMock(return_value=[[0.2]]),
             ) as mock_embed,
@@ -366,6 +375,185 @@ class TestRepresentationManagerSave:
 
         with (
             patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(),
+            ) as mock_save,
+        ):
+            saved = await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(timezone.utc),
+                message_level_configuration=_resolved_config(),
+            )
+
+        assert saved == 0
+        mock_embed.assert_not_awaited()
+        mock_save.assert_not_awaited()
+
+
+class TestRepresentationManagerSessionCap:
+    """Tests for the per-session observation burst cap."""
+
+    @staticmethod
+    def _explicit(content: str) -> ExplicitObservation:
+        return ExplicitObservation(
+            content=content,
+            created_at=datetime.now(timezone.utc),
+            message_ids=[1],
+            session_name="session",
+        )
+
+    @pytest.mark.asyncio
+    async def test_cap_truncates_burst_to_headroom(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A batch overflowing the cap is trimmed to the remaining headroom."""
+        monkeypatch.setattr(settings.DERIVER, "MAX_OBSERVATIONS_PER_SESSION", 50)
+        manager = RepresentationManager(
+            "workspace", observer="observer", observed="observed"
+        )
+        observations: list[ExplicitObservation | DeductiveObservation] = [
+            self._explicit(f"obs {i}") for i in range(5)
+        ]
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.crud.count_documents_for_session",
+                new=AsyncMock(return_value=48),
+            ),
+        ):
+            result = await manager._apply_session_observation_cap(  # pyright: ignore[reportPrivateUsage]
+                observations, "session"
+            )
+
+        # headroom = 50 - 48 = 2
+        assert [o.content for o in result if isinstance(o, ExplicitObservation)] == [
+            "obs 0",
+            "obs 1",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_cap_drops_entire_batch_when_session_full(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """When the session is already at/over the cap, the whole batch is dropped."""
+        monkeypatch.setattr(settings.DERIVER, "MAX_OBSERVATIONS_PER_SESSION", 50)
+        manager = RepresentationManager(
+            "workspace", observer="observer", observed="observed"
+        )
+        observations: list[ExplicitObservation | DeductiveObservation] = [
+            self._explicit(f"obs {i}") for i in range(3)
+        ]
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.crud.count_documents_for_session",
+                new=AsyncMock(return_value=50),
+            ),
+        ):
+            result = await manager._apply_session_observation_cap(  # pyright: ignore[reportPrivateUsage]
+                observations, "session"
+            )
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_cap_disabled_skips_count_query(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A cap of 0 disables the limit and avoids the count query entirely."""
+        monkeypatch.setattr(settings.DERIVER, "MAX_OBSERVATIONS_PER_SESSION", 0)
+        manager = RepresentationManager(
+            "workspace", observer="observer", observed="observed"
+        )
+        observations: list[ExplicitObservation | DeductiveObservation] = [
+            self._explicit(f"obs {i}") for i in range(5)
+        ]
+        count_mock = AsyncMock(return_value=999)
+
+        with patch(
+            "src.crud.representation.crud.count_documents_for_session",
+            new=count_mock,
+        ):
+            result = await manager._apply_session_observation_cap(  # pyright: ignore[reportPrivateUsage]
+                observations, "session"
+            )
+
+        assert len(result) == 5
+        count_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_save_representation_embeds_only_uncapped_observations(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """save_representation embeds and saves only the observations that fit the cap."""
+        monkeypatch.setattr(settings.DERIVER, "MAX_OBSERVATIONS_PER_SESSION", 50)
+        manager = RepresentationManager(
+            "workspace", observer="observer", observed="observed"
+        )
+        representation = Representation(
+            explicit=[self._explicit("a"), self._explicit("b"), self._explicit("c")]
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.crud.count_documents_for_session",
+                new=AsyncMock(return_value=49),
+            ),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(return_value=[[0.1]]),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(return_value=1),
+            ) as mock_save,
+        ):
+            saved = await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(timezone.utc),
+                message_level_configuration=_resolved_config(),
+            )
+
+        # headroom = 50 - 49 = 1, so only the first observation survives.
+        assert saved == 1
+        mock_embed.assert_awaited_once_with(["a"])
+        saved_observations = _saved_observations(mock_save)
+        assert len(saved_observations) == 1
+        assert saved_observations[0].content == "a"
+
+    @pytest.mark.asyncio
+    async def test_save_representation_skips_when_session_full(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """save_representation returns early without embedding when the session is full."""
+        monkeypatch.setattr(settings.DERIVER, "MAX_OBSERVATIONS_PER_SESSION", 50)
+        manager = RepresentationManager(
+            "workspace", observer="observer", observed="observed"
+        )
+        representation = Representation(
+            explicit=[self._explicit("a"), self._explicit("b")]
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.crud.count_documents_for_session",
+                new=AsyncMock(return_value=50),
+            ),
             patch(
                 "src.crud.representation.embedding_client.simple_batch_embed",
                 new=AsyncMock(),

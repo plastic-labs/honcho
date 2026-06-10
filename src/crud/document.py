@@ -157,6 +157,42 @@ async def query_documents_recent(
     return result.scalars().all()
 
 
+async def count_documents_for_session(
+    db: AsyncSession,
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+    session_name: str,
+) -> int:
+    """
+    Count non-deleted documents a session has contributed to a collection.
+
+    Used by the deriver to enforce a per-session observation cap so a single
+    distillation burst can't dominate the representation.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        observer: Name of the observing peer
+        observed: Name of the observed peer
+        session_name: Session whose observations are counted
+
+    Returns:
+        Number of non-deleted documents for the (observer, observed, session) tuple
+    """
+    stmt = select(func.count()).where(
+        models.Document.workspace_name == workspace_name,
+        models.Document.observer == observer,
+        models.Document.observed == observed,
+        models.Document.session_name == session_name,
+        models.Document.deleted_at.is_(None),
+    )
+
+    result = await db.execute(stmt)
+    return result.scalar_one()
+
+
 async def query_documents_most_derived(
     db: AsyncSession,
     workspace_name: str,
