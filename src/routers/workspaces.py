@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
@@ -67,7 +67,7 @@ async def get_all_workspaces(
         None, description="Filtering and pagination options for the workspaces list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Workspaces, paginated with optional filters."""
     filter_param = None
@@ -169,7 +169,7 @@ async def get_queue_status(
     session_id: str | None = Query(
         None, description="Optional session ID to filter by"
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """
     Get the processing queue status for a Workspace, optionally scoped to an observer, sender,

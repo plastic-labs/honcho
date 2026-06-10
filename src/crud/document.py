@@ -369,7 +369,7 @@ async def query_documents(
                 max_distance,
                 top_k,
             )
-        async with tracked_db("query_documents.pgvector") as managed_db:
+        async with tracked_db("query_documents.pgvector", read_only=True) as managed_db:
             docs = await _query_documents_pgvector(
                 managed_db,
                 workspace_name,
@@ -407,7 +407,7 @@ async def query_documents(
             document_ids=document_ids,
             filters=filters,
         )
-    async with tracked_db("query_documents.fetch") as managed_db:
+    async with tracked_db("query_documents.fetch", read_only=True) as managed_db:
         docs = await fetch_documents_by_ids(
             db=managed_db,
             workspace_name=workspace_name,

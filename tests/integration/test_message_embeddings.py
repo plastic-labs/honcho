@@ -490,7 +490,10 @@ async def test_search_messages_external_lookup_happens_before_tracked_db(
         return [([message], [message])]
 
     @asynccontextmanager
-    async def fake_tracked_db(_operation_name: str | None = None):
+    async def fake_tracked_db(
+        _operation_name: str | None = None, *, read_only: bool = False
+    ):
+        del read_only
         call_order.append("enter")
         yield fake_db
         call_order.append("exit")
@@ -594,7 +597,10 @@ async def test_search_messages_temporal_external_lookup_happens_before_tracked_d
         return [([message], [message])]
 
     @asynccontextmanager
-    async def fake_tracked_db(_operation_name: str | None = None):
+    async def fake_tracked_db(
+        _operation_name: str | None = None, *, read_only: bool = False
+    ):
+        del read_only
         call_order.append("enter")
         yield fake_db
         call_order.append("exit")

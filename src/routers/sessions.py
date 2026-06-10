@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import config, crud, schemas
 from src.cache.client import safe_cache_delete
 from src.crud.session import session_cache_key
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion
 from src.embedding_client import embedding_client
 from src.exceptions import (
@@ -251,7 +251,7 @@ async def get_sessions(
         None, description="Filtering and pagination options for the sessions list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Sessions for a Workspace, paginated with optional filters."""
     filter_param = None
@@ -544,7 +544,7 @@ async def get_peer_config(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     peer_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get the configuration for a Peer in a Session."""
     return await crud.get_peer_config(
@@ -599,7 +599,7 @@ async def set_peer_config(
 async def get_session_peers(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Peers in a Session. Results are paginated."""
     try:
@@ -622,7 +622,7 @@ async def get_session_peers(
 async def get_session_context(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
     tokens: int | None = Query(
         None,
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
@@ -814,7 +814,7 @@ async def get_session_context(
 async def get_session_summaries(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ) -> schemas.SessionSummaries:
     """
     Get available summaries for a Session.

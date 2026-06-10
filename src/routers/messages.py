@@ -18,7 +18,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.reconciler.embed_now import embed_messages_now
@@ -276,7 +276,7 @@ async def get_messages(
     reverse: bool | None = Query(
         False, description="Whether to reverse the order of results"
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all messages for a Session with optional filters. Results are paginated."""
     try:
@@ -304,7 +304,7 @@ async def get_message(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     message_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get a single message by ID from a Session."""
     honcho_message = await crud.get_message(

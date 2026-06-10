@@ -695,7 +695,7 @@ async def _semantic_search_messages(
     # Pre-fetch peer session scope if needed (short-lived DB session)
     allowed_session_names: list[str] | None = None
     if observer and not session_name:
-        async with tracked_db(f"{operation_name}.peer_scope") as db:
+        async with tracked_db(f"{operation_name}.peer_scope", read_only=True) as db:
             allowed_session_names = await get_peer_session_names(
                 db, workspace_name, observer
             )
@@ -715,7 +715,7 @@ async def _semantic_search_messages(
         if not message_ids:
             return []
 
-        async with tracked_db(operation_name) as db:
+        async with tracked_db(operation_name, read_only=True) as db:
             matched_messages = (
                 await _fetch_messages_by_ids(
                     db,
@@ -731,7 +731,7 @@ async def _semantic_search_messages(
             _expunge_snippets(db, snippets)
             return snippets
 
-    async with tracked_db(operation_name) as db:
+    async with tracked_db(operation_name, read_only=True) as db:
         snippets = await _search_messages_pgvector(
             db,
             workspace_name,
@@ -863,7 +863,7 @@ async def grep_messages(
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
-    async with tracked_db("message.grep_messages") as db:
+    async with tracked_db("message.grep_messages", read_only=True) as db:
         # Pre-fetch peer session scope if needed
         allowed_session_names = None
         if observer and not session_name:
