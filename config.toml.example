@@ -73,6 +73,9 @@ MAX_TOKENS_PER_REQUEST = 300000
 [embedding.model_config]
 transport = "openai"
 model = "text-embedding-3-small"
+# Optional provider request input cap. Useful for OpenAI-compatible embedding
+# APIs with smaller limits, such as DashScope text-embedding-v4.
+# max_batch_size = 10
 
 # Optional module-level endpoint overrides
 # [embedding.model_config.overrides]

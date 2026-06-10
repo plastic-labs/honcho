@@ -301,6 +301,7 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     transport: EmbeddingTransport = "openai"
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
     dimensions_mode: EmbeddingDimensionsMode = "auto"
+    max_batch_size: Annotated[int, Field(gt=0)] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -337,6 +338,7 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    max_batch_size: Annotated[int, Field(gt=0)] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -459,6 +461,7 @@ def resolve_embedding_model_config(
         transport=configured.transport,
         api_key=api_key,
         base_url=configured.overrides.base_url,
+        max_batch_size=configured.max_batch_size,
     )
 
 

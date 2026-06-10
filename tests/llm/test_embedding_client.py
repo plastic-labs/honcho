@@ -157,6 +157,7 @@ def _build_openai_client(
     model: str,
     send_dimensions: bool,
     vector_dimensions: int,
+    max_batch_size: int | None = None,
 ) -> tuple[_EmbeddingClient, FakeOpenAIEmbeddingsAPI]:
     fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding)
 
@@ -173,6 +174,7 @@ def _build_openai_client(
             transport="openai",
             model=model,
             api_key="test-key",
+            max_batch_size=max_batch_size,
         ),
         vector_dimensions=vector_dimensions,
         max_input_tokens=8192,
@@ -242,6 +244,24 @@ async def test_openai_simple_batch_embed_forwards_dimensions(
 
 
 @pytest.mark.asyncio
+async def test_openai_simple_batch_embed_respects_configured_max_batch_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 1536,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=1536,
+        max_batch_size=2,
+    )
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["input"] for call in fake.calls] == [["a", "b"], ["c"]]
+
+
+@pytest.mark.asyncio
 async def test_openai_batch_embed_forwards_dimensions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -271,6 +291,7 @@ def _build_embedding_settings(
         "EMBEDDING_MODEL_CONFIG__MODEL",
         "EMBEDDING_MODEL_CONFIG__TRANSPORT",
         "EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE",
+        "EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE",
     ):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
@@ -339,3 +360,14 @@ def test_resolve_send_dimensions_never_returns_false_regardless(
         monkeypatch,
     )
     assert s.resolve_send_dimensions() is False
+
+
+def test_embedding_model_config_parses_max_batch_size_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _build_embedding_settings(
+        {"EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE": "10"},
+        monkeypatch,
+    )
+
+    assert s.MODEL_CONFIG.max_batch_size == 10
