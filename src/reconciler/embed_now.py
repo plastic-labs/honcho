@@ -9,9 +9,10 @@ background task right after the response is sent. The reconciler remains the
 fallback for anything this path leaves pending (failures, process restarts, or
 rows it could not claim).
 
-The fast path never holds a DB session across the embedding network call: it
-claims and leases rows in one short transaction, embeds with no session open,
-then persists in a second short transaction. Running concurrently with the
+The fast path never holds a DB session across a network call (embedding or
+external vector store): it claims and leases rows in one short transaction,
+embeds with no session open, then persists in short transactions with any
+external-store upserts running between them, not inside them. Running concurrently with the
 reconciler is safe because the claim uses ``FOR UPDATE SKIP LOCKED`` and leases
 rows by stamping ``last_sync_at``, which the reconciler's backoff filter then
 skips.
@@ -188,8 +189,13 @@ async def _persist(
     claimed: list[_ClaimedChunk],
     vectors: list[list[float]],
 ) -> None:
-    """Phase 3 (short txn): persist vectors and mark rows synced. On failure,
-    rows stay pending (already leased) and the reconciler heals them."""
+    """Phase 3: persist vectors and mark rows synced. On failure, rows stay
+    pending (already leased) and the reconciler heals them.
+
+    pgvector mode is one short transaction. External-store mode never holds a
+    DB session across the vector-store network call: positions are read in one
+    short transaction, the upserts run with no session open, and the surviving
+    rows are marked synced in a second short transaction."""
     if len(vectors) != len(claimed):
         logger.warning(
             "Embedding count %s != claimed chunk count %s; skipping immediate persist, reconciler will heal",
@@ -205,13 +211,18 @@ async def _persist(
     )
     external = get_external_vector_store()
 
-    async with tracked_db("embed_now_persist") as db:
-        if external is None:
+    if external is None:
+        async with tracked_db("embed_now_persist") as db:
             await _persist_pgvector(db, claimed, vector_by_id)
-        else:
-            await _persist_external(
-                db, message_ids, claimed, vector_by_id, store_in_postgres, external
-            )
+            await db.commit()
+        return
+
+    synced = await _upsert_external(message_ids, claimed, vector_by_id, external)
+    if not synced:
+        return
+
+    async with tracked_db("embed_now_persist") as db:
+        await _mark_synced(db, synced, vector_by_id, store_in_postgres)
         await db.commit()
 
 
@@ -241,24 +252,28 @@ async def _persist_pgvector(
         )
 
 
-async def _persist_external(
-    db: AsyncSession,
+async def _upsert_external(
     message_ids: list[str],
     claimed: list[_ClaimedChunk],
     vector_by_id: dict[int, list[float]],
-    store_in_postgres: bool,
     external: VectorStore,
-) -> None:
-    """External-store mode: upsert vectors per namespace, then mark synced.
+) -> list[_ClaimedChunk]:
+    """External-store mode: upsert vectors per namespace with no DB session
+    open, returning the chunks whose namespaces upserted successfully.
+
     Chunk positions come from the shared helper (full sibling ordering) so vector
-    ids match whatever the reconciler writes for any chunk we skipped."""
-    chunk_position = await compute_chunk_positions(db, message_ids)
+    ids match whatever the reconciler writes for any chunk we skipped; reading
+    them is the only DB work here, done in its own short transaction before any
+    network call."""
+    async with tracked_db("embed_now_positions") as db:
+        chunk_position = await compute_chunk_positions(db, message_ids)
 
     by_namespace: dict[str, list[_ClaimedChunk]] = {}
     for c in claimed:
         ns = external.get_vector_namespace("message", c.workspace_name)
         by_namespace.setdefault(ns, []).append(c)
 
+    synced: list[_ClaimedChunk] = []
     for namespace, chunks in by_namespace.items():
         records: list[VectorRecord] = []
         synced_chunks: list[_ClaimedChunk] = []
@@ -295,21 +310,34 @@ async def _persist_external(
             )
             continue
 
-        for c in synced_chunks:
-            values: dict[str, Any] = {
-                "sync_state": "synced",
-                "last_sync_at": func.now(),
-                "sync_attempts": 0,
-            }
-            if store_in_postgres:
-                values["embedding"] = vector_by_id[c.id]
-            await db.execute(
-                update(models.MessageEmbedding)
-                .where(
-                    and_(
-                        models.MessageEmbedding.id == c.id,
-                        models.MessageEmbedding.sync_state == "pending",
-                    )
+        synced.extend(synced_chunks)
+
+    return synced
+
+
+async def _mark_synced(
+    db: AsyncSession,
+    chunks: list[_ClaimedChunk],
+    vector_by_id: dict[int, list[float]],
+    store_in_postgres: bool,
+) -> None:
+    """Mark upserted chunks synced (DB-only). The ``sync_state='pending'``
+    guard keeps us idempotent if the reconciler synced a row in the gap."""
+    for c in chunks:
+        values: dict[str, Any] = {
+            "sync_state": "synced",
+            "last_sync_at": func.now(),
+            "sync_attempts": 0,
+        }
+        if store_in_postgres:
+            values["embedding"] = vector_by_id[c.id]
+        await db.execute(
+            update(models.MessageEmbedding)
+            .where(
+                and_(
+                    models.MessageEmbedding.id == c.id,
+                    models.MessageEmbedding.sync_state == "pending",
                 )
-                .values(**values)
             )
+            .values(**values)
+        )

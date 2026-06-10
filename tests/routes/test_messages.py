@@ -59,9 +59,12 @@ async def test_create_message_schedules_immediate_embed(
     db_session.add(test_session)
     await db_session.commit()
 
-    with patch(
-        "src.routers.messages.embed_messages_now", new=AsyncMock()
-    ) as mock_embed_now:
+    with (
+        patch("src.config.settings.EMBED_MESSAGES", True),
+        patch(
+            "src.routers.messages.embed_messages_now", new=AsyncMock()
+        ) as mock_embed_now,
+    ):
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
             json={"messages": [{"content": "hello", "peer_id": test_peer.name}]},
@@ -112,9 +115,12 @@ async def test_file_upload_schedules_immediate_embed(
     db_session.add(test_session)
     await db_session.commit()
 
-    with patch(
-        "src.routers.messages.embed_messages_now", new=AsyncMock()
-    ) as mock_embed_now:
+    with (
+        patch("src.config.settings.EMBED_MESSAGES", True),
+        patch(
+            "src.routers.messages.embed_messages_now", new=AsyncMock()
+        ) as mock_embed_now,
+    ):
         files = {"file": ("note.txt", io.BytesIO(b"hello world"), "text/plain")}
         response = client.post(
             f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
