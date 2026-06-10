@@ -33,24 +33,48 @@ def repair_response_model_json(
         final = validate_and_repair_json(raw_content)
         repaired_data = json.loads(final)
 
-        if (
-            response_model is PromptRepresentation
-            and "deductive" in repaired_data
-            and isinstance(repaired_data["deductive"], list)
+        if response_model is PromptRepresentation and isinstance(
+            repaired_data, dict
         ):
-            for item in repaired_data["deductive"]:
-                if isinstance(item, dict):
-                    if "conclusion" not in item and "premises" in item:
-                        if item["premises"]:
-                            item["conclusion"] = (
-                                f"[Incomplete reasoning from premises: {item['premises'][0][:100]}...]"
-                            )
-                        else:
-                            item["conclusion"] = (
-                                "[Incomplete reasoning - conclusion missing]"
-                            )
-                    if "premises" not in item:
-                        item["premises"] = []
+            # Normalize explicit: string[] → [{"content": s}, ...]
+            explicit = repaired_data.get("explicit")
+            if isinstance(explicit, list):
+                normalized = []
+                for item in explicit:
+                    if isinstance(item, str):
+                        normalized.append({"content": item})
+                    elif isinstance(item, dict) and "content" in item:
+                        normalized.append(item)
+                    elif isinstance(item, dict) and "observation" in item:
+                        normalized.append({"content": item["observation"]})
+                repaired_data["explicit"] = normalized
+
+            # Normalize deductive items (existing logic + string handling)
+            deductive = repaired_data.get("deductive")
+            if isinstance(deductive, list):
+                normalized_ded = []
+                for item in deductive:
+                    if isinstance(item, str):
+                        normalized_ded.append(
+                            {"conclusion": item, "premises": []}
+                        )
+                    elif isinstance(item, dict):
+                        if (
+                            "conclusion" not in item
+                            and "premises" in item
+                        ):
+                            if item["premises"]:
+                                item["conclusion"] = (
+                                    f"[Incomplete reasoning from premises: {item['premises'][0][:100]}...]"
+                                )
+                            else:
+                                item["conclusion"] = (
+                                    "[Incomplete reasoning - conclusion missing]"
+                                )
+                        if "premises" not in item:
+                            item["premises"] = []
+                        normalized_ded.append(item)
+                repaired_data["deductive"] = normalized_ded
 
         final = json.dumps(repaired_data)
     except (json.JSONDecodeError, KeyError, TypeError, ValueError):
