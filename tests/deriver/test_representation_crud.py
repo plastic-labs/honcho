@@ -1,5 +1,7 @@
 import datetime
 
+import pytest
+
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -106,3 +108,25 @@ def test_prompt_representation_conversion():
     # (they would be created directly by the Dreamer via the create_observations tool)
     assert len(rep.deductive) == 0
     assert rep.explicit[0].created_at == timestamp
+
+
+def test_prompt_representation_normalizes_top_level_array_and_alias_keys():
+    arr = PromptRepresentation.model_validate(["I live in Berlin", {"text": "I use Cubase"}])
+    assert [item.content for item in arr.explicit] == ["I live in Berlin", "I use Cubase"]
+
+    aliased = PromptRepresentation.model_validate({"observations": ["I am a musician"]})
+    assert [item.content for item in aliased.explicit] == ["I am a musician"]
+
+    nested = PromptRepresentation.model_validate({"result": {"observations": ["I work remotely"]}})
+    assert [item.content for item in nested.explicit] == ["I work remotely"]
+
+
+def test_prompt_representation_truncates_overlong_content():
+    prompt_rep = PromptRepresentation.model_validate({"explicit": [{"content": "x" * 5000}]})
+    assert len(prompt_rep.explicit) == 1
+    assert len(prompt_rep.explicit[0].content) == 2000
+
+
+def test_prompt_representation_rejects_unknown_top_level_dict_shape():
+    with pytest.raises(Exception):
+        PromptRepresentation.model_validate({"metadata": {"foo": "bar"}})
