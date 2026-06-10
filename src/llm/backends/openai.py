@@ -360,9 +360,11 @@ class OpenAIBackend:
 
         cache_creation, cache_read = extract_openai_cache_tokens(usage)
         return CompletionResult(
-            content=content_override
-            if content_override is not None
-            else (message.content or ""),
+            content=(
+                content_override
+                if content_override is not None
+                else (message.content or "")
+            ),
             input_tokens=usage.prompt_tokens if usage else 0,
             output_tokens=usage.completion_tokens if usage else 0,
             cache_creation_input_tokens=cache_creation,
@@ -388,6 +390,23 @@ class OpenAIBackend:
                 "schema": response_format.model_json_schema(),
             },
         }
+
+        # Inject system prompt with schema for models that ignore response_format
+        schema_str = json.dumps(response_format.model_json_schema(), ensure_ascii=False)
+        system_injection = {
+            "role": "system",
+            "content": (
+                "You MUST respond with valid JSON only. "
+                "No markdown, no code fences, no bullet points, no explanations. "
+                f"Your response must strictly follow this JSON schema:\n{schema_str}\n"
+                "Respond with a raw JSON object only, starting with { and ending with }."
+            ),
+        }
+        messages = structured_params.get("messages", [])
+        has_system = any(m.get("role") == "system" for m in messages)
+        if not has_system:
+            structured_params["messages"] = [system_injection] + messages
+
         return await self._client.chat.completions.create(**structured_params)
 
     @staticmethod
