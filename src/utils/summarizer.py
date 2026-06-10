@@ -14,6 +14,7 @@ from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
+# TODO: move _custom_instructions_section to shared utility
 from src.deriver.prompts import _custom_instructions_section
 from src.exceptions import ResourceNotFoundException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
@@ -173,42 +174,24 @@ Hard limit: {output_words} words maximum. If needed, drop lower-priority detail 
 
 
 @cache
-def estimate_short_summary_prompt_tokens() -> int:
-    """Estimate tokens for the short summary prompt (without messages/previous_summary or custom instructions)."""
+def estimate_short_summary_prompt_tokens(custom_instructions: str | None = None) -> int:
+    """Estimate tokens for the short summary prompt, optionally including custom instructions."""
     try:
         return estimate_tokens(
             short_summary_prompt(
                 formatted_messages="",
                 output_words=0,
                 previous_summary_text="",
-                custom_instructions=None,
+                custom_instructions=custom_instructions,
             )
         )
     except Exception:
-        # Return a rough estimate if estimation fails
         return 200
 
 
-def estimate_short_summary_prompt_tokens_with_custom_instructions(
-    custom_instructions: str | None,
-) -> int:
-    """Estimate short summary prompt tokens, including custom instructions if present."""
-    if custom_instructions is None:
-        return estimate_short_summary_prompt_tokens()
-
-    return estimate_tokens(
-        short_summary_prompt(
-            formatted_messages="",
-            output_words=0,
-            previous_summary_text="",
-            custom_instructions=custom_instructions,
-        )
-    )
-
-
 @cache
-def estimate_long_summary_prompt_tokens() -> int:
-    """Estimate tokens for the long summary prompt (without messages/previous_summary or custom instructions)."""
+def estimate_long_summary_prompt_tokens(custom_instructions: str | None = None) -> int:
+    """Estimate tokens for the long summary prompt, optionally including custom instructions."""
     try:
         return estimate_tokens(
             long_summary_prompt(
@@ -219,25 +202,8 @@ def estimate_long_summary_prompt_tokens() -> int:
             )
         )
     except Exception:
-        # Return a rough estimate if estimation fails
         return 200
 
-
-def estimate_long_summary_prompt_tokens_with_custom_instructions(
-    custom_instructions: str | None,
-) -> int:
-    """Estimate long summary prompt tokens, including custom instructions if present."""
-    if custom_instructions is None:
-        return estimate_long_summary_prompt_tokens()
-
-    return estimate_tokens(
-        long_summary_prompt(
-            formatted_messages="",
-            output_words=0,
-            previous_summary_text="",
-            custom_instructions=custom_instructions,
-        )
-    )
 
 
 @conditional_observe(name="Create Short Summary")
@@ -521,7 +487,7 @@ async def _create_and_save_summary(
     # This is separate from reasoning custom_instructions — workspace
     # operators may want summaries in a different style than deriver output.
     custom_instructions: str | None = None
-    if configuration.summary and configuration.summary.custom_instructions:
+    if configuration.summary and configuration.summary.custom_instructions is not None:
         custom_instructions = configuration.summary.custom_instructions
 
     (
@@ -546,11 +512,11 @@ async def _create_and_save_summary(
     # save-summary path and the telemetry emit below can use it
     # without basedpyright tripping on a possibly-unbound name.
     if summary_type == SummaryType.SHORT:
-        prompt_tokens = estimate_short_summary_prompt_tokens_with_custom_instructions(
+        prompt_tokens = estimate_short_summary_prompt_tokens(
             custom_instructions
         )
     else:
-        prompt_tokens = estimate_long_summary_prompt_tokens_with_custom_instructions(
+        prompt_tokens = estimate_long_summary_prompt_tokens(
             custom_instructions
         )
 
