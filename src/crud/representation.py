@@ -447,6 +447,9 @@ class RepresentationManager:
             .order_by(
                 models.Document.times_derived.desc(),
                 models.Document.created_at.desc(),
+                # created_at is the transaction timestamp, so documents created
+                # in the same batch share it -- id keeps the order deterministic.
+                models.Document.id,
             )
         )
 
