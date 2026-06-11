@@ -13,7 +13,7 @@ from src import crud, exceptions, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
-from src.embedding_client import embedding_client
+from src.embedding_client import EmbeddingTokenLimitError, embedding_client
 from src.schemas import ResolvedConfiguration
 from src.telemetry.events import EmbeddingCallPurpose
 from src.telemetry.logging import accumulate_metric
@@ -106,7 +106,7 @@ class RepresentationManager:
                 embeddings = await embedding_client.simple_batch_embed(
                     observation_texts
                 )
-        except ValueError as e:
+        except EmbeddingTokenLimitError as e:
             raise exceptions.ValidationException(
                 "Observation content exceeds maximum token limit of "
                 + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
