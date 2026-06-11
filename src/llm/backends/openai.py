@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
-from openai import BadRequestError, LengthFinishReasonError
+from openai import (
+    AuthenticationError,
+    BadRequestError,
+    LengthFinishReasonError,
+)
 from pydantic import BaseModel, ValidationError
 
+from src.config import settings
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.structured_output import (
@@ -109,8 +115,33 @@ def extract_openai_cache_tokens(usage: Any) -> tuple[int, int]:
 class OpenAIBackend:
     """Provider backend wrapping AsyncOpenAI."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, is_nous: bool = False) -> None:
         self._client: Any = client
+        self._is_nous: bool = is_nous
+
+    async def _call_with_autorefresh(
+        self, *, use_parse: bool, params: dict[str, Any]
+    ) -> Any:
+        """Call the OpenAI API with automatic Nous OAuth refresh on 401."""
+        try:
+            if use_parse:
+                return await self._client.chat.completions.parse(**params)
+            return await self._client.chat.completions.create(**params)
+        except AuthenticationError:
+            if self._is_nous:
+                logger.warning("Nous API 401 detected — attempting auto-refresh...")
+                from ..nous_refresh import refresh_nous_credentials
+
+                new_key = await refresh_nous_credentials()
+                if new_key:
+                    self._client.api_key = new_key
+                    with contextlib.suppress(Exception):
+                        settings.LLM.NOUS_API_KEY = new_key
+                    logger.info("Retrying request with refreshed API key")
+                    if use_parse:
+                        return await self._client.chat.completions.parse(**params)
+                    return await self._client.chat.completions.create(**params)
+            raise
 
     async def complete(
         self,
@@ -144,7 +175,9 @@ class OpenAIBackend:
         if isinstance(response_format, type):
             params["response_format"] = response_format
             try:
-                response = await self._client.chat.completions.parse(**params)
+                response = await self._call_with_autorefresh(
+                    use_parse=True, params=params,
+                )
             except LengthFinishReasonError as exc:
                 truncated = exc.completion
                 raw_content = truncated.choices[0].message.content or ""
@@ -198,7 +231,9 @@ class OpenAIBackend:
         if extra_params and extra_params.get("json_mode"):
             params["response_format"] = {"type": "json_object"}
 
-        response = await self._client.chat.completions.create(**params)
+        response = await self._call_with_autorefresh(
+            use_parse=False, params=params,
+        )
         return self._normalize_response(response)
 
     async def stream(
@@ -246,7 +281,9 @@ class OpenAIBackend:
         elif extra_params and extra_params.get("json_mode"):
             params["response_format"] = {"type": "json_object"}
 
-        response_stream = await self._client.chat.completions.create(**params)
+        response_stream = await self._call_with_autorefresh(
+            use_parse=False, params=params,
+        )
         finish_reason: str | None = None
         usage_chunk_received = False
         async for chunk in response_stream:
@@ -312,7 +349,7 @@ class OpenAIBackend:
         if tools:
             params["tools"] = self._convert_tools(tools)
             if tool_choice is not None:
-                params["tool_choice"] = tool_choice
+                params["tool_choice"] = "required" if tool_choice == "any" else tool_choice
         if extra_params:
             for key in (
                 "top_p",
