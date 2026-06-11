@@ -13,6 +13,17 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": CORS_ALLOWED_HEADERS,
 };
 
+function stripOAuthChallenge(response: Response): Response {
+  if (!response.headers.has("WWW-Authenticate")) return response;
+  const headers = new Headers(response.headers);
+  headers.delete("WWW-Authenticate");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export default {
   async fetch(
     request: Request,
@@ -46,7 +57,7 @@ export default {
           headers: CORS_ALLOWED_HEADERS,
         },
       });
-      return await handler(request, env, executionCtx);
+      return stripOAuthChallenge(await handler(request, env, executionCtx));
     } catch (e) {
       const message =
         e instanceof Error ? e.message : "Internal server error";
