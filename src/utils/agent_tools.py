@@ -1303,7 +1303,7 @@ def _normalize_observation_id(obs_id: str) -> str:
     obs_id = obs_id.strip()
     if obs_id.lower().startswith("id:"):
         obs_id = obs_id[3:]
-    return obs_id
+    return obs_id.strip()
 
 
 async def _handle_create_observations_impl(

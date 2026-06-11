@@ -520,6 +520,7 @@ class TestNormalizeObservationId:
             ("id:doc_abc123", "doc_abc123"),
             ("ID:doc_abc123", "doc_abc123"),
             ("  id:doc_abc123  ", "doc_abc123"),
+            ("id: doc_abc123", "doc_abc123"),
             # nanoid alphabet includes '-' and '_'; these must survive untouched
             ("3-bwp1hxCRkRbUh_nrqn0", "3-bwp1hxCRkRbUh_nrqn0"),
             ("id:3-bwp1hxCRkRbUh_nrqn0", "3-bwp1hxCRkRbUh_nrqn0"),
