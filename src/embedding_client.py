@@ -250,76 +250,61 @@ class _EmbeddingClient:
 
     async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
         """
-        Simple batch embedding for a list of text strings.
+        Batch-embed a list of text strings. Each input must already fit within
+        `max_embedding_tokens`; this method does not sub-chunk oversized inputs.
+
+        Internally goes through the same token-aware batching pipeline as
+        `batch_embed()` so the per-request token cap is respected.
 
         Args:
             texts: List of text strings to embed
 
         Returns:
-            List of embedding vectors corresponding to input texts
+            List of embedding vectors, one per input text (in order)
 
         Raises:
             ValueError: If any text exceeds token limits
         """
-        embeddings: list[list[float]] = []
+        if not texts:
+            return []
 
-        for i in range(0, len(texts), self.max_batch_size):
-            batch = texts[i : i + self.max_batch_size]
-
-            async def _embed_batch(batch: list[str] = batch) -> list[list[float]]:
-                """One provider call for one batch. Lifted into a closure so
-                _emit_embedding_call can time + emit + propagate errors."""
-                batch_embeddings: list[list[float]] = []
-                if isinstance(self.client, genai.Client):
-                    # Type cast needed due to genai type signature complexity
-                    response = await self.client.aio.models.embed_content(
-                        model=self.model,
-                        contents=batch,  # pyright: ignore[reportArgumentType]
-                        config={"output_dimensionality": self.vector_dimensions},
-                    )
-                    if response.embeddings:
-                        for emb in response.embeddings:
-                            if emb.values:
-                                batch_embeddings.append(
-                                    self._validate_embedding_dimensions(emb.values)
-                                )
-                else:  # openai
-                    openai_kwargs: dict[str, Any] = {
-                        "input": batch,
-                        "model": self.model,
-                    }
-                    if self.send_dimensions:
-                        openai_kwargs["dimensions"] = self.vector_dimensions
-                    response = await self.client.embeddings.create(**openai_kwargs)
-                    batch_embeddings.extend(
-                        [
-                            self._validate_embedding_dimensions(data.embedding)
-                            for data in response.data
-                        ]
-                    )
-                return batch_embeddings
-
-            try:
-                # Pre-compute the tiktoken estimate ONCE for telemetry; the
-                # batch contents don't change between attempts.
-                tokens_estimate = sum(len(self.encoding.encode(t)) for t in batch)
-                batch_embeddings = await _emit_embedding_call(
-                    provider=self.transport,
-                    model=self.model,
-                    texts=batch,
-                    input_tokens_estimate=tokens_estimate,
-                    fn=_embed_batch,
+        # Validate per-input token limit and collect token counts for batching
+        token_counts: list[int] = []
+        for idx, text in enumerate(texts):
+            tokens = len(self.encoding.encode(text))
+            if tokens > self.max_embedding_tokens:
+                raise ValueError(
+                    f"Text at index {idx} exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {tokens} tokens)"
                 )
-                embeddings.extend(batch_embeddings)
-            except Exception as e:
-                # Check if it's a token limit error and re-raise as ValueError for consistency
-                if "token" in str(e).lower():
-                    raise ValueError(
-                        f"Text content exceeds maximum token limit of {self.max_embedding_tokens}."
-                    ) from e
-                raise
+            token_counts.append(tokens)
 
-        return embeddings
+        # Use positional indices as text_ids so we can reassemble in input order.
+        text_chunks: dict[str, list[tuple[str, int]]] = {
+            str(i): [(text, token_counts[i])] for i, text in enumerate(texts)
+        }
+
+        batches = self._create_batches(text_chunks)
+        batch_results = await asyncio.gather(
+            *[self._process_batch(batch) for batch in batches],
+        )
+
+        combined: dict[str, list[list[float]]] = self._accumulate_embeddings(
+            batch_results
+        )
+        return [combined[str(i)][0] for i in range(len(texts))]
+
+    def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
+        """
+        Public helper: tokenize and chunk texts using the same rules as
+        `batch_embed()`. Returns ordered chunk texts per input id.
+
+        Intended for callers that want to persist embeddable chunks
+        before later embedding them off the request path.
+        """
+        return {
+            text_id: [chunk_text for chunk_text, _ in chunks]
+            for text_id, chunks in self._prepare_chunks(id_resource_dict).items()
+        }
 
     async def batch_embed(
         self, id_resource_dict: dict[str, str]
@@ -623,8 +608,12 @@ class EmbeddingClient:
         return await self._get_client().embed(query)
 
     async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
-        """Simple batch embedding for a list of text strings."""
+        """Batch embed a list of text strings (each must fit token limit)."""
         return await self._get_client().simple_batch_embed(texts)
+
+    def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
+        """Chunk texts using the same rules as `batch_embed` (no network)."""
+        return self._get_client().prepare_chunks(id_resource_dict)
 
     async def batch_embed(
         self, id_resource_dict: dict[str, str]

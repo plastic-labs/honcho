@@ -704,6 +704,9 @@ class EmbeddingSettings(HonchoSettings):
     VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
+    # Caps concurrent message-embedding fan-out on the API request path (the
+    # immediate-embed background task). The reconciler is unaffected.
+    MAX_CONCURRENT_EMBEDDINGS: Annotated[int, Field(default=10, gt=0, le=100)] = 10
 
     @model_validator(mode="before")
     @classmethod
