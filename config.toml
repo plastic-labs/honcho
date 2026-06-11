@@ -1,0 +1,162 @@
+# Self-hosted Honcho for Hermes Agent on Andy's Pi.
+# Secrets live in /home/pi/honcho/.env; do not put API keys here.
+
+[app]
+LOG_LEVEL = "INFO"
+SESSION_OBSERVERS_LIMIT = 10
+GET_CONTEXT_MAX_TOKENS = 100000
+MAX_FILE_SIZE = 5242880
+MAX_MESSAGE_SIZE = 25000
+EMBED_MESSAGES = true
+MAX_EMBEDDING_TOKENS = 8192
+NAMESPACE = "honcho"
+
+[embedding]
+VECTOR_DIMENSIONS = 1024
+MAX_INPUT_TOKENS = 8192
+
+[db]
+CONNECTION_URI = "postgresql+psycopg://honcho:honcho@database:5432/honcho"
+SCHEMA = "public"
+POOL_SIZE = 10
+MAX_OVERFLOW = 20
+POOL_TIMEOUT = 30
+POOL_RECYCLE = 300
+
+[auth]
+USE_AUTH = false
+
+[cache]
+ENABLED = true
+URL = "redis://redis:6379/0?suppress=true"
+DEFAULT_TTL_SECONDS = 300
+
+[llm]
+DEFAULT_MAX_TOKENS = 2500
+# OPENAI_API_KEY and OPENAI_BASE_URL come from .env.
+# We use OpenRouter through Honcho's OpenAI-compatible transport.
+
+[embedding.MODEL_CONFIG]
+transport = "openai"
+# bge-m3 now returns NaN embeddings on this Pi/Ollama build.
+# mxbai-embed-large is currently verified 1024-dim local fallback for Hermes/Honcho.
+model = "mxbai-embed-large"
+dimensions_mode = "never"
+
+[embedding.MODEL_CONFIG.overrides]
+base_url = "http://host.docker.internal:11434/v1"
+api_key_env = "LOCAL_EMBEDDING_API_KEY"
+
+[vector_store]
+TYPE = "pgvector"
+
+[deriver]
+ENABLED = true
+WORKERS = 1
+POLLING_SLEEP_INTERVAL_SECONDS = 1.0
+STALE_SESSION_TIMEOUT_MINUTES = 5
+DEDUPLICATE = true
+MAX_INPUT_TOKENS = 23000
+WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
+REPRESENTATION_BATCH_MAX_TOKENS = 1024
+# Hermes/Honcho uses many low-volume Discord threads; forced batching leaves
+# small sessions pending indefinitely. Flush immediately so memory ingestion
+# reaches durable observations without waiting for arbitrary token volume.
+FLUSH_ENABLED = true
+LOG_OBSERVATIONS = false
+
+[deriver.MODEL_CONFIG]
+transport = "openai"
+model = "openai/gpt-4.1-mini"
+max_output_tokens = 4096
+
+[deriver.MODEL_CONFIG.overrides]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+[summary]
+ENABLED = true
+MESSAGES_PER_SHORT_SUMMARY = 20
+MESSAGES_PER_LONG_SUMMARY = 60
+
+[summary.MODEL_CONFIG]
+transport = "openai"
+model = "openai/gpt-4.1-mini"
+max_output_tokens = 4096
+
+[summary.MODEL_CONFIG.overrides]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+[dialectic]
+MAX_OUTPUT_TOKENS = 12000
+MAX_TOOL_OUTPUT_CHARS = 10000
+HISTORY_TOKEN_LIMIT = 8192
+SESSION_HISTORY_MAX_TOKENS = 4096
+
+[dialectic.LEVELS.minimal]
+MAX_TOOL_ITERATIONS = 1
+MAX_OUTPUT_TOKENS = 1500
+TOOL_CHOICE = "auto"
+[dialectic.LEVELS.minimal.MODEL_CONFIG]
+transport = "openai"
+model = "openai/gpt-4.1-mini"
+[dialectic.LEVELS.minimal.MODEL_CONFIG.overrides]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+[dialectic.LEVELS.low]
+MAX_TOOL_ITERATIONS = 5
+TOOL_CHOICE = "auto"
+[dialectic.LEVELS.low.MODEL_CONFIG]
+transport = "openai"
+model = "x-ai/grok-4.3"
+[dialectic.LEVELS.low.MODEL_CONFIG.overrides]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+[dialectic.LEVELS.medium]
+MAX_TOOL_ITERATIONS = 2
+[dialectic.LEVELS.medium.MODEL_CONFIG]
+transport = "openai"
+model = "x-ai/grok-4.3"
+[dialectic.LEVELS.medium.MODEL_CONFIG.overrides]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+[dream]
+ENABLED = true
+DOCUMENT_THRESHOLD = 50
+IDLE_TIMEOUT_MINUTES = 60
+MIN_HOURS_BETWEEN_DREAMS = 8
+ENABLED_TYPES = ["omni"]
+MAX_TOOL_ITERATIONS = 20
+HISTORY_TOKEN_LIMIT = 16384
+
+[dream.DEDUCTION_MODEL_CONFIG]
+transport = "openai"
+model = "z-ai/glm-5"
+max_output_tokens = 16384
+[dream.DEDUCTION_MODEL_CONFIG.overrides]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+[dream.INDUCTION_MODEL_CONFIG]
+transport = "openai"
+model = "z-ai/glm-5"
+max_output_tokens = 16384
+[dream.INDUCTION_MODEL_CONFIG.overrides]
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "LLM_OPENAI_API_KEY"
+
+[peer_card]
+ENABLED = true
+
+[metrics]
+ENABLED = false
+
+[telemetry]
+ENABLED = false
+
+[sentry]
+ENABLED = false

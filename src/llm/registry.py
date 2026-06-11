@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 
 from src.config import ModelConfig, ModelTransport, settings
 from src.exceptions import ValidationException
+from src.llm.openrouter import attribution_headers
 
 from .backend import ProviderBackend
 from .backends.anthropic import AnthropicBackend
@@ -49,6 +50,11 @@ def get_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
+        default_headers=attribution_headers(
+            base_url=settings.LLM.OPENAI_BASE_URL,
+            app_url=settings.LLM.OPENROUTER_APP_URL,
+            app_title=settings.LLM.OPENROUTER_APP_TITLE,
+        ),
     )
 
 
@@ -70,7 +76,15 @@ def get_openai_override_client(
     base_url: str | None, api_key: str | None
 ) -> AsyncOpenAI:
     """OpenAI client for a specific (base_url, api_key) pair. Cached by key."""
-    return AsyncOpenAI(api_key=api_key, base_url=base_url)
+    return AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        default_headers=attribution_headers(
+            base_url=base_url,
+            app_url=settings.LLM.OPENROUTER_APP_URL,
+            app_title=settings.LLM.OPENROUTER_APP_TITLE,
+        ),
+    )
 
 
 @lru_cache(maxsize=128)
@@ -106,6 +120,11 @@ if settings.LLM.OPENAI_API_KEY:
     CLIENTS["openai"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
+        default_headers=attribution_headers(
+            base_url=settings.LLM.OPENAI_BASE_URL,
+            app_url=settings.LLM.OPENROUTER_APP_URL,
+            app_title=settings.LLM.OPENROUTER_APP_TITLE,
+        ),
     )
 
 if settings.LLM.GEMINI_API_KEY:

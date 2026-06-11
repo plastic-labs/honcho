@@ -1,0 +1,36 @@
+# Side-by-side Honcho stack for testing local mxbai-embed-large embeddings.
+# Use with:
+#   docker compose -p honcho-local-embed -f docker-compose.yml -f docker-compose.local-embeddings.yml up -d --build
+
+x-local-embedding-env: &local_embedding_env
+  EMBEDDING_VECTOR_DIMENSIONS: "1024"
+  EMBEDDING_MAX_INPUT_TOKENS: "8192"
+  EMBEDDING_MODEL_CONFIG__TRANSPORT: openai
+  EMBEDDING_MODEL_CONFIG__MODEL: mxbai-embed-large
+  EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE: never
+  EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: http://host.docker.internal:11434/v1
+  EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV: LOCAL_EMBEDDING_API_KEY
+  LOCAL_EMBEDDING_API_KEY: ollama
+
+services:
+  api:
+    ports: !override
+      - "8001:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      <<: *local_embedding_env
+
+  deriver:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      <<: *local_embedding_env
+
+  database:
+    ports: !override
+      - "127.0.0.1:5433:5432"
+
+  redis:
+    ports: !override
+      - "127.0.0.1:6380:6379"
