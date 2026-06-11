@@ -176,7 +176,8 @@ async def query_documents_most_derived(
         limit: Maximum number of documents to return
 
     Returns:
-        Sequence of documents ordered by times_derived descending
+        Sequence of documents ordered by times_derived descending,
+        ties broken by created_at descending (most recent first)
     """
     stmt = (
         select(models.Document)
@@ -186,7 +187,13 @@ async def query_documents_most_derived(
             models.Document.observed == observed,
             models.Document.deleted_at.is_(None),
         )
-        .order_by(models.Document.times_derived.desc())
+        .order_by(
+            models.Document.times_derived.desc(),
+            models.Document.created_at.desc(),
+            # created_at is the transaction timestamp, so documents created in
+            # the same batch share it -- id keeps the order deterministic.
+            models.Document.id,
+        )
         .limit(limit)
     )
 
@@ -980,7 +987,13 @@ async def is_rejected_duplicate(
     If the document is not a duplicate, returns False.
 
     If the document is a duplicate AND the new document is superior,
-    deletes the existing document and returns False.
+    deletes the existing document and returns False. In this case
+    ``doc.times_derived`` is updated in place to carry the replaced
+    document's reinforcement count forward.
+
+    If the document is a duplicate AND the existing document is superior,
+    increments the existing document's ``times_derived`` to record the
+    reinforcement, then returns True.
     """
     # Step 1: Find potential duplicates using cosine similarity
     similar_docs = await query_documents(
@@ -1014,12 +1027,20 @@ async def is_rejected_duplicate(
         logger.warning(
             f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
         )
+        # Carry the reinforcement count forward so replacing a duplicate counts as
+        # another derivation rather than resetting times_derived to 1.
+        doc.times_derived = max(doc.times_derived, existing_doc.times_derived + 1)
         # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
         existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
         await db.flush()
         return False  # Don't reject the new document
 
-    # Existing document has more information, reject the new one
+    # Existing document has more information, reject the new one but record the
+    # reinforcement: a semantic duplicate was derived again. Assign a SQL
+    # expression so the increment is atomic server-side -- concurrent workers
+    # reinforcing the same document must not lose updates.
+    existing_doc.times_derived = models.Document.times_derived + 1
+    await db.flush()
     logger.warning(
         f"[DUPLICATE DETECTION] Rejecting new in favor of existing. new='{doc.content}', existing='{existing_doc.content}'."
     )
