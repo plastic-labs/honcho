@@ -22,7 +22,7 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "litellm"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 

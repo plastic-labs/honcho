@@ -40,6 +40,10 @@ dependencies = [
     "prometheus_client>=0.21.0",
     "cloudevents>=1.12.0,<2.0",
 ]
+
+[project.optional-dependencies]
+litellm = ["litellm>=1.65,<1.85"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.2.2",
