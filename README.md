@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/plastic-labs-honcho-badge.png)](https://mseep.ai/app/plastic-labs-honcho)
+
 <!-- markdownlint-disable MD033 -->
 <div align="center">
   <a href="https://app.honcho.dev" target="_blank">
