@@ -1305,6 +1305,7 @@ name = "honcho-cli"
 version = "0.1.0"
 source = { editable = "honcho-cli" }
 dependencies = [
+    { name = "click" },
     { name = "honcho-ai" },
     { name = "httpx" },
     { name = "rich" },
@@ -1319,6 +1320,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.0.0" },
     { name = "honcho-ai", editable = "sdks/python" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
