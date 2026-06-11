@@ -234,7 +234,11 @@ class _EmbeddingClient:
         openai_client = self.client
 
         async def _call_openai() -> list[float]:
-            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            openai_kwargs: dict[str, Any] = {
+                "model": self.model,
+                "input": [query],
+                "encoding_format": "float",
+            }
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
             response = await openai_client.embeddings.create(**openai_kwargs)
@@ -287,6 +291,7 @@ class _EmbeddingClient:
                     openai_kwargs: dict[str, Any] = {
                         "input": batch,
                         "model": self.model,
+                        "encoding_format": "float",
                     }
                     if self.send_dimensions:
                         openai_kwargs["dimensions"] = self.vector_dimensions
@@ -452,6 +457,7 @@ class _EmbeddingClient:
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
                     "input": [item.text for item in batch],
+                    "encoding_format": "float",
                 }
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
