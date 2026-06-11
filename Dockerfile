@@ -49,6 +49,7 @@ COPY --chown=app:app config.toml* /app/
 # Switch to non-root user
 USER app
 
+# Default port (can be overridden with PORT environment variable)
 EXPOSE 8000
 
-CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
+CMD ["sh", "-c", "fastapi run --host 0.0.0.0 --port ${PORT:-8000} src/main.py"]
