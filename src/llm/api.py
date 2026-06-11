@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.config import ConfiguredModelSettings, ModelConfig
+from src.config import ConfiguredModelSettings, ModelConfig, settings
 from src.exceptions import ValidationException
 from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
@@ -29,6 +29,7 @@ from .runtime import (
     AttemptPlan,
     current_attempt,
     effective_temperature,
+    force_fallback,
     plan_attempt,
     resolve_runtime_model_config,
     update_current_langfuse_observation,
@@ -46,6 +47,24 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 M = TypeVar("M", bound=BaseModel)
+
+
+def _update_langfuse_usage(result: HonchoLLMCallResponse[Any]) -> None:
+    """Report token usage to Langfuse if enabled."""
+    if not settings.LANGFUSE_PUBLIC_KEY:
+        return
+    try:
+        from langfuse import get_client
+
+        usage = {}
+        if result.input_tokens is not None:
+            usage["input"] = result.input_tokens
+        if result.output_tokens is not None:
+            usage["output"] = result.output_tokens
+        if usage:
+            get_client().update_current_generation(usage_details=usage)
+    except Exception as exc:
+        logger.debug("Failed to update Langfuse usage: %s", exc)
 
 
 @overload
@@ -138,7 +157,7 @@ async def honcho_llm_call(
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
-@conditional_observe(name="LLM Call")
+@conditional_observe(name="LLM Call", as_type="generation")
 async def honcho_llm_call(
     *,
     model_config: ModelConfig | ConfiguredModelSettings,
@@ -196,34 +215,63 @@ async def honcho_llm_call(
         )
 
     # tenacity uses 1-indexed attempts.
-    current_attempt.set(1)
+    _current_attempt_token = current_attempt.set(1)
+    _force_fallback_token = force_fallback.set(False)
 
-    def _get_attempt_plan() -> AttemptPlan:
-        plan = plan_attempt(
-            runtime_model_config=runtime_model_config,
-            attempt=current_attempt.get(),
-            retry_attempts=retry_attempts,
-            call_thinking_budget_tokens=thinking_budget_tokens,
-            call_reasoning_effort=reasoning_effort,
-        )
-        update_current_langfuse_observation(
-            plan.provider,
-            plan.model,
-            name=track_name,
-        )
-        return plan
+    def _restore_contextvars() -> None:
+        current_attempt.reset(_current_attempt_token)
+        force_fallback.reset(_force_fallback_token)
 
-    async def _call_with_provider_selection() -> (
-        HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
-    ):
-        """Select provider/model based on current attempt, then call once.
+    try:
+        def _get_attempt_plan() -> AttemptPlan:
+            plan = plan_attempt(
+                runtime_model_config=runtime_model_config,
+                attempt=current_attempt.get(),
+                retry_attempts=retry_attempts,
+                call_thinking_budget_tokens=thinking_budget_tokens,
+                call_reasoning_effort=reasoning_effort,
+                force_fallback=force_fallback.get(),
+            )
+            is_fallback = plan.selected_config is not runtime_model_config
+            update_current_langfuse_observation(
+                plan.provider,
+                plan.model,
+                name=track_name,
+                is_fallback=is_fallback,
+            )
+            return plan
 
-        This closure is what tenacity wraps, so selection re-runs per attempt
-        (and the fallback kicks in on the final attempt automatically).
-        """
-        plan = _get_attempt_plan()
+        async def _call_with_provider_selection() -> (
+            HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+        ):
+            """Select provider/model based on current attempt, then call once.
 
-        if stream:
+            This closure is what tenacity wraps, so selection re-runs per attempt
+            (and the fallback kicks in on the final attempt automatically).
+            """
+            plan = _get_attempt_plan()
+
+            if stream:
+                return await honcho_llm_call_inner(
+                    plan.provider,
+                    plan.model,
+                    prompt,
+                    max_tokens,
+                    response_model,
+                    json_mode,
+                    effective_temperature(temperature),
+                    stop_seqs,
+                    plan.reasoning_effort,
+                    verbosity,
+                    plan.thinking_budget_tokens,
+                    stream=True,
+                    client_override=plan.client,
+                    tools=tools,
+                    tool_choice=tool_choice,
+                    selected_config=plan.selected_config,
+                    plan=plan,
+                    telemetry=telemetry,
+                )
             return await honcho_llm_call_inner(
                 plan.provider,
                 plan.model,
@@ -236,7 +284,7 @@ async def honcho_llm_call(
                 plan.reasoning_effort,
                 verbosity,
                 plan.thinking_budget_tokens,
-                stream=True,
+                stream=False,
                 client_override=plan.client,
                 tools=tools,
                 tool_choice=tool_choice,
@@ -244,115 +292,145 @@ async def honcho_llm_call(
                 plan=plan,
                 telemetry=telemetry,
             )
-        return await honcho_llm_call_inner(
-            plan.provider,
-            plan.model,
-            prompt,
-            max_tokens,
-            response_model,
-            json_mode,
-            effective_temperature(temperature),
-            stop_seqs,
-            plan.reasoning_effort,
-            verbosity,
-            plan.thinking_budget_tokens,
-            stream=False,
-            client_override=plan.client,
-            tools=tools,
-            tool_choice=tool_choice,
-            selected_config=plan.selected_config,
-            plan=plan,
-            telemetry=telemetry,
-        )
 
-    decorated = _call_with_provider_selection
+        decorated = _call_with_provider_selection
 
-    if track_name:
-        decorated = ai_track(track_name)(decorated)
+        if track_name:
+            decorated = ai_track(track_name)(decorated)
 
-    def before_retry_callback(retry_state: Any) -> None:
-        """Update attempt counter before each retry + log transient failures.
-
-        tenacity's before_sleep fires AFTER an attempt fails, BEFORE sleeping,
-        so we increment to the next attempt number here.
-        """
-        next_attempt = retry_state.attempt_number + 1
-        current_attempt.set(next_attempt)
-        exc = retry_state.outcome.exception() if retry_state.outcome else None
-        if exc:
-            logger.warning(
-                f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
-                + f"{runtime_model_config.transport}/{runtime_model_config.model}: {exc}"
-            )
-            logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
-
-    if enable_retry:
-        decorated = retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            before_sleep=before_retry_callback,
-        )(decorated)
-
-    def _trace_thinking_budget() -> int | None:
-        # Trace log should reflect what got applied, so fall back to the
-        # runtime config's value when the caller left the kwarg unset.
-        return (
-            thinking_budget_tokens
-            if thinking_budget_tokens is not None
-            else runtime_model_config.thinking_budget_tokens
-        )
-
-    def _trace_reasoning_effort() -> ReasoningEffortType:
-        if reasoning_effort is not None:
-            return reasoning_effort
-        config_effort = runtime_model_config.thinking_effort
-        return cast(ReasoningEffortType, config_effort) if config_effort else None
-
-    def _trace_stop_seqs() -> list[str] | None:
-        return (
-            stop_seqs if stop_seqs is not None else runtime_model_config.stop_sequences
-        )
-
-    # Tool-less path: call once and return.
-    if not tools or not tool_executor:
-        # enforce `max_input_tokens` for tool-less calls too. Before
-        # this change, only `execute_tool_loop` consumed the kwarg — the
-        # deriver passed it but it was silently dropped, so the cap-hit
-        # signal it needed for RepresentationCompletedEvent could not be
-        # measured. Now we run the same message-list truncation helper
-        # and surface a `hit_input_token_cap` boolean on the response.
-        #
-        # The signal is purely token-based ("did the input exceed cap?")
-        # rather than message-count-based — the helper deliberately keeps
-        # the last conversation unit even when it's oversized (see
-        # truncate_messages_to_fit), so a single-message over-cap input
-        # (the deriver's prompt-only case) would otherwise silently fly
-        # through with hit=False. Token-based comparison catches it.
-        toolless_hit_input_token_cap = False
-        toolless_messages = messages
-        if max_input_tokens is not None:
-            from .conversation import count_message_tokens, truncate_messages_to_fit
-
-            base_messages = messages or [{"role": "user", "content": prompt}]
-            toolless_hit_input_token_cap = (
-                count_message_tokens(base_messages) > max_input_tokens
-            )
-            toolless_messages = truncate_messages_to_fit(
-                base_messages, max_input_tokens
+        def _is_retryable_error(exc: BaseException) -> bool:
+            """Check if an error should trigger fast fallback to secondary model."""
+            # HTTP status code errors (429 rate limit, 5xx server errors)
+            status = getattr(exc, "status_code", None)
+            if status is not None:
+                return status in (408, 429) or (500 <= status < 600)
+            # Timeout / connection errors
+            if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+                return True
+            # OpenAI/Anthropic SDK specific retryable errors
+            return type(exc).__name__ in (
+                "APIConnectionError",
+                "APITimeoutError",
+                "InternalServerError",
+                "ServiceUnavailableError",
+                "RateLimitError",
             )
 
-        # Re-bind the closure to use the truncated message list.
-        if toolless_messages is not None:
-            captured_messages = toolless_messages
+        def before_retry_callback(retry_state: Any) -> None:
+            """Update attempt counter before each retry + log transient failures.
 
-            async def _toolless_call() -> (
-                HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
-            ):
-                plan = _get_attempt_plan()
-                # Branch on stream so each call site lands on the right
-                # `Literal[True]/False` overload — basedpyright won't infer
-                # which overload a runtime `bool` matches.
-                if stream:
+            On first retryable failure, set force_fallback to True so the next
+            attempt uses the fallback model immediately.
+            """
+            next_attempt = retry_state.attempt_number + 1
+            current_attempt.set(next_attempt)
+            exc = retry_state.outcome.exception() if retry_state.outcome else None
+            if exc:
+                logger.warning(
+                    f"Error on attempt {retry_state.attempt_number}/{retry_attempts} with "
+                    + f"{runtime_model_config.transport}/{runtime_model_config.model}: {exc}"
+                )
+                if (
+                    not force_fallback.get()
+                    and runtime_model_config.fallback is not None
+                    and _is_retryable_error(exc)
+                ):
+                    force_fallback.set(True)
+                    logger.warning(
+                        "Fast fallback triggered: will use fallback model "
+                        + f"{runtime_model_config.fallback.transport}/{runtime_model_config.fallback.model} "
+                        + f"on attempt {next_attempt}/{retry_attempts}"
+                    )
+                else:
+                    logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
+
+        if enable_retry:
+            decorated = retry(
+                stop=stop_after_attempt(retry_attempts),
+                wait=wait_exponential(multiplier=1, min=4, max=10),
+                before_sleep=before_retry_callback,
+            )(decorated)
+
+        def _trace_thinking_budget() -> int | None:
+            # Trace log should reflect what got applied, so fall back to the
+            # runtime config's value when the caller left the kwarg unset.
+            return (
+                thinking_budget_tokens
+                if thinking_budget_tokens is not None
+                else runtime_model_config.thinking_budget_tokens
+            )
+
+        def _trace_reasoning_effort() -> ReasoningEffortType:
+            if reasoning_effort is not None:
+                return reasoning_effort
+            config_effort = runtime_model_config.thinking_effort
+            return cast(ReasoningEffortType, config_effort) if config_effort else None
+
+        def _trace_stop_seqs() -> list[str] | None:
+            return (
+                stop_seqs if stop_seqs is not None else runtime_model_config.stop_sequences
+            )
+
+        if not tools or not tool_executor:
+            # enforce `max_input_tokens` for tool-less calls too. Before
+            # this change, only `execute_tool_loop` consumed the kwarg — the
+            # deriver passed it but it was silently dropped, so the cap-hit
+            # signal it needed for RepresentationCompletedEvent could not be
+            # measured. Now we run the same message-list truncation helper
+            # and surface a `hit_input_token_cap` boolean on the response.
+            #
+            # The signal is purely token-based ("did the input exceed cap?")
+            # rather than message-count-based — the helper deliberately keeps
+            # the last conversation unit even when it's oversized (see
+            # truncate_messages_to_fit), so a single-message over-cap input
+            # (the deriver's prompt-only case) would otherwise silently fly
+            # through with hit=False. Token-based comparison catches it.
+            toolless_hit_input_token_cap = False
+            toolless_messages = messages
+            if max_input_tokens is not None:
+                from .conversation import count_message_tokens, truncate_messages_to_fit
+
+                base_messages = messages or [{"role": "user", "content": prompt}]
+                toolless_hit_input_token_cap = (
+                    count_message_tokens(base_messages) > max_input_tokens
+                )
+                toolless_messages = truncate_messages_to_fit(
+                    base_messages, max_input_tokens
+                )
+
+            # Re-bind the closure to use the truncated message list.
+            if toolless_messages is not None:
+                captured_messages = toolless_messages
+
+                async def _toolless_call() -> (
+                    HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+                ):
+                    plan = _get_attempt_plan()
+                    # Branch on stream so each call site lands on the right
+                    # `Literal[True]/False` overload — basedpyright won't infer
+                    # which overload a runtime `bool` matches.
+                    if stream:
+                        return await honcho_llm_call_inner(
+                            plan.provider,
+                            plan.model,
+                            prompt,
+                            max_tokens,
+                            response_model=response_model,
+                            json_mode=json_mode,
+                            temperature=effective_temperature(temperature),
+                            stop_seqs=stop_seqs,
+                            reasoning_effort=plan.reasoning_effort,
+                            verbosity=verbosity,
+                            thinking_budget_tokens=plan.thinking_budget_tokens,
+                            stream=True,
+                            client_override=plan.client,
+                            tools=tools,
+                            tool_choice=tool_choice,
+                            selected_config=plan.selected_config,
+                            plan=plan,
+                            telemetry=telemetry,
+                            messages=captured_messages,
+                        )
                     return await honcho_llm_call_inner(
                         plan.provider,
                         plan.model,
@@ -365,7 +443,7 @@ async def honcho_llm_call(
                         reasoning_effort=plan.reasoning_effort,
                         verbosity=verbosity,
                         thinking_budget_tokens=plan.thinking_budget_tokens,
-                        stream=True,
+                        stream=False,
                         client_override=plan.client,
                         tools=tools,
                         tool_choice=tool_choice,
@@ -374,45 +452,70 @@ async def honcho_llm_call(
                         telemetry=telemetry,
                         messages=captured_messages,
                     )
-                return await honcho_llm_call_inner(
-                    plan.provider,
-                    plan.model,
-                    prompt,
-                    max_tokens,
-                    response_model=response_model,
+
+                wrapped = _toolless_call
+                if track_name:
+                    wrapped = ai_track(track_name)(wrapped)
+                if enable_retry:
+                    wrapped = retry(
+                        stop=stop_after_attempt(retry_attempts),
+                        wait=wait_exponential(multiplier=1, min=4, max=10),
+                        before_sleep=before_retry_callback,
+                    )(wrapped)
+                result: (
+                    HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+                ) = await wrapped()
+            else:
+                result = await decorated()
+
+            if toolless_hit_input_token_cap and isinstance(result, HonchoLLMCallResponse):
+                result.hit_input_token_cap = True
+
+            if isinstance(result, HonchoLLMCallResponse):
+                _update_langfuse_usage(result)
+
+
+            if trace_name and isinstance(result, HonchoLLMCallResponse):
+                log_reasoning_trace(
+                    task_type=trace_name,
+                    model_config=runtime_model_config,
+                    prompt=prompt,
+                    response=result,
+                    max_tokens=max_tokens,
+                    thinking_budget_tokens=_trace_thinking_budget(),
+                    reasoning_effort=_trace_reasoning_effort(),
                     json_mode=json_mode,
-                    temperature=effective_temperature(temperature),
-                    stop_seqs=stop_seqs,
-                    reasoning_effort=plan.reasoning_effort,
-                    verbosity=verbosity,
-                    thinking_budget_tokens=plan.thinking_budget_tokens,
-                    stream=False,
-                    client_override=plan.client,
-                    tools=tools,
-                    tool_choice=tool_choice,
-                    selected_config=plan.selected_config,
-                    plan=plan,
-                    telemetry=telemetry,
-                    messages=captured_messages,
+                    stop_seqs=_trace_stop_seqs(),
+                    messages=messages,
                 )
+            return result
 
-            wrapped = _toolless_call
-            if track_name:
-                wrapped = ai_track(track_name)(wrapped)
-            if enable_retry:
-                wrapped = retry(
-                    stop=stop_after_attempt(retry_attempts),
-                    wait=wait_exponential(multiplier=1, min=4, max=10),
-                    before_sleep=before_retry_callback,
-                )(wrapped)
-            result: (
-                HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
-            ) = await wrapped()
-        else:
-            result = await decorated()
-
-        if toolless_hit_input_token_cap and isinstance(result, HonchoLLMCallResponse):
-            result.hit_input_token_cap = True
+        # execute_tool_loop raises ValidationException on out-of-range
+        # max_tool_iterations; fail-fast is cheaper than silent clamping here.
+        result = await execute_tool_loop(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            tool_executor=tool_executor,
+            max_tool_iterations=max_tool_iterations,
+            response_model=response_model,
+            json_mode=json_mode,
+            temperature=temperature,
+            stop_seqs=stop_seqs,
+            verbosity=verbosity,
+            enable_retry=enable_retry,
+            retry_attempts=retry_attempts,
+            max_input_tokens=max_input_tokens,
+            get_attempt_plan=_get_attempt_plan,
+            before_retry_callback=before_retry_callback,
+            stream_final=stream_final_only,
+            iteration_callback=iteration_callback,
+            telemetry=telemetry,
+        )
+        if isinstance(result, HonchoLLMCallResponse):
+            _update_langfuse_usage(result)
 
         if trace_name and isinstance(result, HonchoLLMCallResponse):
             log_reasoning_trace(
@@ -427,45 +530,8 @@ async def honcho_llm_call(
                 stop_seqs=_trace_stop_seqs(),
                 messages=messages,
             )
-        return result
-
-    # execute_tool_loop raises ValidationException on out-of-range
-    # max_tool_iterations; fail-fast is cheaper than silent clamping here.
-    result = await execute_tool_loop(
-        prompt=prompt,
-        max_tokens=max_tokens,
-        messages=messages,
-        tools=tools,
-        tool_choice=tool_choice,
-        tool_executor=tool_executor,
-        max_tool_iterations=max_tool_iterations,
-        response_model=response_model,
-        json_mode=json_mode,
-        temperature=temperature,
-        stop_seqs=stop_seqs,
-        verbosity=verbosity,
-        enable_retry=enable_retry,
-        retry_attempts=retry_attempts,
-        max_input_tokens=max_input_tokens,
-        get_attempt_plan=_get_attempt_plan,
-        before_retry_callback=before_retry_callback,
-        stream_final=stream_final_only,
-        iteration_callback=iteration_callback,
-        telemetry=telemetry,
-    )
-    if trace_name and isinstance(result, HonchoLLMCallResponse):
-        log_reasoning_trace(
-            task_type=trace_name,
-            model_config=runtime_model_config,
-            prompt=prompt,
-            response=result,
-            max_tokens=max_tokens,
-            thinking_budget_tokens=_trace_thinking_budget(),
-            reasoning_effort=_trace_reasoning_effort(),
-            json_mode=json_mode,
-            stop_seqs=_trace_stop_seqs(),
-            messages=messages,
-        )
+    finally:
+        _restore_contextvars()
     return result
 
 

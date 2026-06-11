@@ -36,6 +36,7 @@ from .runtime import (
     AttemptPlan,
     current_attempt,
     effective_temperature,
+    force_fallback,
 )
 from .types import (
     HonchoLLMCallResponse,
@@ -337,8 +338,9 @@ async def execute_tool_loop(
     effective_tool_choice = tool_choice
 
     while iteration < max_tool_iterations:
-        # Reset attempt counter so each iteration starts with the primary provider.
+        # Reset attempt counter and fallback flag so each iteration starts fresh.
         current_attempt.set(1)
+        force_fallback.set(False)
         logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
 
         if max_input_tokens is not None:
@@ -605,6 +607,7 @@ async def execute_tool_loop(
         )
 
     current_attempt.set(1)
+    force_fallback.set(False)
 
     async def _final_call() -> HonchoLLMCallResponse[Any]:
         plan = get_attempt_plan()
