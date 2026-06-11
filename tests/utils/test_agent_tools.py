@@ -34,6 +34,7 @@ from src.utils.agent_tools import (
     _handle_search_messages,  # pyright: ignore[reportPrivateUsage]
     _handle_search_messages_temporal,  # pyright: ignore[reportPrivateUsage]
     _handle_update_peer_card,  # pyright: ignore[reportPrivateUsage]
+    _normalize_observation_id,  # pyright: ignore[reportPrivateUsage]
     _validate_peer_card_entry,  # pyright: ignore[reportPrivateUsage]
     create_observations,
     create_tool_executor,
@@ -245,6 +246,40 @@ class TestCreateObservations:
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
         assert doc.level == "deductive"
+        assert doc.source_ids == ["premise1", "premise2"]
+
+    async def test_source_ids_display_prefix_is_stripped(
+        self,
+        db_session: AsyncSession,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Models sometimes copy the '[id:xxx]' display format into source_ids;
+        the prefix must be stripped so provenance links reference real IDs."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Inferred preference for early mornings",
+                        "source_ids": ["id:premise1", "ID:premise2"],
+                        "premises": [
+                            "User schedules meetings before 9am",
+                            "User mentions waking at 5:30",
+                        ],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Inferred preference for early mornings"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
         assert doc.source_ids == ["premise1", "premise2"]
 
     async def test_empty_observations_list_returns_error(
@@ -473,6 +508,27 @@ class TestCreateObservations:
         assert len(result.failed) == 0
         batch_embed.assert_not_awaited()
         create_documents.assert_not_awaited()
+
+
+class TestNormalizeObservationId:
+    """Unit tests for _normalize_observation_id."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("doc_abc123", "doc_abc123"),
+            ("id:doc_abc123", "doc_abc123"),
+            ("ID:doc_abc123", "doc_abc123"),
+            ("  id:doc_abc123  ", "doc_abc123"),
+            ("id: doc_abc123", "doc_abc123"),
+            # nanoid alphabet includes '-' and '_'; these must survive untouched
+            ("3-bwp1hxCRkRbUh_nrqn0", "3-bwp1hxCRkRbUh_nrqn0"),
+            ("id:3-bwp1hxCRkRbUh_nrqn0", "3-bwp1hxCRkRbUh_nrqn0"),
+            ("_leading_underscore", "_leading_underscore"),
+        ],
+    )
+    def test_normalization(self, raw: str, expected: str):
+        assert _normalize_observation_id(raw) == expected
 
 
 @pytest.mark.asyncio

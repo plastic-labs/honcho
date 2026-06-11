@@ -1290,6 +1290,22 @@ class ToolContext:
     parent_category: str | None = None  # Parent category for CloudEvents
 
 
+def _normalize_observation_id(obs_id: str) -> str:
+    """Strip the display-format ``id:`` prefix from a model-supplied observation ID.
+
+    Observations are presented to agents as ``[id:xxx]`` (see
+    ``Representation.str_with_ids``), and despite tool-schema instructions to
+    pass the bare ID, models sometimes copy the prefix verbatim. Since document
+    IDs are nanoids whose alphabet includes ``-`` and ``_``, only the ``id:``
+    prefix and surrounding whitespace are stripped — anything more aggressive
+    could mangle legitimate IDs.
+    """
+    obs_id = obs_id.strip()
+    if obs_id.lower().startswith("id:"):
+        obs_id = obs_id[3:]
+    return obs_id.strip()
+
+
 async def _handle_create_observations_impl(
     ctx: ToolContext,
     tool_input: dict[str, Any],
@@ -1309,6 +1325,13 @@ async def _handle_create_observations_impl(
             obs["level"] = forced_level
         else:
             obs.setdefault("level", default_level)
+        # Models sometimes copy the display-format "id:" prefix into source_ids;
+        # normalize so provenance links reference real document IDs.
+        source_ids = obs.get("source_ids")
+        if isinstance(source_ids, list):
+            obs["source_ids"] = [
+                _normalize_observation_id(s) for s in source_ids if isinstance(s, str)
+            ]
 
     # Validate observations individually so valid ones are still processed
     observations: list[schemas.ObservationInput] = []
@@ -2203,6 +2226,7 @@ async def _handle_get_reasoning_chain(
     observation_id = tool_input.get("observation_id")
     if not observation_id:
         return "ERROR: 'observation_id' is required"
+    observation_id = _normalize_observation_id(observation_id)
 
     direction = tool_input.get("direction", "both")
     if direction not in ("premises", "conclusions", "both"):
