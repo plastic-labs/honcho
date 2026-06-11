@@ -381,13 +381,12 @@ class OpenAIBackend:
         response_format: type[BaseModel],
     ) -> Any:
         structured_params = dict(params)
-        structured_params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": response_format.__name__,
-                "schema": response_format.model_json_schema(),
-            },
-        }
+        structured_params.pop("response_format", None)
+        structured_params["response_format"] = {"type": "json_object"}
+        # Inject schema hint so the model returns the correct JSON shape
+        schema = response_format.model_json_schema()
+        schema_msg = {"role": "system", "content": f"Respond in JSON matching this schema: {json.dumps(schema)}"}
+        structured_params["messages"] = [schema_msg] + structured_params.get("messages", [])
         return await self._client.chat.completions.create(**structured_params)
 
     @staticmethod
