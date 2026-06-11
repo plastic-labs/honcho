@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
+import httpx
 from openai import BadRequestError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
@@ -33,6 +34,56 @@ def _uses_max_completion_tokens(model: str) -> bool:
         if m == prefix or m.startswith(prefix + "-"):
             return True
     return False
+
+
+def _prefers_json_object_structured_output(model: str, client: Any) -> bool:
+    """Use json_object for local Ollama structured calls.
+
+    Ollama's OpenAI-compatible shim can return empty content for json_schema
+    with local models. json_object plus local validation is more reliable.
+    """
+    base_url = str(getattr(client, "base_url", "")).lower()
+    model_name = model.lower()
+    return (
+        "11434" in base_url
+        or "11435" in base_url
+        or "ollama" in base_url
+        or model_name.startswith(("qwen", "llama", "mistral", "gemma"))
+    )
+
+
+def _local_ollama_base_url(client: Any) -> str | None:
+    base_url = str(getattr(client, "base_url", "")).rstrip("/")
+    lowered = base_url.lower()
+    if not ("11434" in lowered or "11435" in lowered or "ollama" in lowered):
+        return None
+    if lowered.endswith("/v1"):
+        return base_url[:-3]
+    return base_url
+
+
+def _ollama_native_options(
+    max_tokens: int,
+    temperature: float | None,
+    stop: list[str] | None,
+    extra_params: dict[str, Any] | None,
+) -> dict[str, Any]:
+    options: dict[str, Any] = {"num_predict": max_tokens}
+    if temperature is not None:
+        options["temperature"] = temperature
+    if stop:
+        options["stop"] = stop
+    if extra_params:
+        for key in (
+            "top_p",
+            "top_k",
+            "frequency_penalty",
+            "presence_penalty",
+            "seed",
+        ):
+            if key in extra_params:
+                options[key] = extra_params[key]
+    return options
 
 
 def extract_openai_reasoning_content(response: Any) -> str | None:
@@ -141,7 +192,38 @@ class OpenAIBackend:
             extra_params=extra_params,
         )
 
+        ollama_base_url = _local_ollama_base_url(self._client)
+        if ollama_base_url and not tools and tool_choice is None:
+            return await self._complete_with_ollama_native_chat(
+                base_url=ollama_base_url,
+                model=model,
+                messages=messages,
+                max_tokens=max_output_tokens or max_tokens,
+                temperature=temperature,
+                stop=stop,
+                response_format=response_format,
+                json_mode=bool(extra_params and extra_params.get("json_mode")),
+                extra_params=extra_params,
+            )
+
         if isinstance(response_format, type):
+            if (
+                extra_params
+                and extra_params.get("json_mode")
+                and _prefers_json_object_structured_output(model, self._client)
+            ):
+                params["response_format"] = {"type": "json_object"}
+                response = await self._client.chat.completions.create(**params)
+                content = self._parse_or_repair_structured_content(
+                    response,
+                    response_format,
+                    model,
+                )
+                return self._normalize_response(
+                    response,
+                    content_override=content,
+                )
+
             params["response_format"] = response_format
             try:
                 response = await self._client.chat.completions.parse(**params)
@@ -200,6 +282,52 @@ class OpenAIBackend:
 
         response = await self._client.chat.completions.create(**params)
         return self._normalize_response(response)
+
+    async def _complete_with_ollama_native_chat(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        temperature: float | None,
+        stop: list[str] | None,
+        response_format: type[BaseModel] | dict[str, Any] | None,
+        json_mode: bool,
+        extra_params: dict[str, Any] | None,
+    ) -> CompletionResult:
+        options = _ollama_native_options(
+            max_tokens=max_tokens,
+            temperature=temperature,
+            stop=stop,
+            extra_params=extra_params,
+        )
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "think": False,
+            "options": options,
+        }
+        if response_format is not None or json_mode:
+            payload["format"] = "json"
+
+        async with httpx.AsyncClient(timeout=180) as client:
+            response = await client.post(f"{base_url}/api/chat", json=payload)
+            response.raise_for_status()
+        data = response.json()
+        raw_content = data.get("message", {}).get("content") or ""
+        content: Any = raw_content
+        if isinstance(response_format, type):
+            content = repair_response_model_json(raw_content, response_format, model)
+        return CompletionResult(
+            content=content,
+            input_tokens=int(data.get("prompt_eval_count") or 0),
+            output_tokens=int(data.get("eval_count") or 0),
+            finish_reason=data.get("done_reason") or "stop",
+            raw_response=data,
+        )
 
     async def stream(
         self,
