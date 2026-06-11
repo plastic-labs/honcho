@@ -174,7 +174,9 @@ Hard limit: {output_words} words maximum. If needed, drop lower-priority detail 
 
 
 @lru_cache(maxsize=128)
-def estimate_short_summary_prompt_tokens(custom_instructions: str | None = None) -> int:
+def estimate_short_summary_prompt_tokens(
+    custom_instructions: str | None = None,
+) -> int:
     """Estimate tokens for the short summary prompt, optionally including custom instructions."""
     try:
         return estimate_tokens(
@@ -190,7 +192,9 @@ def estimate_short_summary_prompt_tokens(custom_instructions: str | None = None)
 
 
 @lru_cache(maxsize=128)
-def estimate_long_summary_prompt_tokens(custom_instructions: str | None = None) -> int:
+def estimate_long_summary_prompt_tokens(
+    custom_instructions: str | None = None,
+) -> int:
     """Estimate tokens for the long summary prompt, optionally including custom instructions."""
     try:
         return estimate_tokens(
