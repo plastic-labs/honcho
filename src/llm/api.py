@@ -27,9 +27,9 @@ from src.telemetry.reasoning_traces import log_reasoning_trace
 from .executor import honcho_llm_call_inner
 from .runtime import (
     AttemptPlan,
+    aplan_attempt,
     current_attempt,
     effective_temperature,
-    plan_attempt,
     resolve_runtime_model_config,
     update_current_langfuse_observation,
 )
@@ -198,8 +198,8 @@ async def honcho_llm_call(
     # tenacity uses 1-indexed attempts.
     current_attempt.set(1)
 
-    def _get_attempt_plan() -> AttemptPlan:
-        plan = plan_attempt(
+    async def _get_attempt_plan() -> AttemptPlan:
+        plan = await aplan_attempt(
             runtime_model_config=runtime_model_config,
             attempt=current_attempt.get(),
             retry_attempts=retry_attempts,
@@ -221,7 +221,7 @@ async def honcho_llm_call(
         This closure is what tenacity wraps, so selection re-runs per attempt
         (and the fallback kicks in on the final attempt automatically).
         """
-        plan = _get_attempt_plan()
+        plan = await _get_attempt_plan()
 
         if stream:
             return await honcho_llm_call_inner(
@@ -348,7 +348,7 @@ async def honcho_llm_call(
             async def _toolless_call() -> (
                 HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
             ):
-                plan = _get_attempt_plan()
+                plan = await _get_attempt_plan()
                 # Branch on stream so each call site lands on the right
                 # `Literal[True]/False` overload — basedpyright won't infer
                 # which overload a runtime `bool` matches.

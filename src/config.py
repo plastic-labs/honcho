@@ -23,6 +23,7 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 logger = logging.getLogger(__name__)
 
 ModelTransport = Literal["anthropic", "openai", "gemini"]
+ModelAuthMode = Literal["api_key", "codex_oauth"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 
@@ -68,6 +69,10 @@ class ModelOverrideSettings(BaseModel):
     api_key: str | None = None
     api_key_env: str | None = None
     base_url: str | None = None
+    auth_mode: ModelAuthMode = "api_key"
+    codex_auth_path: str | None = None
+    codex_refresh_skew_seconds: int = 120
+    codex_refresh_timeout_seconds: float = 20.0
 
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
@@ -93,11 +98,27 @@ def _normalize_model_transport(data: Any) -> Any:
     update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
     model_value = update.get("model")
     transport_value = update.get("transport")
-    if isinstance(model_value, str) and "/" in model_value and transport_value is None:
+    if isinstance(model_value, str) and "/" in model_value:
         prefix, bare_model = model_value.split("/", 1)
         if prefix in {"anthropic", "openai", "gemini"}:
-            update["transport"] = prefix
+            if transport_value in {None, prefix}:
+                update["transport"] = prefix
+                update["model"] = bare_model
+        elif prefix in {"openai-codex", "codex"} and transport_value in {
+            None,
+            "openai",
+        }:
+            update["transport"] = "openai"
             update["model"] = bare_model
+            update["auth_mode"] = "codex_oauth"
+            overrides_value = update.get("overrides")
+            overrides = (
+                cast(dict[str, Any], overrides_value)
+                if isinstance(overrides_value, dict)
+                else {}
+            )
+            overrides = {**overrides, "auth_mode": "codex_oauth"}
+            update["overrides"] = overrides
     return update
 
 
@@ -210,6 +231,10 @@ class ResolvedFallbackConfig(BaseModel):
 
     api_key: str | None = None
     base_url: str | None = None
+    auth_mode: ModelAuthMode = "api_key"
+    codex_auth_path: str | None = None
+    codex_refresh_skew_seconds: int = 120
+    codex_refresh_timeout_seconds: float = 20.0
 
     temperature: float | None = None
     top_p: float | None = None
@@ -245,6 +270,10 @@ class ModelConfig(BaseModel):
 
     api_key: str | None = None
     base_url: str | None = None
+    auth_mode: ModelAuthMode = "api_key"
+    codex_auth_path: str | None = None
+    codex_refresh_skew_seconds: int = 120
+    codex_refresh_timeout_seconds: float = 20.0
 
     temperature: float | None = None
     top_p: float | None = None
@@ -386,6 +415,12 @@ def _resolve_fallback_config(
             fallback.overrides.api_key_env,
         ),
         base_url=fallback.overrides.base_url,
+        auth_mode=fallback.overrides.auth_mode,
+        codex_auth_path=fallback.overrides.codex_auth_path,
+        codex_refresh_skew_seconds=fallback.overrides.codex_refresh_skew_seconds,
+        codex_refresh_timeout_seconds=(
+            fallback.overrides.codex_refresh_timeout_seconds
+        ),
         temperature=fallback.temperature,
         top_p=fallback.top_p,
         top_k=fallback.top_k,
@@ -419,6 +454,12 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
             configured.overrides.api_key_env,
         ),
         base_url=configured.overrides.base_url,
+        auth_mode=configured.overrides.auth_mode,
+        codex_auth_path=configured.overrides.codex_auth_path,
+        codex_refresh_skew_seconds=configured.overrides.codex_refresh_skew_seconds,
+        codex_refresh_timeout_seconds=(
+            configured.overrides.codex_refresh_timeout_seconds
+        ),
         temperature=configured.temperature,
         top_p=configured.top_p,
         top_k=configured.top_k,

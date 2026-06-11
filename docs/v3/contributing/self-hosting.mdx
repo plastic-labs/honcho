@@ -55,6 +55,8 @@ DERIVER_MODEL_CONFIG__MODEL=google/gemini-2.5-flash
 DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://openrouter.ai/api/v1
 ```
 
+For text generation, you can use a ChatGPT Codex subscription with no OpenAI API key by setting `*_MODEL_CONFIG__OVERRIDES__AUTH_MODE=codex_oauth` on those same text-generation sections. Honcho uses Codex CLI OAuth tokens from `$CODEX_HOME/auth.json` or `~/.codex/auth.json`. Embeddings still require a configured embedding provider key.
+
 <Info>
 For recommended model tiers per feature, using multiple providers, or direct vendor API keys, see the [Configuration Guide](./configuration#llm-configuration).
 </Info>

@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from src.config import ModelConfig, settings
 from src.exceptions import ValidationException
+from src.llm.codex_oauth import DEFAULT_CODEX_BASE_URL
 
 
 def resolve_credentials(config: ModelConfig) -> dict[str, str | None]:
     """Resolve credentials for the effective model transport."""
+
+    if config.transport == "openai" and config.auth_mode == "codex_oauth":
+        return {
+            "api_key": None,
+            "api_base": config.base_url or DEFAULT_CODEX_BASE_URL,
+        }
 
     default_api_key = default_transport_api_key(config.transport)
     return {

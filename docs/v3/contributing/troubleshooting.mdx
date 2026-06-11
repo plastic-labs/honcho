@@ -15,15 +15,15 @@ This page covers common issues you may encounter when self-hosting Honcho, what 
 ValueError: Missing client for Deriver: google
 ```
 
-**Cause:** The server validates at startup that all configured LLM providers have API keys. If a provider is referenced in your configuration but the corresponding API key isn't set, the server refuses to start.
+**Cause:** The server validates at startup that configured API-key LLM providers have credentials. If a provider is referenced in your configuration but the corresponding API key isn't set, the server refuses to start.
 
 **Fix:** Set the API keys for your configured providers. With default configuration, you need:
 
 ```bash
-LLM_GEMINI_API_KEY=...    # Used by deriver, summary, dialectic minimal/low
-LLM_ANTHROPIC_API_KEY=... # Used by dialectic medium/high/max, dream
-LLM_OPENAI_API_KEY=...    # Used by embeddings (when EMBED_MESSAGES=true)
+LLM_OPENAI_API_KEY=... # Used by default text generation and embeddings
 ```
+
+If a text-generation model config uses `MODEL_CONFIG__OVERRIDES__AUTH_MODE=codex_oauth`, Honcho reads `$CODEX_HOME/auth.json` or `~/.codex/auth.json` instead of an OpenAI API key for that text-generation call. Embeddings still require a configured embedding provider key.
 
 See the [LLM Setup](/v3/contributing/self-hosting#llm-setup) section for provider configuration. You can change which providers are used in your `.env` or `config.toml` (see [Configuration Guide](./configuration#llm-configuration)).
 

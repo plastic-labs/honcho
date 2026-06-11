@@ -24,7 +24,11 @@ from src.config import (
     settings,
 )
 
-from .registry import backend_for_provider, client_for_model_config
+from .registry import (
+    aclient_for_model_config,
+    backend_for_provider,
+    client_for_model_config,
+)
 from .types import ProviderClient, ReasoningEffortType
 
 logger = logging.getLogger(__name__)
@@ -110,6 +114,10 @@ def select_model_config_for_attempt(
         fallback=None,
         api_key=fb.api_key,
         base_url=fb.base_url,
+        auth_mode=fb.auth_mode,
+        codex_auth_path=fb.codex_auth_path,
+        codex_refresh_skew_seconds=fb.codex_refresh_skew_seconds,
+        codex_refresh_timeout_seconds=fb.codex_refresh_timeout_seconds,
         temperature=fb.temperature,
         top_p=fb.top_p,
         top_k=fb.top_k,
@@ -175,6 +183,56 @@ def plan_attempt(
     )
 
 
+async def aplan_attempt(
+    *,
+    runtime_model_config: ModelConfig,
+    attempt: int,
+    retry_attempts: int,
+    call_thinking_budget_tokens: int | None,
+    call_reasoning_effort: ReasoningEffortType,
+) -> AttemptPlan:
+    """Async variant of plan_attempt for request paths.
+
+    The selected client may need Codex OAuth refresh. Resolve it without
+    blocking the event loop.
+    """
+
+    selected = select_model_config_for_attempt(
+        runtime_model_config,
+        attempt=attempt,
+        retry_attempts=retry_attempts,
+    )
+    provider = selected.transport
+    client = await aclient_for_model_config(provider, selected)
+
+    is_primary = selected is runtime_model_config
+    attempt_thinking_budget = (
+        call_thinking_budget_tokens if is_primary else selected.thinking_budget_tokens
+    )
+    attempt_reasoning_effort: ReasoningEffortType = (
+        call_reasoning_effort if is_primary else selected.thinking_effort
+    )
+
+    if attempt == retry_attempts and runtime_model_config.fallback is not None:
+        logger.warning(
+            f"Final retry attempt {attempt}/{retry_attempts}: switching from "
+            + f"{runtime_model_config.transport}/{runtime_model_config.model} to "
+            + f"backup {provider}/{selected.model}"
+        )
+
+    return AttemptPlan(
+        provider=provider,
+        model=selected.model,
+        client=client,
+        thinking_budget_tokens=attempt_thinking_budget,
+        reasoning_effort=attempt_reasoning_effort,
+        selected_config=selected,
+        attempt=attempt,
+        retry_attempts=retry_attempts,
+        is_fallback=not is_primary,
+    )
+
+
 def effective_config_for_call(
     *,
     selected_config: ModelConfig | None,
@@ -192,8 +250,8 @@ def effective_config_for_call(
     (test-only callers passing provider+model directly) a minimal ModelConfig
     is synthesized.
 
-    max_output_tokens is forced to None so the per-call max_tokens kwarg is
-    authoritative — matching historical honcho_llm_call_inner behavior.
+    If selected_config defines max_output_tokens, request_builder keeps that
+    cap authoritative over the generic per-call max_tokens default.
     """
     if selected_config is None:
         return ModelConfig(
@@ -204,7 +262,7 @@ def effective_config_for_call(
             thinking_budget_tokens=thinking_budget_tokens,
             thinking_effort=reasoning_effort,
         )
-    updates: dict[str, Any] = {"max_output_tokens": None}
+    updates: dict[str, Any] = {}
     if temperature is not None:
         updates["temperature"] = temperature
     if stop_seqs is not None:
@@ -226,11 +284,12 @@ def effective_temperature(temperature: float | None) -> float | None:
 
 def resolve_backend_for_plan(plan: AttemptPlan) -> Any:
     """Convenience helper: plan → ready-to-call ProviderBackend."""
-    return backend_for_provider(plan.provider, plan.client)
+    return backend_for_provider(plan.provider, plan.client, plan.selected_config)
 
 
 __all__ = [
     "AttemptPlan",
+    "aplan_attempt",
     "current_attempt",
     "effective_config_for_call",
     "effective_temperature",

@@ -48,3 +48,18 @@ def test_openai_transport_credentials_fall_back_to_global_defaults(
         "api_key": "openai-test-key",
         "api_base": None,
     }
+
+
+def test_codex_oauth_credentials_do_not_require_api_key() -> None:
+    credentials = resolve_credentials(
+        ModelConfig(
+            model="gpt-5.5",
+            transport="openai",
+            auth_mode="codex_oauth",
+        )
+    )
+
+    assert credentials == {
+        "api_key": None,
+        "api_base": "https://chatgpt.com/backend-api/codex",
+    }
