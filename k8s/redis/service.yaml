@@ -1,0 +1,13 @@
+# Headless Service — required by the redis StatefulSet for stable pod DNS.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: honcho
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

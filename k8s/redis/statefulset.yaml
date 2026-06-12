@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: honcho
+spec:
+  serviceName: redis
+  # Single replica is intentional — Redis clustering/sentinel requires
+  # additional configuration beyond the scope of these sample manifests.
+  # For production, use a managed cache service instead.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      # redis pods don't call the Kubernetes API.
+      automountServiceAccountToken: false
+      containers:
+        - name: redis
+          image: redis:8.2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6379
+          # Enable persistence: snapshot every 60 s if at least 1 key changed.
+          command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          # startupProbe — handles the brief period before redis is ready.
+          startupProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            timeoutSeconds: 3
+            failureThreshold: 20
+          # readinessProbe — verifies redis is accepting commands.
+          # Probe type: exec (full PING/PONG roundtrip).
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # livenessProbe — checks that the TCP port is open.
+          # Different probe type from readiness to avoid the identical-probe
+          # anti-pattern: TCP open != redis accepting commands.
+          livenessProbe:
+            tcpSocket:
+              port: 6379
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+              ephemeral-storage: "100Mi"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+              ephemeral-storage: "500Mi"
+          # securityContext is intentionally omitted for the redis container.
+          # Some redis image versions start as root. For production, use a
+          # managed cache service. Network-level security is enforced by
+          # NetworkPolicies.
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

@@ -1,0 +1,31 @@
+# Honcho Kustomize entrypoint
+#
+# BEFORE running kubectl apply -k k8s/, apply secrets separately:
+#   cp k8s/secrets.yaml.example k8s/secrets.yaml
+#   # fill in all placeholder values in k8s/secrets.yaml
+#   kubectl apply -f k8s/secrets.yaml
+#
+# Then deploy everything else:
+#   kubectl apply -k k8s/
+#
+# secrets.yaml is excluded here because it is gitignored and must be created
+# locally by each operator — it should never be committed to version control.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: honcho
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - network-policies.yaml
+  - postgres/configmap.yaml
+  - postgres/statefulset.yaml
+  - postgres/service.yaml
+  - redis/statefulset.yaml
+  - redis/service.yaml
+  - api/deployment.yaml
+  - api/service.yaml
+  - api/hpa.yaml
+  - api/pdb.yaml
+  - deriver/deployment.yaml

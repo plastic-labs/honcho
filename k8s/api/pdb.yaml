@@ -1,0 +1,15 @@
+# PodDisruptionBudget — limits voluntary disruption during node drains and
+# cluster upgrades. maxUnavailable: 1 allows at most one pod to be evicted at a
+# time regardless of current replica count, which avoids a deadlock with
+# HPA minReplicas: 1 (minAvailable: 1 would block drains when only one replica
+# is running).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: honcho-api
+  namespace: honcho
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: honcho-api

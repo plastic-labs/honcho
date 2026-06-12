@@ -1,0 +1,233 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: honcho-api
+  namespace: honcho
+spec:
+  # No static replicas — the HPA (api/hpa.yaml) manages the replica count.
+  # Setting replicas here would override HPA scaling on every kubectl apply.
+  selector:
+    matchLabels:
+      app: honcho-api
+  # maxSurge: 1, maxUnavailable: 0 — ensures only one new pod starts at a
+  # time so migrations (run inside the entrypoint) never execute concurrently.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: honcho-api
+    spec:
+      # These pods don't call the Kubernetes API.
+      automountServiceAccountToken: false
+      # Pod-level security context: applies to all containers including init containers.
+      # Container-level securityContext blocks below add further restrictions.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Block startup until PostgreSQL is accepting connections.
+        - name: wait-for-postgres
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              MAX_RETRIES=60; RETRY=0
+              until nc -z postgres 5432; do
+                RETRY=$((RETRY + 1))
+                if [ "$RETRY" -ge "$MAX_RETRIES" ]; then
+                  echo "ERROR: postgres not reachable after $MAX_RETRIES attempts (120 s)"
+                  exit 1
+                fi
+                echo "Waiting for postgres... ($RETRY/$MAX_RETRIES)"
+                sleep 2
+              done
+              echo "PostgreSQL is ready."
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "50m"
+              ephemeral-storage: "16Mi"
+            limits:
+              memory: "32Mi"
+              cpu: "100m"
+              ephemeral-storage: "64Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534      # nobody
+            runAsGroup: 65534     # nogroup
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+        # Block startup until Redis is accepting connections.
+        - name: wait-for-redis
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              MAX_RETRIES=60; RETRY=0
+              until nc -z redis 6379; do
+                RETRY=$((RETRY + 1))
+                if [ "$RETRY" -ge "$MAX_RETRIES" ]; then
+                  echo "ERROR: redis not reachable after $MAX_RETRIES attempts (120 s)"
+                  exit 1
+                fi
+                echo "Waiting for redis... ($RETRY/$MAX_RETRIES)"
+                sleep 2
+              done
+              echo "Redis is ready."
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "50m"
+              ephemeral-storage: "16Mi"
+            limits:
+              memory: "32Mi"
+              cpu: "100m"
+              ephemeral-storage: "64Mi"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534      # nobody
+            runAsGroup: 65534     # nogroup
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: api
+          # Use a specific image tag in production (e.g. honcho:v2.1.1) to
+          # ensure reproducible deployments and enable clean rollbacks.
+          image: honcho:latest
+          # IfNotPresent: works for locally-loaded images (kind/k3s) and
+          # registry images alike. With specific tags the image is cached
+          # after the first pull.
+          imagePullPolicy: IfNotPresent
+          # Matches the docker-compose entrypoint: runs idempotent alembic
+          # migrations, then starts the FastAPI server.
+          command: ["sh", "docker/entrypoint.sh"]
+          ports:
+            - containerPort: 8000
+          env:
+            # ── Non-secret config ──────────────────────────────────────────
+            - name: AUTH_USE_AUTH
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: AUTH_USE_AUTH
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: LOG_LEVEL
+            - name: CACHE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: CACHE_URL
+            - name: CACHE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: CACHE_ENABLED
+            - name: METRICS_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: honcho-config
+                  key: METRICS_ENABLED
+            # ── Secrets ────────────────────────────────────────────────────
+            - name: DB_CONNECTION_URI
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: DB_CONNECTION_URI
+            - name: AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: AUTH_JWT_SECRET
+            # LLM keys are optional — unset keys simply won't appear in the
+            # container environment; the app will error if it calls a provider
+            # whose key is absent.
+            - name: LLM_ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: LLM_ANTHROPIC_API_KEY
+                  optional: true
+            - name: LLM_GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: LLM_GEMINI_API_KEY
+                  optional: true
+            - name: LLM_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: honcho-secrets
+                  key: LLM_OPENAI_API_KEY
+                  optional: true
+          volumeMounts:
+            # Writable /tmp for uv cache (UV_CACHE_DIR=/tmp/uv-cache set in
+            # the Dockerfile) and any other runtime temp files.
+            - name: tmp
+              mountPath: /tmp
+          # startupProbe — absorbs slow migration runs before readiness/liveness
+          # take over. 60 × 5 s = up to 5 min for migrations to complete.
+          startupProbe:
+            httpGet:
+              path: /openapi.json
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          # readinessProbe — checks that the HTTP server is serving responses.
+          # Probe type: httpGet (full request/response cycle).
+          readinessProbe:
+            httpGet:
+              path: /openapi.json
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # livenessProbe — checks that the TCP port is open (lighter than a
+          # full HTTP request). Different probe type from readiness avoids the
+          # identical-probe anti-pattern: port open != app serving responses.
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+              ephemeral-storage: "256Mi"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+              ephemeral-storage: "1Gi"
+          securityContext:
+            # The Dockerfile creates a non-root 'app' user via adduser --system
+            # (UID in the 100–999 range). runAsNonRoot enforces this without
+            # hardcoding the UID, which varies by image build.
+            # Note: kube-score recommends UID > 10000; achieving that requires
+            # a Dockerfile change (adduser --uid 10001 app).
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tmp
+          emptyDir: {}
