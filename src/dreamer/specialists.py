@@ -111,11 +111,18 @@ class BaseSpecialist(ABC):
     @abstractmethod
     def build_user_prompt(
         self,
+        observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
     ) -> str:
         """Build the user prompt with optional exploration hints and current peer card."""
         ...
+
+    def _build_target_observee_context(self, observed: str) -> str:
+        return f"""Target observee:
+{observed}
+
+"""
 
     def _build_peer_card_context(self, peer_card: list[str] | None) -> str:
         """Build the peer card context section for user prompts."""
@@ -226,7 +233,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                 },
                 {
                     "role": "user",
-                    "content": self.build_user_prompt(hints, current_peer_card),
+                    "content": self.build_user_prompt(
+                        observed=observed,
+                        hints=hints,
+                        peer_card=current_peer_card,
+                    ),
                 },
             ]
 
@@ -465,15 +476,16 @@ class DeductionSpecialist(BaseSpecialist):
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
     ) -> str:
+        _ = observed
         peer_card_section = ""
         if peer_card_enabled:
-            peer_card_section = f"""
+            peer_card_section = """
 
 ## PEER CARD (REQUIRED)
 
-The peer card is {observed}'s identity store: stable identity markers that distinguish this entity from others and persist across interactions. Behavior, tendencies, transient state, and episodic facts belong in observations, not on the peer card.
+The peer card is the target observee's identity store: stable identity markers that distinguish this entity from others and persist across interactions. Behavior, tendencies, transient state, and episodic facts belong in observations, not on the peer card.
 
-A peer can be anything with identity that changes over time — a human, an agent, a codebase, a team, an organization. Do not assume {observed} is human. Do not require any field; empty is the correct output when evidence is absent.
+A peer can be anything with identity that changes over time — a human, an agent, a codebase, a team, an organization. Do not assume the target observee is human. Do not require any field; empty is the correct output when evidence is absent.
 
 ### Allowed entry kinds
 
@@ -493,16 +505,16 @@ Each entry must start with one of these four prefixes (exact case, followed by a
   - `RELATIONSHIP: Spouse: Bob`
   - `RELATIONSHIP: Maintainer: vineeth`
   - `RELATIONSHIP: Members: vineeth, rajat`
-- `INSTRUCTION: ...` — standing rule of engagement that {observed} has explicitly stated (do/don't for the observer). Only when explicit; never inferred from behavior.
+- `INSTRUCTION: ...` — standing rule of engagement that the target observee has explicitly stated (do/don't for the observer). Only when explicit; never inferred from behavior.
   - `INSTRUCTION: Call me Vee`
   - `INSTRUCTION: Never push to main without review`
 
 ### Rules
 
 1. **Stable.** If the value plausibly changes within six months absent a deliberate announcement, it does not belong on the card. Prefer leaving the card empty over filling it with volatile content.
-2. **Subject is {observed}.** Every entry must be a fact about {observed}, not about another participant in the session. Never write facts about co-occurring peers into the card, no matter how frequently they appear in the messages.
-3. **Evidence-grounded.** Only write what {observed} has explicitly stated, or what another participant has explicitly stated about {observed} with {observed}'s assent. No "general knowledge" inferences (`"co-founder"` does not imply an age; mentioning a colleague does not imply a family relationship).
-4. **Type-agnostic.** {observed} may not be human. Do not require name/age/location/family/occupation fields.
+2. **Subject is the target observee.** Every entry must be a fact about the target observee, not about another participant in the session. Never write facts about co-occurring peers into the card, no matter how frequently they appear in the messages.
+3. **Evidence-grounded.** Only write what the target observee has explicitly stated, or what another participant has explicitly stated about the target observee with the target observee's assent. No "general knowledge" inferences (`"co-founder"` does not imply an age; mentioning a colleague does not imply a family relationship).
+4. **Type-agnostic.** The target observee may not be human. Do not require name/age/location/family/occupation fields.
 5. **No behavioral content.** TRAITs, behavioral tendencies, patterns, and inferred preferences belong in observations, not on the peer card. Do not write `TRAIT:` entries or behavioral `PREFERENCE:` entries — they will be rejected.
 6. **No evidence bundles.** Each entry is one concise fact. No `e.g.` clauses, no parenthetical example lists, no semicolon-separated value dumps.
 
@@ -523,7 +535,7 @@ When in doubt about a specific legacy entry, prefer migrating it (so valid info 
 
 Call `update_peer_card` with the complete deduplicated list when there is a durable identity update to record, or when the existing card needs migration. Entries that do not start with one of the four allowed prefixes will be rejected. Keep concise (max 40 entries)."""
 
-        return f"""You are a deductive reasoning agent analyzing observations about {observed}.
+        return f"""You are a deductive reasoning agent analyzing observations about the target observee.
 
 ## YOUR JOB
 
@@ -583,14 +595,16 @@ Use `create_observations_deductive`.
 
     def build_user_prompt(
         self,
+        observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
     ) -> str:
+        target_observee_context = self._build_target_observee_context(observed)
         peer_card_context = self._build_peer_card_context(peer_card)
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
-            return f"""{peer_card_context}Start by exploring recent observations and messages. These topics may be worth investigating:
+            return f"""{target_observee_context}{peer_card_context}Start by exploring recent observations and messages. These topics may be worth investigating:
 
 {hints_str}
 
@@ -598,7 +612,7 @@ But follow the evidence - if you find something more interesting, pursue that in
 
 Begin with `get_recent_observations` to see what's there."""
 
-        return f"""{peer_card_context}Explore the observation space and create deductive observations.
+        return f"""{target_observee_context}{peer_card_context}Explore the observation space and create deductive observations.
 
 Start with `get_recent_observations` to see what's been learned recently, then investigate whatever seems most promising.
 
@@ -647,8 +661,9 @@ class InductionSpecialist(BaseSpecialist):
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
     ) -> str:
+        _ = observed
         _ = peer_card_enabled
-        return f"""You are an inductive reasoning agent identifying patterns about {observed}.
+        return """You are an inductive reasoning agent identifying patterns about the target observee.
 
 ## YOUR JOB
 
@@ -711,16 +726,18 @@ Use `create_observations_inductive`.
 
     def build_user_prompt(
         self,
+        observed: str,
         hints: list[str] | None,
         peer_card: list[str] | None = None,
     ) -> str:
+        target_observee_context = self._build_target_observee_context(observed)
         # Induction does not consume peer card context — it produces inductive
         # observations, not identity-marker updates.
         _ = peer_card
 
         if hints:
             hints_str = "\n".join(f"- {q}" for q in hints[:5])
-            return f"""Explore and find patterns. These areas may be worth investigating:
+            return f"""{target_observee_context}Explore and find patterns. These areas may be worth investigating:
 
 {hints_str}
 
@@ -728,7 +745,7 @@ But follow the evidence - if you find patterns elsewhere, pursue those.
 
 Start with `get_recent_observations`."""
 
-        return """Explore the observation space and identify patterns.
+        return f"""{target_observee_context}Explore the observation space and identify patterns.
 
 Remember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.
 
