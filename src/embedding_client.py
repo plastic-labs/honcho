@@ -428,12 +428,16 @@ class _EmbeddingClient:
                         contents=item.text,
                         config={"output_dimensionality": self.vector_dimensions},
                     )
-                    if response.embeddings and response.embeddings[0].values:
-                        result[item.text_id][item.chunk_index] = (
-                            self._validate_embedding_dimensions(
-                                response.embeddings[0].values
-                            )
+                    if not response.embeddings or not response.embeddings[0].values:
+                        raise ValueError(
+                            f"Gemini returned empty embeddings for text_id={item.text_id!r},"
+                            f" chunk_index={item.chunk_index}"
                         )
+                    result[item.text_id][item.chunk_index] = (
+                        self._validate_embedding_dimensions(
+                            response.embeddings[0].values
+                        )
+                    )
             else:  # openai
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
