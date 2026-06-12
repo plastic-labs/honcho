@@ -2,14 +2,134 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel, ValidationError
 
+from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.structured_output import repair_response_model_json
+
+# Effort levels accepted by ``output_config.effort`` (ordered low -> high).
+# Honcho's ThinkingEffortLevel additionally allows "none"/"minimal", which the
+# Messages API does not accept, so those are mapped onto supported values below.
+_ANTHROPIC_EFFORTS: frozenset[str] = frozenset(
+    {"low", "medium", "high", "xhigh", "max"}
+)
+_EFFORT_ALIASES: dict[str, str] = {"minimal": "low"}
+
+# claude-<tier>-<major>-<minor>[-<date/suffix>]; only the version prefix matters
+# for picking the thinking format.
+_MODEL_VERSION_RE = re.compile(r"^claude-(opus|sonnet|haiku)-(\d+)-(\d+)")
+
+# Per-tier (major, minor) at/above which Anthropic removed the legacy
+# ``thinking: {"type": "enabled", "budget_tokens": N}`` format and *requires*
+# adaptive thinking. Sending the legacy shape to one of these models returns
+# HTTP 400:
+#   "thinking.type.enabled" is not supported for this model. Use
+#   "thinking.type.adaptive" and "output_config.effort" to control thinking ...
+# Verified against the Anthropic docs (Opus 4.7 and Opus 4.8 are adaptive-only):
+# https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking
+# Opus 4.6 / Sonnet 4.6 still accept the legacy format (deprecated but
+# functional), so they intentionally stay on the legacy path.
+_ADAPTIVE_THINKING_MIN_VERSION: dict[str, tuple[int, int]] = {"opus": (4, 7)}
+
+
+def _requires_adaptive_thinking(model: str) -> bool:
+    """Return True if ``model`` rejects legacy budget-based thinking (HTTP 400).
+
+    Such models require ``thinking: {"type": "adaptive"}`` with
+    ``output_config.effort`` instead of ``{"type": "enabled", "budget_tokens"}``.
+    """
+    match = _MODEL_VERSION_RE.match(model)
+    if match is None:
+        return False
+    minimum = _ADAPTIVE_THINKING_MIN_VERSION.get(match.group(1))
+    if minimum is None:
+        return False
+    return (int(match.group(2)), int(match.group(3))) >= minimum
+
+
+def _budget_to_effort(thinking_budget_tokens: int) -> str:
+    """Bucket a legacy thinking-token budget into an adaptive effort level.
+
+    There is no exact mapping from ``budget_tokens`` to ``effort``; these
+    buckets keep budget-configured models at a comparable thinking depth (e.g.
+    the deriver's 16000-token dream budget maps to ``high``, 32000 to ``xhigh``).
+    """
+    if thinking_budget_tokens < 4096:
+        return "low"
+    if thinking_budget_tokens < 16000:
+        return "medium"
+    if thinking_budget_tokens < 32000:
+        return "high"
+    return "xhigh"
+
+
+def _adaptive_effort(
+    thinking_effort: str | None, thinking_budget_tokens: int | None
+) -> str | None:
+    """Resolve ``output_config.effort`` for an adaptive-thinking request.
+
+    An explicit ``thinking_effort`` wins; otherwise the legacy
+    ``thinking_budget_tokens`` is bucketed so existing budget-based configs keep
+    a comparable thinking depth. Returns None to fall back to the API default
+    (``high``). A budget of 0 (or None) means "no effort hint"; a negative
+    budget or an unrecognized effort is a caller error and raises
+    ``ValidationException`` rather than being silently coerced.
+    """
+    if thinking_budget_tokens is not None and thinking_budget_tokens < 0:
+        raise ValidationException("thinking_budget_tokens must be >= 0")
+    if thinking_effort is not None and thinking_effort != "none":
+        normalized = _EFFORT_ALIASES.get(thinking_effort, thinking_effort)
+        if normalized not in _ANTHROPIC_EFFORTS:
+            raise ValidationException(
+                f"Unsupported thinking_effort: {thinking_effort!r}"
+            )
+        return normalized
+    if thinking_budget_tokens:
+        return _budget_to_effort(thinking_budget_tokens)
+    return None
+
+
+def _build_thinking_params(
+    model: str,
+    thinking_budget_tokens: int | None,
+    thinking_effort: str | None,
+) -> dict[str, Any]:
+    """Build the ``thinking`` (+ ``output_config``) request params for a model.
+
+    Opus 4.7+ reject the legacy ``{"type": "enabled", "budget_tokens": N}`` shape
+    with HTTP 400 and require adaptive thinking; older models keep the legacy
+    shape unchanged. A budget of 0 (or None) with no explicit effort means no
+    thinking; an explicit ``thinking_effort`` enables adaptive thinking
+    regardless of budget. A negative budget raises ``ValidationException``
+    rather than being forwarded. Returns an empty dict when thinking is not
+    requested.
+    """
+    if thinking_budget_tokens is not None and thinking_budget_tokens < 0:
+        raise ValidationException("thinking_budget_tokens must be >= 0")
+
+    if not _requires_adaptive_thinking(model):
+        if thinking_budget_tokens:
+            return {
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": thinking_budget_tokens,
+                }
+            }
+        return {}
+
+    effort = _adaptive_effort(thinking_effort, thinking_budget_tokens)
+    if not thinking_budget_tokens and effort is None:
+        return {}
+    params: dict[str, Any] = {"thinking": {"type": "adaptive"}}
+    if effort is not None:
+        params["output_config"] = {"effort": effort}
+    return params
 
 
 class AnthropicBackend:
@@ -34,7 +154,7 @@ class AnthropicBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        del max_output_tokens, thinking_effort
+        del max_output_tokens
 
         request_messages, system_messages = self._extract_system(messages)
         params: dict[str, Any] = {
@@ -42,6 +162,11 @@ class AnthropicBackend:
             "max_tokens": max_tokens,
             "messages": request_messages,
         }
+
+        thinking_params = _build_thinking_params(
+            model, thinking_budget_tokens, thinking_effort
+        )
+        params.update(thinking_params)
 
         if temperature is not None:
             params["temperature"] = temperature
@@ -60,11 +185,6 @@ class AnthropicBackend:
             converted_tool_choice = self._convert_tool_choice(tool_choice)
             if converted_tool_choice is not None:
                 params["tool_choice"] = converted_tool_choice
-        if thinking_budget_tokens:
-            params["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": thinking_budget_tokens,
-            }
         if extra_params:
             for key in ("top_p", "top_k"):
                 if key in extra_params:
@@ -72,7 +192,7 @@ class AnthropicBackend:
 
         use_json_prefill = (
             bool(response_format or self._json_mode(extra_params))
-            and not thinking_budget_tokens
+            and "thinking" not in thinking_params
             and self._supports_assistant_prefill(model)
         )
         if use_json_prefill and params["messages"]:
@@ -119,7 +239,7 @@ class AnthropicBackend:
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         is_json_mode = self._json_mode(extra_params)
-        del max_output_tokens, thinking_effort
+        del max_output_tokens
 
         request_messages, system_messages = self._extract_system(messages)
         params: dict[str, Any] = {
@@ -127,6 +247,10 @@ class AnthropicBackend:
             "max_tokens": max_tokens,
             "messages": request_messages,
         }
+        thinking_params = _build_thinking_params(
+            model, thinking_budget_tokens, thinking_effort
+        )
+        params.update(thinking_params)
         if temperature is not None:
             params["temperature"] = temperature
         if stop:
@@ -150,7 +274,7 @@ class AnthropicBackend:
                     params[key] = extra_params[key]
         use_json_prefill = (
             bool(response_format or is_json_mode)
-            and not thinking_budget_tokens
+            and "thinking" not in thinking_params
             and self._supports_assistant_prefill(model)
         )
         if use_json_prefill and params["messages"]:
@@ -169,11 +293,6 @@ class AnthropicBackend:
                 params["messages"],
                 f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
             )
-        if thinking_budget_tokens:
-            params["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": thinking_budget_tokens,
-            }
 
         async with self._client.messages.stream(**params) as stream:
             async for chunk in stream:

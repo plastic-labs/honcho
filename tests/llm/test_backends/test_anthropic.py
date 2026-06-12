@@ -1,10 +1,12 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel
 
+from src.exceptions import ValidationException
 from src.llm.backends.anthropic import AnthropicBackend
 
 
@@ -123,7 +125,7 @@ async def test_anthropic_backend_skips_assistant_prefill_for_claude_4_models() -
 
 
 @pytest.mark.asyncio
-async def test_anthropic_backend_ignores_thinking_effort() -> None:
+async def test_legacy_model_ignores_thinking_effort() -> None:
     client = Mock()
     client.messages.create = AsyncMock(
         return_value=SimpleNamespace(
@@ -152,3 +154,349 @@ async def test_anthropic_backend_ignores_thinking_effort() -> None:
     call = await_args.kwargs
     assert "thinking" not in call
     assert "reasoning_effort" not in call
+
+
+def _text_response_client() -> Mock:
+    """Mock Anthropic client returning a minimal text completion."""
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text="ok")],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+    return client
+
+
+def _create_call_kwargs(client: Mock) -> dict[str, Any]:
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    return await_args.kwargs
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-5-0",  # future Opus keeps using adaptive thinking
+        "claude-opus-4-8-20260120",  # date-suffixed variant
+    ],
+)
+@pytest.mark.asyncio
+async def test_anthropic_backend_uses_adaptive_thinking(model: str) -> None:
+    # These models reject the legacy {"type": "enabled", "budget_tokens": N}
+    # shape with HTTP 400; the backend must send adaptive thinking instead.
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model=model,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=32000,
+        thinking_budget_tokens=16000,
+    )
+
+    call = _create_call_kwargs(client)
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": "high"}
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "claude-opus-4-6",
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+    ],
+)
+@pytest.mark.asyncio
+async def test_anthropic_backend_keeps_legacy_thinking(model: str) -> None:
+    # Models that still accept the legacy budget format must be unchanged.
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model=model,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=32000,
+        thinking_budget_tokens=16000,
+    )
+
+    call = _create_call_kwargs(client)
+    assert call["thinking"] == {"type": "enabled", "budget_tokens": 16000}
+    assert "output_config" not in call
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_adaptive_thinking_respects_explicit_effort() -> None:
+    # An explicit thinking_effort overrides the budget-derived effort bucket.
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-opus-4-8",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=32000,
+        thinking_budget_tokens=16000,
+        thinking_effort="low",
+    )
+
+    call = _create_call_kwargs(client)
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": "low"}
+
+
+class _FakeAnthropicStream:
+    """Minimal async-context-manager stand-in for client.messages.stream()."""
+
+    def __init__(self, final_message: Any) -> None:
+        self._final_message: Any = final_message
+
+    async def __aenter__(self) -> "_FakeAnthropicStream":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        del exc_info
+        return False
+
+    def __aiter__(self) -> "_FakeAnthropicStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        raise StopAsyncIteration
+
+    async def get_final_message(self) -> Any:
+        return self._final_message
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_stream_uses_adaptive_thinking_for_opus_4_8() -> None:
+    # The streaming path must apply the same adaptive thinking format.
+    final_message = SimpleNamespace(
+        usage=SimpleNamespace(output_tokens=5),
+        stop_reason="end_turn",
+    )
+    client = Mock()
+    client.messages.stream = Mock(return_value=_FakeAnthropicStream(final_message))
+
+    backend = AnthropicBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=32000,
+            thinking_budget_tokens=16000,
+        )
+    ]
+
+    assert chunks[-1].is_done is True
+    stream_call = client.messages.stream.call_args
+    if stream_call is None:
+        raise AssertionError("Expected Anthropic stream call")
+    call = stream_call.kwargs
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": "high"}
+
+
+@pytest.mark.parametrize(
+    ("thinking_budget_tokens", "expected_effort"),
+    [
+        (2048, "low"),
+        (8000, "medium"),
+        (16000, "high"),
+        (32000, "xhigh"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_anthropic_backend_maps_budget_to_effort(
+    thinking_budget_tokens: int, expected_effort: str
+) -> None:
+    # With no explicit effort, the legacy budget is bucketed into an effort
+    # level so existing budget-based configs keep a comparable thinking depth.
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-opus-4-8",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=64000,
+        thinking_budget_tokens=thinking_budget_tokens,
+    )
+
+    call = _create_call_kwargs(client)
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": expected_effort}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_rejects_unknown_thinking_effort() -> None:
+    # An unrecognized effort is a caller error, not a silent fallback.
+    backend = AnthropicBackend(_text_response_client())
+    with pytest.raises(ValidationException):
+        await backend.complete(
+            model="claude-opus-4-8",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=32000,
+            thinking_budget_tokens=16000,
+            thinking_effort="turbo",
+        )
+
+
+@pytest.mark.parametrize("model", ["claude-opus-4-8", "claude-opus-4-6"])
+@pytest.mark.asyncio
+async def test_anthropic_backend_rejects_negative_budget(model: str) -> None:
+    # Negative budgets must not be bucketed (adaptive) or forwarded (legacy).
+    backend = AnthropicBackend(_text_response_client())
+    with pytest.raises(ValidationException):
+        await backend.complete(
+            model=model,
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=32000,
+            thinking_budget_tokens=-1,
+        )
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["claude-opus-4-8", "claude-opus-4-6", "claude-haiku-4-5"],
+)
+@pytest.mark.parametrize("thinking_budget_tokens", [None, 0])
+@pytest.mark.asyncio
+async def test_anthropic_backend_no_thinking_for_zero_or_none_budget(
+    model: str, thinking_budget_tokens: int | None
+) -> None:
+    # 0 is a valid "disable thinking" sentinel (config permits it); neither 0
+    # nor None raises, and no thinking params are sent.
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model=model,
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=32000,
+        thinking_budget_tokens=thinking_budget_tokens,
+    )
+
+    call = _create_call_kwargs(client)
+    assert "thinking" not in call
+    assert "output_config" not in call
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_adaptive_aliases_minimal_to_low() -> None:
+    # Honcho's ThinkingEffortLevel allows "minimal", which the Messages API
+    # does not accept; it is aliased onto the supported "low" effort.
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-opus-4-8",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=32000,
+        thinking_effort="minimal",
+    )
+
+    call = _create_call_kwargs(client)
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": "low"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_effort_none_falls_through_to_budget_bucket() -> None:
+    # "none" means "no explicit effort hint", not "disable thinking": with a
+    # positive budget it falls through to the budget-derived effort bucket
+    # (16000 -> high). Thinking is disabled via a 0/None budget, not "none".
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-opus-4-8",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=32000,
+        thinking_budget_tokens=16000,
+        thinking_effort="none",
+    )
+
+    call = _create_call_kwargs(client)
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": "high"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_explicit_effort_with_zero_budget_enables_adaptive() -> (
+    None
+):
+    # A 0 budget alone disables thinking, but an explicit effort still enables
+    # adaptive thinking on 4.7+ models — the effort is the authoritative hint.
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-opus-4-8",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=32000,
+        thinking_budget_tokens=0,
+        thinking_effort="high",
+    )
+
+    call = _create_call_kwargs(client)
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": "high"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_stream_keeps_legacy_thinking_for_sonnet_4_6() -> None:
+    # The streaming path must keep the legacy budget shape for models that
+    # still accept it (no adaptive output_config).
+    final_message = SimpleNamespace(
+        usage=SimpleNamespace(output_tokens=5),
+        stop_reason="end_turn",
+    )
+    client = Mock()
+    client.messages.stream = Mock(return_value=_FakeAnthropicStream(final_message))
+
+    backend = AnthropicBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=32000,
+            thinking_budget_tokens=16000,
+        )
+    ]
+
+    assert chunks[-1].is_done is True
+    stream_call = client.messages.stream.call_args
+    if stream_call is None:
+        raise AssertionError("Expected Anthropic stream call")
+    call = stream_call.kwargs
+    assert call["thinking"] == {"type": "enabled", "budget_tokens": 16000}
+    assert "output_config" not in call
+
+
+@pytest.mark.parametrize(
+    ("thinking_budget_tokens", "expected_effort"),
+    [(4095, "low"), (4096, "medium")],
+)
+@pytest.mark.asyncio
+async def test_anthropic_backend_budget_low_medium_boundary(
+    thinking_budget_tokens: int, expected_effort: str
+) -> None:
+    # The <4096 bucket boundary: 4095 -> low, 4096 -> medium. (16000 -> high
+    # and 32000 -> xhigh are pinned by test_anthropic_backend_maps_budget_to_effort.)
+    client = _text_response_client()
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-opus-4-8",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=64000,
+        thinking_budget_tokens=thinking_budget_tokens,
+    )
+
+    call = _create_call_kwargs(client)
+    assert call["thinking"] == {"type": "adaptive"}
+    assert call["output_config"] == {"effort": expected_effort}
