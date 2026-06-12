@@ -13,6 +13,8 @@
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/honcho)
 
+> **Note:** This repository is a Honcho fork experimenting with porting parts of the project to Rust. So far, only the MCP server has been ported; the Rust implementation lives in [`mcp-rs/`](./mcp-rs), while the TypeScript Worker remains in [`mcp/`](./mcp).
+
 **Honcho is memory infrastructure for building stateful agents that understand changing people, agents, groups, projects, and ideas over time.**
 
 Store messages and events, let Honcho reason in the background, then query peer representations, session context, search results, or natural-language insights from any model or framework. Use it managed at [api.honcho.dev](https://api.honcho.dev) or self-host the FastAPI server yourself.
