@@ -32,6 +32,15 @@ from .history_adapters import (
 )
 from .types import ProviderClient
 
+# Identifies Honcho to OpenRouter (https://openrouter.ai/docs/app-attribution)
+# for per-app usage analytics and the app icon/name shown in its dashboard.
+# Other OpenAI-compatible providers ignore unrecognized headers, so these are
+# safe to send unconditionally.
+OPENROUTER_ATTRIBUTION_HEADERS = {
+    "HTTP-Referer": "https://honcho.dev",
+    "X-Title": "Honcho",
+}
+
 
 @lru_cache(maxsize=1)
 def get_anthropic_client() -> AsyncAnthropic:
@@ -49,6 +58,7 @@ def get_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
+        default_headers=OPENROUTER_ATTRIBUTION_HEADERS,
     )
 
 
@@ -70,7 +80,11 @@ def get_openai_override_client(
     base_url: str | None, api_key: str | None
 ) -> AsyncOpenAI:
     """OpenAI client for a specific (base_url, api_key) pair. Cached by key."""
-    return AsyncOpenAI(api_key=api_key, base_url=base_url)
+    return AsyncOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        default_headers=OPENROUTER_ATTRIBUTION_HEADERS,
+    )
 
 
 @lru_cache(maxsize=128)
@@ -106,6 +120,7 @@ if settings.LLM.OPENAI_API_KEY:
     CLIENTS["openai"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
+        default_headers=OPENROUTER_ATTRIBUTION_HEADERS,
     )
 
 if settings.LLM.GEMINI_API_KEY:
@@ -187,6 +202,7 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
 
 __all__ = [
     "CLIENTS",
+    "OPENROUTER_ATTRIBUTION_HEADERS",
     "backend_for_provider",
     "client_for_model_config",
     "get_anthropic_client",

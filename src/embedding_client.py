@@ -12,6 +12,7 @@ from google.genai import types as genai_types
 from openai import AsyncOpenAI
 
 from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
+from .llm.registry import OPENROUTER_ATTRIBUTION_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,7 @@ class _EmbeddingClient:
             self.client = AsyncOpenAI(
                 api_key=config.api_key,
                 base_url=config.base_url,
+                default_headers=OPENROUTER_ATTRIBUTION_HEADERS,
             )
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048  # OpenAI batch limit
