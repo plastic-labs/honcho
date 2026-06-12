@@ -1,0 +1,423 @@
+{
+  "description": "deriver_no_memory_signal [M] -- Pattern-level test for the failure mode: the deriver writes observations that don't add signal a future agent could use about the user OR their work. Memory's job is to capture the user-and-their-work: (a) the user -- identity, traits, preferences, work patterns, recurring concerns; (b) the work -- what they're building, codebase, system architecture, stack/tools, problem domain, projects, active tasks. A failed observation adds neither. Discriminator (per-observation): would a future agent be better off with this in their context than without it? If the observation merely records a conversational event (an acknowledgment, task instruction, sentence-shaped one-off request) without conveying durable or current-state information about who the user is or what they're working on, it fails. Pure durability over-blocks legitimate transient-but-meaningful state ('user is currently debugging the payment migration' is transient but adds work signal). The dual-signal criterion (user OR work) handles both. ===== Relationship to existing categories ===== This is a broader umbrella for what an upstream evaluator (evals/auxiliary/deriver/__main__.py) calls META_CONVERSATIONAL. That narrower definition targets conversation events ('X talked to Y', 'X met with Y'). This broader name covers (a) speech-act paraphrase ('X confirmed with yes', 'X said go'), (b) task instructions paraphrased as user attributes ('X wants to delete Y', 'X asked someone to do Z'), and (c) momentary-state-as-stable-preference ('X wants a setting flipped to false'). All fail the durability test. The connection to the molecular-facts framework (Gunjal & Durrett, EMNLP 2024, https://arxiv.org/abs/2406.20079): these observations may be decontextualized but they are non-durable -- properties an agent could rely on a week later. ===== Empirical evidence ===== Verified firing in a production Honcho workspace: multiple persisted conclusions match the pattern, including bare confirmations, task-instructions-as-attributes, and event-of-asking records. All carry zero or trace-level signal about the user or their work. ===== Inputs ===== 10 real coding-agent sessions sampled from the SWE-chat dataset (SALT-NLP/SWE-chat, ODC-BY, https://arxiv.org/abs/2604.20779), balanced across user_persona (3 Expert Nitpicker, 3 Vague Requester, 3 Mind Changer, 1 Other). Selection criteria documented in tests/unified/test_cases/data/swe_chat_sample_persona_balanced.json. ===== Invariant ===== For each ingested session, the user's representation must NOT include any Tier 1 bare-speech-act / event-record observations (observations capturing the conversational EVENT of someone saying / confirming / doing something, without the substantive content). Tier 2 underspecified-attribute observations are NOT violations of this fixture's invariant -- they are a real failure mode but are tracked separately. Faithful records of user properties (identity, role, traits, preferences, patterns) and work context (codebase, system, stack, domain, projects, current focus with specificity) are NOT violations. ===== Aggregate metric ===== Leak rate = #(sessions where judge finds at least one Tier 1 observation) / N. With continue_on_failure=true, all sessions run; failures aggregate into a leak-rate signal in the runner output. ===== Tier scoping ===== The judge prompt is narrowed to fail ONLY on Tier 1 (bare-speech-act / event-record observations). Tier 2 observations (underspecified-task-instruction shapes like 'user requested certain changes be tested' where the WHAT is missing) PASS this fixture's gate. Rationale: Tier 1 and Tier 2 are structurally different bugs that need different fixes (Tier 1 = stop writing bare events; Tier 2 = include the specific subject/object). Conflating them in one gate would let a Tier-1-only fix show as partial improvement without telling us which tier moved. Tier 2 is real and worth its own fixture later; this fixture is scoped to Tier 1. ===== Polarity status ===== INITIAL polarity pass_if=true (invariant test). Per the verify-first methodology, polarity flips to pass_if=false (verified-firing test) only after a fixture has been observed firing on real code, with the observed behavior documented in the description. First verify-first run showed the bug fires on multiple sessions with several Tier 1 observations per representation. ===== Trace artifacts ===== After each per-session llm_judge query, a save_artifact step dumps the user's representation to <artifact_dir>/<swe_N>_representation.json. Use these for offline classification of which observations carry no signal (which sub-shape -- speech-act paraphrase, task-instruction-as-attribute, momentary-state-as-preference) and to compute signal-to-noise ratios that the binary judge alone cannot expose. ===== Trimmed input set ===== Sessions swe_0 and swe_9 from the underlying swe_chat_sample_persona_balanced.json extract are intentionally skipped because they have data-quality issues that would confound the no-signal measurement: swe_0 is Japanese-dominant with 18 user / 2 assistant messages where the 'user' content reads as agent-authored refactoring plans (mislabeled role), and swe_9 has 8 user / 1 assistant messages (essentially monologue). Both are real SWE-chat sessions; both would test 'how does the deriver behave on misattributed agent output' rather than 'how does the deriver behave on user-authored messages,' which isn't what this fixture targets. The 8 retained sessions are 1-8 inclusive (3 Expert Nitpicker, 3 Vague Requester, 2 Mind Changer; the single Other persona session was dropped along with swe_9).",
+  "workspace_config": {},
+  "continue_on_failure": true,
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "swe_1",
+      "peer_configs": {
+        "user_1": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_1": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "swe_1",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 1,
+      "user_peer_id": "user_1",
+      "assistant_peer_id": "assistant_1"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Session 1 (Expert Nitpicker).",
+      "target": "get_representation",
+      "observer_peer_id": "user_1",
+      "observed_peer_id": "user_1",
+      "session_id": "swe_1",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation. Determine whether it contains any Tier 1 bare-speech-act / event-record observations. The bug being tested: memory writing \"X happened\" instead of \"what is true about the user or their work.\"\n\nThe line is calibrated by these examples:\n\n=== Tier 1 \u2014 FAILS THE TEST (always-wrong; no specifics could rescue these) ===\n- \"user_a confirmed something with 'yes'.\" \u2014 bare speech act, nothing to anchor\n- \"user_a gave a confirmation to proceed with 'go' on a particular date.\" \u2014 timestamp doesn't add signal\n- \"user_a confirmed to delete items.\" \u2014 bare confirmation, WHAT-was-deleted isn't captured\n- \"user_a confirmed a deletion request.\" \u2014 same shape\n- \"user_a asked for the status of PR #X.\" \u2014 event-record of a question, purpose not captured\n- \"assistant executed the command 'cd ~/some/path' successfully at HH:MM:SS.\" \u2014 shell-history noise persisted as durable fact\n\n=== Tier 2 \u2014 PASSES THIS TEST (shape-correct but underspecified; tracked by a DIFFERENT failure mode) ===\n- \"user_a wants a setting flipped to false.\" \u2014 WHICH setting? specificity gap\n- \"user_a wants someone to look at their tasks and update them.\" \u2014 WHAT tasks?\n- \"user_a asked someone to review their issues and help plan their day.\" \u2014 generic, underspecified\n- \"user_a instructed to delete sessions.\" \u2014 WHICH sessions?\n- \"user_a is asking for help to update a document.\" \u2014 WHICH document?\n\n=== Signal \u2014 PASSES (substantive memory, real value to a future agent) ===\n- \"user_a is a backend engineer working on a payment service migration to Kubernetes.\" \u2014 durable bio facts\n- \"user_a is working on an issue titled 'Refactor X for Y'.\" \u2014 specific work context with title\n- \"user_a believes the existing unified test runner is located at honcho/tests/unified.\" \u2014 specific work knowledge\n- \"user_a wants memory to remember previous sessions at least at a high level and with awareness of when they happened.\" \u2014 substantive design preference\n- \"user_a wants to delete tracked sessions except for projects A, B, C, and those ending in timestamps.\" \u2014 specific decision with enumerated set\n- \"user_a does not want to delete logs or artifacts.\" \u2014 scoped, durable preference\n- \"user_a is working on a harness project.\" \u2014 named project IS signal even without elaboration\n- \"user_a is confused because their Honcho plugin is disabled but still running.\" \u2014 observation of user state with diagnostic specifics\n- \"user_a disabled their Honcho plugin via the CLI /mcp.\" \u2014 event-record but with specific tool and command\n\n=== The Tier 1 / Signal line ===\nEvent-records can be SIGNAL if they pin down specifics \u2014 naming a tool, a command, a project, a file, a system. \"user_a disabled their Honcho plugin via the CLI /mcp\" is Signal because it names the tool and the command. \"user_a confirmed something with 'yes'\" is Tier 1 because there's nothing to anchor \u2014 no WHAT, no WHICH, no WHO else, no WHERE. The presence of a timestamp alone does not save an otherwise-bare observation.\n\n=== Decision rule ===\nFor each observation in the representation, ask: does it match a Tier 1 shape from the examples above (bare confirmation, bare question with no anchor, shell-history record, conversation event with no semantic anchor)? If yes, the test FAILS. If every observation either matches Tier 2 (underspecified-but-shape-correct, which is bad-but-tracked-elsewhere), Signal (substantive or specifics-anchored event), or some other non-Tier-1 shape, the test PASSES.\n\nAnswer passed=true if NO Tier 1 observation is present. Answer passed=false if ANY Tier 1 observation is present. In your reasoning, quote each observation you considered Tier 1 verbatim.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_1 after swe_1 ingestion (Expert Nitpicker)",
+      "target": "get_representation",
+      "observer_peer_id": "user_1",
+      "observed_peer_id": "user_1",
+      "session_id": "swe_1",
+      "filename": "swe_1_representation.json"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "swe_2",
+      "peer_configs": {
+        "user_2": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_2": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "swe_2",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 2,
+      "user_peer_id": "user_2",
+      "assistant_peer_id": "assistant_2"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Session 2 (Expert Nitpicker).",
+      "target": "get_representation",
+      "observer_peer_id": "user_2",
+      "observed_peer_id": "user_2",
+      "session_id": "swe_2",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation. Determine whether it contains any Tier 1 bare-speech-act / event-record observations. The bug being tested: memory writing \"X happened\" instead of \"what is true about the user or their work.\"\n\nThe line is calibrated by these examples:\n\n=== Tier 1 \u2014 FAILS THE TEST (always-wrong; no specifics could rescue these) ===\n- \"user_a confirmed something with 'yes'.\" \u2014 bare speech act, nothing to anchor\n- \"user_a gave a confirmation to proceed with 'go' on a particular date.\" \u2014 timestamp doesn't add signal\n- \"user_a confirmed to delete items.\" \u2014 bare confirmation, WHAT-was-deleted isn't captured\n- \"user_a confirmed a deletion request.\" \u2014 same shape\n- \"user_a asked for the status of PR #X.\" \u2014 event-record of a question, purpose not captured\n- \"assistant executed the command 'cd ~/some/path' successfully at HH:MM:SS.\" \u2014 shell-history noise persisted as durable fact\n\n=== Tier 2 \u2014 PASSES THIS TEST (shape-correct but underspecified; tracked by a DIFFERENT failure mode) ===\n- \"user_a wants a setting flipped to false.\" \u2014 WHICH setting? specificity gap\n- \"user_a wants someone to look at their tasks and update them.\" \u2014 WHAT tasks?\n- \"user_a asked someone to review their issues and help plan their day.\" \u2014 generic, underspecified\n- \"user_a instructed to delete sessions.\" \u2014 WHICH sessions?\n- \"user_a is asking for help to update a document.\" \u2014 WHICH document?\n\n=== Signal \u2014 PASSES (substantive memory, real value to a future agent) ===\n- \"user_a is a backend engineer working on a payment service migration to Kubernetes.\" \u2014 durable bio facts\n- \"user_a is working on an issue titled 'Refactor X for Y'.\" \u2014 specific work context with title\n- \"user_a believes the existing unified test runner is located at honcho/tests/unified.\" \u2014 specific work knowledge\n- \"user_a wants memory to remember previous sessions at least at a high level and with awareness of when they happened.\" \u2014 substantive design preference\n- \"user_a wants to delete tracked sessions except for projects A, B, C, and those ending in timestamps.\" \u2014 specific decision with enumerated set\n- \"user_a does not want to delete logs or artifacts.\" \u2014 scoped, durable preference\n- \"user_a is working on a harness project.\" \u2014 named project IS signal even without elaboration\n- \"user_a is confused because their Honcho plugin is disabled but still running.\" \u2014 observation of user state with diagnostic specifics\n- \"user_a disabled their Honcho plugin via the CLI /mcp.\" \u2014 event-record but with specific tool and command\n\n=== The Tier 1 / Signal line ===\nEvent-records can be SIGNAL if they pin down specifics \u2014 naming a tool, a command, a project, a file, a system. \"user_a disabled their Honcho plugin via the CLI /mcp\" is Signal because it names the tool and the command. \"user_a confirmed something with 'yes'\" is Tier 1 because there's nothing to anchor \u2014 no WHAT, no WHICH, no WHO else, no WHERE. The presence of a timestamp alone does not save an otherwise-bare observation.\n\n=== Decision rule ===\nFor each observation in the representation, ask: does it match a Tier 1 shape from the examples above (bare confirmation, bare question with no anchor, shell-history record, conversation event with no semantic anchor)? If yes, the test FAILS. If every observation either matches Tier 2 (underspecified-but-shape-correct, which is bad-but-tracked-elsewhere), Signal (substantive or specifics-anchored event), or some other non-Tier-1 shape, the test PASSES.\n\nAnswer passed=true if NO Tier 1 observation is present. Answer passed=false if ANY Tier 1 observation is present. In your reasoning, quote each observation you considered Tier 1 verbatim.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_2 after swe_2 ingestion (Expert Nitpicker)",
+      "target": "get_representation",
+      "observer_peer_id": "user_2",
+      "observed_peer_id": "user_2",
+      "session_id": "swe_2",
+      "filename": "swe_2_representation.json"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "swe_3",
+      "peer_configs": {
+        "user_3": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_3": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "swe_3",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 3,
+      "user_peer_id": "user_3",
+      "assistant_peer_id": "assistant_3"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Session 3 (Vague Requester).",
+      "target": "get_representation",
+      "observer_peer_id": "user_3",
+      "observed_peer_id": "user_3",
+      "session_id": "swe_3",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation. Determine whether it contains any Tier 1 bare-speech-act / event-record observations. The bug being tested: memory writing \"X happened\" instead of \"what is true about the user or their work.\"\n\nThe line is calibrated by these examples:\n\n=== Tier 1 \u2014 FAILS THE TEST (always-wrong; no specifics could rescue these) ===\n- \"user_a confirmed something with 'yes'.\" \u2014 bare speech act, nothing to anchor\n- \"user_a gave a confirmation to proceed with 'go' on a particular date.\" \u2014 timestamp doesn't add signal\n- \"user_a confirmed to delete items.\" \u2014 bare confirmation, WHAT-was-deleted isn't captured\n- \"user_a confirmed a deletion request.\" \u2014 same shape\n- \"user_a asked for the status of PR #X.\" \u2014 event-record of a question, purpose not captured\n- \"assistant executed the command 'cd ~/some/path' successfully at HH:MM:SS.\" \u2014 shell-history noise persisted as durable fact\n\n=== Tier 2 \u2014 PASSES THIS TEST (shape-correct but underspecified; tracked by a DIFFERENT failure mode) ===\n- \"user_a wants a setting flipped to false.\" \u2014 WHICH setting? specificity gap\n- \"user_a wants someone to look at their tasks and update them.\" \u2014 WHAT tasks?\n- \"user_a asked someone to review their issues and help plan their day.\" \u2014 generic, underspecified\n- \"user_a instructed to delete sessions.\" \u2014 WHICH sessions?\n- \"user_a is asking for help to update a document.\" \u2014 WHICH document?\n\n=== Signal \u2014 PASSES (substantive memory, real value to a future agent) ===\n- \"user_a is a backend engineer working on a payment service migration to Kubernetes.\" \u2014 durable bio facts\n- \"user_a is working on an issue titled 'Refactor X for Y'.\" \u2014 specific work context with title\n- \"user_a believes the existing unified test runner is located at honcho/tests/unified.\" \u2014 specific work knowledge\n- \"user_a wants memory to remember previous sessions at least at a high level and with awareness of when they happened.\" \u2014 substantive design preference\n- \"user_a wants to delete tracked sessions except for projects A, B, C, and those ending in timestamps.\" \u2014 specific decision with enumerated set\n- \"user_a does not want to delete logs or artifacts.\" \u2014 scoped, durable preference\n- \"user_a is working on a harness project.\" \u2014 named project IS signal even without elaboration\n- \"user_a is confused because their Honcho plugin is disabled but still running.\" \u2014 observation of user state with diagnostic specifics\n- \"user_a disabled their Honcho plugin via the CLI /mcp.\" \u2014 event-record but with specific tool and command\n\n=== The Tier 1 / Signal line ===\nEvent-records can be SIGNAL if they pin down specifics \u2014 naming a tool, a command, a project, a file, a system. \"user_a disabled their Honcho plugin via the CLI /mcp\" is Signal because it names the tool and the command. \"user_a confirmed something with 'yes'\" is Tier 1 because there's nothing to anchor \u2014 no WHAT, no WHICH, no WHO else, no WHERE. The presence of a timestamp alone does not save an otherwise-bare observation.\n\n=== Decision rule ===\nFor each observation in the representation, ask: does it match a Tier 1 shape from the examples above (bare confirmation, bare question with no anchor, shell-history record, conversation event with no semantic anchor)? If yes, the test FAILS. If every observation either matches Tier 2 (underspecified-but-shape-correct, which is bad-but-tracked-elsewhere), Signal (substantive or specifics-anchored event), or some other non-Tier-1 shape, the test PASSES.\n\nAnswer passed=true if NO Tier 1 observation is present. Answer passed=false if ANY Tier 1 observation is present. In your reasoning, quote each observation you considered Tier 1 verbatim.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_3 after swe_3 ingestion (Vague Requester)",
+      "target": "get_representation",
+      "observer_peer_id": "user_3",
+      "observed_peer_id": "user_3",
+      "session_id": "swe_3",
+      "filename": "swe_3_representation.json"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "swe_4",
+      "peer_configs": {
+        "user_4": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_4": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "swe_4",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 4,
+      "user_peer_id": "user_4",
+      "assistant_peer_id": "assistant_4"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Session 4 (Vague Requester).",
+      "target": "get_representation",
+      "observer_peer_id": "user_4",
+      "observed_peer_id": "user_4",
+      "session_id": "swe_4",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation. Determine whether it contains any Tier 1 bare-speech-act / event-record observations. The bug being tested: memory writing \"X happened\" instead of \"what is true about the user or their work.\"\n\nThe line is calibrated by these examples:\n\n=== Tier 1 \u2014 FAILS THE TEST (always-wrong; no specifics could rescue these) ===\n- \"user_a confirmed something with 'yes'.\" \u2014 bare speech act, nothing to anchor\n- \"user_a gave a confirmation to proceed with 'go' on a particular date.\" \u2014 timestamp doesn't add signal\n- \"user_a confirmed to delete items.\" \u2014 bare confirmation, WHAT-was-deleted isn't captured\n- \"user_a confirmed a deletion request.\" \u2014 same shape\n- \"user_a asked for the status of PR #X.\" \u2014 event-record of a question, purpose not captured\n- \"assistant executed the command 'cd ~/some/path' successfully at HH:MM:SS.\" \u2014 shell-history noise persisted as durable fact\n\n=== Tier 2 \u2014 PASSES THIS TEST (shape-correct but underspecified; tracked by a DIFFERENT failure mode) ===\n- \"user_a wants a setting flipped to false.\" \u2014 WHICH setting? specificity gap\n- \"user_a wants someone to look at their tasks and update them.\" \u2014 WHAT tasks?\n- \"user_a asked someone to review their issues and help plan their day.\" \u2014 generic, underspecified\n- \"user_a instructed to delete sessions.\" \u2014 WHICH sessions?\n- \"user_a is asking for help to update a document.\" \u2014 WHICH document?\n\n=== Signal \u2014 PASSES (substantive memory, real value to a future agent) ===\n- \"user_a is a backend engineer working on a payment service migration to Kubernetes.\" \u2014 durable bio facts\n- \"user_a is working on an issue titled 'Refactor X for Y'.\" \u2014 specific work context with title\n- \"user_a believes the existing unified test runner is located at honcho/tests/unified.\" \u2014 specific work knowledge\n- \"user_a wants memory to remember previous sessions at least at a high level and with awareness of when they happened.\" \u2014 substantive design preference\n- \"user_a wants to delete tracked sessions except for projects A, B, C, and those ending in timestamps.\" \u2014 specific decision with enumerated set\n- \"user_a does not want to delete logs or artifacts.\" \u2014 scoped, durable preference\n- \"user_a is working on a harness project.\" \u2014 named project IS signal even without elaboration\n- \"user_a is confused because their Honcho plugin is disabled but still running.\" \u2014 observation of user state with diagnostic specifics\n- \"user_a disabled their Honcho plugin via the CLI /mcp.\" \u2014 event-record but with specific tool and command\n\n=== The Tier 1 / Signal line ===\nEvent-records can be SIGNAL if they pin down specifics \u2014 naming a tool, a command, a project, a file, a system. \"user_a disabled their Honcho plugin via the CLI /mcp\" is Signal because it names the tool and the command. \"user_a confirmed something with 'yes'\" is Tier 1 because there's nothing to anchor \u2014 no WHAT, no WHICH, no WHO else, no WHERE. The presence of a timestamp alone does not save an otherwise-bare observation.\n\n=== Decision rule ===\nFor each observation in the representation, ask: does it match a Tier 1 shape from the examples above (bare confirmation, bare question with no anchor, shell-history record, conversation event with no semantic anchor)? If yes, the test FAILS. If every observation either matches Tier 2 (underspecified-but-shape-correct, which is bad-but-tracked-elsewhere), Signal (substantive or specifics-anchored event), or some other non-Tier-1 shape, the test PASSES.\n\nAnswer passed=true if NO Tier 1 observation is present. Answer passed=false if ANY Tier 1 observation is present. In your reasoning, quote each observation you considered Tier 1 verbatim.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_4 after swe_4 ingestion (Vague Requester)",
+      "target": "get_representation",
+      "observer_peer_id": "user_4",
+      "observed_peer_id": "user_4",
+      "session_id": "swe_4",
+      "filename": "swe_4_representation.json"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "swe_5",
+      "peer_configs": {
+        "user_5": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_5": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "swe_5",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 5,
+      "user_peer_id": "user_5",
+      "assistant_peer_id": "assistant_5"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Session 5 (Vague Requester).",
+      "target": "get_representation",
+      "observer_peer_id": "user_5",
+      "observed_peer_id": "user_5",
+      "session_id": "swe_5",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation. Determine whether it contains any Tier 1 bare-speech-act / event-record observations. The bug being tested: memory writing \"X happened\" instead of \"what is true about the user or their work.\"\n\nThe line is calibrated by these examples:\n\n=== Tier 1 \u2014 FAILS THE TEST (always-wrong; no specifics could rescue these) ===\n- \"user_a confirmed something with 'yes'.\" \u2014 bare speech act, nothing to anchor\n- \"user_a gave a confirmation to proceed with 'go' on a particular date.\" \u2014 timestamp doesn't add signal\n- \"user_a confirmed to delete items.\" \u2014 bare confirmation, WHAT-was-deleted isn't captured\n- \"user_a confirmed a deletion request.\" \u2014 same shape\n- \"user_a asked for the status of PR #X.\" \u2014 event-record of a question, purpose not captured\n- \"assistant executed the command 'cd ~/some/path' successfully at HH:MM:SS.\" \u2014 shell-history noise persisted as durable fact\n\n=== Tier 2 \u2014 PASSES THIS TEST (shape-correct but underspecified; tracked by a DIFFERENT failure mode) ===\n- \"user_a wants a setting flipped to false.\" \u2014 WHICH setting? specificity gap\n- \"user_a wants someone to look at their tasks and update them.\" \u2014 WHAT tasks?\n- \"user_a asked someone to review their issues and help plan their day.\" \u2014 generic, underspecified\n- \"user_a instructed to delete sessions.\" \u2014 WHICH sessions?\n- \"user_a is asking for help to update a document.\" \u2014 WHICH document?\n\n=== Signal \u2014 PASSES (substantive memory, real value to a future agent) ===\n- \"user_a is a backend engineer working on a payment service migration to Kubernetes.\" \u2014 durable bio facts\n- \"user_a is working on an issue titled 'Refactor X for Y'.\" \u2014 specific work context with title\n- \"user_a believes the existing unified test runner is located at honcho/tests/unified.\" \u2014 specific work knowledge\n- \"user_a wants memory to remember previous sessions at least at a high level and with awareness of when they happened.\" \u2014 substantive design preference\n- \"user_a wants to delete tracked sessions except for projects A, B, C, and those ending in timestamps.\" \u2014 specific decision with enumerated set\n- \"user_a does not want to delete logs or artifacts.\" \u2014 scoped, durable preference\n- \"user_a is working on a harness project.\" \u2014 named project IS signal even without elaboration\n- \"user_a is confused because their Honcho plugin is disabled but still running.\" \u2014 observation of user state with diagnostic specifics\n- \"user_a disabled their Honcho plugin via the CLI /mcp.\" \u2014 event-record but with specific tool and command\n\n=== The Tier 1 / Signal line ===\nEvent-records can be SIGNAL if they pin down specifics \u2014 naming a tool, a command, a project, a file, a system. \"user_a disabled their Honcho plugin via the CLI /mcp\" is Signal because it names the tool and the command. \"user_a confirmed something with 'yes'\" is Tier 1 because there's nothing to anchor \u2014 no WHAT, no WHICH, no WHO else, no WHERE. The presence of a timestamp alone does not save an otherwise-bare observation.\n\n=== Decision rule ===\nFor each observation in the representation, ask: does it match a Tier 1 shape from the examples above (bare confirmation, bare question with no anchor, shell-history record, conversation event with no semantic anchor)? If yes, the test FAILS. If every observation either matches Tier 2 (underspecified-but-shape-correct, which is bad-but-tracked-elsewhere), Signal (substantive or specifics-anchored event), or some other non-Tier-1 shape, the test PASSES.\n\nAnswer passed=true if NO Tier 1 observation is present. Answer passed=false if ANY Tier 1 observation is present. In your reasoning, quote each observation you considered Tier 1 verbatim.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_5 after swe_5 ingestion (Vague Requester)",
+      "target": "get_representation",
+      "observer_peer_id": "user_5",
+      "observed_peer_id": "user_5",
+      "session_id": "swe_5",
+      "filename": "swe_5_representation.json"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "swe_6",
+      "peer_configs": {
+        "user_6": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_6": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "swe_6",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 6,
+      "user_peer_id": "user_6",
+      "assistant_peer_id": "assistant_6"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Session 6 (Mind Changer).",
+      "target": "get_representation",
+      "observer_peer_id": "user_6",
+      "observed_peer_id": "user_6",
+      "session_id": "swe_6",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation. Determine whether it contains any Tier 1 bare-speech-act / event-record observations. The bug being tested: memory writing \"X happened\" instead of \"what is true about the user or their work.\"\n\nThe line is calibrated by these examples:\n\n=== Tier 1 \u2014 FAILS THE TEST (always-wrong; no specifics could rescue these) ===\n- \"user_a confirmed something with 'yes'.\" \u2014 bare speech act, nothing to anchor\n- \"user_a gave a confirmation to proceed with 'go' on a particular date.\" \u2014 timestamp doesn't add signal\n- \"user_a confirmed to delete items.\" \u2014 bare confirmation, WHAT-was-deleted isn't captured\n- \"user_a confirmed a deletion request.\" \u2014 same shape\n- \"user_a asked for the status of PR #X.\" \u2014 event-record of a question, purpose not captured\n- \"assistant executed the command 'cd ~/some/path' successfully at HH:MM:SS.\" \u2014 shell-history noise persisted as durable fact\n\n=== Tier 2 \u2014 PASSES THIS TEST (shape-correct but underspecified; tracked by a DIFFERENT failure mode) ===\n- \"user_a wants a setting flipped to false.\" \u2014 WHICH setting? specificity gap\n- \"user_a wants someone to look at their tasks and update them.\" \u2014 WHAT tasks?\n- \"user_a asked someone to review their issues and help plan their day.\" \u2014 generic, underspecified\n- \"user_a instructed to delete sessions.\" \u2014 WHICH sessions?\n- \"user_a is asking for help to update a document.\" \u2014 WHICH document?\n\n=== Signal \u2014 PASSES (substantive memory, real value to a future agent) ===\n- \"user_a is a backend engineer working on a payment service migration to Kubernetes.\" \u2014 durable bio facts\n- \"user_a is working on an issue titled 'Refactor X for Y'.\" \u2014 specific work context with title\n- \"user_a believes the existing unified test runner is located at honcho/tests/unified.\" \u2014 specific work knowledge\n- \"user_a wants memory to remember previous sessions at least at a high level and with awareness of when they happened.\" \u2014 substantive design preference\n- \"user_a wants to delete tracked sessions except for projects A, B, C, and those ending in timestamps.\" \u2014 specific decision with enumerated set\n- \"user_a does not want to delete logs or artifacts.\" \u2014 scoped, durable preference\n- \"user_a is working on a harness project.\" \u2014 named project IS signal even without elaboration\n- \"user_a is confused because their Honcho plugin is disabled but still running.\" \u2014 observation of user state with diagnostic specifics\n- \"user_a disabled their Honcho plugin via the CLI /mcp.\" \u2014 event-record but with specific tool and command\n\n=== The Tier 1 / Signal line ===\nEvent-records can be SIGNAL if they pin down specifics \u2014 naming a tool, a command, a project, a file, a system. \"user_a disabled their Honcho plugin via the CLI /mcp\" is Signal because it names the tool and the command. \"user_a confirmed something with 'yes'\" is Tier 1 because there's nothing to anchor \u2014 no WHAT, no WHICH, no WHO else, no WHERE. The presence of a timestamp alone does not save an otherwise-bare observation.\n\n=== Decision rule ===\nFor each observation in the representation, ask: does it match a Tier 1 shape from the examples above (bare confirmation, bare question with no anchor, shell-history record, conversation event with no semantic anchor)? If yes, the test FAILS. If every observation either matches Tier 2 (underspecified-but-shape-correct, which is bad-but-tracked-elsewhere), Signal (substantive or specifics-anchored event), or some other non-Tier-1 shape, the test PASSES.\n\nAnswer passed=true if NO Tier 1 observation is present. Answer passed=false if ANY Tier 1 observation is present. In your reasoning, quote each observation you considered Tier 1 verbatim.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_6 after swe_6 ingestion (Mind Changer)",
+      "target": "get_representation",
+      "observer_peer_id": "user_6",
+      "observed_peer_id": "user_6",
+      "session_id": "swe_6",
+      "filename": "swe_6_representation.json"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "swe_7",
+      "peer_configs": {
+        "user_7": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_7": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "swe_7",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 7,
+      "user_peer_id": "user_7",
+      "assistant_peer_id": "assistant_7"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Session 7 (Mind Changer).",
+      "target": "get_representation",
+      "observer_peer_id": "user_7",
+      "observed_peer_id": "user_7",
+      "session_id": "swe_7",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation. Determine whether it contains any Tier 1 bare-speech-act / event-record observations. The bug being tested: memory writing \"X happened\" instead of \"what is true about the user or their work.\"\n\nThe line is calibrated by these examples:\n\n=== Tier 1 \u2014 FAILS THE TEST (always-wrong; no specifics could rescue these) ===\n- \"user_a confirmed something with 'yes'.\" \u2014 bare speech act, nothing to anchor\n- \"user_a gave a confirmation to proceed with 'go' on a particular date.\" \u2014 timestamp doesn't add signal\n- \"user_a confirmed to delete items.\" \u2014 bare confirmation, WHAT-was-deleted isn't captured\n- \"user_a confirmed a deletion request.\" \u2014 same shape\n- \"user_a asked for the status of PR #X.\" \u2014 event-record of a question, purpose not captured\n- \"assistant executed the command 'cd ~/some/path' successfully at HH:MM:SS.\" \u2014 shell-history noise persisted as durable fact\n\n=== Tier 2 \u2014 PASSES THIS TEST (shape-correct but underspecified; tracked by a DIFFERENT failure mode) ===\n- \"user_a wants a setting flipped to false.\" \u2014 WHICH setting? specificity gap\n- \"user_a wants someone to look at their tasks and update them.\" \u2014 WHAT tasks?\n- \"user_a asked someone to review their issues and help plan their day.\" \u2014 generic, underspecified\n- \"user_a instructed to delete sessions.\" \u2014 WHICH sessions?\n- \"user_a is asking for help to update a document.\" \u2014 WHICH document?\n\n=== Signal \u2014 PASSES (substantive memory, real value to a future agent) ===\n- \"user_a is a backend engineer working on a payment service migration to Kubernetes.\" \u2014 durable bio facts\n- \"user_a is working on an issue titled 'Refactor X for Y'.\" \u2014 specific work context with title\n- \"user_a believes the existing unified test runner is located at honcho/tests/unified.\" \u2014 specific work knowledge\n- \"user_a wants memory to remember previous sessions at least at a high level and with awareness of when they happened.\" \u2014 substantive design preference\n- \"user_a wants to delete tracked sessions except for projects A, B, C, and those ending in timestamps.\" \u2014 specific decision with enumerated set\n- \"user_a does not want to delete logs or artifacts.\" \u2014 scoped, durable preference\n- \"user_a is working on a harness project.\" \u2014 named project IS signal even without elaboration\n- \"user_a is confused because their Honcho plugin is disabled but still running.\" \u2014 observation of user state with diagnostic specifics\n- \"user_a disabled their Honcho plugin via the CLI /mcp.\" \u2014 event-record but with specific tool and command\n\n=== The Tier 1 / Signal line ===\nEvent-records can be SIGNAL if they pin down specifics \u2014 naming a tool, a command, a project, a file, a system. \"user_a disabled their Honcho plugin via the CLI /mcp\" is Signal because it names the tool and the command. \"user_a confirmed something with 'yes'\" is Tier 1 because there's nothing to anchor \u2014 no WHAT, no WHICH, no WHO else, no WHERE. The presence of a timestamp alone does not save an otherwise-bare observation.\n\n=== Decision rule ===\nFor each observation in the representation, ask: does it match a Tier 1 shape from the examples above (bare confirmation, bare question with no anchor, shell-history record, conversation event with no semantic anchor)? If yes, the test FAILS. If every observation either matches Tier 2 (underspecified-but-shape-correct, which is bad-but-tracked-elsewhere), Signal (substantive or specifics-anchored event), or some other non-Tier-1 shape, the test PASSES.\n\nAnswer passed=true if NO Tier 1 observation is present. Answer passed=false if ANY Tier 1 observation is present. In your reasoning, quote each observation you considered Tier 1 verbatim.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_7 after swe_7 ingestion (Mind Changer)",
+      "target": "get_representation",
+      "observer_peer_id": "user_7",
+      "observed_peer_id": "user_7",
+      "session_id": "swe_7",
+      "filename": "swe_7_representation.json"
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "swe_8",
+      "peer_configs": {
+        "user_8": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_8": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "swe_8",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 8,
+      "user_peer_id": "user_8",
+      "assistant_peer_id": "assistant_8"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Session 8 (Mind Changer).",
+      "target": "get_representation",
+      "observer_peer_id": "user_8",
+      "observed_peer_id": "user_8",
+      "session_id": "swe_8",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation. Determine whether it contains any Tier 1 bare-speech-act / event-record observations. The bug being tested: memory writing \"X happened\" instead of \"what is true about the user or their work.\"\n\nThe line is calibrated by these examples:\n\n=== Tier 1 \u2014 FAILS THE TEST (always-wrong; no specifics could rescue these) ===\n- \"user_a confirmed something with 'yes'.\" \u2014 bare speech act, nothing to anchor\n- \"user_a gave a confirmation to proceed with 'go' on a particular date.\" \u2014 timestamp doesn't add signal\n- \"user_a confirmed to delete items.\" \u2014 bare confirmation, WHAT-was-deleted isn't captured\n- \"user_a confirmed a deletion request.\" \u2014 same shape\n- \"user_a asked for the status of PR #X.\" \u2014 event-record of a question, purpose not captured\n- \"assistant executed the command 'cd ~/some/path' successfully at HH:MM:SS.\" \u2014 shell-history noise persisted as durable fact\n\n=== Tier 2 \u2014 PASSES THIS TEST (shape-correct but underspecified; tracked by a DIFFERENT failure mode) ===\n- \"user_a wants a setting flipped to false.\" \u2014 WHICH setting? specificity gap\n- \"user_a wants someone to look at their tasks and update them.\" \u2014 WHAT tasks?\n- \"user_a asked someone to review their issues and help plan their day.\" \u2014 generic, underspecified\n- \"user_a instructed to delete sessions.\" \u2014 WHICH sessions?\n- \"user_a is asking for help to update a document.\" \u2014 WHICH document?\n\n=== Signal \u2014 PASSES (substantive memory, real value to a future agent) ===\n- \"user_a is a backend engineer working on a payment service migration to Kubernetes.\" \u2014 durable bio facts\n- \"user_a is working on an issue titled 'Refactor X for Y'.\" \u2014 specific work context with title\n- \"user_a believes the existing unified test runner is located at honcho/tests/unified.\" \u2014 specific work knowledge\n- \"user_a wants memory to remember previous sessions at least at a high level and with awareness of when they happened.\" \u2014 substantive design preference\n- \"user_a wants to delete tracked sessions except for projects A, B, C, and those ending in timestamps.\" \u2014 specific decision with enumerated set\n- \"user_a does not want to delete logs or artifacts.\" \u2014 scoped, durable preference\n- \"user_a is working on a harness project.\" \u2014 named project IS signal even without elaboration\n- \"user_a is confused because their Honcho plugin is disabled but still running.\" \u2014 observation of user state with diagnostic specifics\n- \"user_a disabled their Honcho plugin via the CLI /mcp.\" \u2014 event-record but with specific tool and command\n\n=== The Tier 1 / Signal line ===\nEvent-records can be SIGNAL if they pin down specifics \u2014 naming a tool, a command, a project, a file, a system. \"user_a disabled their Honcho plugin via the CLI /mcp\" is Signal because it names the tool and the command. \"user_a confirmed something with 'yes'\" is Tier 1 because there's nothing to anchor \u2014 no WHAT, no WHICH, no WHO else, no WHERE. The presence of a timestamp alone does not save an otherwise-bare observation.\n\n=== Decision rule ===\nFor each observation in the representation, ask: does it match a Tier 1 shape from the examples above (bare confirmation, bare question with no anchor, shell-history record, conversation event with no semantic anchor)? If yes, the test FAILS. If every observation either matches Tier 2 (underspecified-but-shape-correct, which is bad-but-tracked-elsewhere), Signal (substantive or specifics-anchored event), or some other non-Tier-1 shape, the test PASSES.\n\nAnswer passed=true if NO Tier 1 observation is present. Answer passed=false if ANY Tier 1 observation is present. In your reasoning, quote each observation you considered Tier 1 verbatim.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: representation for user_8 after swe_8 ingestion (Mind Changer)",
+      "target": "get_representation",
+      "observer_peer_id": "user_8",
+      "observed_peer_id": "user_8",
+      "session_id": "swe_8",
+      "filename": "swe_8_representation.json"
+    }
+  ]
+}
