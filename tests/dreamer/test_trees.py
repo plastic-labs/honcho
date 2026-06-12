@@ -22,4 +22,4 @@ def test_create_tree_all_types_with_default_k(tree_type: str) -> None:
     tree.batch_insert(embeddings)
     score = tree.surprisal(embeddings[0])
     assert isinstance(score, float)
-    assert not np.isnan(score)
+    assert np.isfinite(score)
