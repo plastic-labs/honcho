@@ -36,9 +36,16 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 8)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            default_headers: dict[str, str] | None = None,
+        ) -> None:
             self.api_key: str | None = api_key
             self.base_url: str | None = base_url
+            self.default_headers: dict[str, str] | None = default_headers
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
@@ -71,7 +78,13 @@ async def test_openai_embedding_client_rejects_dimension_mismatch(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 7)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            default_headers: dict[str, str] | None = None,
+        ) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
@@ -161,9 +174,16 @@ def _build_openai_client(
     fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            default_headers: dict[str, str] | None = None,
+        ) -> None:
             self.api_key: str | None = api_key
             self.base_url: str | None = base_url
+            self.default_headers: dict[str, str] | None = default_headers
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
@@ -349,7 +369,13 @@ async def test_simple_batch_embed_respects_token_budget_per_request(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.5] * 4)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            default_headers: dict[str, str] | None = None,
+        ) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
@@ -387,7 +413,13 @@ async def test_simple_batch_embed_rejects_oversized_input(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            default_headers: dict[str, str] | None = None,
+        ) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
@@ -417,7 +449,13 @@ def test_prepare_chunks_returns_ordered_chunks(
     fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
 
     class FakeOpenAIClient:
-        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+        def __init__(
+            self,
+            *,
+            api_key: str | None,
+            base_url: str | None,
+            default_headers: dict[str, str] | None = None,
+        ) -> None:
             self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
 
     monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
