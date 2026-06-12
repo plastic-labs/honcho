@@ -444,3 +444,67 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert len(out["long"]) > 1
     # Order preserved
     assert isinstance(out["long"][0], str)
+
+
+@pytest.mark.asyncio
+async def test_gemini_simple_batch_embed_processes_items_individually(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini transport must send one API call per item, not a single batched
+    call, because the genai SDK treats list[str] as a multi-part content
+    input and collapses it to a single embedding vector."""
+    calls: list[dict[str, Any]] = []
+    embeddings_per_call = [[0.2] * 12, [0.3] * 12, [0.4] * 12]
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: str | list[str],
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            call_idx = len(calls)
+            calls.append(
+                {
+                    "model": model,
+                    "contents": contents,
+                    "config": config,
+                }
+            )
+            return SimpleNamespace(
+                embeddings=[
+                    SimpleNamespace(values=embeddings_per_call[call_idx])
+                ],
+            )
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+        ),
+        vector_dimensions=12,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    result = await client.simple_batch_embed(["alpha", "beta", "gamma"])
+
+    assert len(result) == 3
+    assert result[0] == [0.2] * 12
+    assert result[1] == [0.3] * 12
+    assert result[2] == [0.4] * 12
+
+    # Each call must be a single string, not a list.
+    assert len(calls) == 3
+    assert calls[0]["contents"] == "alpha"
+    assert calls[1]["contents"] == "beta"
+    assert calls[2]["contents"] == "gamma"

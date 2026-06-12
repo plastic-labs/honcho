@@ -422,17 +422,18 @@ class _EmbeddingClient:
             item in analytics."""
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
             if isinstance(self.client, genai.Client):
-                response = await self.client.aio.models.embed_content(
-                    model=self.model,
-                    contents=[item.text for item in batch],
-                    config={"output_dimensionality": self.vector_dimensions},
-                )
-                if response.embeddings:
-                    for item, embedding in zip(batch, response.embeddings, strict=True):
-                        if embedding.values:
-                            result[item.text_id][item.chunk_index] = (
-                                self._validate_embedding_dimensions(embedding.values)
+                for item in batch:
+                    response = await self.client.aio.models.embed_content(
+                        model=self.model,
+                        contents=item.text,
+                        config={"output_dimensionality": self.vector_dimensions},
+                    )
+                    if response.embeddings and response.embeddings[0].values:
+                        result[item.text_id][item.chunk_index] = (
+                            self._validate_embedding_dimensions(
+                                response.embeddings[0].values
                             )
+                        )
             else:  # openai
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
