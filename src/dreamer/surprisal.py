@@ -384,9 +384,15 @@ def _build_tree(embeddings: np.ndarray) -> SurprisalTree:
         # Return empty tree (will handle gracefully in caller)
         return create_tree(settings.DREAM.SURPRISAL.TREE_TYPE)
 
+    # Only KNN-based tree types (kdtree, balltree, graph) accept k.
+    # Other types (rptree, covertree, lsh, prototype) do not.
+    tree_kwargs = {}
+    if settings.DREAM.SURPRISAL.TREE_TYPE in ("kdtree", "balltree", "graph"):
+        tree_kwargs["k"] = settings.DREAM.SURPRISAL.TREE_K
+
     tree = create_tree(
         tree_type=settings.DREAM.SURPRISAL.TREE_TYPE,
-        k=settings.DREAM.SURPRISAL.TREE_K,
+        **tree_kwargs,
     )
 
     tree.batch_insert(embeddings)
