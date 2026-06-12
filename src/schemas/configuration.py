@@ -215,6 +215,6 @@ class PeerConfig(BaseModel):
 class SessionPeerConfig(PeerConfig):
     # TODO: Update description - should say "Whether this peer forms representations of other peers in the session"
     observe_others: bool | None = Field(
-        default=None,
+        default=True,
         description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
     )

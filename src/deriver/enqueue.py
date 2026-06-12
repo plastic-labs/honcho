@@ -364,7 +364,7 @@ async def generate_queue_records(
                 schemas.SessionPeerConfig(**peer_conf[1]) if peer_conf[1] else None
             )
 
-            if session_peer_config is None or not session_peer_config.observe_others:
+            if session_peer_config is None or session_peer_config.observe_others is False:
                 continue
 
             observers.append(peer_name)
