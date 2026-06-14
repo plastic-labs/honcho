@@ -274,6 +274,14 @@ class AnthropicBackend:
 
     @staticmethod
     def _supports_assistant_prefill(model: str) -> bool:
+        # Assistant-prefill (seeding the reply with "{") is an Anthropic-native
+        # capability for forcing structured output. Only genuine Claude models
+        # honor it. Third-party models served through Anthropic-COMPATIBLE
+        # endpoints (e.g. MiniMax) ignore the prefilled assistant turn and stop
+        # after emitting a few tokens, yielding truncated JSON like '{"explicit": ['
+        # that parses to an empty result. Restrict prefill to real Claude models.
+        if not model.startswith("claude-"):
+            return False
         # Claude 4-class models reject assistant-prefill and require the
         # conversation to end with a user message.
         return not model.startswith(
