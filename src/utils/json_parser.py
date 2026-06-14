@@ -354,7 +354,13 @@ def simple_bracket_repair(json_str: str) -> str:
 
 def validate_and_repair_json(json_str: str) -> str:
     """Main function with comprehensive repair strategies"""
-    json_str = json_str.strip()
+    # Clean up empty strings or markdown empty blocks
+    cleaned = json_str.strip() if json_str else ""
+    cleaned = re.sub(r'^```json\s*```$', '', cleaned, flags=re.MULTILINE).strip()
+    if not cleaned or cleaned == '```' or cleaned == '``````':
+        return "[]"
+        
+    json_str = cleaned
 
     # Try parsing with repair library
     good_json = repair_json(json_str)
