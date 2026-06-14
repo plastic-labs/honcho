@@ -18,6 +18,45 @@ from src.llm.structured_output import (
 logger = logging.getLogger(__name__)
 
 
+_JSON_KEYWORD_HINT = "Respond in valid JSON format."
+
+
+def _ensure_json_keyword(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Ensure the word "json" appears in messages when response_format is set.
+
+    Many OpenAI-compatible providers (notably Alibaba/Qwen) require the word
+    "json" to appear in the messages when ``response_format`` is set, even if
+    the format uses ``json_schema`` rather than ``json_object``.  Alibaba
+    internally converts ``json_schema`` to ``json_object`` and then enforces
+    the keyword check.
+
+    If no message contains "json" (case-insensitive), a brief instruction is
+    appended to the system message (or a new system message is prepended).
+    """
+    if any("json" in str(m.get("content", "")).lower() for m in messages):
+        return messages
+
+    result = list(messages)
+    # Find an existing system message and append the hint
+    for i, msg in enumerate(result):
+        if msg.get("role") == "system":
+            updated = dict(msg)
+            content = updated.get("content", "")
+            if isinstance(content, str):
+                updated["content"] = content.rstrip() + f"\n\n{_JSON_KEYWORD_HINT}"
+            elif isinstance(content, list):
+                updated["content"] = list(content) + [
+                    {"type": "text", "text": _JSON_KEYWORD_HINT}
+                ]
+            else:
+                continue  # unrecognised content shape — fall through to prepend
+            result[i] = updated
+            return result
+    # No system message — prepend one
+    result.insert(0, {"role": "system", "content": _JSON_KEYWORD_HINT})
+    return result
+
+
 def _uses_max_completion_tokens(model: str) -> bool:
     """OpenAI reasoning models (gpt-5 family + o-series) require
     ``max_completion_tokens`` instead of the classic ``max_tokens`` parameter.
@@ -141,6 +180,12 @@ class OpenAIBackend:
             extra_params=extra_params,
         )
 
+        # Ensure "json" appears in messages when json_mode is requested.
+        # Some OpenAI-compatible providers (e.g. Alibaba/Qwen) require the word
+        # "json" in messages when response_format is set.
+        if extra_params and extra_params.get("json_mode"):
+            params["messages"] = _ensure_json_keyword(params["messages"])
+
         if isinstance(response_format, type):
             params["response_format"] = response_format
             try:
@@ -231,6 +276,13 @@ class OpenAIBackend:
         )
         params["stream"] = True
         params["stream_options"] = {"include_usage": True}
+
+        # Ensure "json" appears in messages when json_mode is requested.
+        # Some OpenAI-compatible providers (e.g. Alibaba/Qwen) require the word
+        # "json" in messages when response_format is set.
+        if extra_params and extra_params.get("json_mode"):
+            params["messages"] = _ensure_json_keyword(params["messages"])
+
         if isinstance(response_format, type):
             # parse() supports BaseModel types but streaming create() does not —
             # convert to a json_schema dict so the streaming path works.
