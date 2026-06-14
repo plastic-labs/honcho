@@ -167,7 +167,7 @@ def completion_result_to_response(
     return HonchoLLMCallResponse(
         content=result.content,
         input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
+        output_tokens=result.output_tokens or 0,
         cache_creation_input_tokens=result.cache_creation_input_tokens,
         cache_read_input_tokens=result.cache_read_input_tokens,
         finish_reasons=[result.finish_reason] if result.finish_reason else [],
