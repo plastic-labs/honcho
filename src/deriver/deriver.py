@@ -1,5 +1,6 @@
 import logging
 import time
+from typing import Any
 
 from src import crud
 from src.config import ConfiguredModelSettings, settings
@@ -12,6 +13,10 @@ from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import RepresentationCompletedEvent, emit
 from src.telemetry.events.llm import CallPurpose
+from src.telemetry.langfuse_context import (
+    build_honcho_langfuse_metadata,
+    build_honcho_langfuse_trace_attrs,
+)
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.telemetry.prometheus.metrics import (
     DeriverComponents,
@@ -31,6 +36,35 @@ logger = logging.getLogger(__name__)
 
 def _get_deriver_model_config() -> ConfiguredModelSettings:
     return settings.DERIVER.MODEL_CONFIG
+
+
+def _build_deriver_langfuse_metadata(
+    *,
+    messages: list[Message],
+    observers: list[str],
+    observed: str,
+    queue_item_message_ids: list[int],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build safe Langfuse metadata for a minimal deriver LLM call."""
+    if not messages:
+        return {}, {}
+
+    sorted_messages = sorted(messages, key=lambda message: message.id)
+    latest_message = sorted_messages[-1]
+    metadata = build_honcho_langfuse_metadata(
+        operation="minimal_deriver",
+        workspace_name=latest_message.workspace_name,
+        session_name=latest_message.session_name,
+        observed=observed,
+        observers=observers,
+        message_count=len(sorted_messages),
+        message_public_ids=[message.public_id for message in sorted_messages],
+        latest_message_public_id=latest_message.public_id,
+        queue_item_count=len(queue_item_message_ids),
+        tenant_workspace_prefix=settings.LANGFUSE_TENANT_WORKSPACE_PREFIX,
+        tenant_platform=settings.LANGFUSE_TENANT_PLATFORM,
+    )
+    return metadata, build_honcho_langfuse_trace_attrs(metadata)
 
 
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
@@ -143,6 +177,12 @@ async def process_representation_tasks_batch(
 
     # Single LLM call
     llm_start = time.perf_counter()
+    metadata, trace_attrs = _build_deriver_langfuse_metadata(
+        messages=messages,
+        observers=observers,
+        observed=observed,
+        queue_item_message_ids=queue_item_message_ids,
+    )
     response = await honcho_llm_call(
         model_config=model_config,
         prompt=prompt,
@@ -160,6 +200,10 @@ async def process_representation_tasks_batch(
             parent_category="representation",
             observed=observed,
         ),
+        langfuse_metadata=metadata,
+        langfuse_trace_user_id=trace_attrs.get("user_id"),
+        langfuse_trace_session_id=trace_attrs.get("session_id"),
+        langfuse_trace_tags=trace_attrs.get("tags"),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
 

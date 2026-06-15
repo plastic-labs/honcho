@@ -78,6 +78,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/telemetry/",
     "tests/dialectic/test_langfuse_metadata.py",
     "tests/dialectic/test_model_config_usage.py",
+    "tests/deriver/test_langfuse_metadata.py",
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
