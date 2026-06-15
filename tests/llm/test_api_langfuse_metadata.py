@@ -23,6 +23,9 @@ def attempt_plan(model_config: ModelConfig) -> AttemptPlan:
         thinking_budget_tokens=None,
         reasoning_effort=None,
         selected_config=model_config,
+        attempt=1,
+        retry_attempts=1,
+        is_fallback=False,
     )
 
 
@@ -61,9 +64,7 @@ async def test_honcho_llm_call_forwards_langfuse_metadata_without_tools(
         _record_langfuse_update(update_calls),
     )
 
-    async def fake_inner(
-        *_args: Any, **_kwargs: Any
-    ) -> HonchoLLMCallResponse[str]:
+    async def fake_inner(*_args: Any, **_kwargs: Any) -> HonchoLLMCallResponse[str]:
         return HonchoLLMCallResponse(
             content="ok",
             output_tokens=1,
@@ -112,9 +113,7 @@ async def test_honcho_llm_call_forwards_langfuse_metadata_to_tool_loop_attempt_p
         _record_langfuse_update(update_calls),
     )
 
-    async def fake_tool_loop(
-        *_args: Any, **kwargs: Any
-    ) -> HonchoLLMCallResponse[str]:
+    async def fake_tool_loop(*_args: Any, **kwargs: Any) -> HonchoLLMCallResponse[str]:
         get_attempt_plan = kwargs["get_attempt_plan"]
         plan = get_attempt_plan()
         assert plan.provider == "openai"
@@ -171,9 +170,7 @@ async def test_honcho_llm_call_existing_callers_keep_empty_langfuse_metadata(
         _record_langfuse_update(update_calls),
     )
 
-    async def fake_inner(
-        *_args: Any, **_kwargs: Any
-    ) -> HonchoLLMCallResponse[str]:
+    async def fake_inner(*_args: Any, **_kwargs: Any) -> HonchoLLMCallResponse[str]:
         return HonchoLLMCallResponse(
             content="ok",
             output_tokens=1,

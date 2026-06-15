@@ -31,7 +31,7 @@ def test_build_langfuse_metadata_uses_allowlist_and_generic_tenant_prefix() -> N
     )
 
     assert metadata == {
-        "honcho_metadata_schema_version": "phase2.1",
+        "honcho_metadata_schema_version": "v1",
         "component": "honcho",
         "subsystem": "honcho-memory",
         "honcho_operation": "dialectic_chat",
@@ -46,7 +46,9 @@ def test_build_langfuse_metadata_uses_allowlist_and_generic_tenant_prefix() -> N
     }
 
 
-def test_build_langfuse_metadata_ignores_secret_shaped_list_values_and_has_no_passthrough() -> None:
+def test_build_langfuse_metadata_ignores_secret_shaped_list_values_and_has_no_passthrough() -> (
+    None
+):
     metadata = build_honcho_langfuse_metadata(
         operation="minimal_deriver",
         workspace_name="hermes",
@@ -78,7 +80,9 @@ def test_build_langfuse_metadata_ignores_secret_shaped_list_values_and_has_no_pa
         "postgresql://user:password@localhost/db",
     ],
 )
-def test_build_langfuse_metadata_omits_secret_shaped_scalar_values(secret_value: str) -> None:
+def test_build_langfuse_metadata_omits_secret_shaped_scalar_values(
+    secret_value: str,
+) -> None:
     metadata = build_honcho_langfuse_metadata(
         operation="dialectic_chat",
         workspace_name=secret_value,

@@ -13,7 +13,7 @@ HonchoLangfuseOperation = Literal[
     "long_summary",
 ]
 
-_METADATA_SCHEMA_VERSION = "phase2.1"
+_METADATA_SCHEMA_VERSION = "v1"
 _MAX_LIST_ITEMS = 25
 _SECRET_PATTERNS = (
     re.compile(r"\bbearer\s+\S+", re.IGNORECASE),

@@ -650,7 +650,9 @@ async def _create_summary(
                 workspace_name=workspace_name,
                 langfuse_metadata=langfuse_metadata,
                 langfuse_trace_user_id=(langfuse_trace_attrs or {}).get("user_id"),
-                langfuse_trace_session_id=(langfuse_trace_attrs or {}).get("session_id"),
+                langfuse_trace_session_id=(langfuse_trace_attrs or {}).get(
+                    "session_id"
+                ),
                 langfuse_trace_tags=(langfuse_trace_attrs or {}).get("tags"),
             )
         else:
@@ -660,7 +662,9 @@ async def _create_summary(
                 workspace_name=workspace_name,
                 langfuse_metadata=langfuse_metadata,
                 langfuse_trace_user_id=(langfuse_trace_attrs or {}).get("user_id"),
-                langfuse_trace_session_id=(langfuse_trace_attrs or {}).get("session_id"),
+                langfuse_trace_session_id=(langfuse_trace_attrs or {}).get(
+                    "session_id"
+                ),
                 langfuse_trace_tags=(langfuse_trace_attrs or {}).get("tags"),
             )
 

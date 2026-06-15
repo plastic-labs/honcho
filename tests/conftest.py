@@ -73,12 +73,13 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/alembic/",
     "tests/unified/",
     "tests/live_llm/",
-    # Pure llm/telemetry unit tests should stay isolated from the broader app/runtime fixtures.
+    # Pure LLM/metadata and existing pure summarizer unit tests should stay isolated from
+    # broader app/runtime fixtures.
     "tests/llm/",
-    "tests/telemetry/",
+    "tests/telemetry/test_langfuse_context.py",
+    "tests/telemetry/test_deriver_langfuse_metadata.py",
+    "tests/telemetry/test_summary_langfuse_metadata.py",
     "tests/dialectic/test_langfuse_metadata.py",
-    "tests/dialectic/test_model_config_usage.py",
-    "tests/deriver/test_langfuse_metadata.py",
     "tests/utils/test_summarizer.py",
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",

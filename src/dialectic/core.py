@@ -108,7 +108,9 @@ class DialecticAgent:
         self._prefetched_conclusion_count: int = 0
         self._run_id: str = generate_nanoid()  # Always generate for event correlation
 
-    def _build_langfuse_metadata_for_call(self) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _build_langfuse_metadata_for_call(
+        self,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Build safe Langfuse metadata for a dialectic LLM call."""
         metadata = build_honcho_langfuse_metadata(
             operation="dialectic_chat",

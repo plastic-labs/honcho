@@ -78,10 +78,7 @@ def test_build_deriver_langfuse_metadata_uses_public_ids_and_omits_content(
 
 
 def test_build_deriver_langfuse_metadata_bounds_and_sanitizes_lists() -> None:
-    messages = [
-        _message(message_id=i, public_id=f"msg-public-{i}")
-        for i in range(30)
-    ]
+    messages = [_message(message_id=i, public_id=f"msg-public-{i}") for i in range(30)]
     messages.append(_message(message_id=31, public_id="Bearer secret-token"))
 
     metadata, _ = _build_deriver_langfuse_metadata(

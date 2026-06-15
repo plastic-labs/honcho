@@ -33,6 +33,24 @@ logger = logging.getLogger(__name__)
 current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
 
 
+def _langfuse_trace_metadata(metadata: dict[str, Any] | None) -> dict[str, str] | None:
+    """Return trace-propagation-safe metadata for Langfuse v4.
+
+    Langfuse v4's public `propagate_attributes` API only accepts string metadata
+    values. Keep observation metadata richer, but only propagate compact string
+    scalars to top-level trace attributes.
+    """
+    if not metadata:
+        return None
+
+    trace_metadata = {
+        key: value
+        for key, value in metadata.items()
+        if isinstance(value, str) and len(value) <= 200
+    }
+    return trace_metadata or None
+
+
 def update_current_langfuse_observation(
     provider: ModelTransport,
     model: str,
@@ -65,18 +83,24 @@ def update_current_langfuse_observation(
         client = get_client()
         client.update_current_span(**span_update_kwargs)
 
-        trace_update_kwargs: dict[str, Any] = {}
-        if trace_user_id is not None:
-            trace_update_kwargs["user_id"] = trace_user_id
-        if trace_session_id is not None:
-            trace_update_kwargs["session_id"] = trace_session_id
-        if trace_tags:
-            trace_update_kwargs["tags"] = trace_tags
-        if metadata:
-            trace_update_kwargs["metadata"] = metadata
+        trace_metadata = _langfuse_trace_metadata(metadata)
+        if (
+            trace_user_id is not None
+            or trace_session_id is not None
+            or trace_tags
+            or trace_metadata
+        ):
+            from langfuse import propagate_attributes
 
-        if trace_update_kwargs:
-            client.update_current_trace(**trace_update_kwargs)
+            # Langfuse v4 records trace attributes on the active span when the
+            # context manager is entered, so the body is intentionally empty.
+            with propagate_attributes(
+                user_id=trace_user_id,
+                session_id=trace_session_id,
+                tags=trace_tags,
+                metadata=trace_metadata,
+            ):
+                pass
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         logger.debug("Failed to update Langfuse observation metadata: %s", exc)
 
