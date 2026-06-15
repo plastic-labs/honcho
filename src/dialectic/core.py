@@ -25,6 +25,10 @@ from src.llm import (
 from src.llm.types import LLMTelemetryContext
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import DialecticCompletedEvent, EmbeddingCallPurpose, emit
+from src.telemetry.langfuse_context import (
+    build_honcho_langfuse_metadata,
+    build_honcho_langfuse_trace_attrs,
+)
 from src.telemetry.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -103,6 +107,21 @@ class DialecticAgent:
         self._session_history_initialized: bool = False
         self._prefetched_conclusion_count: int = 0
         self._run_id: str = generate_nanoid()  # Always generate for event correlation
+
+    def _build_langfuse_metadata_for_call(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Build safe Langfuse metadata for a dialectic LLM call."""
+        metadata = build_honcho_langfuse_metadata(
+            operation="dialectic_chat",
+            workspace_name=self.workspace_name,
+            session_name=self.session_name,
+            observer=self.observer,
+            observed=self.observed,
+            reasoning_level=self.reasoning_level,
+            run_id=self._run_id,
+            tenant_workspace_prefix=settings.LANGFUSE_TENANT_WORKSPACE_PREFIX,
+            tenant_platform=settings.LANGFUSE_TENANT_PLATFORM,
+        )
+        return metadata, build_honcho_langfuse_trace_attrs(metadata)
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -437,6 +456,7 @@ class DialecticAgent:
             else settings.DIALECTIC.MAX_OUTPUT_TOKENS
         )
 
+        metadata, trace_attrs = self._build_langfuse_metadata_for_call()
         response: HonchoLLMCallResponse[str] = await honcho_llm_call(
             model_config=_get_dialectic_level_model_config(self.reasoning_level),
             prompt="",  # Ignored since we pass messages
@@ -450,6 +470,10 @@ class DialecticAgent:
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
             trace_name="dialectic_chat",
             telemetry=self._telemetry_context(),
+            langfuse_metadata=metadata,
+            langfuse_trace_user_id=trace_attrs.get("user_id"),
+            langfuse_trace_session_id=trace_attrs.get("session_id"),
+            langfuse_trace_tags=trace_attrs.get("tags"),
         )
 
         self._log_response_metrics(
@@ -502,6 +526,7 @@ class DialecticAgent:
             else settings.DIALECTIC.MAX_OUTPUT_TOKENS
         )
 
+        metadata, trace_attrs = self._build_langfuse_metadata_for_call()
         response = cast(
             StreamingResponseWithMetadata,
             await honcho_llm_call(
@@ -519,6 +544,10 @@ class DialecticAgent:
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
                 telemetry=self._telemetry_context(),
+                langfuse_metadata=metadata,
+                langfuse_trace_user_id=trace_attrs.get("user_id"),
+                langfuse_trace_session_id=trace_attrs.get("session_id"),
+                langfuse_trace_tags=trace_attrs.get("tags"),
             ),
         )
 
