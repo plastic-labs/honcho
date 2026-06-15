@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.10] - 2026-06-15
+
+### Added
+
+- Messages are now embedded via a background task rather than blocking API request
+- Read-only DB session mode (`get_read_db` / `tracked_db(..., read_only=True)`) so reads don't hold a transaction open across the work
+- `CORS_ORIGINS` env var to configure CORS allowed origins without editing source; defaults match the prior hardcoded list, so self-hosted deployments behind custom domains can whitelist their frontend (#697)
+- `scripts/generate_jwt.py` — utility for minting scoped or admin Honcho JWTs (`--admin`, `--workspace`/`--peer`/`--session`, `--expires` with human-friendly durations, `--print-only`) without calling the keys API (#757)
+- `STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS` (default 60s) — minimum jittered spacing between deriver stale-work-unit cleanup runs, so cleanup no longer runs on every seconds-scale poll (`0.0` keeps the legacy every-poll behavior) (#773)
+
+### Changed
+
+- Optimized the deriver and dreamer prompt cache prefixes to improve prompt-cache hit rates (#806)
+
+### Fixed
+
+- `times_derived` is now properly reinforced when a duplicate conclusion is detected. It had been pinned at 1 for nearly every conclusion (the reject-new branch dropped the increment and the new-wins branch reset the count to 1), so `ORDER BY times_derived DESC` fell back to arbitrary heap order and froze stale conclusions to the front of injected context. Reinforcement is now an atomic increment and both most-derived queries gained a `created_at DESC` recency tiebreaker (#768)
+- Webhook creation now correctly rejects private/internal IP addresses (#793)
+
 ## [3.0.9] - 2026-06-02
 
 ### Changed
