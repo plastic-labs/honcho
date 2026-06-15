@@ -1,14 +1,16 @@
 from datetime import datetime, timezone
+from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from src.config import settings
 from src.deriver.deriver import (
-    _build_deriver_langfuse_metadata,
+    _build_deriver_langfuse_metadata,  # pyright: ignore[reportPrivateUsage]
     process_representation_tasks_batch,
 )
 from src.llm import HonchoLLMCallResponse
+from src.models import Message
 from src.utils.representation import PromptRepresentation
 
 
@@ -33,6 +35,10 @@ def _message(
     )
 
 
+def _messages_for_helper(messages: list[Mock]) -> list[Message]:
+    return cast(list[Message], messages)
+
+
 def test_build_deriver_langfuse_metadata_uses_public_ids_and_omits_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -44,7 +50,7 @@ def test_build_deriver_langfuse_metadata_uses_public_ids_and_omits_content(
     ]
 
     metadata, trace_attrs = _build_deriver_langfuse_metadata(
-        messages=messages,  # type: ignore[arg-type]
+        messages=_messages_for_helper(messages),
         observers=["myah", "support-agent"],
         observed="user-123",
         queue_item_message_ids=[1, 2],
@@ -79,7 +85,7 @@ def test_build_deriver_langfuse_metadata_bounds_and_sanitizes_lists() -> None:
     messages.append(_message(message_id=31, public_id="Bearer secret-token"))
 
     metadata, _ = _build_deriver_langfuse_metadata(
-        messages=messages,  # type: ignore[arg-type]
+        messages=_messages_for_helper(messages),
         observers=["myah", "lf_sk_secret"],
         observed="user-123",
         queue_item_message_ids=list(range(31)),
@@ -119,7 +125,7 @@ async def test_process_representation_tasks_batch_passes_langfuse_metadata(
         return_value=mock_response,
     ) as mock_llm_call:
         await process_representation_tasks_batch(
-            messages=messages,  # type: ignore[arg-type]
+            messages=_messages_for_helper(messages),
             message_level_configuration=configuration,
             observers=["myah"],
             observed="user-123",

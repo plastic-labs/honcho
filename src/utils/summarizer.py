@@ -4,7 +4,7 @@ import time
 from enum import Enum
 from functools import cache
 from inspect import cleandoc as c
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,11 @@ from src.models import Message
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import AgentToolSummaryCreatedEvent, emit
 from src.telemetry.events.llm import CallPurpose
+from src.telemetry.langfuse_context import (
+    HonchoLangfuseOperation,
+    build_honcho_langfuse_metadata,
+    build_honcho_langfuse_trace_attrs,
+)
 from src.telemetry.logging import accumulate_metric, conditional_observe
 from src.telemetry.prometheus.metrics import (
     DeriverComponents,
@@ -95,6 +100,32 @@ SUMMARIES_KEY = "summaries"
 class SummaryType(Enum):
     SHORT = "honcho_chat_summary_short"
     LONG = "honcho_chat_summary_long"
+
+
+def _summary_operation(summary_type: SummaryType) -> HonchoLangfuseOperation:
+    return "short_summary" if summary_type == SummaryType.SHORT else "long_summary"
+
+
+def _build_summary_langfuse_metadata(
+    *,
+    workspace_name: str,
+    session_name: str,
+    summary_type: SummaryType,
+    message_count: int,
+    latest_message_public_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    operation = _summary_operation(summary_type)
+    metadata = build_honcho_langfuse_metadata(
+        operation=operation,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        latest_message_public_id=latest_message_public_id,
+        message_count=message_count,
+        tenant_workspace_prefix=settings.LANGFUSE_TENANT_WORKSPACE_PREFIX,
+        tenant_platform=settings.LANGFUSE_TENANT_PLATFORM,
+    )
+    trace_attrs = build_honcho_langfuse_trace_attrs(metadata)
+    return metadata, trace_attrs
 
 
 def short_summary_prompt(
@@ -202,6 +233,10 @@ async def create_short_summary(
     previous_summary: str | None = None,
     *,
     workspace_name: str | None = None,
+    langfuse_metadata: dict[str, Any] | None = None,
+    langfuse_trace_user_id: str | None = None,
+    langfuse_trace_session_id: str | None = None,
+    langfuse_trace_tags: list[str] | None = None,
 ) -> HonchoLLMCallResponse[str]:
     # input_tokens indicates how many tokens the message list + previous summary take up
     # we want to optimize short summaries to be smaller than the actual content being summarized
@@ -228,6 +263,12 @@ async def create_short_summary(
             call_purpose=CallPurpose.SUMMARY_SHORT.value,
             parent_category="summary",
         ),
+        track_name="Create Short Summary",
+        trace_name="short_summary",
+        langfuse_metadata=langfuse_metadata,
+        langfuse_trace_user_id=langfuse_trace_user_id,
+        langfuse_trace_session_id=langfuse_trace_session_id,
+        langfuse_trace_tags=langfuse_trace_tags,
     )
 
 
@@ -237,6 +278,10 @@ async def create_long_summary(
     previous_summary: str | None = None,
     *,
     workspace_name: str | None = None,
+    langfuse_metadata: dict[str, Any] | None = None,
+    langfuse_trace_user_id: str | None = None,
+    langfuse_trace_session_id: str | None = None,
+    langfuse_trace_tags: list[str] | None = None,
 ) -> HonchoLLMCallResponse[str]:
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
@@ -260,6 +305,12 @@ async def create_long_summary(
             call_purpose=CallPurpose.SUMMARY_LONG.value,
             parent_category="summary",
         ),
+        track_name="Create Long Summary",
+        trace_name="long_summary",
+        langfuse_metadata=langfuse_metadata,
+        langfuse_trace_user_id=langfuse_trace_user_id,
+        langfuse_trace_session_id=langfuse_trace_session_id,
+        langfuse_trace_tags=langfuse_trace_tags,
     )
 
 
@@ -438,6 +489,13 @@ async def _create_and_save_summary(
         messages_tokens = sum([message.token_count for message in messages])
         previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
         input_tokens = messages_tokens + previous_summary_tokens
+        langfuse_metadata, langfuse_trace_attrs = _build_summary_langfuse_metadata(
+            workspace_name=workspace_name,
+            session_name=session_name,
+            summary_type=summary_type,
+            message_count=message_count,
+            latest_message_public_id=message_public_id,
+        )
 
     (
         new_summary,
@@ -454,6 +512,8 @@ async def _create_and_save_summary(
         last_message_content_preview=last_message_content_preview,
         message_count=message_count,
         workspace_name=workspace_name,
+        langfuse_metadata=langfuse_metadata,
+        langfuse_trace_attrs=langfuse_trace_attrs,
     )
 
     # Compute scaffold tokens up front (cheap + idempotent) so both the
@@ -554,6 +614,8 @@ async def _create_summary(
     message_count: int,
     *,
     workspace_name: str | None = None,
+    langfuse_metadata: dict[str, Any] | None = None,
+    langfuse_trace_attrs: dict[str, Any] | None = None,
 ) -> tuple[Summary, bool, int, int]:
     """
     Generate a summary of the provided messages using an LLM.
@@ -586,12 +648,20 @@ async def _create_summary(
                 input_tokens,
                 previous_summary_text,
                 workspace_name=workspace_name,
+                langfuse_metadata=langfuse_metadata,
+                langfuse_trace_user_id=(langfuse_trace_attrs or {}).get("user_id"),
+                langfuse_trace_session_id=(langfuse_trace_attrs or {}).get("session_id"),
+                langfuse_trace_tags=(langfuse_trace_attrs or {}).get("tags"),
             )
         else:
             response = await create_long_summary(
                 formatted_messages,
                 previous_summary_text,
                 workspace_name=workspace_name,
+                langfuse_metadata=langfuse_metadata,
+                langfuse_trace_user_id=(langfuse_trace_attrs or {}).get("user_id"),
+                langfuse_trace_session_id=(langfuse_trace_attrs or {}).get("session_id"),
+                langfuse_trace_tags=(langfuse_trace_attrs or {}).get("tags"),
             )
 
         summary_text = response.content

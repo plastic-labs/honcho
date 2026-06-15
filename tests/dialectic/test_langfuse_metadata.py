@@ -41,7 +41,7 @@ def test_build_dialectic_langfuse_metadata_is_pure_and_allowlisted(
         reasoning_level="medium",
     )
 
-    metadata, trace_attrs = agent._build_langfuse_metadata_for_call()
+    metadata, trace_attrs = agent._build_langfuse_metadata_for_call()  # pyright: ignore[reportPrivateUsage]
 
     assert metadata["honcho_operation"] == "dialectic_chat"
     assert metadata["honcho_workspace_id"] == "myah-user-123"

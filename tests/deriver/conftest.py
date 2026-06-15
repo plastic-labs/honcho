@@ -24,7 +24,7 @@ async def clean_queue_tables(
     from polluting subsequent tests, which can cause issues when tests have a limit
     on how many work units can be claimed (e.g., WORKERS=1).
     """
-    if request.node.nodeid.startswith("tests/deriver/test_langfuse_metadata.py"):
+    if request.node.nodeid.startswith("tests/deriver/test_langfuse_metadata.py"):  # pyright: ignore[reportUnknownMemberType]
         yield
         return
 

@@ -10,6 +10,8 @@ from src.llm.runtime import update_current_langfuse_observation
 
 
 class FakeLangfuseClient:
+    raise_on_update: bool
+
     def __init__(self, *, raise_on_update: bool = False) -> None:
         self.raise_on_update = raise_on_update
         self.span_calls: list[dict[str, Any]] = []
