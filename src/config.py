@@ -1311,6 +1311,8 @@ class AppSettings(HonchoSettings):
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
+    LANGFUSE_TENANT_WORKSPACE_PREFIX: str | None = None
+    LANGFUSE_TENANT_PLATFORM: str | None = None
 
     # Origins allowed by the FastAPI CORSMiddleware
     CORS_ORIGINS: list[str] = [

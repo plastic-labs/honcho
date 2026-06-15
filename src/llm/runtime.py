@@ -38,26 +38,47 @@ def update_current_langfuse_observation(
     model: str,
     *,
     name: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    trace_user_id: str | None = None,
+    trace_session_id: str | None = None,
+    trace_tags: list[str] | None = None,
 ) -> None:
-    """Best-effort annotation of the current Langfuse span with LLM routing."""
+    """Best-effort annotation of the current Langfuse span/trace with LLM routing."""
     if not settings.LANGFUSE_PUBLIC_KEY:
         return
 
     try:
         from langfuse import get_client
 
-        update_kwargs: dict[str, Any] = {
-            "metadata": {
-                "namespace": settings.NAMESPACE,
-                "provider": provider,
-                "model": model,
-            }
+        span_metadata: dict[str, Any] = {
+            "namespace": settings.NAMESPACE,
+            "provider": provider,
+            "model": model,
         }
+        if metadata:
+            span_metadata.update(metadata)
+
+        span_update_kwargs: dict[str, Any] = {"metadata": span_metadata}
         if name is not None:
-            update_kwargs["name"] = name
-        get_client().update_current_span(**update_kwargs)
+            span_update_kwargs["name"] = name
+
+        client = get_client()
+        client.update_current_span(**span_update_kwargs)
+
+        trace_update_kwargs: dict[str, Any] = {}
+        if trace_user_id is not None:
+            trace_update_kwargs["user_id"] = trace_user_id
+        if trace_session_id is not None:
+            trace_update_kwargs["session_id"] = trace_session_id
+        if trace_tags:
+            trace_update_kwargs["tags"] = trace_tags
+        if metadata:
+            trace_update_kwargs["metadata"] = metadata
+
+        if trace_update_kwargs:
+            client.update_current_trace(**trace_update_kwargs)
     except Exception as exc:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to update Langfuse span metadata: %s", exc)
+        logger.debug("Failed to update Langfuse observation metadata: %s", exc)
 
 
 @dataclass(frozen=True)
