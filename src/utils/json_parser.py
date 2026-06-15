@@ -370,7 +370,8 @@ def validate_and_repair_json(json_str: str) -> str:
     # instead of structured output). Log a warning rather than swallowing silently.
     if not (raw.startswith("[") or raw.startswith("{") or raw.startswith("```")):
         logger.warning(
-            "[PARSER-GUARD] Non-JSON model output detected (length=%d); coercing to []",
+            "[PARSER-GUARD] Non-JSON model output detected "
+            "(length=%d); coercing to []",
             len(raw),
         )
         return "[]"
