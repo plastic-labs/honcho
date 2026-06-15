@@ -354,13 +354,13 @@ def simple_bracket_repair(json_str: str) -> str:
 
 def validate_and_repair_json(json_str: str) -> str:
     """Main function with comprehensive repair strategies"""
-    # Clean up empty strings or markdown empty blocks
-    cleaned = json_str.strip() if json_str else ""
-    cleaned = re.sub(r'^```json\s*```$', '', cleaned, flags=re.MULTILINE).strip()
-    if not cleaned or cleaned == '```' or cleaned == '``````':
+    raw = json_str.strip() if json_str else ""
+    # L1: Basic empty check
+    if not raw or not (raw.startswith("[") or raw.startswith("{") or raw.startswith("```")):
+        logger.info(f"[PARSER-GUARD] Non-JSON content detected, bypassing: {repr(raw)[:200]}...")
         return "[]"
-        
-    json_str = cleaned
+    
+    json_str = raw
 
     # Try parsing with repair library
     good_json = repair_json(json_str)
@@ -377,7 +377,7 @@ def validate_and_repair_json(json_str: str) -> str:
         return repaired
 
     except json.JSONDecodeError as repair_error:
-        logger.error(f"❌ Repair failed: {repair_error}")
+        logger.error(f"❌ Repair failed: {repair_error}. RAW CONTENT: {repr(json_str)}")
         raise ValueError(
             f"Could not repair JSON. Original error: {repair_error.msg}, "
             + f"Repair error: {repair_error.msg}"
