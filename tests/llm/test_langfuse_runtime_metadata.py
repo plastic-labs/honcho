@@ -76,7 +76,7 @@ def test_update_current_langfuse_observation_merges_span_metadata_and_updates_tr
     metadata = {
         "component": "honcho",
         "honcho_operation": "dialectic_chat",
-        "honcho_workspace_id": "myah-user-123",
+        "honcho_workspace_id": "acme-user-123",
     }
 
     update_current_langfuse_observation(
@@ -98,7 +98,7 @@ def test_update_current_langfuse_observation_merges_span_metadata_and_updates_tr
                 "model": "openai/gpt-4o-mini",
                 "component": "honcho",
                 "honcho_operation": "dialectic_chat",
-                "honcho_workspace_id": "myah-user-123",
+                "honcho_workspace_id": "acme-user-123",
             },
         }
     ]
@@ -166,11 +166,11 @@ def test_update_current_langfuse_observation_is_fail_open(
 def test_langfuse_tenant_settings_parse_with_defaults_and_env() -> None:
     defaults = AppSettings()
     configured = AppSettings(
-        LANGFUSE_TENANT_WORKSPACE_PREFIX="myah-",
-        LANGFUSE_TENANT_PLATFORM="myah",
+        LANGFUSE_TENANT_WORKSPACE_PREFIX="acme-",
+        LANGFUSE_TENANT_PLATFORM="acme",
     )
 
     assert defaults.LANGFUSE_TENANT_WORKSPACE_PREFIX is None
     assert defaults.LANGFUSE_TENANT_PLATFORM is None
-    assert configured.LANGFUSE_TENANT_WORKSPACE_PREFIX == "myah-"
-    assert configured.LANGFUSE_TENANT_PLATFORM == "myah"
+    assert configured.LANGFUSE_TENANT_WORKSPACE_PREFIX == "acme-"
+    assert configured.LANGFUSE_TENANT_PLATFORM == "acme"

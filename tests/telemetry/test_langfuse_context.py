@@ -10,24 +10,24 @@ from src.telemetry.langfuse_context import (
 
 
 def test_derive_tenant_user_id_requires_explicit_prefix() -> None:
-    assert derive_tenant_user_id("myah-user-123", None) is None
-    assert derive_tenant_user_id("myah-user-123", "myah-") == "user-123"
-    assert derive_tenant_user_id("other-user-123", "myah-") is None
-    assert derive_tenant_user_id(None, "myah-") is None
-    assert derive_tenant_user_id("myah-", "myah-") is None
+    assert derive_tenant_user_id("acme-user-123", None) is None
+    assert derive_tenant_user_id("acme-user-123", "acme-") == "user-123"
+    assert derive_tenant_user_id("other-user-123", "acme-") is None
+    assert derive_tenant_user_id(None, "acme-") is None
+    assert derive_tenant_user_id("acme-", "acme-") is None
 
 
 def test_build_langfuse_metadata_uses_allowlist_and_generic_tenant_prefix() -> None:
     metadata = build_honcho_langfuse_metadata(
         operation="dialectic_chat",
-        workspace_name="myah-user-123",
+        workspace_name="acme-user-123",
         session_name="chat-abc",
-        observer="myah",
+        observer="acme",
         observed="user-123",
         reasoning_level="low",
         message_count=2,
-        tenant_workspace_prefix="myah-",
-        tenant_platform="myah",
+        tenant_workspace_prefix="acme-",
+        tenant_platform="acme",
     )
 
     assert metadata == {
@@ -35,14 +35,14 @@ def test_build_langfuse_metadata_uses_allowlist_and_generic_tenant_prefix() -> N
         "component": "honcho",
         "subsystem": "honcho-memory",
         "honcho_operation": "dialectic_chat",
-        "honcho_workspace_id": "myah-user-123",
+        "honcho_workspace_id": "acme-user-123",
         "honcho_session_id": "chat-abc",
-        "honcho_observer_peer": "myah",
+        "honcho_observer_peer": "acme",
         "honcho_observed_peer": "user-123",
         "honcho_reasoning_level": "low",
         "honcho_message_count": 2,
         "tenant_user_id": "user-123",
-        "tenant_platform": "myah",
+        "tenant_platform": "acme",
     }
 
 
@@ -83,7 +83,7 @@ def test_build_langfuse_metadata_omits_secret_shaped_scalar_values(secret_value:
         operation="dialectic_chat",
         workspace_name=secret_value,
         session_name="chat-abc",
-        observer="myah",
+        observer="acme",
         observed="user-123",
         run_id=secret_value,
     )
@@ -108,10 +108,10 @@ def test_build_langfuse_metadata_bounds_public_id_lists() -> None:
 def test_build_langfuse_trace_attrs_uses_safe_metadata() -> None:
     metadata = build_honcho_langfuse_metadata(
         operation="dialectic_chat",
-        workspace_name="myah-user-123",
+        workspace_name="acme-user-123",
         session_name="chat-abc",
-        tenant_workspace_prefix="myah-",
-        tenant_platform="myah",
+        tenant_workspace_prefix="acme-",
+        tenant_platform="acme",
     )
 
     attrs = build_honcho_langfuse_trace_attrs(metadata)
@@ -119,7 +119,7 @@ def test_build_langfuse_trace_attrs_uses_safe_metadata() -> None:
     assert attrs == {
         "user_id": "user-123",
         "session_id": "chat-abc",
-        "tags": ["honcho", "memory", "dialectic_chat", "myah"],
+        "tags": ["honcho", "memory", "dialectic_chat", "acme"],
     }
 
 

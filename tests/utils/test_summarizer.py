@@ -53,11 +53,11 @@ class TestSummaryLangfuseMetadata:
     def test_build_summary_langfuse_metadata_is_safe_and_joinable(
         self, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "myah-")
-        monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "myah")
+        monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "acme-")
+        monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "acme")
 
         metadata, trace_attrs = _build_summary_langfuse_metadata(
-            workspace_name="myah-user-123",
+            workspace_name="acme-user-123",
             session_name="chat-abc",
             summary_type=SummaryType.SHORT,
             message_count=5,
@@ -65,16 +65,16 @@ class TestSummaryLangfuseMetadata:
         )
 
         assert metadata["honcho_operation"] == "short_summary"
-        assert metadata["honcho_workspace_id"] == "myah-user-123"
+        assert metadata["honcho_workspace_id"] == "acme-user-123"
         assert metadata["honcho_session_id"] == "chat-abc"
         assert metadata["honcho_message_count"] == 5
         assert metadata["honcho_latest_message_public_id"] == "msg-public-5"
         assert metadata["tenant_user_id"] == "user-123"
-        assert metadata["tenant_platform"] == "myah"
+        assert metadata["tenant_platform"] == "acme"
         assert trace_attrs == {
             "user_id": "user-123",
             "session_id": "chat-abc",
-            "tags": ["honcho", "memory", "short_summary", "myah"],
+            "tags": ["honcho", "memory", "short_summary", "acme"],
         }
         assert "content" not in str(metadata).lower()
 

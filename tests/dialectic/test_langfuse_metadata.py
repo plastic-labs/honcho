@@ -31,12 +31,12 @@ async def _stream_chunks() -> StreamingResponseWithMetadata:
 def test_build_dialectic_langfuse_metadata_is_pure_and_allowlisted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "myah-")
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "myah")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "acme-")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "acme")
     agent = DialecticAgent(
-        workspace_name="myah-user-123",
+        workspace_name="acme-user-123",
         session_name="chat-abc",
-        observer="myah",
+        observer="acme",
         observed="user-123",
         reasoning_level="medium",
     )
@@ -44,18 +44,18 @@ def test_build_dialectic_langfuse_metadata_is_pure_and_allowlisted(
     metadata, trace_attrs = agent._build_langfuse_metadata_for_call()  # pyright: ignore[reportPrivateUsage]
 
     assert metadata["honcho_operation"] == "dialectic_chat"
-    assert metadata["honcho_workspace_id"] == "myah-user-123"
+    assert metadata["honcho_workspace_id"] == "acme-user-123"
     assert metadata["honcho_session_id"] == "chat-abc"
-    assert metadata["honcho_observer_peer"] == "myah"
+    assert metadata["honcho_observer_peer"] == "acme"
     assert metadata["honcho_observed_peer"] == "user-123"
     assert metadata["honcho_reasoning_level"] == "medium"
     assert metadata["tenant_user_id"] == "user-123"
-    assert metadata["tenant_platform"] == "myah"
+    assert metadata["tenant_platform"] == "acme"
     assert "honcho_run_id" in metadata
     assert trace_attrs == {
         "user_id": "user-123",
         "session_id": "chat-abc",
-        "tags": ["honcho", "memory", "dialectic_chat", "myah"],
+        "tags": ["honcho", "memory", "dialectic_chat", "acme"],
     }
     assert "query" not in metadata
     assert "prompt" not in metadata
@@ -66,12 +66,12 @@ def test_build_dialectic_langfuse_metadata_is_pure_and_allowlisted(
 async def test_dialectic_answer_passes_langfuse_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "myah-")
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "myah")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "acme-")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "acme")
     agent = DialecticAgent(
-        workspace_name="myah-user-123",
+        workspace_name="acme-user-123",
         session_name="chat-abc",
-        observer="myah",
+        observer="acme",
         observed="user-123",
         reasoning_level="low",
     )
@@ -106,7 +106,7 @@ async def test_dialectic_answer_passes_langfuse_metadata(
     assert result == "answer"
     assert kwargs["track_name"] == "Dialectic Agent"
     assert kwargs["langfuse_metadata"]["honcho_operation"] == "dialectic_chat"
-    assert kwargs["langfuse_metadata"]["honcho_workspace_id"] == "myah-user-123"
+    assert kwargs["langfuse_metadata"]["honcho_workspace_id"] == "acme-user-123"
     assert kwargs["langfuse_metadata"]["honcho_session_id"] == "chat-abc"
     assert kwargs["langfuse_trace_user_id"] == "user-123"
     assert kwargs["langfuse_trace_session_id"] == "chat-abc"
@@ -114,7 +114,7 @@ async def test_dialectic_answer_passes_langfuse_metadata(
         "honcho",
         "memory",
         "dialectic_chat",
-        "myah",
+        "acme",
     ]
 
 
@@ -122,12 +122,12 @@ async def test_dialectic_answer_passes_langfuse_metadata(
 async def test_dialectic_answer_stream_passes_langfuse_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "myah-")
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "myah")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "acme-")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "acme")
     agent = DialecticAgent(
-        workspace_name="myah-user-123",
+        workspace_name="acme-user-123",
         session_name="chat-abc",
-        observer="myah",
+        observer="acme",
         observed="user-123",
         reasoning_level="low",
     )
@@ -162,5 +162,5 @@ async def test_dialectic_answer_stream_passes_langfuse_metadata(
         "honcho",
         "memory",
         "dialectic_chat",
-        "myah",
+        "acme",
     ]

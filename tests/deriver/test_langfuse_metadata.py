@@ -18,7 +18,7 @@ def _message(
     *,
     message_id: int,
     public_id: str,
-    workspace_name: str = "myah-user-123",
+    workspace_name: str = "acme-user-123",
     session_name: str = "chat-abc",
     peer_name: str = "user-123",
     content: str = "private content should not appear",
@@ -42,8 +42,8 @@ def _messages_for_helper(messages: list[Mock]) -> list[Message]:
 def test_build_deriver_langfuse_metadata_uses_public_ids_and_omits_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "myah-")
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "myah")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "acme-")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "acme")
     messages = [
         _message(message_id=1, public_id="msg-public-1"),
         _message(message_id=2, public_id="msg-public-2"),
@@ -51,26 +51,26 @@ def test_build_deriver_langfuse_metadata_uses_public_ids_and_omits_content(
 
     metadata, trace_attrs = _build_deriver_langfuse_metadata(
         messages=_messages_for_helper(messages),
-        observers=["myah", "support-agent"],
+        observers=["acme", "support-agent"],
         observed="user-123",
         queue_item_message_ids=[1, 2],
     )
 
     assert metadata["honcho_operation"] == "minimal_deriver"
-    assert metadata["honcho_workspace_id"] == "myah-user-123"
+    assert metadata["honcho_workspace_id"] == "acme-user-123"
     assert metadata["honcho_session_id"] == "chat-abc"
     assert metadata["honcho_observed_peer"] == "user-123"
-    assert metadata["honcho_observer_peers"] == ["myah", "support-agent"]
+    assert metadata["honcho_observer_peers"] == ["acme", "support-agent"]
     assert metadata["honcho_message_count"] == 2
     assert metadata["honcho_queue_item_count"] == 2
     assert metadata["honcho_message_public_ids"] == ["msg-public-1", "msg-public-2"]
     assert metadata["honcho_latest_message_public_id"] == "msg-public-2"
     assert metadata["tenant_user_id"] == "user-123"
-    assert metadata["tenant_platform"] == "myah"
+    assert metadata["tenant_platform"] == "acme"
     assert trace_attrs == {
         "user_id": "user-123",
         "session_id": "chat-abc",
-        "tags": ["honcho", "memory", "minimal_deriver", "myah"],
+        "tags": ["honcho", "memory", "minimal_deriver", "acme"],
     }
     assert "private content" not in str(metadata)
     assert "content" not in str(metadata).lower()
@@ -86,12 +86,12 @@ def test_build_deriver_langfuse_metadata_bounds_and_sanitizes_lists() -> None:
 
     metadata, _ = _build_deriver_langfuse_metadata(
         messages=_messages_for_helper(messages),
-        observers=["myah", "lf_sk_secret"],
+        observers=["acme", "lf_sk_secret"],
         observed="user-123",
         queue_item_message_ids=list(range(31)),
     )
 
-    assert metadata["honcho_observer_peers"] == ["myah"]
+    assert metadata["honcho_observer_peers"] == ["acme"]
     assert metadata["honcho_message_public_ids"] == [
         f"msg-public-{i}" for i in range(25)
     ]
@@ -103,8 +103,8 @@ def test_build_deriver_langfuse_metadata_bounds_and_sanitizes_lists() -> None:
 async def test_process_representation_tasks_batch_passes_langfuse_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "myah-")
-    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "myah")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_WORKSPACE_PREFIX", "acme-")
+    monkeypatch.setattr(settings, "LANGFUSE_TENANT_PLATFORM", "acme")
     messages = [
         _message(message_id=1, public_id="msg-public-1"),
         _message(message_id=2, public_id="msg-public-2"),
@@ -127,7 +127,7 @@ async def test_process_representation_tasks_batch_passes_langfuse_metadata(
         await process_representation_tasks_batch(
             messages=_messages_for_helper(messages),
             message_level_configuration=configuration,
-            observers=["myah"],
+            observers=["acme"],
             observed="user-123",
             queue_item_message_ids=[1, 2],
         )
@@ -139,7 +139,7 @@ async def test_process_representation_tasks_batch_passes_langfuse_metadata(
 
     assert kwargs["track_name"] == "Minimal Deriver"
     assert kwargs["langfuse_metadata"]["honcho_operation"] == "minimal_deriver"
-    assert kwargs["langfuse_metadata"]["honcho_workspace_id"] == "myah-user-123"
+    assert kwargs["langfuse_metadata"]["honcho_workspace_id"] == "acme-user-123"
     assert kwargs["langfuse_metadata"]["honcho_session_id"] == "chat-abc"
     assert kwargs["langfuse_metadata"]["honcho_queue_item_count"] == 2
     assert kwargs["langfuse_trace_user_id"] == "user-123"
@@ -148,5 +148,5 @@ async def test_process_representation_tasks_batch_passes_langfuse_metadata(
         "honcho",
         "memory",
         "minimal_deriver",
-        "myah",
+        "acme",
     ]
