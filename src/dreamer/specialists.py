@@ -122,6 +122,8 @@ class BaseSpecialist(ABC):
         return f"""Target observee:
 {observed}
 
+The target observee is the peer identified above. When created observations need to name this subject, use the exact observee id above, not the phrase "the target observee".
+
 """
 
     def _build_peer_card_context(self, peer_card: list[str] | None) -> str:
