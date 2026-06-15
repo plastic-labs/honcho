@@ -32,6 +32,26 @@ def test_deduction_prompt_omits_peer_card_when_disabled() -> None:
     assert "IDENTITY:" not in prompt
 
 
+def test_dreamer_system_prompts_delay_observed_observee_for_cache_prefix() -> None:
+    for specialist in (DeductionSpecialist(), InductionSpecialist()):
+        prompt = specialist.build_system_prompt("alice", peer_card_enabled=True)
+        other_prompt = specialist.build_system_prompt("bob", peer_card_enabled=True)
+
+        assert prompt == other_prompt
+        assert "the target observee" in prompt
+
+
+def test_dreamer_user_prompts_include_target_observee() -> None:
+    for specialist in (DeductionSpecialist(), InductionSpecialist()):
+        prompt = specialist.build_user_prompt(
+            observed="alice",
+            hints=None,
+            peer_card=None,
+        )
+
+        assert "Target observee:\nalice" in prompt
+
+
 def test_induction_prompt_has_no_peer_card_section() -> None:
     """Induction no longer writes to the peer card; its prompt must not reference it."""
     prompt = InductionSpecialist().build_system_prompt("alice", peer_card_enabled=True)
