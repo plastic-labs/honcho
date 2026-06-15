@@ -355,11 +355,26 @@ def simple_bracket_repair(json_str: str) -> str:
 def validate_and_repair_json(json_str: str) -> str:
     """Main function with comprehensive repair strategies"""
     raw = json_str.strip() if json_str else ""
-    # L1: Basic empty check
-    if not raw or not (raw.startswith("[") or raw.startswith("{") or raw.startswith("```")):
-        logger.info(f"[PARSER-GUARD] Non-JSON content detected, bypassing: {repr(raw)[:200]}...")
+    # Detect empty markdown fence-only responses (e.g. "```json\n```" or "``` ```")
+    empty_fence_only = bool(
+        re.fullmatch(
+            r"```(?:json)?\s*```",
+            raw,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+    )
+    if not raw or empty_fence_only:
+        logger.info("[PARSER-GUARD] Empty model output detected; returning []")
         return "[]"
-    
+    # Guard against non-JSON hallucinations (e.g. model returns pure-text explanation
+    # instead of structured output). Log a warning rather than swallowing silently.
+    if not (raw.startswith("[") or raw.startswith("{") or raw.startswith("```")):
+        logger.warning(
+            "[PARSER-GUARD] Non-JSON model output detected (length=%d); coercing to []",
+            len(raw),
+        )
+        return "[]"
+
     json_str = raw
 
     # Try parsing with repair library
@@ -377,7 +392,11 @@ def validate_and_repair_json(json_str: str) -> str:
         return repaired
 
     except json.JSONDecodeError as repair_error:
-        logger.error(f"❌ Repair failed: {repair_error}. RAW CONTENT: {repr(json_str)}")
+        logger.error(
+            "❌ Repair failed: %s (length=%d)",
+            repair_error,
+            len(json_str) if json_str else 0,
+        )
         raise ValueError(
             f"Could not repair JSON. Original error: {repair_error.msg}, "
             + f"Repair error: {repair_error.msg}"
