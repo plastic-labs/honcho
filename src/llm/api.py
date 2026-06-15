@@ -73,6 +73,10 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
+    langfuse_metadata: dict[str, Any] | None = None,
+    langfuse_trace_user_id: str | None = None,
+    langfuse_trace_session_id: str | None = None,
+    langfuse_trace_tags: list[str] | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[M]: ...
@@ -103,6 +107,10 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
+    langfuse_metadata: dict[str, Any] | None = None,
+    langfuse_trace_user_id: str | None = None,
+    langfuse_trace_session_id: str | None = None,
+    langfuse_trace_tags: list[str] | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
 ) -> HonchoLLMCallResponse[str]: ...
@@ -133,6 +141,10 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
+    langfuse_metadata: dict[str, Any] | None = None,
+    langfuse_trace_user_id: str | None = None,
+    langfuse_trace_session_id: str | None = None,
+    langfuse_trace_tags: list[str] | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
@@ -163,6 +175,10 @@ async def honcho_llm_call(
     messages: list[dict[str, Any]] | None = None,
     max_input_tokens: int | None = None,
     trace_name: str | None = None,
+    langfuse_metadata: dict[str, Any] | None = None,
+    langfuse_trace_user_id: str | None = None,
+    langfuse_trace_session_id: str | None = None,
+    langfuse_trace_tags: list[str] | None = None,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
 ) -> (
@@ -210,6 +226,10 @@ async def honcho_llm_call(
             plan.provider,
             plan.model,
             name=track_name,
+            metadata=langfuse_metadata,
+            trace_user_id=langfuse_trace_user_id,
+            trace_session_id=langfuse_trace_session_id,
+            trace_tags=langfuse_trace_tags,
         )
         return plan
 
