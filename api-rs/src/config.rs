@@ -1,0 +1,152 @@
+use crate::auth::AuthConfig;
+use crate::cache::{CacheConfig, default_cache_namespace, default_cache_url};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use thiserror::Error;
+
+const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:8001";
+const DEFAULT_DB_SCHEMA: &str = "public";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppConfig {
+    pub bind_address: SocketAddr,
+    pub database_url: String,
+    pub db_schema: String,
+    pub auth: AuthConfig,
+    pub write_enabled: bool,
+    pub cache: CacheConfig,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ConfigError {
+    #[error("DB_CONNECTION_URI is required")]
+    MissingDatabaseUrl,
+    #[error("RUST_API_BIND_ADDRESS is invalid: {0}")]
+    InvalidBindAddress(String),
+    #[error("AUTH_JWT_SECRET is required when AUTH_USE_AUTH is true")]
+    MissingJwtSecret,
+    #[error("{name} is invalid: {value}")]
+    InvalidBool { name: &'static str, value: String },
+}
+
+impl AppConfig {
+    pub fn from_env() -> Result<Self, ConfigError> {
+        Self::from_pairs(std::env::vars())
+    }
+
+    pub fn from_pairs<I, K, V>(pairs: I) -> Result<Self, ConfigError>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let values = pairs
+            .into_iter()
+            .map(|(key, value)| (key.as_ref().to_string(), value.as_ref().to_string()))
+            .collect::<HashMap<_, _>>();
+
+        let bind_address = values
+            .get("RUST_API_BIND_ADDRESS")
+            .map(String::as_str)
+            .unwrap_or(DEFAULT_BIND_ADDRESS)
+            .parse::<SocketAddr>()
+            .map_err(|error| ConfigError::InvalidBindAddress(error.to_string()))?;
+        let database_url = values
+            .get("DB_CONNECTION_URI")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(normalize_python_postgres_url)
+            .ok_or(ConfigError::MissingDatabaseUrl)?;
+        let db_schema = values
+            .get("DB_SCHEMA")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(DEFAULT_DB_SCHEMA)
+            .to_string();
+        let use_auth = values
+            .get("AUTH_USE_AUTH")
+            .map(String::as_str)
+            .map(parse_bool)
+            .unwrap_or(false);
+        let write_enabled = values
+            .get("RUST_API_ENABLE_WRITES")
+            .map(String::as_str)
+            .map(parse_bool)
+            .unwrap_or(false);
+        let cache_enabled = values
+            .get("CACHE_ENABLED")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| parse_bool_strict("CACHE_ENABLED", value))
+            .transpose()?
+            .unwrap_or(false);
+        let cache_url = values
+            .get("CACHE_URL")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(default_cache_url())
+            .to_string();
+        let cache_namespace = values
+            .get("CACHE_NAMESPACE")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                values
+                    .get("NAMESPACE")
+                    .map(String::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            })
+            .unwrap_or(default_cache_namespace())
+            .to_string();
+        let jwt_secret = values
+            .get("AUTH_JWT_SECRET")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
+
+        if use_auth && jwt_secret.is_none() {
+            return Err(ConfigError::MissingJwtSecret);
+        }
+
+        Ok(Self {
+            bind_address,
+            database_url,
+            db_schema,
+            auth: AuthConfig {
+                use_auth,
+                jwt_secret,
+            },
+            write_enabled,
+            cache: CacheConfig {
+                enabled: cache_enabled,
+                url: cache_url,
+                namespace: cache_namespace,
+            },
+        })
+    }
+}
+
+fn parse_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+fn parse_bool_strict(name: &'static str, value: &str) -> Result<bool, ConfigError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(ConfigError::InvalidBool {
+            name,
+            value: value.to_string(),
+        }),
+    }
+}
+
+fn normalize_python_postgres_url(value: &str) -> String {
+    value
+        .trim()
+        .replacen("postgresql+psycopg://", "postgresql://", 1)
+        .replacen("postgres+psycopg://", "postgres://", 1)
+}

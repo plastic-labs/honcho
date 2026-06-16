@@ -85,6 +85,32 @@ services:
       - MCP_BIND_ADDRESS=0.0.0.0:8787
     restart: unless-stopped
 
+  # Experimental Rust API sidecar. This does not receive traffic from the
+  # Python API and is intended for compatibility validation only. Write routes
+  # are disabled by default unless RUST_API_ENABLE_WRITES=true is set.
+  api-rs:
+    profiles: ["rust-api"]
+    build:
+      context: ./api-rs
+      dockerfile: Dockerfile
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8001:8001"
+    environment:
+      - RUST_API_BIND_ADDRESS=0.0.0.0:8001
+      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - AUTH_USE_AUTH=${AUTH_USE_AUTH:-false}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
+      - DB_SCHEMA=${DB_SCHEMA:-public}
+      - RUST_API_ENABLE_WRITES=${RUST_API_ENABLE_WRITES:-false}
+      - NAMESPACE=${NAMESPACE:-honcho}
+      - CACHE_ENABLED=${CACHE_ENABLED:-false}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
+      - CACHE_NAMESPACE=${CACHE_NAMESPACE:-}
+    restart: unless-stopped
+
   database:
     image: pgvector/pgvector:pg15
     restart: unless-stopped
