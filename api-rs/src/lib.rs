@@ -6,5 +6,6 @@ pub mod db;
 pub mod error;
 pub mod filters;
 pub mod pagination;
+pub mod producer;
 pub mod queue_status;
 pub mod tokens;

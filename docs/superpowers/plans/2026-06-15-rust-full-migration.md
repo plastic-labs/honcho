@@ -565,9 +565,31 @@ gate for the message-write API slice.
 
 - [ ] **Step 4: Implement queue producer compatibility**
 
-  Rust API message routes must enqueue the same payloads as Python before public
-  write cutover. Not started — this is the message-write slice and depends on the
-  producer logic documented in the Phase 4 Step 1 reference §5.
+  In progress. The deterministic, DB-free producer core is ported and
+  golden-tested in `api-rs/src/producer.rs` (12 tests validated against captured
+  Python output):
+  - `resolve_configuration` — the `ResolvedConfiguration` hierarchy
+    (defaults → workspace → session → message) with `deep_update` skip-None
+    semantics, `normalize_configuration_dict` legacy `deriver`/`skip_deriver`
+    mapping, Pydantic extra-key dropping, and `exclude_none` serialization
+    (omitted `custom_instructions`). Defaults are the Python globals, hardcoded
+    like the custom-instructions budget (config-driven is a follow-up).
+  - `format_pydantic_datetime` — exact Pydantic v2 `mode="json"` datetime form
+    (`Z` suffix; fractional omitted at 0 µs, else 6 digits).
+  - `effective_observe_me`, `summary_due` — observer/summary selection logic.
+  - `construct_work_unit_key` — all six task-type formats incl. the `"None"`
+    defaults.
+  - `representation_payload` / `summary_payload` / `deletion_payload` — exact
+    payload JSON incl. `exclude_none`.
+
+  **Remaining for Step 4 (route wiring):** the `POST .../messages` handler that
+  inserts messages (per-session advisory lock + `seq_in_session`, `token_count`
+  via `tokens::estimate_tokens`, `created_at`), selects observers from
+  `session_peers`, and inserts the queue rows using the producer functions; plus
+  a contract test comparing persisted messages and queue rows. Embedding rows
+  (`MessageEmbedding`, `EMBED_MESSAGES=true` default, `cl100k_base` chunking) are
+  deferred to Phase 5 — the message-write contract test will run with
+  `EMBED_MESSAGES=false` on both sides until that port lands.
 
 - [x] **Step 5: Run worker tests**
 
