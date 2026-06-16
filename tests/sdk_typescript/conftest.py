@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from uvicorn.config import Config
 from uvicorn.server import Server
 
-from src.dependencies import get_db
+from src.dependencies import get_db, get_read_db
 from src.main import app
 
 
@@ -95,17 +95,33 @@ def ts_test_server(
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
+    # Read-only routes use get_read_db (AUTOCOMMIT engine) in production; in
+    # tests they must resolve to the same per-test database.
+    app.dependency_overrides[get_read_db] = override_get_db
+
+    # No-op the lifespan's startup embedding-schema validator — same
+    # reasoning as the `client` fixture in tests/conftest.py: the module-
+    # level `engine` it inspects points to an unmigrated DB in CI, and the
+    # validator has dedicated coverage in tests/startup/. Use a manual
+    # MonkeyPatch since this fixture is module-scoped (the built-in
+    # `monkeypatch` fixture is function-scoped only).
+    async def _skip_validate(_engine: object) -> None:
+        return None
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr("src.main.validate_embedding_schema", _skip_validate)
 
     # Start the server
     server = TestServer(app, port)
-    server.start()
-
-    yield f"http://127.0.0.1:{port}"
-
-    # Cleanup
-    server.stop()
-    app.dependency_overrides.clear()
-    _ts_session_factory = None
+    try:
+        server.start()
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        # Cleanup
+        server.stop()
+        app.dependency_overrides.clear()
+        _ts_session_factory = None
+        mp.undo()
 
 
 @pytest.fixture(autouse=True)
@@ -120,7 +136,9 @@ def mock_tracked_db(ts_db_session: async_sessionmaker[AsyncSession]):
 
     # Create a tracked_db that uses fresh sessions (not shared)
     @asynccontextmanager
-    async def ts_tracked_db(_: str | None = None):
+    async def ts_tracked_db(_: str | None = None, *, read_only: bool = False):
+        # read_only accepted (and ignored): tests use one per-test database.
+        del read_only
         async with ts_db_session() as session:
             yield session
 

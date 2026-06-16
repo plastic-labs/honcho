@@ -17,7 +17,7 @@ export const WorkspaceIdSchema = z
     /^[a-zA-Z0-9_-]+$/,
     'Workspace ID may only contain letters, numbers, underscores, and hyphens'
   )
-  .max(100, 'Workspace ID can be at most 100 characters')
+  .max(512, 'Workspace ID can be at most 512 characters')
 
 /**
  * Schema for Honcho client configuration options.
@@ -69,7 +69,7 @@ export const PeerIdSchema = z
     /^[a-zA-Z0-9_-]+$/,
     'Peer ID may only contain letters, numbers, underscores, and hyphens'
   )
-  .max(100, 'Peer ID can be at most 100 characters')
+  .max(512, 'Peer ID can be at most 512 characters')
 
 /**
  * Strict helper: peer ID as object.
@@ -152,7 +152,7 @@ export const SessionIdSchema = z
     /^[a-zA-Z0-9_-]+$/,
     'Session ID may only contain letters, numbers, underscores, and hyphens'
   )
-  .max(100, 'Session ID can be at most 100 characters')
+  .max(512, 'Session ID can be at most 512 characters')
 
 /**
  * Strict helper: session ID as object.

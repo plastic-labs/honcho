@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 ModelTransport = Literal["anthropic", "openai", "gemini", "azure_openai"]
 EmbeddingTransport = Literal["openai", "gemini", "azure_openai"]
+EmbeddingDimensionsMode = Literal["auto", "always", "never"]
+
+# OpenAI-compatible models that reject the `dimensions=` request parameter.
+_EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
+    {"text-embedding-ada-002"}
+)
 
 
 def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
@@ -300,6 +306,7 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     model: str = "text-embedding-3-small"
     transport: EmbeddingTransport = "openai"
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
+    dimensions_mode: EmbeddingDimensionsMode = "auto"
 
     @model_validator(mode="before")
     @classmethod
@@ -621,8 +628,9 @@ class DBSettings(HonchoSettings):
     POOL_PRE_PING: bool = True
     POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
     MAX_OVERFLOW: Annotated[int, Field(default=20, ge=0, le=1000)] = 20
-    POOL_TIMEOUT: Annotated[int, Field(default=30, gt=0, le=300)] = (
-        30  # seconds (max 5 minutes)
+    POOL_TIMEOUT: Annotated[int, Field(default=5, gt=0, le=300)] = (
+        5  # seconds a pooled checkout may wait for a free connection (QueuePool
+        # only; NullPool has no local queue wait)
     )
     POOL_RECYCLE: Annotated[int, Field(default=300, gt=0, le=7200)] = (
         300  # seconds (max 2 hours)
@@ -630,6 +638,13 @@ class DBSettings(HonchoSettings):
     POOL_USE_LIFO: bool = True
     SQL_DEBUG: bool = False
     TRACING: bool = False
+
+    # Per-connection establish timeout (seconds) passed to the driver, so a
+    # single connection attempt fails fast instead of hanging when the server or
+    # pooler is unreachable or stalled. Connection acquisition is a single
+    # attempt with no retry; callers handle failure (the API surfaces it, the
+    # deriver backs off and retries on a later poll).
+    CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
 
 class AuthSettings(HonchoSettings):
@@ -664,6 +679,12 @@ class LLMSettings(HonchoSettings):
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
     AZURE_OPENAI_API_KEY: str | None = None
+
+    # Base URLs for LLM providers (for OpenAI-compatible proxies like
+    # OpenRouter, vLLM, Together, Anyscale, self-hosted, etc.)
+    ANTHROPIC_BASE_URL: str | None = None
+    OPENAI_BASE_URL: str | None = None
+    GEMINI_BASE_URL: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
@@ -700,6 +721,9 @@ class EmbeddingSettings(HonchoSettings):
     VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
+    # Caps concurrent message-embedding fan-out on the API request path (the
+    # immediate-embed background task). The reconciler is unaffected.
+    MAX_CONCURRENT_EMBEDDINGS: Annotated[int, Field(default=10, gt=0, le=100)] = 10
 
     @model_validator(mode="before")
     @classmethod
@@ -711,6 +735,23 @@ class EmbeddingSettings(HonchoSettings):
                 cls._MODEL_CONFIG_DEFAULT,
             )
         return data  # pyright: ignore[reportUnknownVariableType]
+
+    def resolve_send_dimensions(self) -> bool:
+        """Decide whether OpenAI embedding calls should forward ``dimensions=``.
+
+        Lives on the settings instance because ``auto`` mode needs access to
+        ``self.model_fields_set`` to tell whether the operator explicitly set
+        ``VECTOR_DIMENSIONS`` — a standalone resolver over
+        ``ConfiguredEmbeddingModelSettings`` cannot see that.
+        """
+        mode = self.MODEL_CONFIG.dimensions_mode
+        if mode == "always":
+            return True
+        if mode == "never":
+            return False
+        if self.MODEL_CONFIG.model in _EMBEDDING_KNOWN_REJECTING_MODELS:
+            return False
+        return "VECTOR_DIMENSIONS" in self.model_fields_set
 
 
 class DeriverSettings(HonchoSettings):
@@ -724,7 +765,34 @@ class DeriverSettings(HonchoSettings):
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
         float, Field(default=1.0, gt=0.0, le=60.0)
     ] = 1.0
+    # Adaptive polling: when the queue is idle (or the loop is erroring) the
+    # sleep interval grows from POLLING_SLEEP_INTERVAL_SECONDS toward
+    # POLLING_SLEEP_MAX_INTERVAL_SECONDS by POLLING_BACKOFF_MULTIPLIER each
+    # cycle, then snaps back to the base interval as soon as work is found.
+    # Reduces steady-state query load against the (shared) DB/pooler.
+    POLLING_BACKOFF_ENABLED: bool = True
+    POLLING_SLEEP_MAX_INTERVAL_SECONDS: Annotated[
+        float, Field(default=30.0, gt=0.0, le=300.0)
+    ] = 30.0
+    POLLING_BACKOFF_MULTIPLIER: Annotated[
+        float, Field(default=2.0, ge=1.0, le=10.0)
+    ] = 2.0
+    # Sleep a uniform-random delay in [0, POLLING_STARTUP_JITTER_SECONDS] before
+    # the first poll so instances that start together don't poll in lockstep.
+    # Set to 0.0 to disable.
+    POLLING_STARTUP_JITTER_SECONDS: Annotated[
+        float, Field(default=30.0, ge=0.0, le=300.0)
+    ] = 30.0
+    # Multiply every poll sleep by a random factor in [1 - ratio, 1 + ratio]
+    # (0.5 -> [0.5x, 1.5x]) so poll loops don't re-converge over time. The
+    # backoff schedule is unchanged; only the returned sleep is scattered. Set
+    # to 0.0 to disable.
+    POLLING_JITTER_RATIO: Annotated[float, Field(default=0.5, ge=0.0, le=1.0)] = 0.5
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
+    # Minimum (jittered) spacing between stale-work-unit cleanup runs
+    STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS: Annotated[
+        float, Field(default=60.0, ge=0.0, le=3600.0)
+    ] = 60.0
 
     # Retention window (seconds) for keeping errored items in the queue
     QUEUE_ERROR_RETENTION_SECONDS: Annotated[
@@ -748,7 +816,10 @@ class DeriverSettings(HonchoSettings):
 
     LOG_OBSERVATIONS: bool = False
 
-    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=25000, gt=0, le=25000)] = 25000
+    MAX_CUSTOM_INSTRUCTIONS_TOKENS: Annotated[
+        int, Field(default=2000, ge=0, le=2000)
+    ] = 2000
 
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
@@ -904,7 +975,7 @@ class DialecticSettings(HonchoSettings):
 
         Iterates over every built-in default level so partial overrides
         (e.g. only setting ``DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT``)
-        don't drop the untouched levels — which would fail
+        don't drop the untouched levels - which would fail
         ``_validate_all_levels_present``.
         """
         if not isinstance(data, dict):
@@ -916,48 +987,51 @@ class DialecticSettings(HonchoSettings):
         if not isinstance(levels_raw, dict):
             return data  # pyright: ignore[reportUnknownVariableType]
         defaults = _default_dialectic_levels()
-        merged: dict[str, Any] = {}
-        for level_name, default_settings in defaults.items():
-            base: dict[str, Any] = default_settings.model_dump(by_alias=True)
-            override_val = levels_raw.get(level_name)
-            if isinstance(override_val, BaseModel):
-                override_val = override_val.model_dump(by_alias=True)
-            if not isinstance(override_val, dict):
-                merged[level_name] = base
-                continue
-            level_override: dict[str, Any] = dict(cast(dict[str, Any], override_val))
-            # Recursively merge nested MODEL_CONFIG / model_config too.
-            # model_dump() always produces the Python field name
-            # ("MODEL_CONFIG"), but TOML overrides arrive as lowercase
-            # ("model_config"). Check both casings in the override and
-            # resolve the base value from whichever casing is present.
-            for mc_key in ("MODEL_CONFIG", "model_config"):
-                if mc_key in level_override and isinstance(
-                    level_override[mc_key], dict
-                ):
-                    base_mc: dict[str, Any] = dict(
-                        base.get("MODEL_CONFIG") or base.get("model_config") or {}
-                    )
-                    override_mc = cast(dict[str, Any], level_override[mc_key])
-                    override_lower = {k.lower(): v for k, v in override_mc.items()}
-                    base_lower = {k.lower(): v for k, v in base_mc.items()}
-                    override_transport = override_lower.get("transport")
-                    base_transport = base_lower.get("transport")
-                    if (
-                        override_transport is not None
-                        and override_transport != base_transport
-                    ):
-                        for k in list(base_mc.keys()):
-                            if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
-                                del base_mc[k]
-                    level_override[mc_key] = {**base_mc, **override_mc}
-            merged[level_name] = {**base, **level_override}
-        # Preserve any unexpected custom level names the caller supplied.
         for level_name_key, level_override_val in levels_raw.items():
             level_name = str(level_name_key)
-            if level_name not in merged:
-                merged[level_name] = level_override_val
-        typed_data["LEVELS"] = merged
+            # Honor programmatic DialecticLevelSettings (BaseModel) overrides by
+            # normalizing to a dict instead of discarding them below.
+            if isinstance(level_override_val, BaseModel):
+                level_override_val = level_override_val.model_dump(by_alias=True)
+            if not isinstance(level_override_val, dict):
+                continue
+            level_override = cast(dict[str, Any], level_override_val)
+            if level_name in defaults:
+                base: dict[str, Any] = defaults[level_name].model_dump(by_alias=True)
+                # Recursively merge nested MODEL_CONFIG / model_config too.
+                # model_dump() always produces the Python field name
+                # ("MODEL_CONFIG"), but TOML overrides arrive as lowercase
+                # ("model_config").  Check both casings in the override and
+                # resolve the base value from whichever casing is present.
+                for mc_key in ("MODEL_CONFIG", "model_config"):
+                    if mc_key in level_override and isinstance(
+                        level_override[mc_key], dict
+                    ):
+                        base_mc: dict[str, Any] = dict(
+                            base.get("MODEL_CONFIG") or base.get("model_config") or {}
+                        )
+                        override_mc = cast(dict[str, Any], level_override[mc_key])
+                        override_lower = {k.lower(): v for k, v in override_mc.items()}
+                        base_lower = {k.lower(): v for k, v in base_mc.items()}
+                        override_transport = override_lower.get("transport")
+                        base_transport = base_lower.get("transport")
+                        if (
+                            override_transport is not None
+                            and override_transport != base_transport
+                        ):
+                            for k in list(base_mc.keys()):
+                                if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
+                                    del base_mc[k]
+                        level_override[mc_key] = {**base_mc, **override_mc}
+                levels_raw[level_name] = {**base, **level_override}
+            else:
+                # Preserve any unexpected custom level names the caller supplied
+                # (normalized to a dict above when passed programmatically).
+                levels_raw[level_name] = level_override
+        # Backfill any reasoning levels the operator didn't explicitly set with the default values.
+        for default_level_name, default_level in defaults.items():
+            if default_level_name not in levels_raw:
+                levels_raw[default_level_name] = default_level.model_dump(by_alias=True)
         return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")
@@ -1065,6 +1139,21 @@ class TelemetrySettings(HonchoSettings):
 
     # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
     NAMESPACE: str | None = None
+
+    # Sample rate for high-volume events: llm.call.completed, embedding.call.completed,
+    # agent.iteration, agent.tool.call.completed. Deterministic on run_id so traces
+    # remain coherent end-to-end. Aggregate envelopes (RepresentationCompleted,
+    # DialecticCompleted, DreamRun, etc.) are NEVER sampled — they're calibration
+    # ground truth.
+    #
+    # Design trade-off: at rate < 1.0, aggregate events still emit but their
+    # high-volume children get dropped. Downstream `JOIN ... ON run_id` queries
+    # will see parents without complete children — this is intentional (the
+    # aggregates carry totals; detail events are best-effort), but consumers
+    # MUST NOT rebuild per-call analytics from the sampled children alone or
+    # they'll undercount. If you tune this below 1.0, audit dashboards/queries
+    # that join high-volume events to aggregate envelopes first.
+    HIGH_VOLUME_SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
 
 
 class CacheSettings(HonchoSettings):
@@ -1254,6 +1343,13 @@ class AppSettings(HonchoSettings):
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 
+    # Origins allowed by the FastAPI CORSMiddleware
+    CORS_ORIGINS: list[str] = [
+        "http://localhost",
+        "http://127.0.0.1:8000",
+        "https://api.honcho.dev",
+    ]
+
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
     REASONING_TRACES_FILE: str | None = None  # Path to JSONL file for reasoning traces
@@ -1291,24 +1387,26 @@ class AppSettings(HonchoSettings):
             self.CACHE.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.VECTOR_STORE.model_fields_set:
             self.VECTOR_STORE.NAMESPACE = self.NAMESPACE
-        if "DIMENSIONS" not in self.VECTOR_STORE.model_fields_set:
-            self.VECTOR_STORE.DIMENSIONS = self.EMBEDDING.VECTOR_DIMENSIONS
-        elif self.VECTOR_STORE.DIMENSIONS != self.EMBEDDING.VECTOR_DIMENSIONS:
-            raise ValueError(
-                "VECTOR_STORE.DIMENSIONS must match EMBEDDING.VECTOR_DIMENSIONS"
+        if "DIMENSIONS" in self.VECTOR_STORE.model_fields_set:
+            # VECTOR_STORE_DIMENSIONS is deprecated: EMBEDDING_VECTOR_DIMENSIONS
+            # is the single source of truth. Log a runtime-visible warning
+            # so operators see it (DeprecationWarning is filtered by Python's
+            # default config outside __main__/tests) and also raise the stdlib
+            # warning so tests can assert on it.
+            import warnings
+
+            message = (
+                "VECTOR_STORE_DIMENSIONS is deprecated; "
+                "EMBEDDING_VECTOR_DIMENSIONS is authoritative. "
+                "Drop VECTOR_STORE_DIMENSIONS from your .env."
             )
+            logger.warning(message)
+            warnings.warn(message, DeprecationWarning, stacklevel=2)
+        self.VECTOR_STORE.DIMENSIONS = self.EMBEDDING.VECTOR_DIMENSIONS
         if "NAMESPACE" not in self.TELEMETRY.model_fields_set:
             self.TELEMETRY.NAMESPACE = self.NAMESPACE
         if "NAMESPACE" not in self.METRICS.model_fields_set:
             self.METRICS.NAMESPACE = self.NAMESPACE
-
-        if self.EMBEDDING.VECTOR_DIMENSIONS != 1536 and (
-            self.VECTOR_STORE.TYPE == "pgvector" or not self.VECTOR_STORE.MIGRATED
-        ):
-            raise ValueError(
-                "EMBEDDING.VECTOR_DIMENSIONS must remain 1536 while pgvector is "
-                + "active or vector-store migration is incomplete"
-            )
 
         return self
 

@@ -97,7 +97,7 @@ class WorkspaceBase(BaseModel):
 class WorkspaceCreate(WorkspaceBase):
     name: Annotated[
         str,
-        Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
+        Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: _SanitizedMetadata = {}
     configuration: WorkspaceConfiguration = Field(
@@ -141,7 +141,7 @@ class PeerBase(BaseModel):
 class PeerCreate(PeerBase):
     name: Annotated[
         str,
-        Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
+        Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: _SanitizedMetadata | None = None
     configuration: dict[str, Any] | None = None
@@ -322,7 +322,7 @@ class SessionBase(BaseModel):
 class SessionCreate(SessionBase):
     name: Annotated[
         str,
-        Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
+        Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: _SanitizedMetadata | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
@@ -681,10 +681,17 @@ class WebhookEndpointCreate(WebhookEndpointBase):
         if parsed.hostname:
             try:
                 ip_address = ipaddress.ip_address(parsed.hostname)
-                if ip_address.is_private:
-                    raise ValueError("Private IP addresses are not allowed")
-            except ValueError:  # Not an IP address, might be a hostname
-                pass
+            except ValueError:  # Not an IP literal — a hostname, leave it alone
+                ip_address = None
+            if ip_address is not None and (
+                ip_address.is_private
+                or ip_address.is_loopback
+                or ip_address.is_link_local
+                or ip_address.is_reserved
+                or ip_address.is_multicast
+                or ip_address.is_unspecified
+            ):
+                raise ValueError("Private/internal IP addresses are not allowed")
 
         return v
 

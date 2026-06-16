@@ -6,9 +6,11 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import require_auth
+from src.telemetry.events import EmbeddingCallPurpose
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,7 @@ async def list_conclusions(
         False,
         description="Whether to reverse the order of results",
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """
     List Conclusions using optional filters, ordered by recency unless `reverse` is true. Results are paginated.
@@ -95,7 +97,7 @@ async def query_conclusions(
         ...,
         description="Semantic search parameters for Conclusions",
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ) -> list[schemas.Conclusion]:
     """
     Query Conclusions using semantic search. Use `top_k` to control the number of results returned.
@@ -111,16 +113,21 @@ async def query_conclusions(
             "observer and observed must be specified for semantic search"
         )
 
-    documents = await crud.query_documents(
-        db,
+    with embedding_call_purpose(
+        EmbeddingCallPurpose.GENERIC_DOCUMENT_SEARCH.value,
         workspace_name=workspace_id,
-        query=body.query,
-        observer=observer,
-        observed=observed,
-        filters=body.filters,
-        max_distance=body.distance,
-        top_k=body.top_k,
-    )
+        parent_category="api",
+    ):
+        documents = await crud.query_documents(
+            db,
+            workspace_name=workspace_id,
+            query=body.query,
+            observer=observer,
+            observed=observed,
+            filters=body.filters,
+            max_distance=body.distance,
+            top_k=body.top_k,
+        )
     return [schemas.Conclusion.model_validate(doc) for doc in documents]
 
 

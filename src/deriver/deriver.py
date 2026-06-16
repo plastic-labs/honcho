@@ -6,10 +6,12 @@ from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.llm import honcho_llm_call
+from src.llm.types import LLMTelemetryContext
 from src.models import Message
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import RepresentationCompletedEvent, emit
+from src.telemetry.events.llm import CallPurpose
 from src.telemetry.logging import accumulate_metric, log_performance_metrics
 from src.telemetry.prometheus.metrics import (
     DeriverComponents,
@@ -22,7 +24,7 @@ from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.tokens import track_deriver_input_tokens
 
-from .prompts import estimate_minimal_deriver_prompt_tokens, minimal_deriver_prompt
+from .prompts import estimate_deriver_prompt_tokens, minimal_deriver_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,9 @@ async def process_representation_tasks_batch(
     observers: list[str],
     observed: str,
     queue_item_message_ids: list[int],
+    hit_batch_token_cap: bool = False,
+    was_flush_enabled: bool = False,
+    batch_max_tokens: int = 0,
 ) -> None:
     """
     Process messages with minimal overhead - single LLM call, save to multiple collections.
@@ -49,6 +54,9 @@ async def process_representation_tasks_batch(
         observers: List of observer peer IDs (collections to save to).
         observed: The observed peer ID.
         queue_item_message_ids: Message IDs from queue items being processed
+        hit_batch_token_cap: queue batcher clamped this batch to fit
+        was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
     """
     if not messages:
         return
@@ -78,6 +86,8 @@ async def process_representation_tasks_batch(
     if message_level_configuration.reasoning.enabled is False:
         return
 
+    custom_instructions = message_level_configuration.reasoning.custom_instructions
+
     accumulate_metric(
         f"minimal_deriver_{latest_message.id}_{observed}",
         "starting_message_id",
@@ -98,7 +108,7 @@ async def process_representation_tasks_batch(
     )
 
     # Track token usage - count only tokens from messages being processed
-    prompt_tokens = estimate_minimal_deriver_prompt_tokens()
+    prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions)
     queue_item_message_ids_set = set(queue_item_message_ids)
     messages_tokens = sum(
         msg.token_count for msg in messages if msg.id in queue_item_message_ids_set
@@ -112,7 +122,11 @@ async def process_representation_tasks_batch(
     )
 
     # Build prompt
-    prompt = minimal_deriver_prompt(peer_id=observed, messages=formatted_messages)
+    prompt = minimal_deriver_prompt(
+        peer_id=observed,
+        messages=formatted_messages,
+        custom_instructions=custom_instructions,
+    )
 
     context_prep_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
@@ -140,6 +154,12 @@ async def process_representation_tasks_batch(
         enable_retry=True,
         retry_attempts=3,
         trace_name="minimal_deriver",
+        telemetry=LLMTelemetryContext(
+            workspace_name=latest_message.workspace_name,
+            call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
+            parent_category="representation",
+            observed=observed,
+        ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
 
@@ -169,6 +189,7 @@ async def process_representation_tasks_batch(
         latest_message.created_at,
     )
 
+    successful_observer_count = 0
     if observations.is_empty() or not message_ids:
         logger.warning(
             "Deriver generated zero observations for messages %s:%s in %s/%s!",
@@ -194,6 +215,7 @@ async def process_representation_tasks_batch(
                     latest_message.created_at,
                     message_level_configuration,
                 )
+                successful_observer_count += 1
             except Exception as e:
                 logger.error(
                     "Failed to save representation for observer %s: %s", observer, e
@@ -228,11 +250,38 @@ async def process_representation_tasks_batch(
         accumulate_metric(
             f"minimal_deriver_{latest_message.id}_{observed}",
             "explicit_observations",
-            "\n".join(f"  • {obs}" for obs in observations.explicit),
+            "\n".join(f" • {obs}" for obs in observations.explicit),
             "blob",
         )
 
     log_performance_metrics("minimal_deriver", f"{latest_message.id}_{observed}")
+
+    # token-breakdown fields derived from messages + cap snapshots.
+    queued_message_count = len(queue_item_message_ids)
+    prompt_message_count = len(messages)
+    prompt_message_tokens = sum(msg.token_count for msg in messages)
+    extra_context_message_count = max(prompt_message_count - queued_message_count, 0)
+    extra_context_tokens = max(prompt_message_tokens - messages_tokens, 0)
+
+    # Data-quality invariants. Best-effort — telemetry never bleeds into the
+    # deriver path — but log loudly when violated so analytics alerting catches
+    # silent estimator failures (provider tokenization drift, scaffold helper
+    # returning 0) at the source instead of as drift in BigQuery later.
+    if response.input_tokens < messages_tokens:
+        logger.warning(
+            "token-breakdown invariant violated: response.input_tokens (%d) < messages_tokens (%d) for observed=%s, latest=%s — provider tokenization drift or wrong messages_tokens computation?",
+            response.input_tokens,
+            messages_tokens,
+            observed,
+            latest_message.public_id,
+        )
+    if prompt_tokens <= 0:
+        logger.warning(
+            "prompt_scaffold_tokens estimated as %d for observed=%s, latest=%s — estimate_deriver_prompt_tokens may have failed silently",
+            prompt_tokens,
+            observed,
+            latest_message.public_id,
+        )
 
     # Emit telemetry event
     emit(
@@ -249,6 +298,20 @@ async def process_representation_tasks_batch(
             llm_call_ms=llm_duration,
             total_duration_ms=overall_duration,
             input_tokens=messages_tokens,
+            total_input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
+            # additive fields
+            queued_message_count=queued_message_count,
+            prompt_message_count=prompt_message_count,
+            prompt_message_tokens=prompt_message_tokens,
+            extra_context_message_count=extra_context_message_count,
+            extra_context_tokens=extra_context_tokens,
+            prompt_scaffold_tokens=prompt_tokens,
+            batch_max_tokens=batch_max_tokens,
+            max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
+            was_flush_enabled=was_flush_enabled,
+            hit_batch_token_cap=hit_batch_token_cap,
+            hit_input_token_cap=response.hit_input_token_cap,
+            observer_count=successful_observer_count,
         )
     )

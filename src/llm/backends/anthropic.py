@@ -34,11 +34,7 @@ class AnthropicBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        del max_output_tokens
-        if thinking_effort is not None:
-            raise ValueError(
-                "Anthropic backend does not support thinking_effort; use thinking_budget_tokens instead"
-            )
+        del max_output_tokens, thinking_effort
 
         request_messages, system_messages = self._extract_system(messages)
         params: dict[str, Any] = {
@@ -123,11 +119,7 @@ class AnthropicBackend:
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         is_json_mode = self._json_mode(extra_params)
-        del max_output_tokens
-        if thinking_effort is not None:
-            raise ValueError(
-                "Anthropic backend does not support thinking_effort; use thinking_budget_tokens instead"
-            )
+        del max_output_tokens, thinking_effort
 
         request_messages, system_messages = self._extract_system(messages)
         params: dict[str, Any] = {

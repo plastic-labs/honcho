@@ -1,3 +1,4 @@
+import datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -123,6 +124,135 @@ async def test_get_all_workspaces_with_null_filter(client: TestClient):
     data = response.json()
     assert "items" in data
     assert isinstance(data["items"], list)
+
+
+@pytest.mark.asyncio
+async def test_get_all_workspaces_with_reverse(client: TestClient):
+    """Test workspace listing with reverse creation-time ordering."""
+    first_name = f"reverse-workspace-{generate_nanoid()}"
+    second_name = f"reverse-workspace-{generate_nanoid()}"
+
+    first_response = client.post(
+        "/v3/workspaces",
+        json={"name": first_name, "metadata": {"reverse_group": first_name}},
+    )
+    assert first_response.status_code in [200, 201]
+
+    second_response = client.post(
+        "/v3/workspaces",
+        json={"name": second_name, "metadata": {"reverse_group": first_name}},
+    )
+    assert second_response.status_code in [200, 201]
+
+    normal_response = client.post(
+        "/v3/workspaces/list",
+        json={"filters": {"metadata": {"reverse_group": first_name}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        "/v3/workspaces/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": first_name}}},
+    )
+    assert reverse_response.status_code == 200
+
+    assert [item["id"] for item in normal_response.json()["items"]] == [
+        first_name,
+        second_name,
+    ]
+    assert [item["id"] for item in reverse_response.json()["items"]] == [
+        second_name,
+        first_name,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_all_workspaces_reverse_uses_id_tiebreaker(
+    client: TestClient, db_session: AsyncSession
+):
+    """Workspaces with identical created_at fall back to ordering by id (nanoid PK)."""
+    reverse_group = f"tiebreaker-{generate_nanoid()}"
+    shared_created_at = datetime.datetime(
+        2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
+    )
+
+    low_id = "A" * 21
+    high_id = "z" * 21
+    low_name = f"tie-low-{generate_nanoid()}"
+    high_name = f"tie-high-{generate_nanoid()}"
+
+    db_session.add(
+        models.Workspace(
+            id=low_id,
+            name=low_name,
+            created_at=shared_created_at,
+            h_metadata={"reverse_group": reverse_group},
+        )
+    )
+    db_session.add(
+        models.Workspace(
+            id=high_id,
+            name=high_name,
+            created_at=shared_created_at,
+            h_metadata={"reverse_group": reverse_group},
+        )
+    )
+    await db_session.commit()
+
+    normal_response = client.post(
+        "/v3/workspaces/list",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert normal_response.status_code == 200
+
+    reverse_response = client.post(
+        "/v3/workspaces/list?reverse=true",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert reverse_response.status_code == 200
+
+    normal_items = [item["id"] for item in normal_response.json()["items"]]
+    reverse_items = [item["id"] for item in reverse_response.json()["items"]]
+
+    # When created_at ties, ordering falls back to the nanoid id: low_id < high_id
+    # lexicographically, so the workspace with id="AAA..." sorts first ascending.
+    assert normal_items == [low_name, high_name]
+    assert reverse_items == [high_name, low_name]
+
+
+@pytest.mark.asyncio
+async def test_get_all_workspaces_reverse_with_pagination(client: TestClient):
+    """Paged reverse listing returns newest-first across consecutive pages."""
+    reverse_group = f"paged-reverse-{generate_nanoid()}"
+    names = [f"paged-reverse-{i}-{generate_nanoid()}" for i in range(3)]
+
+    for name in names:
+        response = client.post(
+            "/v3/workspaces",
+            json={"name": name, "metadata": {"reverse_group": reverse_group}},
+        )
+        assert response.status_code in [200, 201]
+
+    page_one = client.post(
+        "/v3/workspaces/list?reverse=true&page=1&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_one.status_code == 200
+    page_two = client.post(
+        "/v3/workspaces/list?reverse=true&page=2&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_two.status_code == 200
+    page_three = client.post(
+        "/v3/workspaces/list?reverse=true&page=3&size=1",
+        json={"filters": {"metadata": {"reverse_group": reverse_group}}},
+    )
+    assert page_three.status_code == 200
+
+    assert page_one.json()["total"] == 3
+    assert [item["id"] for item in page_one.json()["items"]] == [names[2]]
+    assert [item["id"] for item in page_two.json()["items"]] == [names[1]]
+    assert [item["id"] for item in page_three.json()["items"]] == [names[0]]
 
 
 def test_update_workspace(client: TestClient, sample_data: tuple[Workspace, Peer]):
