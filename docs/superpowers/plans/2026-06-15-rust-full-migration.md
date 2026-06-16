@@ -488,7 +488,8 @@ started.
 
 ## Phase 4: Queue Producer And Worker Runtime
 
-**Status:** Not started.
+**Status:** In progress. Step 1 (schema/state-transition extraction) is complete;
+implementation steps not started.
 
 **Goal:** Move queue production and consumption to Rust without changing task ordering or retry semantics.
 
@@ -514,9 +515,20 @@ started.
 - Create later: `worker-rs/tests/`
 - Modify later: `docker-compose-rs.yml.example`
 
-- [ ] **Step 1: Document queue item schema and state transitions**
+- [x] **Step 1: Document queue item schema and state transitions**
 
-  Extract exact payload fields from `src/schemas/internal.py` and queue state changes from `src/deriver/queue_manager.py`.
+  Done. See `docs/superpowers/plans/2026-06-16-rust-queue-schema-reference.md`
+  for the authoritative extraction: the `queue` + `active_queue_sessions` table
+  schemas (no `status` column — state is `(processed, error)` + AQS existence),
+  the six `task_type` values and their `work_unit_key` formats, the per-task
+  payload shapes (with `exclude_none` / `mode="json"` serialization rules), the
+  producer flow (observer selection + summary thresholds), the full consumer
+  state machine (claim via unique-`work_unit_key` `ON CONFLICT DO NOTHING`,
+  complete, error-marks-only-first-item, stale recovery via `FOR UPDATE SKIP
+  LOCKED`), representation token-batching, dedup indexes, the per-session
+  advisory lock for message sequencing, the behavior-affecting `DERIVER.*`
+  config defaults, a mapping to Step 2's required test states, and a port-gotchas
+  checklist for `worker-rs`.
 
 - [ ] **Step 2: Add Rust worker tests for claim, retry, completion, and stale cleanup**
 
