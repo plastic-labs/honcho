@@ -82,8 +82,8 @@ the deferred message-write slice.
 | Peer card routes | FastAPI authoritative | Read-only get implemented | Partial / in progress | Sidecar only; peer-card writes remain Python only |
 | Key routes | FastAPI authoritative | `POST /v3/keys` implemented | Rust contract-tested; Python/Rust focused test added and DB-gated | Sidecar only |
 | Webhook routes | FastAPI authoritative | Read-only list implemented | Partial / in progress | Sidecar only; create/delete/test remain Python only |
-| Queue enqueue paths | Python authoritative | Not implemented | Not started | Python only |
-| Deriver worker | Python authoritative | Not implemented | Not started | Python only |
+| Queue enqueue paths | Python authoritative | Not implemented | Not started | Python only; Rust producer parity is Phase 4 Step 4 |
+| Deriver worker | Python authoritative | `worker-rs` crate with claim/complete/error/stale primitives + no-op consumer; queue schema documented | Partial / in progress | No-op consumer only; real task handlers (Phase 5) and producer (Step 4) not started; not run against shared queues |
 | Reconciler worker | Python authoritative | Not implemented | Not started | Python only |
 | Summarizer | Python authoritative | Not implemented | Not started | Python only |
 | Dreamer | Python authoritative | Not implemented | Not started | Python only |
@@ -117,7 +117,7 @@ Use this layout only when the number of Rust crates makes the current standalone
 honcho-rs/
 ├── api-rs/                 # Axum HTTP service; already exists
 ├── mcp-rs/                 # Existing Rust MCP crate; already exists
-├── worker-rs/              # Future queue consumer, reconciler, deriver, summarizer, dreamer
+├── worker-rs/              # Queue worker; exists (no-op consumer milestone). Reconciler, deriver, summarizer, dreamer to come
 ├── crates/
 │   ├── honcho-config/      # Shared env/config parsing
 │   ├── honcho-auth/        # Shared JWT and auth scope logic
@@ -488,8 +488,11 @@ started.
 
 ## Phase 4: Queue Producer And Worker Runtime
 
-**Status:** In progress. Step 1 (schema/state-transition extraction) is complete;
-implementation steps not started.
+**Status:** In progress. Steps 1–3 and 5 complete: the schema/state-transition
+extraction, the `worker-rs` crate with claim/complete/error/stale primitives, the
+no-op consumer, and the DB-backed worker test suite (14 tests) all landed. Step 4
+(Rust producer / message-write enqueue parity) is the remaining piece and is the
+gate for the message-write API slice.
 
 **Goal:** Move queue production and consumption to Rust without changing task ordering or retry semantics.
 
@@ -530,36 +533,49 @@ implementation steps not started.
   config defaults, a mapping to Step 2's required test states, and a port-gotchas
   checklist for `worker-rs`.
 
-- [ ] **Step 2: Add Rust worker tests for claim, retry, completion, and stale cleanup**
+- [x] **Step 2: Add Rust worker tests for claim, retry, completion, and stale cleanup**
 
-  Tests must cover:
+  Done. `worker-rs/tests/queue.rs` covers all required transitions against a real
+  Postgres (gated on `HONCHO_WORKER_RS_TEST_DATABASE_URL`, each test in its own
+  isolated schema):
 
   ```text
-  pending -> processing
-  processing -> completed
-  processing -> failed with retry
-  stale processing -> pending
-  workspace/session ordering
+  pending -> processing            claim_creates_active_session
+                                   claim_is_exclusive_per_work_unit
+  processing -> completed          mark_processed_completes_item
+  processing -> failed with retry  error_marks_only_first_item (rest stay pending)
+  stale processing -> pending      stale_cleanup_returns_unit_to_pending
+  workspace/session ordering       next_item_is_fifo_by_id
+  (release semantics)              release_is_idempotent
   ```
 
-- [ ] **Step 3: Implement Rust queue consumer without LLM work**
+- [x] **Step 3: Implement Rust queue consumer without LLM work**
 
-  First worker milestone must claim and complete no-op tasks in fixture data.
+  Done. `worker-rs` crate scaffolded (`config.rs`, `queue.rs`, `consumer.rs`,
+  `main.rs`). `queue.rs` implements the claim/next/complete/error/release/stale
+  primitives from the Phase 4 Step 1 reference. `consumer.rs` provides the no-op
+  `drain_work_unit` / `run_once`: claim up to `DERIVER.WORKERS` units and mark
+  every pending item processed without doing real work. Covered by
+  `drain_work_unit_processes_all_and_releases`, `run_once_drains_multiple_units`,
+  and `run_once_respects_worker_limit`. A `Dockerfile` + opt-in `rust-worker`
+  Compose profile exist (heavily caveated: the no-op consumer marks items
+  processed without doing the work, so it must never run against a shared queue
+  alongside the Python deriver). The representation token-batching claim gate is
+  intentionally deferred to Phase 5.
 
 - [ ] **Step 4: Implement queue producer compatibility**
 
-  Rust API message routes must enqueue the same payloads as Python before public write cutover.
+  Rust API message routes must enqueue the same payloads as Python before public
+  write cutover. Not started — this is the message-write slice and depends on the
+  producer logic documented in the Phase 4 Step 1 reference §5.
 
-- [ ] **Step 5: Run worker tests**
+- [x] **Step 5: Run worker tests**
 
-  Run:
-
-  ```bash
-  rtk cargo test --manifest-path worker-rs/Cargo.toml
-  rtk uv run pytest tests/deriver/
-  ```
-
-  Expected: Rust queue behavior matches Python queue behavior for database state transitions.
+  `HONCHO_WORKER_RS_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres
+  rtk cargo test --manifest-path worker-rs/Cargo.toml` passed with 14 tests
+  (4 config unit + 10 DB state-transition). `docker build worker-rs` passed.
+  `tests/deriver/` (Python) is left as the producer-parity reference for Step 4;
+  no Rust producer exists to compare yet.
 
 - [ ] **Step 6: Commit queue runtime**
 
@@ -1113,7 +1129,9 @@ implementation steps not started.
 - [ ] Shared Rust crates extracted only when justified.
 - [ ] Write routes implemented behind a disabled-by-default gate.
 - [ ] Queue producer parity complete.
-- [ ] Rust worker runtime complete.
+- [ ] Rust worker runtime complete. (Scaffolded: `worker-rs` no-op consumer +
+      claim/complete/error/stale primitives with 14 DB-backed tests; real task
+      handlers and producer parity remain.)
 - [ ] Deriver parity complete.
 - [ ] Summarizer parity complete.
 - [ ] Reconciler parity complete.

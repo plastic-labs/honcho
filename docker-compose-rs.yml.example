@@ -111,6 +111,31 @@ services:
       - CACHE_NAMESPACE=${CACHE_NAMESPACE:-}
     restart: unless-stopped
 
+  # Experimental Rust queue worker (no-op consumer milestone).
+  #
+  # !!! SAFETY: this consumer CLAIMS and COMPLETES real queue items WITHOUT
+  # doing the actual work (it just marks them processed). Running it against a
+  # shared queue alongside the Python deriver will SILENTLY DROP memory-formation
+  # work (representation/summary/etc.). It is for ISOLATED state-machine
+  # validation only. Do NOT enable it in any environment whose queue you care
+  # about, and never run it at the same time as the Python deriver on the same
+  # database. It is opt-in via the "rust-worker" profile and off by default.
+  worker-rs:
+    profiles: ["rust-worker"]
+    build:
+      context: ./worker-rs
+      dockerfile: Dockerfile
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - DB_SCHEMA=${DB_SCHEMA:-public}
+      - DERIVER__WORKERS=${DERIVER__WORKERS:-1}
+      - DERIVER__STALE_SESSION_TIMEOUT_MINUTES=${DERIVER__STALE_SESSION_TIMEOUT_MINUTES:-5}
+      - RUST_LOG=${RUST_LOG:-info}
+    restart: unless-stopped
+
   database:
     image: pgvector/pgvector:pg15
     restart: unless-stopped
