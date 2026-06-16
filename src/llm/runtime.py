@@ -23,6 +23,7 @@ from src.config import (
     resolve_model_config,
     settings,
 )
+from src.telemetry.langfuse_context import filter_honcho_langfuse_metadata
 
 from .registry import backend_for_provider, client_for_model_config
 from .types import ProviderClient, ReasoningEffortType
@@ -43,9 +44,13 @@ def _langfuse_trace_metadata(metadata: dict[str, Any] | None) -> dict[str, str] 
     if not metadata:
         return None
 
+    safe_metadata = filter_honcho_langfuse_metadata(metadata)
+    if not safe_metadata:
+        return None
+
     trace_metadata = {
         key: value
-        for key, value in metadata.items()
+        for key, value in safe_metadata.items()
         if isinstance(value, str) and len(value) <= 200
     }
     return trace_metadata or None
@@ -74,7 +79,9 @@ def update_current_langfuse_observation(
             "model": model,
         }
         if metadata:
-            span_metadata.update(metadata)
+            safe_metadata = filter_honcho_langfuse_metadata(metadata)
+            if safe_metadata:
+                span_metadata.update(safe_metadata)
 
         span_update_kwargs: dict[str, Any] = {"metadata": span_metadata}
         if name is not None:

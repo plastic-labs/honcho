@@ -1,6 +1,6 @@
 import logging
 from collections.abc import AsyncGenerator, Callable
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -30,10 +30,12 @@ from sqlalchemy_utils import (
 
 from src import models
 from src.cache.client import cache
-from src.config import settings
+from src.config import ModelConfig, settings
 from src.db import Base
 from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
+from src.llm.runtime import AttemptPlan
+from src.llm.types import ProviderClient
 from src.main import app
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_admin_jwt, create_jwt
@@ -101,6 +103,26 @@ def _get_nodeid(request: pytest.FixtureRequest) -> str:
     node = getattr(request, "node", None)
     nodeid = getattr(node, "nodeid", "")
     return nodeid if isinstance(nodeid, str) else ""
+
+
+@pytest.fixture
+def model_config() -> ModelConfig:
+    return ModelConfig(model="gpt-4o-mini", transport="openai")
+
+
+@pytest.fixture
+def attempt_plan(model_config: ModelConfig) -> AttemptPlan:
+    return AttemptPlan(
+        provider="openai",
+        model="gpt-4o-mini",
+        client=cast(ProviderClient, object()),
+        thinking_budget_tokens=None,
+        reasoning_effort=None,
+        selected_config=model_config,
+        attempt=1,
+        retry_attempts=1,
+        is_fallback=False,
+    )
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

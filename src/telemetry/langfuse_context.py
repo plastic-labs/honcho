@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
 HonchoLangfuseOperation = Literal[
@@ -15,6 +15,35 @@ HonchoLangfuseOperation = Literal[
 
 _METADATA_SCHEMA_VERSION = "v1"
 _MAX_LIST_ITEMS = 25
+_STRING_METADATA_KEYS = frozenset(
+    {
+        "honcho_metadata_schema_version",
+        "component",
+        "subsystem",
+        "honcho_operation",
+        "honcho_workspace_id",
+        "honcho_session_id",
+        "honcho_observer_peer",
+        "honcho_observed_peer",
+        "honcho_reasoning_level",
+        "honcho_run_id",
+        "honcho_latest_message_public_id",
+        "tenant_user_id",
+        "tenant_platform",
+    }
+)
+_STRING_LIST_METADATA_KEYS = frozenset(
+    {
+        "honcho_observer_peers",
+        "honcho_message_public_ids",
+    }
+)
+_INT_METADATA_KEYS = frozenset(
+    {
+        "honcho_message_count",
+        "honcho_queue_item_count",
+    }
+)
 _SECRET_PATTERNS = (
     re.compile(r"\bbearer\s+\S+", re.IGNORECASE),
     re.compile(r"\b(?:sk|pk)-[A-Za-z0-9][A-Za-z0-9_-]*\b"),
@@ -78,6 +107,42 @@ def derive_tenant_user_id(
 
     tenant_user_id = safe_workspace.removeprefix(safe_prefix).strip()
     return _safe_string(tenant_user_id)
+
+
+def filter_honcho_langfuse_metadata(
+    metadata: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Filter arbitrary metadata down to Honcho's safe Langfuse allowlist."""
+    if not metadata:
+        return None
+
+    filtered: dict[str, Any] = {}
+
+    for key in _STRING_METADATA_KEYS:
+        value = metadata.get(key)
+        if not isinstance(value, str):
+            continue
+        safe = _safe_string(value)
+        if safe is not None:
+            filtered[key] = safe
+
+    for key in _STRING_LIST_METADATA_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, (str, Mapping)) or not isinstance(value, Iterable):
+            continue
+        safe_values = _safe_string_list(item for item in value if isinstance(item, str))
+        if safe_values is not None:
+            filtered[key] = safe_values
+
+    for key in _INT_METADATA_KEYS:
+        value = metadata.get(key)
+        if not isinstance(value, int):
+            continue
+        safe = _safe_int(value)
+        if safe is not None:
+            filtered[key] = safe
+
+    return filtered or None
 
 
 def build_honcho_langfuse_metadata(

@@ -1,32 +1,12 @@
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
 from src.config import ModelConfig, ModelTransport
 from src.llm.api import honcho_llm_call
 from src.llm.runtime import AttemptPlan
-from src.llm.types import HonchoLLMCallResponse, ProviderClient
-
-
-@pytest.fixture
-def model_config() -> ModelConfig:
-    return ModelConfig(model="gpt-4o-mini", transport="openai")
-
-
-@pytest.fixture
-def attempt_plan(model_config: ModelConfig) -> AttemptPlan:
-    return AttemptPlan(
-        provider="openai",
-        model="gpt-4o-mini",
-        client=cast(ProviderClient, object()),
-        thinking_budget_tokens=None,
-        reasoning_effort=None,
-        selected_config=model_config,
-        attempt=1,
-        retry_attempts=1,
-        is_fallback=False,
-    )
+from src.llm.types import HonchoLLMCallResponse
 
 
 def _plan_attempt_stub(attempt_plan: AttemptPlan) -> Callable[..., AttemptPlan]:

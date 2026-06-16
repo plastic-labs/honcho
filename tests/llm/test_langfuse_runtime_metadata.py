@@ -158,6 +158,52 @@ def test_update_current_langfuse_observation_merges_span_metadata_and_updates_tr
     ]
 
 
+def test_update_current_langfuse_observation_filters_unapproved_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = FakeLangfuseClient()
+    monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setattr(settings, "NAMESPACE", "honcho-test")
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "langfuse",
+        _fake_langfuse_module(fake_client),
+    )
+
+    update_current_langfuse_observation(
+        "openai",
+        "openai/gpt-4o-mini",
+        metadata={
+            "honcho_operation": "dialectic_chat",
+            "honcho_workspace_id": "acme-user-123",
+            "password": "super-secret",
+            "headers": {"authorization": "Bearer secret-token"},
+            "tenant_user_id": "Bearer secret-token",
+        },
+        trace_user_id="user-123",
+    )
+
+    span_metadata = fake_client.span_calls[0]["metadata"]
+    assert span_metadata == {
+        "namespace": "honcho-test",
+        "provider": "openai",
+        "model": "openai/gpt-4o-mini",
+        "honcho_operation": "dialectic_chat",
+        "honcho_workspace_id": "acme-user-123",
+    }
+    assert fake_client.propagate_calls == [
+        {
+            "user_id": "user-123",
+            "session_id": None,
+            "tags": None,
+            "metadata": {
+                "honcho_operation": "dialectic_chat",
+                "honcho_workspace_id": "acme-user-123",
+            },
+        }
+    ]
+
+
 def test_update_current_langfuse_observation_keeps_existing_behavior_without_new_args(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

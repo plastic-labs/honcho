@@ -79,19 +79,21 @@ def test_build_deriver_langfuse_metadata_uses_public_ids_and_omits_content(
 
 def test_build_deriver_langfuse_metadata_bounds_and_sanitizes_lists() -> None:
     messages = [_message(message_id=i, public_id=f"msg-public-{i}") for i in range(30)]
-    messages.append(_message(message_id=31, public_id="Bearer secret-token"))
+    messages[3] = _message(message_id=3, public_id="Bearer secret-token")
 
     metadata, _ = _build_deriver_langfuse_metadata(
         messages=_messages_for_helper(messages),
         observers=["acme", "lf_sk_secret"],
         observed="user-123",
-        queue_item_message_ids=list(range(31)),
+        queue_item_message_ids=list(range(30)),
     )
 
     assert metadata["honcho_observer_peers"] == ["acme"]
     assert metadata["honcho_message_public_ids"] == [
-        f"msg-public-{i}" for i in range(25)
+        *(f"msg-public-{i}" for i in range(3)),
+        *(f"msg-public-{i}" for i in range(4, 26)),
     ]
+    assert len(metadata["honcho_message_public_ids"]) == 25
     assert "Bearer secret-token" not in str(metadata)
     assert "lf_sk_secret" not in str(metadata)
 
