@@ -920,6 +920,8 @@ class DialecticSettings(HonchoSettings):
         for level_name, default_settings in defaults.items():
             base: dict[str, Any] = default_settings.model_dump(by_alias=True)
             override_val = levels_raw.get(level_name)
+            if isinstance(override_val, BaseModel):
+                override_val = override_val.model_dump(by_alias=True)
             if not isinstance(override_val, dict):
                 merged[level_name] = base
                 continue
