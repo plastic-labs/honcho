@@ -41,11 +41,19 @@
 - Current guarded session delete slice: `DELETE /v3/workspaces/{workspace_id}/sessions/{session_id}` is implemented behind `RUST_API_ENABLE_WRITES=false` by default. The Rust route mirrors the Python HTTP route's fast path, not the worker hard-delete path: it requires an active session, sets `sessions.is_active=false`, inserts a `queue` row with `task_type='deletion'`, `work_unit_key='deletion:{workspace}:session:{session}'`, `session_id=NULL`, `message_id=NULL`, and payload including `task_type`, `deletion_type`, and `resource_id`, returns `202 {"message":"Session deleted successfully"}`, invalidates the Python session value cache key, and returns Python-compatible `404` for missing or inactive sessions. The asynchronous hard delete of messages, message embeddings, documents, session peers, and the session row remains Python-worker owned until the Rust worker migration phase. `rtk cargo test --manifest-path api-rs/Cargo.toml` passed with 65 tests; focused delete-session contract tests passed with 2 tests; `DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres rtk uv run pytest tests/rust_api/ tests/routes/test_workspaces.py tests/routes/test_peers.py tests/routes/test_sessions.py` passed with 157 tests.
 - Current guarded-write blocker: broader Python cache parity is not complete for all cached resources. Peer writes, session create/update, and session membership writes now have best-effort Rust invalidation, but workspace cache behavior, cache warming, collection cache behavior, and all future write routes still need cache-specific parity before mixed Python/Rust traffic.
 
-**Known guarded-write limitation:** `WorkspaceConfiguration.reasoning.custom_instructions`
-token-budget validation is still not full Rust/Python parity. Python uses
-`tiktoken` with `o200k_base`; the Rust sidecar currently uses a conservative
-local guard and remains blocked from cutover for this field until an exact Rust
-tokenizer strategy is added and contract-tested.
+**Resolved (2026-06-16):** `WorkspaceConfiguration.reasoning.custom_instructions`
+token-budget validation now has exact Rust/Python parity. The Rust sidecar uses
+`tiktoken-rs`' bundled `o200k_base` ranks via `api-rs/src/tokens.rs`
+(`estimate_tokens`, mirroring Python `src/utils/tokens.py`), replacing the old
+`max(words, chars/4)` heuristic in `validate_custom_instructions`. Parity is
+contract-tested at the 2000-token boundary, including the two cases the old
+heuristic got wrong: a high-character/low-token string the char heuristic
+over-counted (accepted by both now) and a single-"word"/high-token string the
+whitespace heuristic under-counted (rejected by both now). The token budget
+itself is still hardcoded to the Python default (2000); making it read
+`DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS` is a separate, smaller change. This same
+`tokens::estimate_tokens` is the prerequisite for message `token_count` parity in
+the deferred message-write slice.
 
 ## Status Matrix
 
@@ -367,8 +375,15 @@ not rejoin left memberships, missing peer/session `404` parity, and
 observer-limit enforcement. Rust still rejects embedded session peer
 membership payloads on session create/update until those code paths support the
 same semantics. Exact
-`WorkspaceConfiguration.reasoning.custom_instructions` token-budget parity is
-still blocked on a Rust `o200k_base` tokenizer strategy. Peer write shadow now
+`WorkspaceConfiguration.reasoning.custom_instructions` token-budget parity is now
+implemented via `tiktoken-rs` `o200k_base` in `api-rs/src/tokens.rs` and
+boundary-contract-tested (see Resolved note above).
+
+Message creation remains deferred (Phase 3 Step 3 / Phase 4): it is queue-coupled
+(enqueue payloads + queue rows) and has two further parity dependencies — the now
+available `tokens::estimate_tokens` for `token_count`, and `EMBED_MESSAGES=true`
+(default) which writes `MessageEmbedding` pending rows via Python's chunking that
+must be ported before persisted-row parity is possible. Peer write shadow now
 best-effort invalidates Python's peer value cache key after successful Rust
 create/update when cache is enabled. Session write shadow similarly deletes the
 Python session value cache key after successful Rust session writes, but does

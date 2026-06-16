@@ -721,6 +721,51 @@ def test_workspace_update_validation_matches_fastapi(
         assert rust_response.json() == python_response.json()
 
 
+def test_custom_instructions_token_budget_matches_fastapi(
+    client: TestClient,
+    rust_api_writes_url: str,
+):
+    marker = generate_nanoid()
+    # Exact o200k_base token counts (DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2000):
+    #   "word " * 1999 -> 2000 tokens   (accepted; exactly at the budget)
+    #   "word " * 2000 -> 2001 tokens   (rejected; one over)
+    #   "a" * 8400     -> 1050 tokens   (accepted; 2100 chars/4 — the old
+    #                                    character heuristic wrongly rejected it)
+    #   "日本語" * 1001 -> 2002 tokens  (rejected; one "word" — the old
+    #                                    whitespace heuristic wrongly accepted it)
+    cases: list[tuple[str, str, bool]] = [
+        ("budget-exact", "word " * 1999, True),
+        ("over-budget", "word " * 2000, False),
+        ("dense-chars", "a" * 8400, True),
+        ("dense-tokens", "日本語" * 1001, False),
+    ]
+
+    for index, (label, text, should_accept) in enumerate(cases):
+        python_workspace = f"rust-contract-python-ci-{label}-{marker}-{index}"
+        rust_workspace = f"rust-contract-rust-ci-{label}-{marker}-{index}"
+        body = {"configuration": {"reasoning": {"custom_instructions": text}}}
+
+        python_response = client.post(
+            "/v3/workspaces", json={"name": python_workspace, **body}
+        )
+        rust_response = httpx.post(
+            f"{rust_api_writes_url}/v3/workspaces",
+            json={"name": rust_workspace, **body},
+            timeout=5,
+        )
+
+        if should_accept:
+            assert python_response.status_code in (200, 201)
+            assert rust_response.status_code == python_response.status_code
+            assert (
+                rust_response.json()["configuration"]
+                == python_response.json()["configuration"]
+            )
+        else:
+            assert rust_response.status_code == python_response.status_code == 422
+            assert rust_response.json() == python_response.json()
+
+
 @pytest.mark.asyncio
 async def test_peer_get_or_create_write_shadow_matches_fastapi(
     client: TestClient,

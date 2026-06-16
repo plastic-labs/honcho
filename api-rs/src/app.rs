@@ -1770,7 +1770,11 @@ fn validate_custom_instructions(value: &str) -> Result<(), ApiError> {
     if value.trim().is_empty() {
         return Ok(());
     }
-    if approximate_token_count(value) > 2000 {
+    // Exact o200k_base parity with Python's `estimate_tokens`. The token budget
+    // itself is still hardcoded to the Python default
+    // (DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2000); making it config-driven is
+    // a separate change.
+    if crate::tokens::estimate_tokens(value) > 2000 {
         return Err(validation_error(
             "value_error",
             &["configuration", "reasoning", "custom_instructions"],
@@ -1780,13 +1784,6 @@ fn validate_custom_instructions(value: &str) -> Result<(), ApiError> {
         ));
     }
     Ok(())
-}
-
-fn approximate_token_count(value: &str) -> usize {
-    value
-        .split_whitespace()
-        .count()
-        .max(value.chars().count() / 4)
 }
 
 fn validate_optional_i64(
