@@ -182,6 +182,8 @@ def test_entra_id_without_azure_identity_raises_install_hint(
     # even if the package happens to be installed in the test environment.
     import builtins
 
+    sys.modules.pop("azure.identity", None)
+
     original_import = builtins.__import__
 
     def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:

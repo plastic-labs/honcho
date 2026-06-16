@@ -218,8 +218,48 @@ EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 ```
 
-Current constraint:
-- `EMBEDDING_VECTOR_DIMENSIONS` can be changed for fully migrated external vector stores, but pgvector and dual-write mode still require `1536` until the schema migration lands.
+Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
+
+- `auto` (default): forwards `dimensions=` when **the operator has explicitly set `EMBEDDING_VECTOR_DIMENSIONS`** — provenance, not value — and the configured model is not on the known-rejecting list (currently `text-embedding-ada-002`). Explicit `EMBEDDING_VECTOR_DIMENSIONS=1536` *does* trigger the forward; this is how `text-embedding-3-large` truncation to 1536 is expressed. Deployments that leave the setting unset get their existing behavior (`dimensions=` is not forwarded).
+- `always`: always forward, regardless of whether `EMBEDDING_VECTOR_DIMENSIONS` was set. Use for OpenAI-compatible self-hosted providers that require it. Do not pick `always` *just* for same-as-default truncation — `auto` handles that case correctly as long as you set `EMBEDDING_VECTOR_DIMENSIONS=1536` explicitly in your environment. `always` is the right answer when your config layer might strip explicit "default-valued" envs, or when you want defense-in-depth.
+- `never`: never forward. Explicit opt-out for providers that reject the parameter (e.g. `text-embedding-ada-002` if it slips past the known-rejecting allowlist).
+
+#### Bootstrapping non-default dimensions
+
+`EMBEDDING_VECTOR_DIMENSIONS` is treated as immutable for the life of a deployment. The pgvector schema is dim-pinned by Alembic at `1536` by default; if you want a different dim, you must ALTER the empty columns once at bootstrap time.
+
+Install order for a non-default dim:
+
+```bash
+# 1. Apply migrations (creates default vector(1536) schema)
+alembic upgrade head
+
+# 2. Set the dim you want
+export EMBEDDING_VECTOR_DIMENSIONS=768
+
+# 3. ALTER the empty columns to the target dim
+uv run python scripts/configure_embeddings.py --dry-run   # preview
+uv run python scripts/configure_embeddings.py --yes       # apply
+
+# 4. Start API and deriver — both run the startup validator and refuse
+# to serve traffic if the schema and EMBEDDING_VECTOR_DIMENSIONS disagree.
+```
+
+Existing deployments at 1536 with `text-embedding-3-small` need no action — step 3 detects matching dims and skips.
+
+The script refuses to ALTER tables that already contain non-null embeddings. To switch dim or model on a populated deployment, stand up a new deployment at the new configuration and migrate data out of band; there is no in-place re-embedding affordance. See [Changing Embeddings](./changing-embeddings) for the destroy + rebuild recipe and the same-dim model-swap caveat.
+
+External vector stores (Turbopuffer, LanceDB) do not need bootstrap setup. Namespaces are per-workspace and lazy-created on first write at whatever dim the embedding client returns. Use `--report` to inventory the existing namespaces against the configured dim:
+
+```bash
+uv run python scripts/configure_embeddings.py --report
+```
+
+The startup validator at `src/startup/embedding_validator.py` enforces the dim invariant at boot for both the API (`src/main.py` lifespan) and the deriver (`src/deriver/__main__.py`). A mismatch crashes the process with an actionable error before any HTTP route is served or any queue task is processed.
+
+`VECTOR_STORE_DIMENSIONS` is **deprecated**. `EMBEDDING_VECTOR_DIMENSIONS` is the single source of truth; setting `VECTOR_STORE_DIMENSIONS` explicitly emits a startup warning and is otherwise ignored. The field will be removed in a future release; drop it from your `.env` to silence the warning.
+
+The `VECTOR_STORE_MIGRATED` flag still exists and still controls dual-write / cutover semantics for legacy tenants moving between storage backends (pgvector ↔ turbopuffer ↔ lancedb). It is unrelated to dimension configuration after this release.
 
 ### Feature-Specific Model Configuration
 
@@ -301,7 +341,8 @@ DERIVER_ENABLED=true
 # LLM settings
 DERIVER_MODEL_CONFIG__TRANSPORT=openai
 DERIVER_MODEL_CONFIG__MODEL=gpt-5.4-mini
-DERIVER_MAX_INPUT_TOKENS=23000
+DERIVER_MAX_INPUT_TOKENS=25000
+DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000
 # DERIVER_MODEL_CONFIG__THINKING_EFFORT=minimal
 # DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 # DERIVER_MODEL_CONFIG__TEMPERATURE=0.7  # Optional temperature override
@@ -313,6 +354,17 @@ DERIVER_MAX_INPUT_TOKENS=23000
 # Worker settings
 DERIVER_WORKERS=1  # Increase for higher throughput
 DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0
+# Adaptive polling: when idle/erroring, the sleep interval grows from the base
+# toward DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS by the multiplier each cycle,
+# then snaps back to base when work is found. Cuts steady-state query load.
+DERIVER_POLLING_BACKOFF_ENABLED=true
+DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS=30.0
+DERIVER_POLLING_BACKOFF_MULTIPLIER=2.0
+# Jitter so instances that start together don't poll in lockstep. Startup: sleep
+# a random delay in [0, value] before the first poll (0.0 disables). Per-cycle:
+# multiply every poll sleep by a random factor in [1-ratio, 1+ratio] (0.0 disables).
+DERIVER_POLLING_STARTUP_JITTER_SECONDS=30.0
+DERIVER_POLLING_JITTER_RATIO=0.5
 DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5
 
 # Queue management
@@ -418,10 +470,13 @@ DB_SCHEMA=public
 DB_POOL_PRE_PING=true
 DB_POOL_SIZE=10
 DB_MAX_OVERFLOW=20
-DB_POOL_TIMEOUT=30
+DB_POOL_TIMEOUT=5
 DB_POOL_RECYCLE=300
 DB_POOL_USE_LIFO=true
 DB_SQL_DEBUG=false
+# Per-connection establish timeout (seconds) so a single connection attempt
+# fails fast instead of hanging when the server/pooler is unreachable.
+DB_CONNECT_TIMEOUT_SECONDS=2
 ```
 
 ### Authentication
@@ -458,7 +513,8 @@ WEBHOOK_MAX_WORKSPACE_LIMIT=10
 VECTOR_STORE_TYPE=pgvector  # Options: pgvector, turbopuffer, lancedb
 VECTOR_STORE_MIGRATED=false
 VECTOR_STORE_NAMESPACE=honcho
-VECTOR_STORE_DIMENSIONS=1536
+# Embedding dim is configured via EMBEDDING_VECTOR_DIMENSIONS — see the
+# Embedding Configuration section. VECTOR_STORE_DIMENSIONS is deprecated.
 
 # Turbopuffer-specific
 VECTOR_STORE_TURBOPUFFER_API_KEY=your-turbopuffer-api-key
@@ -636,4 +692,4 @@ uv run alembic revision --autogenerate -m "Description"  # Create new migration
 
 5. **Dialectic level issues** — Unset level fields inherit from the built-in defaults. For Anthropic, `THINKING_BUDGET_TOKENS` must be >= 1024 when enabled. For providers without budgeted thinking, omit it or set it to `0`. `MAX_OUTPUT_TOKENS` must exceed `THINKING_BUDGET_TOKENS`.
 
-6. **Vector store issues** — For Turbopuffer, set the API key. Check `VECTOR_STORE_DIMENSIONS` matches your embedding model.
+6. **Vector store issues** — For Turbopuffer, set the API key. Check that `EMBEDDING_VECTOR_DIMENSIONS` matches your embedding model — the startup validator will refuse to boot on a mismatch.

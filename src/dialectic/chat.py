@@ -40,7 +40,7 @@ async def agentic_chat(
         The synthesized answer string
     """
     # Short-lived DB session for validation + config
-    async with tracked_db("dialectic.preflight") as db:
+    async with tracked_db("dialectic.preflight", read_only=True) as db:
         await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
         if observer != observed:
             await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
@@ -101,7 +101,7 @@ async def agentic_chat_stream(
         Chunks of the response text as they are generated
     """
     # Short-lived DB session for validation + config
-    async with tracked_db("dialectic.preflight") as db:
+    async with tracked_db("dialectic.preflight", read_only=True) as db:
         await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
         if observer != observed:
             await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))

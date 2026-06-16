@@ -32,7 +32,7 @@ from src import models
 from src.cache.client import cache
 from src.config import settings
 from src.db import Base
-from src.dependencies import get_db
+from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
 from src.main import app
 from src.models import Peer, Workspace
@@ -78,6 +78,7 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
+    "tests/test_generate_jwt_script.py",
 )
 
 _LIVE_LLM_MARKER = "live_llm"
@@ -321,6 +322,7 @@ async def fake_cache(fake_cache_session: FakeAsyncRedis):
 async def client(
     db_session: AsyncSession,
     fake_cache_session: FakeAsyncRedis,  # pyright: ignore[reportUnusedParameter]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncGenerator[TestClient, Any]:
     """Create a FastAPI TestClient for the scope of a single test function"""
 
@@ -338,6 +340,22 @@ async def client(
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    # Read-only routes use get_read_db (AUTOCOMMIT engine) in production; in
+    # tests they must see the same per-test database/session as writes, both
+    # for isolation and so data written by a test is visible to its reads.
+    app.dependency_overrides[get_read_db] = override_get_db
+
+    # No-op the startup embedding-schema validator inside the lifespan. The
+    # global `engine` it would inspect points to a DB that isn't migrated in
+    # CI (per-worker test DBs are migrated separately by db_engine), and we
+    # don't want the validator to dispose the test engine via the lifespan
+    # finally block either. The validator has its own dedicated coverage in
+    # tests/startup/test_embedding_validator.py against db_engine directly.
+    async def _skip_validate(_engine: object) -> None:
+        return None
+
+    monkeypatch.setattr("src.main.validate_embedding_schema", _skip_validate)
+
     with TestClient(app) as c:
         if settings.AUTH.USE_AUTH:
             # give the test client the admin JWT
@@ -466,6 +484,9 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
         patch(
             "src.embedding_client.embedding_client.simple_batch_embed"
         ) as mock_simple_batch_embed,
+        patch(
+            "src.embedding_client.embedding_client.prepare_chunks"
+        ) as mock_prepare_chunks,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
     ):
         # Mock the embed method to return content-dependent embedding
@@ -479,13 +500,21 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
 
         mock_simple_batch_embed.side_effect = mock_simple_batch_embed_func
 
+        def mock_prepare_chunks_func(
+            id_resource_dict: dict[str, str],
+        ) -> dict[str, list[str]]:
+            # No real tokenizer in mocks: treat each input as a single chunk.
+            return {text_id: [text] for text_id, text in id_resource_dict.items()}
+
+        mock_prepare_chunks.side_effect = mock_prepare_chunks_func
+
         # Mock the batch_embed method to return content-dependent embeddings
         async def mock_batch_embed_func(
-            id_resource_dict: dict[str, tuple[str, list[int]]],
+            id_resource_dict: dict[str, str],
         ) -> dict[str, list[list[float]]]:
             return {
-                text_id: [_content_to_embedding(resource[0])]
-                for text_id, resource in id_resource_dict.items()
+                text_id: [_content_to_embedding(content)]
+                for text_id, content in id_resource_dict.items()
             }
 
         mock_batch_embed.side_effect = mock_batch_embed_func
@@ -493,6 +522,7 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
         yield {
             "embed": mock_embed,
             "simple_batch_embed": mock_simple_batch_embed,
+            "prepare_chunks": mock_prepare_chunks,
             "batch_embed": mock_batch_embed,
         }
 
@@ -509,7 +539,7 @@ def mock_vector_store(request: pytest.FixtureRequest):
     from src.vector_store import (
         VectorQueryResult,
         VectorRecord,
-        _hash_namespace_components,  # pyright: ignore[reportPrivateUsage]
+        _hash_namespace_components,
     )
 
     # Create a mock vector store that stores vectors in memory
@@ -772,38 +802,48 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         yield
         return
 
-    from contextlib import asynccontextmanager
+    from contextlib import ExitStack, asynccontextmanager
 
     db_engine = request.getfixturevalue("db_engine")
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def mock_tracked_db_context(_: str | None = None):
+    async def mock_tracked_db_context(_: str | None = None, *, read_only: bool = False):
+        # read_only is accepted (and ignored): in tests both engines resolve to
+        # the same per-test database session.
+        del read_only
         async with session_factory() as session:
             yield session
 
-    with (
-        patch("src.dependencies.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
-        patch("src.routers.peers.tracked_db", mock_tracked_db_context),
-        patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.orchestrator.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
-        patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
-        patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
-        patch("src.webhooks.webhook_delivery.tracked_db", mock_tracked_db_context),
-        patch("src.utils.agent_tools.tracked_db", mock_tracked_db_context),
-        patch("src.utils.search.tracked_db", mock_tracked_db_context),
-        patch("src.crud.document.tracked_db", mock_tracked_db_context),
-        patch("src.crud.message.tracked_db", mock_tracked_db_context),
-        patch("src.reconciler.sync_vectors.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.core.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.specialists.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.surprisal.tracked_db", mock_tracked_db_context),
-    ):
+    # Each module imports tracked_db by name, so patch every import site.
+    # Use ExitStack (not a parenthesized `with`) to stay under CPython's
+    # 20-statically-nested-block limit as this list grows.
+    tracked_db_targets = [
+        "src.dependencies.tracked_db",
+        "src.deriver.queue_manager.tracked_db",
+        "src.deriver.consumer.tracked_db",
+        "src.deriver.enqueue.tracked_db",
+        "src.routers.peers.tracked_db",
+        "src.crud.representation.tracked_db",
+        "src.dreamer.orchestrator.tracked_db",
+        "src.dreamer.dream_scheduler.tracked_db",
+        "src.dialectic.chat.tracked_db",
+        "src.utils.summarizer.tracked_db",
+        "src.webhooks.events.tracked_db",
+        "src.webhooks.webhook_delivery.tracked_db",
+        "src.utils.agent_tools.tracked_db",
+        "src.utils.search.tracked_db",
+        "src.crud.document.tracked_db",
+        "src.crud.message.tracked_db",
+        "src.reconciler.sync_vectors.tracked_db",
+        "src.reconciler.embed_now.tracked_db",
+        "src.dialectic.core.tracked_db",
+        "src.dreamer.specialists.tracked_db",
+        "src.dreamer.surprisal.tracked_db",
+    ]
+    with ExitStack() as stack:
+        for target in tracked_db_targets:
+            stack.enter_context(patch(target, mock_tracked_db_context))
         yield
 
 

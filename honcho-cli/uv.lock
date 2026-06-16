@@ -88,9 +88,10 @@ wheels = [
 
 [[package]]
 name = "honcho-cli"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "honcho-ai" },
     { name = "httpx" },
     { name = "rich" },
@@ -105,6 +106,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "click", specifier = ">=8.0.0" },
     { name = "honcho-ai", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },

@@ -1,6 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,11 +9,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.crud.representation import RepresentationManager
+from src.schemas.configuration import (
+    ResolvedConfiguration,
+    ResolvedDreamConfiguration,
+    ResolvedPeerCardConfiguration,
+    ResolvedReasoningConfiguration,
+    ResolvedSummaryConfiguration,
+)
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
     Representation,
 )
+
+
+def _resolved_config(*, dream_enabled: bool = False) -> ResolvedConfiguration:
+    """Build a minimal ResolvedConfiguration for tests that only care about dream.enabled."""
+    return ResolvedConfiguration(
+        reasoning=ResolvedReasoningConfiguration(enabled=False),
+        peer_card=ResolvedPeerCardConfiguration(use=False, create=False),
+        summary=ResolvedSummaryConfiguration(
+            enabled=False,
+            messages_per_short_summary=20,
+            messages_per_long_summary=60,
+        ),
+        dream=ResolvedDreamConfiguration(enabled=dream_enabled),
+    )
 
 
 @asynccontextmanager
@@ -24,7 +44,7 @@ async def _fake_tracked_db(_name: str):
 
 def _saved_observations(mock_save: AsyncMock):
     call = mock_save.await_args
-    assert call is not None, "mock was not awaited"
+    assert call is not None, "mock_save was never awaited"
     if "all_observations" in call.kwargs:
         return call.kwargs["all_observations"]
     if len(call.args) > 1:
@@ -160,6 +180,57 @@ class TestRepresentationManagerSoftDelete:
         assert doc_live.id in result_ids
         assert doc_deleted.id not in result_ids
 
+    @pytest.mark.asyncio
+    async def test_query_documents_most_derived_ties_break_by_recency(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Regression: when times_derived ties, the manager's most-derived query
+        must fall back to recency, not insertion order. Mirrors the equivalent
+        test on crud.query_documents_most_derived -- the query is duplicated in
+        both modules and must not drift."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _, manager = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        # Three conclusions, all reinforced once, inserted oldest-first.
+        for i in range(3):
+            db_session.add(
+                models.Document(
+                    workspace_name=test_workspace.name,
+                    observer=test_peer.name,
+                    observed=test_peer2.name,
+                    content=f"tie {i}",
+                    session_name=test_session.name,
+                    times_derived=1,
+                    created_at=base + timedelta(days=i),
+                )
+            )
+        # A genuinely reinforced conclusion that is also the oldest of all.
+        db_session.add(
+            models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                content="hot",
+                session_name=test_session.name,
+                times_derived=5,
+                created_at=base - timedelta(days=10),
+            )
+        )
+        await db_session.flush()
+
+        results = await manager._query_documents_most_derived(db_session, top_k=10)  # pyright: ignore[reportPrivateUsage]
+
+        contents = [doc.content for doc in results]
+        # Primary sort still wins: the actually-reinforced conclusion leads.
+        assert contents[0] == "hot"
+        # Ties break toward most-recent, not oldest-inserted.
+        assert contents[1:] == ["tie 2", "tie 1", "tie 0"]
+
 
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio
@@ -205,9 +276,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(  # pyright: ignore[reportArgumentType]
-                    dream=SimpleNamespace(enabled=False)
-                ),
+                message_level_configuration=_resolved_config(),
             )
 
         assert saved == 1
@@ -261,9 +330,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(  # pyright: ignore[reportArgumentType]
-                    dream=SimpleNamespace(enabled=False)
-                ),
+                message_level_configuration=_resolved_config(),
             )
 
         assert saved == 1
@@ -314,9 +381,7 @@ class TestRepresentationManagerSave:
                 message_ids=[1],
                 session_name="session",
                 message_created_at=datetime.now(timezone.utc),
-                message_level_configuration=SimpleNamespace(  # pyright: ignore[reportArgumentType]
-                    dream=SimpleNamespace(enabled=False)
-                ),
+                message_level_configuration=_resolved_config(),
             )
 
         assert saved == 0

@@ -24,6 +24,11 @@ Event Categories:
     - AgentToolPeerCardUpdatedEvent: Peer card updated by agent
     - AgentToolSummaryCreatedEvent: Summary created
 
+    api: User-facing API operations
+    - MessageCreatedEvent: Message batch created
+    - FileUploadedEvent: File converted into messages
+    - GetContextEvent: Context retrieved for a session or peer
+
     deletion: Resource removal
     - DeletionCompletedEvent: Resource deletion completed (with cascade counts)
 
@@ -55,10 +60,16 @@ import logging
 
 from src.telemetry.events.agent import (
     AgentIterationEvent,
+    AgentToolCallCompletedEvent,
     AgentToolConclusionsCreatedEvent,
     AgentToolConclusionsDeletedEvent,
     AgentToolPeerCardUpdatedEvent,
     AgentToolSummaryCreatedEvent,
+)
+from src.telemetry.events.api import (
+    FileUploadedEvent,
+    GetContextEvent,
+    MessageCreatedEvent,
 )
 from src.telemetry.events.base import BaseEvent, generate_event_id
 from src.telemetry.events.deletion import DeletionCompletedEvent
@@ -66,6 +77,12 @@ from src.telemetry.events.dialectic import DialecticCompletedEvent
 from src.telemetry.events.dream import (
     DreamRunEvent,
     DreamSpecialistEvent,
+)
+from src.telemetry.events.llm import (
+    CallPurpose,
+    EmbeddingCallCompletedEvent,
+    EmbeddingCallPurpose,
+    LLMCallCompletedEvent,
 )
 from src.telemetry.events.reconciliation import (
     CleanupStaleItemsCompletedEvent,
@@ -89,10 +106,20 @@ __all__ = [
     "DialecticCompletedEvent",
     # Agent events
     "AgentIterationEvent",
+    "AgentToolCallCompletedEvent",
     "AgentToolConclusionsCreatedEvent",
     "AgentToolConclusionsDeletedEvent",
     "AgentToolPeerCardUpdatedEvent",
     "AgentToolSummaryCreatedEvent",
+    # API events
+    "MessageCreatedEvent",
+    "FileUploadedEvent",
+    "GetContextEvent",
+    # LLM events
+    "LLMCallCompletedEvent",
+    "CallPurpose",
+    "EmbeddingCallCompletedEvent",
+    "EmbeddingCallPurpose",
     # Reconciliation events
     "SyncVectorsCompletedEvent",
     "CleanupStaleItemsCompletedEvent",
