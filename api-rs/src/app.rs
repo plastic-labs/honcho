@@ -94,6 +94,11 @@ pub struct PeerCardQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CloneSessionQuery {
+    pub message_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreateKeyQuery {
     pub workspace_id: Option<String>,
     pub peer_id: Option<String>,
@@ -185,6 +190,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v3/workspaces/{workspace_id}/sessions/{session_id}",
             put(update_session).delete(delete_session),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/sessions/{session_id}/clone",
+            post(clone_session),
         )
         .route(
             "/v3/workspaces/{workspace_id}/peers/{peer_id}/sessions",
@@ -521,6 +530,47 @@ async fn delete_session(
         StatusCode::ACCEPTED,
         Json(json!({"message": "Session deleted successfully"})),
     ))
+}
+
+async fn clone_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, session_id)): Path<(String, String)>,
+    Query(query): Query<CloneSessionQuery>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        Some(&session_id),
+    )?;
+    ensure_writes_enabled(&state)?;
+    validate_resource_name(&workspace_id, "workspace_id")?;
+    validate_resource_name(&session_id, "session_id")?;
+
+    let value = db::clone_session(
+        state.pool()?,
+        &workspace_id,
+        &session_id,
+        query.message_id.as_deref(),
+    )
+    .await
+    .map_err(clone_session_error)?;
+    Ok((StatusCode::CREATED, Json(value)))
+}
+
+fn clone_session_error(error: db::CloneSessionError) -> ApiError {
+    match error {
+        db::CloneSessionError::OriginalNotFound => {
+            ApiError::NotFound("Original session not found".to_string())
+        }
+        db::CloneSessionError::CutoffMessageNotFound => {
+            ApiError::NotFound("Session not found".to_string())
+        }
+        db::CloneSessionError::Database(error) => ApiError::Database(error),
+    }
 }
 
 async fn add_peers_to_session(

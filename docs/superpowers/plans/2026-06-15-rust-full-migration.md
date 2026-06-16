@@ -18,7 +18,7 @@
 
 **Current Rust milestone:** A standalone API sidecar exists under `api-rs/`. It is mostly read-only, with the first guarded write-shadow routes disabled by default behind `RUST_API_ENABLE_WRITES=false`.
 
-**Current branch status:** Work exists on branch `codex/rust-api-readonly-sidecar` and is not committed yet.
+**Current branch status:** Work is committed on branch `codex/rust-api-readonly-sidecar`. The sidecar milestone (read-only parity + guarded write shadows) was committed as `feat: add rust api sidecar with read-only parity and guarded write shadows`; the session-clone slice is the latest addition on top.
 
 **Verified in the previous implementation pass:**
 
@@ -37,6 +37,7 @@
 - Current guarded peer write-shadow slice: peer mutations now include `POST /v3/workspaces/{workspace_id}/peers` and `PUT /v3/workspaces/{workspace_id}/peers/{peer_id}` in `api-rs` behind `RUST_API_ENABLE_WRITES=false` by default. `POST` mirrors Python get-or-create behavior, including workspace auto-create, `name`/`id` aliasing, `201` for new rows, `200` for existing rows, whole-object metadata/configuration replacement when provided, null/omitted no-op for existing rows, default `{}` values for new rows, metadata NUL stripping, validation parity for selected invalid payloads, and workspace/peer JWT scope checks. `PUT` mirrors Python update-or-create behavior, including missing workspace/peer creation, `200` status, ignored body `name`/`id`, metadata/configuration replace/no-op semantics, and persisted row parity. Route-level contract coverage now includes peer auth success/failure, peer POST default/no-op behavior, metadata key/depth validation, and Python/Rust persisted-row comparison. `api-rs` also parses Python-compatible `CACHE_ENABLED`, `CACHE_URL`, `CACHE_NAMESPACE`, and `NAMESPACE` settings and best-effort deletes Python's peer value cache key (`{CACHE_NAMESPACE}:v2:workspace:{workspace_name}:peer:{peer_name}`) after successful Rust peer writes. The Redis deletion path is now covered by an opt-in integration test using `HONCHO_API_RS_REDIS_TEST_URL`; it was verified against a real `redis:8.2` container at `redis://127.0.0.1:6379/2?suppress=true`. `rtk cargo test --manifest-path api-rs/Cargo.toml` passed with 55 tests; `HONCHO_API_RS_REDIS_TEST_URL='redis://127.0.0.1:6379/2?suppress=true' rtk cargo test --manifest-path api-rs/Cargo.toml peer_cache_invalidation_deletes_real_redis_value_key_when_configured` passed with 1 test; focused peer write contract tests passed with 6 tests; `DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres rtk uv run pytest tests/rust_api/ tests/routes/test_workspaces.py tests/routes/test_peers.py tests/routes/test_sessions.py -q` passed with 141 tests.
 - Current guarded session write-shadow slice: session mutations now include no-peer `POST /v3/workspaces/{workspace_id}/sessions` and `PUT /v3/workspaces/{workspace_id}/sessions/{session_id}` in `api-rs` behind `RUST_API_ENABLE_WRITES=false` by default. `POST` mirrors Python get-or-create behavior for no-peer payloads, including workspace auto-create, `name`/`id` aliasing, `201` for new rows, `200` for existing rows, metadata replacement, typed `SessionConfiguration` validation/coercion, top-level configuration merge for existing rows, null/omitted no-op behavior, default `{}` values for new rows, inactive-session `404`, and workspace/session JWT scope checks. `PUT` mirrors Python update-or-create behavior, including missing workspace/session creation, `200` status, ignored body `name`/`id`, metadata replace/no-op/clear semantics, top-level configuration merge, inactive-session `404`, and persisted row parity. Embedded peer membership payloads on session create/update are still explicitly rejected in the Rust shadow; membership writes now start with the separate add-peers route below. Rust best-effort deletes Python's session value cache key (`{CACHE_NAMESPACE}:v2:workspace:{workspace_name}:session:{session_name}`) after successful Rust session writes; unlike Python create, it does not warm/set the cached value yet. `rtk cargo test --manifest-path api-rs/Cargo.toml` passed with 61 tests; focused session write contract tests passed with 4 tests; `DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres rtk uv run pytest tests/rust_api/ tests/routes/test_workspaces.py tests/routes/test_peers.py tests/routes/test_sessions.py` passed with 145 tests.
 - Current guarded session membership slice: `POST`, `PUT`, and `DELETE /v3/workspaces/{workspace_id}/sessions/{session_id}/peers` plus `PUT /v3/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config` are implemented behind `RUST_API_ENABLE_WRITES=false` by default. Add/set routes accept Python's direct `dict[peer_id, SessionPeerConfig]` body shape and return `200` session JSON without embedding peers. Add-peers creates missing workspaces/sessions/peers through existing get-or-create paths, stores `observe_me`/`observe_others` session-peer configuration, preserves active membership configuration on re-add, rejoins previously-left peers by clearing `left_at` and replacing configuration, and enforces the observer limit before writes. Set-peers requires an existing active session, soft-deletes all active memberships by setting `left_at`, auto-creates requested peers, re-adds only the requested peer set with incoming configuration, and returns Python-compatible `404` for missing sessions. Remove-peers accepts Python's bare `list[str]` body, collapses duplicate peer IDs, verifies the session is active, soft-deletes only matching active memberships, ignores missing/non-member/already-left peers, and returns Python-compatible `404` for missing or inactive sessions. Peer-config writes require an existing active session and existing peer, insert a missing membership, partially merge submitted non-null config keys, preserve omitted/null keys, do not rejoin previously-left memberships, enforce the active-observer limit, and return Python-compatible `204` empty responses plus `404` errors. Membership writes best-effort invalidate the session value cache key and affected peer value cache keys; they do not warm Python cache values. `rtk cargo test --manifest-path api-rs/Cargo.toml` passed with 65 tests; focused add/set/remove/config-peers contract tests passed with 10 tests total; `DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres rtk uv run pytest tests/rust_api/ tests/routes/test_workspaces.py tests/routes/test_peers.py tests/routes/test_sessions.py` passed with 155 tests.
+- Current guarded session clone slice: `POST /v3/workspaces/{workspace_id}/sessions/{session_id}/clone` is implemented behind `RUST_API_ENABLE_WRITES=false` by default. The Rust route mirrors Python `crud.clone_session`: it requires an active original session (`404 {"detail":"Original session not found"}` otherwise), validates an optional `message_id` cutoff against the source session (`404 {"detail":"Session not found"}` on a bad cutoff), creates a new session with a fresh nanoid name copying the original metadata/configuration, copies messages (optionally truncated at and including the cutoff id) with fresh public ids and the Python-default `token_count=0` plus default `internal_metadata`, and copies session-peer memberships with their configuration only when at least one message is cloned (matching Python's early return for empty sources). The Rust copy adds explicit workspace scoping to the message/peer reads that Python omits. No cache invalidation is needed (the clone is a brand-new session, read-through like Python). Known inherited quirk not yet contract-tested: Python's no-message clone returns before committing and skips peer copy; the Rust shadow always commits the new empty session. `rtk cargo test --manifest-path api-rs/Cargo.toml` passed with 67 tests; focused clone contract tests passed with 3 tests; `DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres rtk uv run pytest tests/rust_api/ -q` passed with 41 tests.
 - Current guarded session delete slice: `DELETE /v3/workspaces/{workspace_id}/sessions/{session_id}` is implemented behind `RUST_API_ENABLE_WRITES=false` by default. The Rust route mirrors the Python HTTP route's fast path, not the worker hard-delete path: it requires an active session, sets `sessions.is_active=false`, inserts a `queue` row with `task_type='deletion'`, `work_unit_key='deletion:{workspace}:session:{session}'`, `session_id=NULL`, `message_id=NULL`, and payload including `task_type`, `deletion_type`, and `resource_id`, returns `202 {"message":"Session deleted successfully"}`, invalidates the Python session value cache key, and returns Python-compatible `404` for missing or inactive sessions. The asynchronous hard delete of messages, message embeddings, documents, session peers, and the session row remains Python-worker owned until the Rust worker migration phase. `rtk cargo test --manifest-path api-rs/Cargo.toml` passed with 65 tests; focused delete-session contract tests passed with 2 tests; `DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres rtk uv run pytest tests/rust_api/ tests/routes/test_workspaces.py tests/routes/test_peers.py tests/routes/test_sessions.py` passed with 157 tests.
 - Current guarded-write blocker: broader Python cache parity is not complete for all cached resources. Peer writes, session create/update, and session membership writes now have best-effort Rust invalidation, but workspace cache behavior, cache warming, collection cache behavior, and all future write routes still need cache-specific parity before mixed Python/Rust traffic.
 
@@ -64,7 +65,7 @@ tokenizer strategy is added and contract-tested.
 | Queue status | FastAPI authoritative | Implemented | Contract-tested | Not routed publicly |
 | Filtering | Python utility authoritative | Compatible SQL builder exists for current read endpoints, including JSONB metadata, datetime, `in`, and escaped contains cases | Partial | Needs broad endpoint coverage |
 | Pagination | FastAPI/Pydantic authoritative | Matching page shape exists | Partial | Needs broad endpoint coverage |
-| Create/update/delete routes | FastAPI authoritative | Workspace, peer, no-peer session get-or-create/update, add/set/remove session membership, peer config membership writes, and session soft-delete/enqueue implemented behind `RUST_API_ENABLE_WRITES`; peer/session writes best-effort invalidate Python value cache keys when cache is enabled; clone, worker hard-delete, and remaining relationship mutations not implemented | Partial / in progress | Sidecar shadow only; Python remains public write path |
+| Create/update/delete routes | FastAPI authoritative | Workspace, peer, no-peer session get-or-create/update, add/set/remove session membership, peer config membership writes, session soft-delete/enqueue, and session clone implemented behind `RUST_API_ENABLE_WRITES`; peer/session writes best-effort invalidate Python value cache keys when cache is enabled; worker hard-delete and remaining relationship mutations not implemented | Partial / in progress | Sidecar shadow only; Python remains public write path |
 | Message routes | FastAPI authoritative | Read-only list/get implemented | Partial / in progress | Sidecar only; writes remain Python only |
 | File upload routes | FastAPI authoritative | Not implemented | Not started | Python only |
 | Search routes | FastAPI authoritative | Not implemented | Not started | Python only |
@@ -171,17 +172,13 @@ Root workspace conversion is intentionally deferred. The current `api-rs/` crate
 
   `docker-compose-rs.yml.example` includes optional `api-rs` sidecar configuration on a separate local port.
 
-- [ ] **Step 6: Commit the sidecar milestone**
+- [x] **Step 6: Commit the sidecar milestone**
 
-  Run:
-
-  ```bash
-  git status --short
-  git add api-rs tests/rust_api docker-compose-rs.yml.example docs/superpowers/plans/2026-06-15-rust-full-migration.md
-  git commit -m "feat: add rust read-only api sidecar"
-  ```
-
-  Expected: one focused commit containing the sidecar, its tests, Compose example, and this migration tracker.
+  Committed as `feat: add rust api sidecar with read-only parity and guarded write shadows`
+  (commit `3bf8d96`), containing the `api-rs/` crate, `tests/rust_api/` contract
+  suite, the Compose example, and this migration tracker. The commit message
+  reflects the actual scope, which had already grown past read-only into guarded
+  write shadows by the time of commit.
 
 ## Phase 1: Expand Read-Only API Parity
 
@@ -339,7 +336,7 @@ tie-breaker policy and update Python/Rust contracts together.
 ## Phase 3: Write API Parity Behind A Shadow Gate
 
 **Status:** Partial. Sidecar-only webhook list and key creation exist.
-Workspace, peer, no-peer session get-or-create/update, session soft-delete/enqueue, add/set/remove-peers session membership routes, and peer config membership writes are implemented behind
+Workspace, peer, no-peer session get-or-create/update, session soft-delete/enqueue, session clone, add/set/remove-peers session membership routes, and peer config membership writes are implemented behind
 `RUST_API_ENABLE_WRITES=false` by default and route-contract-tested against Python.
 Workspace coverage includes create/existing behavior, `id` aliasing, metadata
 sanitization, selected configuration validation/coercion, unknown nested
@@ -437,7 +434,7 @@ started.
   remove peers from session [route-contract done behind RUST_API_ENABLE_WRITES; session and affected peer value cache invalidation implemented]
   set peer config [route-contract done behind RUST_API_ENABLE_WRITES; session and affected peer value cache invalidation implemented]
   delete session [HTTP soft-delete/enqueue route-contract done behind RUST_API_ENABLE_WRITES; worker hard-delete remains Python-owned]
-  clone session
+  clone session [route-contract done behind RUST_API_ENABLE_WRITES; copies session/messages/peers, no cache invalidation needed]
   ```
 
 - [ ] **Step 3: Implement message and conclusion mutations after queue behavior is specified**
@@ -1083,7 +1080,7 @@ started.
 - [x] Rust read-only sidecar exists.
 - [x] Initial sidecar contract tests exist.
 - [x] Optional Docker sidecar entry exists.
-- [ ] Sidecar milestone committed.
+- [x] Sidecar milestone committed.
 - [ ] Full read-only route parity complete.
 - [ ] Session peer read endpoints verified in Rust sidecar contracts.
 - [ ] Shared Rust crates extracted only when justified.
@@ -1107,11 +1104,23 @@ started.
 
 ## Immediate Next Actions
 
-1. Commit the current Rust sidecar milestone.
-2. Open a PR for review so the sidecar can land without claiming full migration.
-3. Start Phase 1 by inventorying all remaining read-only v3 routes.
+1. Open a PR for review so the sidecar can land without claiming full migration.
+2. Continue Phase 3 write shadows: the remaining un-started mutations are message
+   creation (must preserve enqueue behavior) and conclusion create/delete (must
+   preserve collection/document semantics) — both depend on queue/vector behavior
+   being specified first.
+3. Start Phase 1 by inventorying all remaining read-only v3 routes (search,
+   representation, context, file upload remain Python-only).
 4. Add contract tests for the next read-only group before writing more Rust endpoint code.
 5. Keep Python authoritative until each phase satisfies its cutover gates.
+
+**Local contract-test note:** the Python/Rust contract suite needs a host-reachable
+pgvector Postgres on `127.0.0.1:5432`. SQLAlchemy 2.0 masks the password in
+`str(url)` and conftest builds the async engine from `str(url)`, so the test DB must
+use trust auth (`POSTGRES_HOST_AUTH_METHOD=trust`); a password-auth container fails
+the async engine connection even though sync DB creation succeeds. Run with
+`DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+rtk uv run pytest tests/rust_api/ -q`.
 
 ## Completion Definition
 

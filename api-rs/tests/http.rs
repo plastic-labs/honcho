@@ -535,6 +535,53 @@ async fn session_write_routes_are_disabled_by_default() {
 }
 
 #[tokio::test]
+async fn session_clone_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let app = build_router(state);
+
+    let clone_response = app
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/sessions/session-a/clone")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(clone_response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(clone_response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
+async fn session_clone_rejects_mismatched_session_scope() {
+    let session_token = create_hs256_token_for_test(&json!({"t": "", "s": "session-b"}), "secret");
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: true,
+        jwt_secret: Some("secret".to_string()),
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/sessions/session-a/clone")
+                .header("authorization", format!("Bearer {session_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "JWT not permissioned for this resource"})
+    );
+}
+
+#[tokio::test]
 async fn session_create_allows_peer_only_token_until_write_guard() {
     let token = create_hs256_token_for_test(&json!({"t": "", "p": "peer-a"}), "secret");
     let state = AppState::for_test(AuthConfig {

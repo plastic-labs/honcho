@@ -2397,6 +2397,249 @@ def test_session_delete_missing_session_matches_fastapi(
     }
 
 
+def _clone_message_contract_fields(message: models.Message) -> dict[str, Any]:
+    return {
+        "content": message.content,
+        "peer_name": message.peer_name,
+        "seq_in_session": message.seq_in_session,
+        "token_count": message.token_count,
+        "metadata": message.h_metadata,
+        "internal_metadata": message.internal_metadata,
+    }
+
+
+def _clone_response_contract_fields(body: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in body.items()
+        if key not in ("id", "created_at", "workspace_id")
+    }
+
+
+def _seed_clone_source(
+    client: TestClient, workspace: str, session: str, peer: str
+) -> list[str]:
+    assert client.post("/v3/workspaces", json={"name": workspace}).status_code in (
+        200,
+        201,
+    )
+    assert client.post(
+        f"/v3/workspaces/{workspace}/peers", json={"name": peer}
+    ).status_code in (200, 201)
+    assert client.post(
+        f"/v3/workspaces/{workspace}/sessions",
+        json={
+            "name": session,
+            "metadata": {"src": "clone"},
+            "peer_names": {peer: {"observe_me": True}},
+        },
+    ).status_code in (200, 201)
+    response = client.post(
+        f"/v3/workspaces/{workspace}/sessions/{session}/messages",
+        json={
+            "messages": [
+                {"content": "clone message one", "peer_id": peer, "metadata": {"order": 1}},
+                {"content": "clone message two", "peer_id": peer, "metadata": {"order": 2}},
+            ]
+        },
+    )
+    assert response.status_code == 201
+    return [message["id"] for message in response.json()]
+
+
+@pytest.mark.asyncio
+async def test_session_clone_write_shadow_matches_fastapi(
+    client: TestClient,
+    db_session: AsyncSession,
+    rust_api_writes_url: str,
+):
+    marker = generate_nanoid()
+    python_workspace = f"rust-contract-python-clone-ws-{marker}"
+    rust_workspace = f"rust-contract-rust-clone-ws-{marker}"
+    python_session = f"rust-contract-python-clone-{marker}"
+    rust_session = f"rust-contract-rust-clone-{marker}"
+    peer = f"rust-contract-clone-peer-{marker}"
+
+    _seed_clone_source(client, python_workspace, python_session, peer)
+    _seed_clone_source(client, rust_workspace, rust_session, peer)
+
+    python_response = client.post(
+        f"/v3/workspaces/{python_workspace}/sessions/{python_session}/clone",
+    )
+    rust_response = httpx.post(
+        f"{rust_api_writes_url}/v3/workspaces/{rust_workspace}/sessions/{rust_session}/clone",
+        timeout=5,
+    )
+
+    assert rust_response.status_code == python_response.status_code == 201
+    python_body = python_response.json()
+    rust_body = rust_response.json()
+    assert python_body["workspace_id"] == python_workspace
+    assert rust_body["workspace_id"] == rust_workspace
+    assert _clone_response_contract_fields(
+        python_body
+    ) == _clone_response_contract_fields(rust_body) == {
+        "is_active": True,
+        "metadata": {"src": "clone"},
+        "configuration": {},
+    }
+    # The clone gets a fresh nanoid name, distinct from the source session.
+    assert python_body["id"] != python_session
+    assert rust_body["id"] != rust_session
+    python_clone = python_body["id"]
+    rust_clone = rust_body["id"]
+
+    python_messages = (
+        await db_session.scalars(
+            select(models.Message)
+            .where(
+                models.Message.workspace_name == python_workspace,
+                models.Message.session_name == python_clone,
+            )
+            .order_by(models.Message.seq_in_session)
+        )
+    ).all()
+    rust_messages = (
+        await db_session.scalars(
+            select(models.Message)
+            .where(
+                models.Message.workspace_name == rust_workspace,
+                models.Message.session_name == rust_clone,
+            )
+            .order_by(models.Message.seq_in_session)
+        )
+    ).all()
+    assert len(rust_messages) == 2
+    assert [_clone_message_contract_fields(m) for m in python_messages] == [
+        _clone_message_contract_fields(m) for m in rust_messages
+    ]
+
+    python_peers = (
+        await db_session.scalars(
+            select(models.SessionPeer)
+            .where(
+                models.SessionPeer.workspace_name == python_workspace,
+                models.SessionPeer.session_name == python_clone,
+            )
+            .order_by(models.SessionPeer.peer_name)
+        )
+    ).all()
+    rust_peers = (
+        await db_session.scalars(
+            select(models.SessionPeer)
+            .where(
+                models.SessionPeer.workspace_name == rust_workspace,
+                models.SessionPeer.session_name == rust_clone,
+            )
+            .order_by(models.SessionPeer.peer_name)
+        )
+    ).all()
+    assert len(rust_peers) == 1
+    assert [_session_peer_row_contract_fields(p) for p in python_peers] == [
+        _session_peer_row_contract_fields(p) for p in rust_peers
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_clone_cutoff_matches_fastapi(
+    client: TestClient,
+    db_session: AsyncSession,
+    rust_api_writes_url: str,
+):
+    marker = generate_nanoid()
+    python_workspace = f"rust-contract-python-clonecut-ws-{marker}"
+    rust_workspace = f"rust-contract-rust-clonecut-ws-{marker}"
+    python_session = f"rust-contract-python-clonecut-{marker}"
+    rust_session = f"rust-contract-rust-clonecut-{marker}"
+    peer = f"rust-contract-clonecut-peer-{marker}"
+
+    python_message_ids = _seed_clone_source(
+        client, python_workspace, python_session, peer
+    )
+    rust_message_ids = _seed_clone_source(client, rust_workspace, rust_session, peer)
+
+    python_response = client.post(
+        f"/v3/workspaces/{python_workspace}/sessions/{python_session}/clone",
+        params={"message_id": python_message_ids[0]},
+    )
+    rust_response = httpx.post(
+        f"{rust_api_writes_url}/v3/workspaces/{rust_workspace}/sessions/{rust_session}/clone",
+        params={"message_id": rust_message_ids[0]},
+        timeout=5,
+    )
+
+    assert rust_response.status_code == python_response.status_code == 201
+    python_clone = python_response.json()["id"]
+    rust_clone = rust_response.json()["id"]
+
+    python_messages = (
+        await db_session.scalars(
+            select(models.Message)
+            .where(
+                models.Message.workspace_name == python_workspace,
+                models.Message.session_name == python_clone,
+            )
+            .order_by(models.Message.seq_in_session)
+        )
+    ).all()
+    rust_messages = (
+        await db_session.scalars(
+            select(models.Message)
+            .where(
+                models.Message.workspace_name == rust_workspace,
+                models.Message.session_name == rust_clone,
+            )
+            .order_by(models.Message.seq_in_session)
+        )
+    ).all()
+    # Only the first message (the cutoff) should be cloned.
+    assert len(python_messages) == len(rust_messages) == 1
+    assert [_clone_message_contract_fields(m) for m in python_messages] == [
+        _clone_message_contract_fields(m) for m in rust_messages
+    ]
+
+
+def test_session_clone_missing_and_bad_cutoff_match_fastapi(
+    client: TestClient,
+    rust_api_writes_url: str,
+):
+    marker = generate_nanoid()
+    python_workspace = f"rust-contract-python-clonemiss-ws-{marker}"
+    rust_workspace = f"rust-contract-rust-clonemiss-ws-{marker}"
+    python_session = f"rust-contract-python-clonemiss-{marker}"
+    rust_session = f"rust-contract-rust-clonemiss-{marker}"
+    peer = f"rust-contract-clonemiss-peer-{marker}"
+
+    # Missing original session -> "Original session not found".
+    python_missing = client.post(
+        f"/v3/workspaces/{python_workspace}/sessions/{python_session}/clone",
+    )
+    rust_missing = httpx.post(
+        f"{rust_api_writes_url}/v3/workspaces/{rust_workspace}/sessions/{rust_session}/clone",
+        timeout=5,
+    )
+    assert rust_missing.status_code == python_missing.status_code == 404
+    assert python_missing.json() == {"detail": "Original session not found"}
+    assert rust_missing.json() == {"detail": "Original session not found"}
+
+    # Existing session but unknown cutoff message -> "Session not found".
+    _seed_clone_source(client, python_workspace, python_session, peer)
+    _seed_clone_source(client, rust_workspace, rust_session, peer)
+    bad_cutoff = generate_nanoid()
+    python_bad = client.post(
+        f"/v3/workspaces/{python_workspace}/sessions/{python_session}/clone",
+        params={"message_id": bad_cutoff},
+    )
+    rust_bad = httpx.post(
+        f"{rust_api_writes_url}/v3/workspaces/{rust_workspace}/sessions/{rust_session}/clone",
+        params={"message_id": bad_cutoff},
+        timeout=5,
+    )
+    assert rust_bad.status_code == python_bad.status_code == 404
+    assert python_bad.json() == {"detail": "Session not found"}
+    assert rust_bad.json() == {"detail": "Session not found"}
+
+
 @pytest.mark.asyncio
 async def test_inactive_session_writes_match_fastapi_not_found(
     client: TestClient,

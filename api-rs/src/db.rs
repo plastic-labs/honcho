@@ -346,6 +346,158 @@ pub async fn delete_session(
     Ok(())
 }
 
+#[derive(Debug)]
+pub enum CloneSessionError {
+    OriginalNotFound,
+    CutoffMessageNotFound,
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for CloneSessionError {
+    fn from(error: sqlx::Error) -> Self {
+        CloneSessionError::Database(error)
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ClonedMessageRow {
+    content: String,
+    metadata: Value,
+    peer_name: String,
+    seq_in_session: i64,
+}
+
+#[derive(Debug, FromRow)]
+struct ClonedPeerRow {
+    peer_name: String,
+    configuration: Value,
+}
+
+/// Clone an active session, mirroring Python's `crud.clone_session` semantics.
+///
+/// The new session gets a fresh nanoid name and copies the original session's
+/// metadata and configuration. Messages (optionally truncated at and including
+/// `cutoff_message_id`) are copied with fresh public ids and default
+/// `token_count` / `internal_metadata`. Session-peer memberships are copied with
+/// their configuration only when at least one message is cloned, matching
+/// Python's early return for empty source sessions.
+pub async fn clone_session(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    cutoff_message_id: Option<&str>,
+) -> Result<Value, CloneSessionError> {
+    let mut transaction = pool.begin().await?;
+
+    let original = sqlx::query_as::<_, SessionRow>(
+        "SELECT name, workspace_name, is_active, metadata, configuration, created_at \
+         FROM sessions \
+         WHERE workspace_name = $1 AND name = $2 AND is_active = true",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or(CloneSessionError::OriginalNotFound)?;
+
+    let cutoff_id: Option<i64> = match cutoff_message_id {
+        Some(message_id) => {
+            let row = sqlx::query(
+                "SELECT id FROM messages \
+                 WHERE public_id = $1 AND session_name = $2 AND workspace_name = $3",
+            )
+            .bind(message_id)
+            .bind(session_name)
+            .bind(workspace_name)
+            .fetch_optional(&mut *transaction)
+            .await?
+            .ok_or(CloneSessionError::CutoffMessageNotFound)?;
+            Some(row.try_get::<i64, _>("id")?)
+        }
+        None => None,
+    };
+
+    let new_session_name = generate_nanoid();
+    let new_session = sqlx::query_as::<_, SessionRow>(
+        "INSERT INTO sessions (id, name, workspace_name, is_active, metadata, configuration) \
+         VALUES ($1, $2, $3, true, $4, $5) \
+         RETURNING name, workspace_name, is_active, metadata, configuration, created_at",
+    )
+    .bind(generate_nanoid())
+    .bind(&new_session_name)
+    .bind(workspace_name)
+    .bind(original.metadata)
+    .bind(original.configuration)
+    .fetch_one(&mut *transaction)
+    .await?;
+
+    let messages = sqlx::query_as::<_, ClonedMessageRow>(
+        "SELECT content, metadata, peer_name, seq_in_session \
+         FROM messages \
+         WHERE session_name = $1 AND workspace_name = $2 \
+         AND ($3::bigint IS NULL OR id <= $3) \
+         ORDER BY id",
+    )
+    .bind(session_name)
+    .bind(workspace_name)
+    .bind(cutoff_id)
+    .fetch_all(&mut *transaction)
+    .await?;
+
+    // Python returns early (skipping peer copy) when the source has no messages.
+    if messages.is_empty() {
+        transaction.commit().await?;
+        return Ok(session_json(new_session));
+    }
+
+    for message in &messages {
+        // token_count has only an application-side default in Python; the column
+        // is NOT NULL with no DB default, so we set the cloned default (0)
+        // explicitly to match Python's omitted-value insert behavior.
+        sqlx::query(
+            "INSERT INTO messages \
+             (public_id, session_name, content, metadata, workspace_name, peer_name, \
+              seq_in_session, token_count) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 0)",
+        )
+        .bind(generate_nanoid())
+        .bind(&new_session_name)
+        .bind(&message.content)
+        .bind(&message.metadata)
+        .bind(workspace_name)
+        .bind(&message.peer_name)
+        .bind(message.seq_in_session)
+        .execute(&mut *transaction)
+        .await?;
+    }
+
+    let peers = sqlx::query_as::<_, ClonedPeerRow>(
+        "SELECT peer_name, configuration FROM session_peers \
+         WHERE workspace_name = $1 AND session_name = $2",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .fetch_all(&mut *transaction)
+    .await?;
+
+    for peer in &peers {
+        sqlx::query(
+            "INSERT INTO session_peers \
+             (workspace_name, session_name, peer_name, configuration) \
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(workspace_name)
+        .bind(&new_session_name)
+        .bind(&peer.peer_name)
+        .bind(&peer.configuration)
+        .execute(&mut *transaction)
+        .await?;
+    }
+
+    transaction.commit().await?;
+    Ok(session_json(new_session))
+}
+
 pub async fn count_active_session_observers_excluding(
     pool: &PgPool,
     workspace_name: &str,
