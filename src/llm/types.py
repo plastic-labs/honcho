@@ -75,6 +75,10 @@ class LLMTelemetryContext:
     # agent — dialectic/deduction/induction. Used by agent iteration
     # event and tool call event.
     agent_type: str | None = None
+    # Human-readable name for the Langfuse trace (e.g. "Dialectic Agent",
+    # "Minimal Deriver"). Populated by honcho_llm_call from its track_name
+    # kwarg so honcho_llm_call_inner can name each per-call trace.
+    track_name: str | None = None
 
 
 IterationCallback = Callable[[IterationData], None]

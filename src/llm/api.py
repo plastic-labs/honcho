@@ -11,6 +11,7 @@ Orchestrates:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal, TypeVar, cast, overload
@@ -21,17 +22,17 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import ValidationException
-from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 
 from .executor import honcho_llm_call_inner
 from .runtime import (
     AttemptPlan,
+    annotate_langfuse_run_io,
     current_attempt,
     effective_temperature,
+    langfuse_agent_run,
     plan_attempt,
     resolve_runtime_model_config,
-    update_current_langfuse_observation,
 )
 from .tool_loop import execute_tool_loop
 from .types import (
@@ -138,7 +139,6 @@ async def honcho_llm_call(
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
-@conditional_observe(name="LLM Call")
 async def honcho_llm_call(
     *,
     model_config: ModelConfig | ConfiguredModelSettings,
@@ -181,6 +181,15 @@ async def honcho_llm_call(
     """
     runtime_model_config = resolve_runtime_model_config(model_config)
 
+    # Default telemetry.track_name to track_name so per-call traces are named
+    # per agent rather than after the bare function.
+    if (
+        telemetry is not None
+        and track_name is not None
+        and telemetry.track_name is None
+    ):
+        telemetry = dataclasses.replace(telemetry, track_name=track_name)
+
     # Caller kwargs left at None are resolved downstream by
     # effective_config_for_call against whichever ModelConfig wins the
     # attempt (primary or fallback). Defaulting here from
@@ -205,11 +214,6 @@ async def honcho_llm_call(
             retry_attempts=retry_attempts,
             call_thinking_budget_tokens=thinking_budget_tokens,
             call_reasoning_effort=reasoning_effort,
-        )
-        update_current_langfuse_observation(
-            plan.provider,
-            plan.model,
-            name=track_name,
         )
         return plan
 
@@ -429,30 +433,40 @@ async def honcho_llm_call(
             )
         return result
 
-    # execute_tool_loop raises ValidationException on out-of-range
-    # max_tool_iterations; fail-fast is cheaper than silent clamping here.
-    result = await execute_tool_loop(
-        prompt=prompt,
-        max_tokens=max_tokens,
-        messages=messages,
-        tools=tools,
-        tool_choice=tool_choice,
-        tool_executor=tool_executor,
-        max_tool_iterations=max_tool_iterations,
-        response_model=response_model,
-        json_mode=json_mode,
-        temperature=temperature,
-        stop_seqs=stop_seqs,
-        verbosity=verbosity,
-        enable_retry=enable_retry,
-        retry_attempts=retry_attempts,
-        max_input_tokens=max_input_tokens,
-        get_attempt_plan=_get_attempt_plan,
-        before_retry_callback=before_retry_callback,
-        stream_final=stream_final_only,
-        iteration_callback=iteration_callback,
-        telemetry=telemetry,
-    )
+    # One run-level trace wrapping the whole run; the step/LLM/tool spans nest
+    # under it (it's the current observation in this task). No-op for single
+    # calls / when disabled.
+    run_label = (telemetry.track_name if telemetry else None) or "Agent"
+    with langfuse_agent_run(run_label, telemetry) as run_span:
+        annotate_langfuse_run_io(run_span, input=messages)
+        # execute_tool_loop raises ValidationException on out-of-range
+        # max_tool_iterations; fail-fast is cheaper than silent clamping here.
+        result = await execute_tool_loop(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            tool_executor=tool_executor,
+            max_tool_iterations=max_tool_iterations,
+            response_model=response_model,
+            json_mode=json_mode,
+            temperature=temperature,
+            stop_seqs=stop_seqs,
+            verbosity=verbosity,
+            enable_retry=enable_retry,
+            retry_attempts=retry_attempts,
+            max_input_tokens=max_input_tokens,
+            get_attempt_plan=_get_attempt_plan,
+            before_retry_callback=before_retry_callback,
+            stream_final=stream_final_only,
+            iteration_callback=iteration_callback,
+            telemetry=telemetry,
+        )
+        # Stamp run output; stream_final has no content yet (drains later in the
+        # caller, where that generation self-stamps).
+        if isinstance(result, HonchoLLMCallResponse):
+            annotate_langfuse_run_io(run_span, output=result.content)
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(
             task_type=trace_name,
