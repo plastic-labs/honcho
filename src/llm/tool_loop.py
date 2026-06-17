@@ -658,7 +658,13 @@ async def execute_tool_loop(
     else:
         final_call_func = _final_call
 
-    final_response = await final_call_func()
+    # Wrap in a step span like the in-loop iterations so the synthesis
+    # generation nests under the run root instead of dangling at the trace.
+    with langfuse_agent_step(
+        _step_label(telemetry),
+        _telemetry_for_iteration(telemetry, synthesis_iteration),
+    ):
+        final_response = await final_call_func()
 
     # emit the synthesis-call iteration event BEFORE merging cumulative
     # totals onto final_response below — otherwise the event's per-iteration
