@@ -5,12 +5,14 @@ through to a workspace check, so a `{w, p}` token authorized any peer in `w`.
 The contract now is: authorize by the token's narrowest claim, never widen.
 """
 
+from contextlib import asynccontextmanager
+
 import jwt as pyjwt
 import pytest
 from fastapi.security import HTTPAuthorizationCredentials
 
 from src.config import settings
-from src.exceptions import AuthenticationException
+from src.exceptions import AuthenticationException, ValidationException
 from src.security import JWTParams, auth, create_jwt, verify_jwt
 
 
@@ -141,6 +143,118 @@ class TestAuthWorkspaceScope:
         creds = _bearer(create_jwt(JWTParams(w="ws-a")))
         params = await auth(credentials=creds)
         assert params.w == "ws-a"
+
+
+@asynccontextmanager
+async def _fake_tracked_db(*_args: object, **_kwargs: object):
+    """Stand-in for tracked_db; the membership query itself is monkeypatched."""
+    yield None
+
+
+def _patch_membership(monkeypatch: pytest.MonkeyPatch, *, is_member: bool):
+    async def _is_peer_in_session(*_args: object, **_kwargs: object) -> bool:
+        return is_member
+
+    # Names are resolved via lazy imports inside auth(), so patch the source
+    # modules rather than the security namespace.
+    monkeypatch.setattr("src.dependencies.tracked_db", _fake_tracked_db)
+    monkeypatch.setattr("src.crud.session.is_peer_in_session", _is_peer_in_session)
+
+
+class TestAuthMemberRead:
+    """Peer-scoped key gets read-only access to sessions it is a member of."""
+
+    @pytest.mark.asyncio
+    async def test_member_peer_allowed_on_read_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _patch_membership(monkeypatch, is_member=True)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        params = await auth(
+            credentials=creds,
+            workspace_name="ws-a",
+            session_name="sess-1",
+            allow_member_read=True,
+        )
+        assert params.p == "alice"
+
+    @pytest.mark.asyncio
+    async def test_non_member_peer_denied_on_read_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _patch_membership(monkeypatch, is_member=False)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-a",
+                session_name="sess-1",
+                allow_member_read=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_member_peer_denied_on_write_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Write routes never set allow_member_read, so membership is irrelevant."""
+        _patch_membership(monkeypatch, is_member=True)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-a",
+                session_name="sess-1",
+                allow_member_read=False,
+            )
+
+    @pytest.mark.asyncio
+    async def test_member_peer_denied_cross_workspace(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _patch_membership(monkeypatch, is_member=True)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-b",
+                session_name="sess-1",
+                allow_member_read=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_session_token_has_no_cross_scope_to_peer_routes(self):
+        """A session key never reaches peer routes, even with allow_member_read."""
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", s="sess-1")))
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-a",
+                peer_name="alice",
+                allow_member_read=True,
+            )
+
+
+class TestCreateKeyValidation:
+    @pytest.mark.asyncio
+    async def test_peer_key_without_workspace_rejected(self):
+        from src.routers.keys import create_key
+
+        with pytest.raises(ValidationException):
+            await create_key(workspace_id=None, peer_id="alice", session_id=None)
+
+    @pytest.mark.asyncio
+    async def test_session_key_without_workspace_rejected(self):
+        from src.routers.keys import create_key
+
+        with pytest.raises(ValidationException):
+            await create_key(workspace_id=None, peer_id=None, session_id="sess-1")
+
+    @pytest.mark.asyncio
+    async def test_peer_key_with_workspace_ok(self):
+        from src.routers.keys import create_key
+
+        result = await create_key(workspace_id="ws-a", peer_id="alice", session_id=None)
+        assert "key" in result
 
 
 class TestAuthAdminAndUnscoped:

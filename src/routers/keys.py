@@ -42,6 +42,14 @@ async def create_key(
             "At least one of workspace_id, peer_id, or session_id must be provided"
         )
 
+    # A peer- or session-scoped key must carry its parent workspace, otherwise
+    # verify_jwt rejects it on every request (the workspace is required to rule
+    # out cross-workspace use). Mirror the guard in scripts/generate_jwt.py.
+    if (peer_id or session_id) and not workspace_id:
+        raise ValidationException(
+            "workspace_id is required when scoping a key to a peer or session"
+        )
+
     key_str = create_jwt(
         JWTParams(
             exp=format_datetime_utc(expires_at) if expires_at else None,

@@ -125,9 +125,14 @@ def require_auth(
     workspace_name: str | None = None,
     peer_name: str | None = None,
     session_name: str | None = None,
+    allow_member_read: bool = False,
 ):
     """
     Generate a dependency that requires authentication for the given parameters.
+
+    Set `allow_member_read=True` on read-only session routes to additionally
+    grant access to peer-scoped keys whose peer is an active member of the
+    session. Never set it on routes that mutate state.
     """
 
     async def auth_dependency(
@@ -158,6 +163,7 @@ def require_auth(
             workspace_name=workspace_name_param,
             peer_name=peer_name_param,
             session_name=session_name_param,
+            allow_member_read=allow_member_read,
         )
 
     return auth_dependency
@@ -169,6 +175,7 @@ async def auth(
     workspace_name: str | None = None,
     peer_name: str | None = None,
     session_name: str | None = None,
+    allow_member_read: bool = False,
 ) -> JWTParams:
     """Authenticate the given JWT and return the decoded parameters."""
     if not settings.AUTH.USE_AUTH:
@@ -194,6 +201,8 @@ async def auth(
         return jwt_params
 
     if jwt_params.s is not None:
+        # Session-scoped token: confined to its own session. It gets no
+        # cross-scope access to peer routes.
         if not session_name or jwt_params.s != session_name:
             raise AuthenticationException("JWT not permissioned for this resource")
         if workspace_name and jwt_params.w != workspace_name:
@@ -201,11 +210,32 @@ async def auth(
         return jwt_params
 
     if jwt_params.p is not None:
-        if not peer_name or jwt_params.p != peer_name:
-            raise AuthenticationException("JWT not permissioned for this resource")
-        if workspace_name and jwt_params.w != workspace_name:
-            raise AuthenticationException("JWT not permissioned for this resource")
-        return jwt_params
+        # Peer-scoped token: its own peer routes...
+        if peer_name and jwt_params.p == peer_name:
+            if workspace_name and jwt_params.w != workspace_name:
+                raise AuthenticationException("JWT not permissioned for this resource")
+            return jwt_params
+        # ...plus read-only access to the sessions the peer is a member of.
+        # Gated on `allow_member_read` so only read routes opt in; writes stay
+        # denied. Requires the route's workspace so the membership lookup is
+        # scoped (every session route declares workspace_name).
+        if allow_member_read and session_name and workspace_name:
+            if jwt_params.w != workspace_name:
+                raise AuthenticationException("JWT not permissioned for this resource")
+            # Lazy imports avoid an import cycle with the crud/db layers and
+            # keep this DB round-trip off the common (same-scope) auth path.
+            from src.crud.session import is_peer_in_session
+            from src.dependencies import tracked_db
+
+            async with tracked_db(
+                "auth.is_peer_in_session", read_only=True
+            ) as member_db:
+                is_member = await is_peer_in_session(
+                    member_db, workspace_name, session_name, jwt_params.p
+                )
+            if is_member:
+                return jwt_params
+        raise AuthenticationException("JWT not permissioned for this resource")
 
     if jwt_params.w is not None:
         # Workspace tokens reach any route inside their workspace. Routes

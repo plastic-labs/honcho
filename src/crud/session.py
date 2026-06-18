@@ -834,6 +834,38 @@ async def get_peers_from_session(
     )
 
 
+async def is_peer_in_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+) -> bool:
+    """Return whether a peer is an active member of a session.
+
+    Active membership means a `SessionPeer` row exists with `left_at IS NULL`.
+    Used by the auth layer to grant a peer-scoped key read access to the
+    sessions that peer belongs to.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        peer_name: Name of the peer
+
+    Returns:
+        True if the peer is currently a member of the session.
+    """
+    result = await db.scalar(
+        select(models.SessionPeer.peer_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.session_name == session_name)
+        .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.SessionPeer.left_at.is_(None))
+        .limit(1)
+    )
+    return result is not None
+
+
 async def get_session_peer_configuration(
     workspace_name: str,
     session_name: str,

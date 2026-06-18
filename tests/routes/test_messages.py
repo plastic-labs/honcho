@@ -7,7 +7,9 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.models import Peer, Workspace
+from src.security import JWTParams, create_jwt
 
 
 @pytest.mark.asyncio
@@ -276,6 +278,64 @@ async def test_get_messages(
     assert data["items"][0]["peer_id"] == test_peer.name
     assert data["items"][0]["session_id"] == test_session.name
     assert data["items"][0]["metadata"] == {}
+
+
+@pytest.mark.asyncio
+async def test_member_peer_key_reads_session_but_cannot_write(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A peer-scoped key may read sessions its peer belongs to (membership-based
+    cross-scope read), but not write to them. Non-member peer keys and session
+    keys on peer routes are denied. Exercises the real session_peers lookup."""
+    test_workspace, alice = sample_data
+    session_name = str(generate_nanoid())
+    base = f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}"
+
+    # Setup with auth disabled: create the session with alice as an active
+    # member, then commit so the independent tracked_db session in auth() (which
+    # only sees committed rows) can resolve membership.
+    client.post(f"{base}/peers", json={alice.name: {}})
+    await db_session.commit()
+
+    # Enforce auth for the assertions below.
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+
+    # Member peer key: reads allowed.
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=alice.name))}"
+    )
+    assert client.post(f"{base}/messages/list", json={}).status_code == 200
+    assert client.get(f"{base}/context").status_code == 200
+
+    # Member peer key: writes denied (write routes don't opt into member read).
+    assert (
+        client.post(
+            f"{base}/messages",
+            json={"messages": [{"content": "nope", "peer_id": alice.name}]},
+        ).status_code
+        == 401
+    )
+
+    # Non-member peer key: even reads denied.
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p='not-a-member'))}"
+    )
+    assert client.post(f"{base}/messages/list", json={}).status_code == 401
+
+    # Session key: no cross-scope access to peer routes.
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, s=session_name))}"
+    )
+    assert (
+        client.get(
+            f"/v3/workspaces/{test_workspace.name}/peers/{alice.name}/card"
+        ).status_code
+        == 401
+    )
 
 
 @pytest.mark.asyncio
