@@ -485,6 +485,54 @@ async fn peer_perspective_filter_keeps_only_in_window_messages() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn fetch_messages_by_ids_preserves_order_and_drops_missing() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "first"),
+            message("alice", "second"),
+            message("alice", "third"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+
+    // Request in a deliberately scrambled order, with one unknown id mixed in.
+    let requested = vec![
+        created[2].public_id.clone(),
+        "does-not-exist".to_string(),
+        created[0].public_id.clone(),
+        created[1].public_id.clone(),
+    ];
+    let hydrated = db::fetch_messages_by_ids(&test_db.pool, &requested)
+        .await
+        .expect("hydrate");
+
+    // Output follows the requested order; the unknown id is dropped.
+    let contents: Vec<&str> = hydrated
+        .iter()
+        .filter_map(|m| m["content"].as_str())
+        .collect();
+    assert_eq!(contents, vec!["third", "first", "second"]);
+
+    // Empty input -> empty output, no query.
+    let empty = db::fetch_messages_by_ids(&test_db.pool, &[])
+        .await
+        .expect("empty");
+    assert!(empty.is_empty());
+
+    test_db.teardown().await;
+}
+
 async fn message_count(pool: &PgPool, session_name: &str) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM messages WHERE session_name = $1 AND workspace_name = 'ws'")
         .bind(session_name)

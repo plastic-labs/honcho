@@ -1193,6 +1193,37 @@ pub async fn list_messages(
     Ok(page_response(items, total as u64, page))
 }
 
+/// Fetch messages by public id, preserving the input ordering and dropping ids
+/// that don't resolve, porting `fetch_messages_by_ids`. Used by the search route
+/// to hydrate the RRF-fused id list back into message JSON.
+pub async fn fetch_messages_by_ids(
+    pool: &PgPool,
+    message_ids: &[String],
+) -> Result<Vec<Value>, sqlx::Error> {
+    if message_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows = sqlx::query_as::<_, MessageRow>(
+        "SELECT public_id, content, peer_name, session_name, metadata, created_at, \
+         workspace_name, token_count \
+         FROM messages WHERE public_id = ANY($1)",
+    )
+    .bind(message_ids)
+    .fetch_all(pool)
+    .await?;
+
+    let mut by_id: BTreeMap<String, Value> = rows
+        .into_iter()
+        .map(|row| (row.public_id.clone(), message_json(row)))
+        .collect();
+
+    Ok(message_ids
+        .iter()
+        .filter_map(|id| by_id.remove(id))
+        .collect())
+}
+
 pub async fn list_conclusions(
     pool: &PgPool,
     workspace_name: &str,
