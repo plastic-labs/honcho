@@ -11,6 +11,7 @@
 pub mod backends;
 pub mod conversation;
 pub mod history_adapters;
+pub mod http;
 pub mod request_builder;
 pub mod runtime;
 pub mod tool_loop;

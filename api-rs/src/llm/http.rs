@@ -33,6 +33,41 @@ impl std::fmt::Display for LlmHttpError {
 
 impl std::error::Error for LlmHttpError {}
 
+/// Resolved per-call credentials for a provider request, mirroring the subset of
+/// `credentials::resolve_credentials` the transport needs: the API key and an
+/// optional base-URL override. A `None` `base_url` means the provider's default
+/// endpoint (each backend supplies its own constant).
+#[derive(Debug, Clone)]
+pub struct Credentials {
+    pub api_key: String,
+    pub base_url: Option<String>,
+}
+
+impl Credentials {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url: None,
+        }
+    }
+
+    pub fn with_base_url(api_key: impl Into<String>, base_url: Option<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url,
+        }
+    }
+
+    /// The effective base URL, falling back to `default` and trimming a trailing
+    /// slash so backends can append a leading-slash path unconditionally.
+    pub fn effective_base_url<'a>(&'a self, default: &'a str) -> &'a str {
+        self.base_url
+            .as_deref()
+            .unwrap_or(default)
+            .trim_end_matches('/')
+    }
+}
+
 /// One JSON POST. Backends call this with a provider URL, headers, and the body
 /// produced by their `build_request`/`build_config`, and parse the returned
 /// [`Value`] with their `parse_response`. Implemented for real by

@@ -7,7 +7,32 @@
 
 use serde_json::{Map, Value, json};
 
+use crate::llm::http::{Credentials, LlmHttp, LlmHttpError};
 use crate::llm::{CompletionResult, ToolCallResult};
+
+/// The OpenAI SDK's default API base. Unlike Anthropic this already includes the
+/// `/v1` version segment, so the path appended below is just `/chat/completions`.
+pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// Run one Chat Completions request: build the body, POST it through the
+/// [`LlmHttp`] transport with a Bearer auth header, and parse the response.
+pub async fn complete<H: LlmHttp>(
+    http: &H,
+    credentials: &Credentials,
+    params: &RequestParams<'_>,
+) -> Result<CompletionResult, LlmHttpError> {
+    let body = build_request(params);
+    let url = format!(
+        "{}/chat/completions",
+        credentials.effective_base_url(DEFAULT_BASE_URL)
+    );
+    let headers = [(
+        "Authorization".to_string(),
+        format!("Bearer {}", credentials.api_key),
+    )];
+    let response = http.post_json(&url, &headers, &body).await?;
+    Ok(parse_response(&response))
+}
 
 /// Whether the model uses `max_completion_tokens` instead of `max_tokens`,
 /// porting `_uses_max_completion_tokens`: GPT-5 family and the o1/o3/o4
@@ -422,5 +447,42 @@ mod tests {
         assert_eq!(result.finish_reason, "stop");
         assert_eq!(result.input_tokens, 0);
         assert!(result.thinking_content.is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_posts_to_chat_completions_with_bearer_auth() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({
+            "choices": [{"finish_reason": "stop", "message": {"content": "hi"}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+        }));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let params = RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 64,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &Map::new(),
+        };
+
+        let result = complete(&http, &Credentials::new("sk-openai"), &params)
+            .await
+            .unwrap();
+
+        // The default base already carries `/v1`; only the path is appended.
+        assert_eq!(http.last_url(), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(
+            http.last_headers(),
+            vec![("Authorization".to_string(), "Bearer sk-openai".to_string())]
+        );
+        assert_eq!(http.last_body(), build_request(&params));
+        assert_eq!(result.content, json!("hi"));
+        assert_eq!(result.input_tokens, 3);
     }
 }

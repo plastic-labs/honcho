@@ -10,7 +10,33 @@
 
 use serde_json::{Map, Value, json};
 
+use crate::llm::http::{Credentials, LlmHttp, LlmHttpError};
 use crate::llm::{CompletionResult, ToolCallResult};
+
+/// The Anthropic SDK's default API host, used when no `base_url` override is set.
+pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
+
+/// The `anthropic-version` header the SDK pins by default.
+pub const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+/// Run one Messages API completion: build the request body, POST it through the
+/// [`LlmHttp`] transport with Anthropic's auth headers, and parse the response.
+/// This is the deterministic orchestration around the single non-deterministic
+/// step (`post_json`); with a mock transport it is exercisable without network.
+pub async fn complete<H: LlmHttp>(
+    http: &H,
+    credentials: &Credentials,
+    params: &RequestParams<'_>,
+) -> Result<CompletionResult, LlmHttpError> {
+    let body = build_request(params);
+    let url = format!("{}/v1/messages", credentials.effective_base_url(DEFAULT_BASE_URL));
+    let headers = [
+        ("x-api-key".to_string(), credentials.api_key.clone()),
+        ("anthropic-version".to_string(), ANTHROPIC_VERSION.to_string()),
+    ];
+    let response = http.post_json(&url, &headers, &body).await?;
+    Ok(parse_response(&response))
+}
 
 /// Inputs for [`build_request`], mirroring the portable subset of the
 /// `complete()` signature (the `response_format` JSON-prefill path is excluded).
@@ -375,5 +401,78 @@ mod tests {
         assert_eq!(result.finish_reason, "stop");
         assert!(result.thinking_content.is_none());
         assert!(result.tool_calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn complete_posts_to_messages_endpoint_and_parses() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({
+            "content": [{"type": "text", "text": "hi there"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 4, "output_tokens": 2},
+        }));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let params = RequestParams {
+            model: "claude-opus-4-8",
+            messages: &messages,
+            max_tokens: 128,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_budget_tokens: None,
+            extra_params: &Map::new(),
+        };
+        let credentials = Credentials::new("sk-test");
+
+        let result = complete(&http, &credentials, &params).await.unwrap();
+
+        assert_eq!(http.last_url(), "https://api.anthropic.com/v1/messages");
+        assert_eq!(
+            http.last_headers(),
+            vec![
+                ("x-api-key".to_string(), "sk-test".to_string()),
+                ("anthropic-version".to_string(), "2023-06-01".to_string()),
+            ]
+        );
+        // The posted body is exactly what build_request produces.
+        assert_eq!(http.last_body(), build_request(&params));
+        assert_eq!(result.content, json!("hi there"));
+        assert_eq!(result.input_tokens, 4);
+        assert_eq!(result.finish_reason, "end_turn");
+    }
+
+    #[tokio::test]
+    async fn complete_honors_base_url_override_and_propagates_errors() {
+        use crate::llm::http::mock::MockHttp;
+        use crate::llm::http::LlmHttpError;
+
+        let http = MockHttp::ok(json!({"content": []}));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let params = RequestParams {
+            model: "claude-opus-4-8",
+            messages: &messages,
+            max_tokens: 128,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_budget_tokens: None,
+            extra_params: &Map::new(),
+        };
+        // Trailing slash on the override is trimmed before the path is appended.
+        let credentials = Credentials::with_base_url("k", Some("https://proxy.test/".to_string()));
+        complete(&http, &credentials, &params).await.unwrap();
+        assert_eq!(http.last_url(), "https://proxy.test/v1/messages");
+
+        let failing = MockHttp::err(LlmHttpError::Status {
+            status: 429,
+            body: "rate limited".to_string(),
+        });
+        let err = complete(&failing, &Credentials::new("k"), &params)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, LlmHttpError::Status { status: 429, .. }));
     }
 }
