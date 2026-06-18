@@ -18,8 +18,10 @@ use chrono::{TimeZone, Utc};
 use honcho_api_rs::db;
 use honcho_api_rs::db::MessageInsert;
 use honcho_api_rs::search;
+use honcho_api_rs::producer::QueueRecord;
 use honcho_api_rs::search::MessageRef;
 use serde_json::json;
+use serde_json::Value;
 use sqlx::{Connection, Executor, PgConnection, PgPool, Row};
 
 /// The embedding column is `vector(1536)`; build a one-hot literal for seeding.
@@ -618,6 +620,81 @@ async fn hybrid_search_without_embedding_uses_fulltext_only() {
         .filter_map(|m| m["content"].as_str())
         .collect();
     assert_eq!(contents, vec!["beta banana"]);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn enqueue_legs_observer_query_and_queue_insert() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("alice", "hi"), message("bob", "yo")],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+
+    // get_session_peer_configuration returns both joined senders, active.
+    let observers = db::get_session_peer_configuration(&test_db.pool, "ws", "sess")
+        .await
+        .expect("observer query");
+    assert!(observers.contains_key("alice"));
+    assert!(observers.contains_key("bob"));
+    assert!(observers["alice"].is_active);
+
+    // The queue FK references sessions.id (the internal nanoid), which the route
+    // gets from fetch_session_for_enqueue — not the session name.
+    let (session_id, _config) = db::fetch_session_for_enqueue(&test_db.pool, "ws", "sess")
+        .await
+        .expect("fetch session")
+        .expect("session exists");
+
+    // insert_queue_records writes the batched rows referencing a real message id.
+    let records = vec![
+        QueueRecord {
+            work_unit_key: "wu1".to_string(),
+            payload: json!({"task": "representation"}),
+            session_id: session_id.clone(),
+            task_type: "representation".to_string(),
+            workspace_name: "ws".to_string(),
+            message_id: created[0].id,
+        },
+        QueueRecord {
+            work_unit_key: "wu2".to_string(),
+            payload: json!({"task": "summary"}),
+            session_id: session_id.clone(),
+            task_type: "summary".to_string(),
+            workspace_name: "ws".to_string(),
+            message_id: created[0].id,
+        },
+    ];
+    db::insert_queue_records(&test_db.pool, &records)
+        .await
+        .expect("insert queue records");
+
+    let rows = sqlx::query(
+        "SELECT task_type, payload FROM queue WHERE workspace_name = 'ws' ORDER BY task_type",
+    )
+    .fetch_all(&test_db.pool)
+    .await
+    .expect("query queue");
+    assert_eq!(rows.len(), 2);
+    let first_task: String = rows[0].get("task_type");
+    assert_eq!(first_task, "representation"); // 'representation' < 'summary'
+    let first_payload: Value = rows[0].get("payload");
+    assert_eq!(first_payload, json!({"task": "representation"}));
+
+    // Empty input is a no-op (no panic, no rows added).
+    db::insert_queue_records(&test_db.pool, &[])
+        .await
+        .expect("empty insert");
 
     test_db.teardown().await;
 }
