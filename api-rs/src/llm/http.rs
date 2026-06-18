@@ -135,12 +135,15 @@ pub(crate) mod mock {
     use serde_json::Value;
     use std::sync::Mutex;
 
+    /// A captured request: `(url, headers, body)`.
+    type CapturedRequest = (String, Vec<(String, String)>, Value);
+
     /// A mock transport that records the last `(url, headers, body)` it received
     /// and returns a canned result, so backend `complete()` flows are testable
     /// without a network.
     pub struct MockHttp {
         result: Result<Value, LlmHttpError>,
-        pub captured: Mutex<Option<(String, Vec<(String, String)>, Value)>>,
+        pub captured: Mutex<Option<CapturedRequest>>,
     }
 
     impl MockHttp {
