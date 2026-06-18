@@ -81,6 +81,148 @@ fn decode_lossy(tokenizer: &CoreBPE, tokens: &[Rank]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+// ---------------------------------------------------------------------------
+// Embedding generation (OpenAI `/embeddings`), ported from
+// `_EmbeddingClient.embed` (OpenAI branch).
+//
+// Like the LLM backends, this reuses the `LlmHttp` transport seam: the request
+// body and response parse are deterministic and mock-testable; only the POST is
+// non-deterministic. The Gemini branch (genai SDK `embed_content`) is deferred
+// for the same reason its chat backend is — the SDK remaps the request into a
+// REST `embedContent` body we can't reproduce faithfully without fixtures.
+// ---------------------------------------------------------------------------
+
+use serde_json::{Value, json};
+
+use crate::llm::http::{Credentials, LlmHttp, LlmHttpError};
+
+/// The OpenAI SDK's default API base (already version-suffixed), used when no
+/// `base_url` override is configured.
+pub const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// An embedding-generation failure, mirroring the `ValueError`s raised in
+/// `_EmbeddingClient.embed` plus the transport error from the POST.
+#[derive(Debug, Clone)]
+pub enum EmbedError {
+    /// Query exceeds `max_embedding_tokens` (the cl100k token-count guard).
+    TokenLimit { limit: usize, got: usize },
+    /// The response carried no embedding vector.
+    NoEmbedding,
+    /// Vector length differed from the configured `vector_dimensions`.
+    DimensionMismatch { expected: usize, got: usize },
+    /// The underlying HTTP POST failed.
+    Http(LlmHttpError),
+}
+
+impl std::fmt::Display for EmbedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EmbedError::TokenLimit { limit, got } => write!(
+                f,
+                "Query exceeds maximum token limit of {limit} tokens (got {got} tokens)"
+            ),
+            EmbedError::NoEmbedding => write!(f, "No embedding returned from API"),
+            EmbedError::DimensionMismatch { expected, got } => {
+                write!(f, "Embedding dimension mismatch. Expected {expected}, got {got}.")
+            }
+            EmbedError::Http(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for EmbedError {}
+
+/// cl100k token count of `query`, the same count `embed()` checks against
+/// `max_embedding_tokens` before calling the provider.
+pub fn embedding_token_count(query: &str) -> usize {
+    tokenizer().encode_ordinary(query).len()
+}
+
+/// Build the OpenAI `/embeddings` request body, porting the `openai_kwargs`
+/// assembly: `input` is always a one-element list; `dimensions` is sent only
+/// when `dimensions` is `Some` (the `send_dimensions` flag).
+pub fn build_openai_embedding_request(
+    model: &str,
+    query: &str,
+    dimensions: Option<usize>,
+) -> Value {
+    let mut body = serde_json::Map::new();
+    body.insert("model".to_string(), json!(model));
+    body.insert("input".to_string(), json!([query]));
+    if let Some(dimensions) = dimensions {
+        body.insert("dimensions".to_string(), json!(dimensions));
+    }
+    Value::Object(body)
+}
+
+/// Extract `data[0].embedding` from an OpenAI embeddings response as `f32`s,
+/// validating the length against `vector_dimensions` (the
+/// `_validate_embedding_dimensions` check). An absent/empty vector is
+/// [`EmbedError::NoEmbedding`].
+pub fn parse_openai_embedding_response(
+    response: &Value,
+    vector_dimensions: usize,
+) -> Result<Vec<f32>, EmbedError> {
+    let values = response
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|data| data.first())
+        .and_then(|first| first.get("embedding"))
+        .and_then(Value::as_array)
+        .ok_or(EmbedError::NoEmbedding)?;
+    if values.is_empty() {
+        return Err(EmbedError::NoEmbedding);
+    }
+    let embedding: Vec<f32> = values
+        .iter()
+        .filter_map(|value| value.as_f64().map(|f| f as f32))
+        .collect();
+    if embedding.len() != vector_dimensions {
+        return Err(EmbedError::DimensionMismatch {
+            expected: vector_dimensions,
+            got: embedding.len(),
+        });
+    }
+    Ok(embedding)
+}
+
+/// Embed a single query via OpenAI, porting `embed()`'s OpenAI branch: enforce
+/// the token limit, POST `{base}/embeddings` with Bearer auth, then extract and
+/// dimension-validate the vector. `send_dimensions` mirrors the config flag.
+#[allow(clippy::too_many_arguments)]
+pub async fn embed_openai<H: LlmHttp>(
+    http: &H,
+    credentials: &Credentials,
+    model: &str,
+    query: &str,
+    vector_dimensions: usize,
+    send_dimensions: bool,
+    max_embedding_tokens: usize,
+) -> Result<Vec<f32>, EmbedError> {
+    let token_count = embedding_token_count(query);
+    if token_count > max_embedding_tokens {
+        return Err(EmbedError::TokenLimit {
+            limit: max_embedding_tokens,
+            got: token_count,
+        });
+    }
+    let dimensions = send_dimensions.then_some(vector_dimensions);
+    let body = build_openai_embedding_request(model, query, dimensions);
+    let url = format!(
+        "{}/embeddings",
+        credentials.effective_base_url(OPENAI_DEFAULT_BASE_URL)
+    );
+    let headers = [(
+        "Authorization".to_string(),
+        format!("Bearer {}", credentials.api_key),
+    )];
+    let response = http
+        .post_json(&url, &headers, &body)
+        .await
+        .map_err(EmbedError::Http)?;
+    parse_openai_embedding_response(&response, vector_dimensions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +288,87 @@ mod tests {
     fn empty_text_is_a_single_empty_chunk() {
         // No tokens (0 <= max) -> single chunk preserving the original text.
         assert_eq!(chunk_text("", 6), vec![(String::new(), 0)]);
+    }
+
+    #[test]
+    fn openai_embedding_request_sends_dimensions_only_when_requested() {
+        assert_eq!(
+            build_openai_embedding_request("text-embedding-3-small", "hi", Some(1536)),
+            json!({"model": "text-embedding-3-small", "input": ["hi"], "dimensions": 1536})
+        );
+        assert_eq!(
+            build_openai_embedding_request("text-embedding-3-small", "hi", None),
+            json!({"model": "text-embedding-3-small", "input": ["hi"]})
+        );
+    }
+
+    #[test]
+    fn parse_embedding_extracts_first_vector_and_validates_length() {
+        let response = json!({"data": [{"embedding": [0.1, 0.2, 0.3]}]});
+        assert_eq!(
+            parse_openai_embedding_response(&response, 3).unwrap(),
+            vec![0.1_f32, 0.2, 0.3]
+        );
+        // Wrong length -> mismatch.
+        assert!(matches!(
+            parse_openai_embedding_response(&response, 4),
+            Err(EmbedError::DimensionMismatch { expected: 4, got: 3 })
+        ));
+        // No data -> NoEmbedding.
+        assert!(matches!(
+            parse_openai_embedding_response(&json!({"data": []}), 3),
+            Err(EmbedError::NoEmbedding)
+        ));
+    }
+
+    #[tokio::test]
+    async fn embed_openai_posts_to_embeddings_endpoint() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({"data": [{"embedding": [1.0, 2.0]}]}));
+        let vector = embed_openai(
+            &http,
+            &Credentials::new("sk-e"),
+            "text-embedding-3-small",
+            "hello",
+            2,
+            true,
+            8192,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(http.last_url(), "https://api.openai.com/v1/embeddings");
+        assert_eq!(
+            http.last_headers(),
+            vec![("Authorization".to_string(), "Bearer sk-e".to_string())]
+        );
+        assert_eq!(
+            http.last_body(),
+            json!({"model": "text-embedding-3-small", "input": ["hello"], "dimensions": 2})
+        );
+        assert_eq!(vector, vec![1.0_f32, 2.0]);
+    }
+
+    #[tokio::test]
+    async fn embed_openai_enforces_token_limit_before_posting() {
+        use crate::llm::http::mock::MockHttp;
+
+        // A 1-token cap with a multi-token query trips the guard without a POST.
+        let http = MockHttp::ok(json!({"data": [{"embedding": [1.0]}]}));
+        let err = embed_openai(
+            &http,
+            &Credentials::new("sk-e"),
+            "text-embedding-3-small",
+            "several words exceed the cap",
+            1,
+            false,
+            1,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, EmbedError::TokenLimit { limit: 1, .. }));
+        // No request was made.
+        assert!(http.captured.lock().unwrap().is_none());
     }
 }
