@@ -14,6 +14,7 @@ use std::collections::hash_map::Entry;
 use std::hash::Hash;
 
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use sqlx::PgPool;
 
 /// RRF constant (`k`) controlling how steeply rank position discounts score.
@@ -251,6 +252,112 @@ pub async fn filter_by_peer_perspective(
         }
     }
     Ok(filtered)
+}
+
+/// Hydrate ids to [`MessageRef`]s (public_id, session_name, created_at),
+/// preserving input order and dropping ids that don't resolve.
+async fn fetch_message_refs_by_ids(
+    pool: &PgPool,
+    ids: &[String],
+) -> Result<Vec<MessageRef>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<(String, String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT public_id, session_name, created_at FROM messages WHERE public_id = ANY($1)",
+    )
+    .bind(ids)
+    .fetch_all(pool)
+    .await?;
+    let mut by_id: HashMap<String, MessageRef> = rows
+        .into_iter()
+        .map(|(public_id, session_name, created_at)| {
+            (
+                public_id.clone(),
+                MessageRef {
+                    public_id,
+                    session_name,
+                    created_at,
+                },
+            )
+        })
+        .collect();
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+}
+
+/// Drop ids whose message falls outside `peer_name`'s session-membership
+/// windows, preserving order. Hydrates the ids then reuses
+/// [`filter_by_peer_perspective`].
+async fn peer_filter_ids(
+    pool: &PgPool,
+    workspace_name: &str,
+    peer_name: &str,
+    ids: &[String],
+) -> Result<Vec<String>, sqlx::Error> {
+    let refs = fetch_message_refs_by_ids(pool, ids).await?;
+    let filtered = filter_by_peer_perspective(pool, workspace_name, peer_name, &refs).await?;
+    Ok(filtered.into_iter().map(|r| r.public_id).collect())
+}
+
+/// Inputs for [`hybrid_search`].
+pub struct HybridSearchParams<'a> {
+    pub workspace_name: &'a str,
+    pub query: &'a str,
+    /// Pre-computed query embedding, or `None` when semantic search is disabled
+    /// (no `EMBED_MESSAGES` / no embedding produced). Computed upstream by the
+    /// route via [`crate::embedding::embed_openai`].
+    pub query_embedding: Option<&'a [f32]>,
+    pub peer_perspective: Option<&'a str>,
+    pub limit: usize,
+}
+
+/// Hybrid message search, porting `search()._run_search`: run the semantic
+/// (pgvector) and full-text legs, peer-filter each leg when a perspective is
+/// given (matching Python, which filters semantic results in code and the
+/// full-text leg via its SQL join — net effect both legs are filtered), fuse
+/// the ranked id lists with RRF (or take the single leg when only one ran), and
+/// hydrate the result back to message JSON.
+pub async fn hybrid_search(
+    pool: &PgPool,
+    params: &HybridSearchParams<'_>,
+) -> Result<Vec<Value>, sqlx::Error> {
+    let limit = params.limit;
+    let semantic_limit = if params.peer_perspective.is_some() {
+        limit * 4
+    } else {
+        limit * 2
+    };
+
+    let mut ranked_lists: Vec<Vec<String>> = Vec::new();
+
+    if let Some(embedding) = params.query_embedding {
+        let mut ids =
+            semantic_search_pgvector(pool, params.workspace_name, embedding, semantic_limit).await?;
+        if let Some(peer) = params.peer_perspective {
+            ids = peer_filter_ids(pool, params.workspace_name, peer, &ids).await?;
+        }
+        ranked_lists.push(ids);
+    }
+
+    let mut fulltext_ids = fulltext_search(pool, params.workspace_name, params.query, limit * 2).await?;
+    if let Some(peer) = params.peer_perspective {
+        fulltext_ids = peer_filter_ids(pool, params.workspace_name, peer, &fulltext_ids).await?;
+    }
+    ranked_lists.push(fulltext_ids);
+
+    let fused: Vec<String> = if ranked_lists.len() > 1 {
+        reciprocal_rank_fusion(&ranked_lists, RRF_K, limit)
+    } else {
+        ranked_lists
+            .into_iter()
+            .next()
+            .unwrap_or_default()
+            .into_iter()
+            .take(limit)
+            .collect()
+    };
+
+    crate::db::fetch_messages_by_ids(pool, &fused).await
 }
 
 #[cfg(test)]

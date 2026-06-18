@@ -533,6 +533,95 @@ async fn fetch_messages_by_ids_preserves_order_and_drops_missing() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn hybrid_search_fuses_semantic_and_fulltext_legs() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "alpha apple"),
+            message("alice", "beta banana"),
+            message("alice", "gamma cherry"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+    seed_embedding(&test_db.pool, &created[0].public_id, 0).await;
+    seed_embedding(&test_db.pool, &created[1].public_id, 1).await;
+    seed_embedding(&test_db.pool, &created[2].public_id, 2).await;
+
+    // FTS "apple" matches only alpha; the embedding leans toward alpha (dim 0).
+    // alpha appears top of BOTH legs, so RRF ranks it first.
+    let embedding = query_vector(&[(0, 1.0), (1, 0.3), (2, 0.1)]);
+    let params = search::HybridSearchParams {
+        workspace_name: "ws",
+        query: "apple",
+        query_embedding: Some(&embedding),
+        peer_perspective: None,
+        limit: 10,
+    };
+    let results = search::hybrid_search(&test_db.pool, &params)
+        .await
+        .expect("hybrid search");
+
+    let contents: Vec<&str> = results
+        .iter()
+        .filter_map(|m| m["content"].as_str())
+        .collect();
+    assert_eq!(contents.first(), Some(&"alpha apple"));
+    // The semantic leg contributes all three; fusion keeps them.
+    assert_eq!(contents.len(), 3);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn hybrid_search_without_embedding_uses_fulltext_only() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "alpha apple"),
+            message("alice", "beta banana"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+
+    // No embedding -> only the full-text leg runs; "banana" matches beta alone.
+    let params = search::HybridSearchParams {
+        workspace_name: "ws",
+        query: "banana",
+        query_embedding: None,
+        peer_perspective: None,
+        limit: 10,
+    };
+    let results = search::hybrid_search(&test_db.pool, &params)
+        .await
+        .expect("hybrid search");
+    let contents: Vec<&str> = results
+        .iter()
+        .filter_map(|m| m["content"].as_str())
+        .collect();
+    assert_eq!(contents, vec!["beta banana"]);
+
+    test_db.teardown().await;
+}
+
 async fn message_count(pool: &PgPool, session_name: &str) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM messages WHERE session_name = $1 AND workspace_name = 'ws'")
         .bind(session_name)
