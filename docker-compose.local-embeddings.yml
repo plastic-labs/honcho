@@ -4,7 +4,10 @@
 
 x-local-embedding-env: &local_embedding_env
   EMBEDDING_VECTOR_DIMENSIONS: "1024"
-  EMBEDDING_MAX_INPUT_TOKENS: "8192"
+  # Ollama's mxbai tokenizer can count some payloads higher than Honcho's
+  # cl100k estimate; keep chunks and provider requests below context.
+  EMBEDDING_MAX_INPUT_TOKENS: "768"
+  EMBEDDING_MAX_TOKENS_PER_REQUEST: "768"
   EMBEDDING_MODEL_CONFIG__TRANSPORT: openai
   EMBEDDING_MODEL_CONFIG__MODEL: mxbai-embed-large
   EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE: never
