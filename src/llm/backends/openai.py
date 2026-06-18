@@ -180,9 +180,14 @@ class OpenAIBackend:
                     model,
                     exc.__class__.__name__,
                 )
-                return CompletionResult(
-                    content=empty_structured_output(response_format)
-                )
+                # empty_structured_output() validates {} against the model, which
+                # itself raises if the model has required fields. Fall back to
+                # empty string content rather than letting that escape the handler.
+                try:
+                    fallback_content: Any = empty_structured_output(response_format)
+                except ValidationError:
+                    fallback_content = ""
+                return CompletionResult(content=fallback_content)
             parsed = response.choices[0].message.parsed
             raw_content = response.choices[0].message.content or ""
             if parsed is None and raw_content:
@@ -415,9 +420,14 @@ class OpenAIBackend:
             f"{json.dumps(response_format.model_json_schema())}"
         )
         new_messages = [dict(message) for message in messages]
-        if new_messages and new_messages[0].get("role") == "system":
-            existing = new_messages[0].get("content") or ""
-            new_messages[0]["content"] = f"{existing}\n\n{instruction}".strip()
+        first = new_messages[0] if new_messages else None
+        # Only merge into a leading system message when its content is a plain
+        # string; non-string content (e.g. a list of content parts) would be
+        # corrupted by f-string coercion, so prepend a fresh system message.
+        if first and first.get("role") == "system" and isinstance(
+            first.get("content"), str
+        ):
+            first["content"] = f"{first['content']}\n\n{instruction}".strip()
         else:
             new_messages.insert(0, {"role": "system", "content": instruction})
         return new_messages

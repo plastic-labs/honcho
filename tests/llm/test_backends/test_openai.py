@@ -432,6 +432,32 @@ async def test_structured_output_parse_failure_returns_empty_without_second_requ
 
 
 @pytest.mark.asyncio
+async def test_structured_output_parse_failure_with_required_fields_does_not_raise() -> (
+    None
+):
+    """parse() failure must not raise even when the response model has required
+    fields (empty_structured_output() can't build an empty instance) — it falls
+    back to empty content instead of escaping the handler."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        side_effect=json.JSONDecodeError("Expecting value", "not json", 0)
+    )
+    client.chat.completions.create = AsyncMock()
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,  # has a required field
+    )
+
+    assert client.chat.completions.parse.await_count == 1
+    assert client.chat.completions.create.await_count == 0  # no second request
+    assert result.content == ""
+
+
+@pytest.mark.asyncio
 async def test_structured_output_json_object_mode_request_shape() -> None:
     """json_object mode skips parse(), requests json_object, injects the schema."""
     client = Mock()
