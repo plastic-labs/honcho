@@ -371,3 +371,54 @@ async fn fulltext_search_matches_fts_and_special_char_ilike() {
 
     test_db.teardown().await;
 }
+
+async fn message_count(pool: &PgPool, session_name: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM messages WHERE session_name = $1 AND workspace_name = 'ws'")
+        .bind(session_name)
+        .fetch_one(pool)
+        .await
+        .expect("count messages")
+}
+
+#[tokio::test]
+async fn clone_session_copies_messages_up_to_cutoff() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "one"),
+            message("alice", "two"),
+            message("alice", "three"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+
+    // Clone up to (and including) the second message.
+    let cloned = db::clone_session(&test_db.pool, "ws", "sess", Some(&created[1].public_id))
+        .await
+        .expect("clone with cutoff");
+    let cloned_name = cloned["id"].as_str().expect("clone session id").to_string();
+    assert_ne!(cloned_name, "sess");
+    assert_eq!(message_count(&test_db.pool, &cloned_name).await, 2);
+
+    // Cloning with no cutoff copies the whole session.
+    let full = db::clone_session(&test_db.pool, "ws", "sess", None)
+        .await
+        .expect("clone all");
+    let full_name = full["id"].as_str().expect("full session id").to_string();
+    assert_eq!(message_count(&test_db.pool, &full_name).await, 3);
+
+    // Cloning a nonexistent session is an error, not a panic.
+    let missing = db::clone_session(&test_db.pool, "ws", "nope", None).await;
+    assert!(missing.is_err());
+
+    test_db.teardown().await;
+}
