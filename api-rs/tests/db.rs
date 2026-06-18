@@ -171,6 +171,47 @@ async fn update_workspace_merges_configuration_and_replaces_metadata() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn get_or_create_peer_updates_metadata_on_conflict() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // First call creates (and auto-creates the workspace).
+    let (created, was_created) = db::get_or_create_peer(
+        &test_db.pool,
+        "ws",
+        "alice",
+        Some(json!({"role": "user"})),
+        None,
+    )
+    .await
+    .expect("create peer");
+    assert!(was_created);
+    assert_eq!(created["metadata"], json!({"role": "user"}));
+
+    // Unlike workspaces, a second call with Some(metadata) UPDATEs via COALESCE.
+    let (updated, was_created_again) = db::get_or_create_peer(
+        &test_db.pool,
+        "ws",
+        "alice",
+        Some(json!({"role": "admin"})),
+        None,
+    )
+    .await
+    .expect("update peer");
+    assert!(!was_created_again);
+    assert_eq!(updated["metadata"], json!({"role": "admin"}));
+
+    // A None metadata preserves the existing value (COALESCE keeps it).
+    let (preserved, _) = db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("preserve peer");
+    assert_eq!(preserved["metadata"], json!({"role": "admin"}));
+
+    test_db.teardown().await;
+}
+
 fn message(peer: &str, content: &str) -> MessageInsert {
     MessageInsert {
         peer_name: peer.to_string(),
