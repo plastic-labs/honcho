@@ -1,13 +1,19 @@
 //! Hybrid-search helpers, ported from `src/utils/search.py`.
 //!
-//! So far this covers the deterministic, network-free core: Reciprocal Rank
-//! Fusion (RRF), which merges the semantic and full-text result lists. The
-//! semantic leg (query embedding + pgvector / external store) and the full-text
-//! SQL are layered on top once the embedding client lands.
+//! Covers the deterministic core — Reciprocal Rank Fusion (RRF), ILIKE escaping,
+//! the FTS special-char test — plus the two SQL legs that produce the ranked
+//! id lists RRF fuses: [`semantic_search_pgvector`] (pgvector cosine distance)
+//! and [`fulltext_search`] (Postgres FTS with an ILIKE fallback). The query
+//! embedding the semantic leg consumes is produced upstream by
+//! [`crate::embedding::embed_openai`]; per-message metadata/peer-perspective
+//! filtering is applied by the route on top of these workspace-scoped legs.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
+
+use sqlx::PgPool;
 
 /// RRF constant (`k`) controlling how steeply rank position discounts score.
 /// Matches the Python default.
@@ -81,6 +87,111 @@ const FTS_SPECIAL_CHARS: &[char] = &[
 /// `has_special_chars` regex test in `_fulltext_search`.
 pub fn query_has_special_chars(query: &str) -> bool {
     query.chars().any(|c| FTS_SPECIAL_CHARS.contains(&c))
+}
+
+/// Render a query embedding as a pgvector text literal (`[v1,v2,...]`) for the
+/// `::vector` cast in the cosine-distance ORDER BY.
+fn vector_literal(embedding: &[f32]) -> String {
+    let mut out = String::from("[");
+    for (i, value) in embedding.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&value.to_string());
+    }
+    out.push(']');
+    out
+}
+
+/// Semantic message search via pgvector, porting `_semantic_search_pgvector`.
+///
+/// Joins messages to their embedding chunks, keeps non-null embeddings in the
+/// workspace, and orders by cosine distance (`<=>`) to the query vector. The
+/// query oversamples (`limit * 2`) because one message can have several chunks;
+/// duplicate `public_id`s are removed in insertion order and the first `limit`
+/// are returned — matching Python's Python-side dedup (kept out of SQL to
+/// preserve the HNSW index scan).
+pub async fn semantic_search_pgvector(
+    pool: &PgPool,
+    workspace_name: &str,
+    embedding_query: &[f32],
+    limit: usize,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT m.public_id \
+         FROM messages m \
+         JOIN message_embeddings me ON m.public_id = me.message_id \
+         WHERE me.embedding IS NOT NULL AND me.workspace_name = $1 \
+         ORDER BY me.embedding <=> $2::vector \
+         LIMIT $3",
+    )
+    .bind(workspace_name)
+    .bind(vector_literal(embedding_query))
+    .bind((limit * 2) as i64)
+    .fetch_all(pool)
+    .await?;
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut deduped: Vec<String> = Vec::new();
+    for (public_id,) in rows {
+        if seen.insert(public_id.clone()) {
+            deduped.push(public_id);
+            if deduped.len() == limit {
+                break;
+            }
+        }
+    }
+    Ok(deduped)
+}
+
+/// Full-text message search, porting `_fulltext_search`.
+///
+/// Queries with FTS-hostile special characters fall back to a literal `ILIKE`
+/// (ordered newest-first); natural-language queries combine `plainto_tsquery`
+/// FTS with an `ILIKE` fallback and order by `ts_rank` then recency. User text
+/// is escaped for the `ILIKE` pattern via [`escape_ilike_pattern`] (`\` escape).
+pub async fn fulltext_search(
+    pool: &PgPool,
+    workspace_name: &str,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<String>, sqlx::Error> {
+    let ilike_pattern = format!("%{}%", escape_ilike_pattern(query));
+
+    let rows: Vec<(String,)> = if query_has_special_chars(query) {
+        sqlx::query_as(
+            "SELECT public_id FROM messages \
+             WHERE workspace_name = $1 AND content ILIKE $2 ESCAPE '\\' \
+             ORDER BY created_at DESC \
+             LIMIT $3",
+        )
+        .bind(workspace_name)
+        .bind(&ilike_pattern)
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT public_id FROM messages \
+             WHERE workspace_name = $1 AND ( \
+                 to_tsvector('english', content) @@ plainto_tsquery('english', $2) \
+                 OR content ILIKE $3 ESCAPE '\\' \
+             ) \
+             ORDER BY coalesce( \
+                 ts_rank(to_tsvector('english', content), plainto_tsquery('english', $2)), \
+                 0 \
+             ) DESC, created_at DESC \
+             LIMIT $4",
+        )
+        .bind(workspace_name)
+        .bind(query)
+        .bind(&ilike_pattern)
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await?
+    };
+
+    Ok(rows.into_iter().map(|(public_id,)| public_id).collect())
 }
 
 #[cfg(test)]
