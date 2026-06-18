@@ -1,98 +1,56 @@
 import asyncio
 import logging
 import os
-
-import uvloop
+import signal
+import sys
 from prometheus_client import start_http_server
 
-from src.config import settings
-from src.db import engine, register_db_query_instrumentation
-from src.startup import validate_embedding_schema
-from src.telemetry import (
-    initialize_telemetry_async,
-    register_db_pool_collector,
-    shutdown_telemetry,
+from honcho.deriver import Deriver
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-
-from .queue_manager import main
-
 logger = logging.getLogger(__name__)
 
-
-def start_metrics_server() -> None:
-    """Start the Prometheus metrics HTTP server on port 9090."""
-    start_http_server(9090)
-    # Expose DB connection-pool stats for this deriver instance.
-    register_db_pool_collector("deriver")
-    register_db_query_instrumentation("deriver")
-    logger.info("Prometheus metrics server started on port 9090")
+# Global flag for graceful shutdown
+shutdown_event = asyncio.Event()
 
 
-def setup_logging():
-    """
-    Configure logging for the deriver process.
-    """
-    # Get log level from environment or settings
-    log_level_str = os.getenv("LOG_LEVEL", settings.LOG_LEVEL).upper()
-
-    log_levels = {
-        "CRITICAL": logging.CRITICAL,  # 50
-        "ERROR": logging.ERROR,  # 40
-        "WARNING": logging.WARNING,  # 30
-        "INFO": logging.INFO,  # 20
-        "DEBUG": logging.DEBUG,  # 10
-        "NOTSET": logging.NOTSET,  # 0
-    }
-
-    log_level = log_levels.get(log_level_str, logging.INFO)
-
-    # Configure logging
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-
-    # Disable SQLAlchemy engine logging unless explicitly enabled
-    if not settings.DB.SQL_DEBUG:
-        logging.getLogger("sqlalchemy.engine.Engine").disabled = True
-
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("openai._base_client").setLevel(logging.WARNING)
+def handle_sigterm(signum, frame):
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    shutdown_event.set()
 
 
-async def run_deriver():
-    """Run the deriver with proper telemetry lifecycle management."""
-    # Initialize async telemetry (CloudEvents emitter)
-    await initialize_telemetry_async()
+def start_metrics_server():
+    """Start Prometheus metrics server on configurable port."""
+    # Use DERIVER_METRICS_PORT env var if set, otherwise default to 9091
+    # (9090 often conflicts with Prometheus itself in production)
+    metrics_port = int(os.getenv("DERIVER_METRICS_PORT", "9091"))
+    start_http_server(metrics_port)
+    logger.info(f"Metrics server started on port {metrics_port}")
 
+
+async def main():
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    signal.signal(signal.SIGINT, handle_sigterm)
+    
     try:
-        # Fail fast if the embedding schema does not match settings — same
-        # gate the API runs in its lifespan. Inside the try block so the
-        # telemetry buffer is still flushed if validation raises.
-        await validate_embedding_schema(engine)
-        await main()
+        # Start metrics server
+        start_metrics_server()
+        
+        # Initialize and run deriver
+        deriver = Deriver()
+        logger.info("Starting deriver queue processor")
+        await deriver.run(shutdown_event=shutdown_event)
+    except Exception as e:
+        logger.error(f"Error in main process: {e}")
+        raise
     finally:
-        # Shutdown telemetry (flush CloudEvents buffer)
-        await shutdown_telemetry()
+        logger.info("Deriver process exiting")
 
 
 if __name__ == "__main__":
-    # Setup logging before starting the main loop
-    setup_logging()
-    logger.info("Starting deriver queue processor")
-
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    try:
-        # Start Prometheus metrics server if enabled
-        if settings.METRICS.ENABLED:
-            start_metrics_server()
-
-        logger.info("Running main loop")
-        asyncio.run(run_deriver())
-    except KeyboardInterrupt:
-        logger.info("Shutdown initiated via KeyboardInterrupt")
-    except Exception as e:
-        logger.exception("Error in main process: %s", e)
-    finally:
-        logger.info("Deriver process exiting")
+    asyncio.run(main())
