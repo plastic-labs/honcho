@@ -1,9 +1,53 @@
+import json
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pydantic import BaseModel
 
 from src.llm.backends.openai import OpenAIBackend
+from src.utils.representation import PromptRepresentation
+
+
+def _await_kwargs(mock_method: Any) -> dict[str, Any]:
+    await_args = mock_method.await_args
+    if await_args is None:
+        raise AssertionError("Expected the mocked method to have been awaited")
+    return await_args.kwargs
+
+
+async def _empty_stream() -> AsyncIterator[Any]:
+    chunks: list[Any] = []  # async generator that yields nothing
+    for chunk in chunks:
+        yield chunk
+
+
+class _StructuredResponse(BaseModel):
+    answer: str
+
+
+def _structured_create_return(content: str, parsed: Any = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(
+                    content=content,
+                    parsed=parsed,
+                    tool_calls=[],
+                    reasoning_details=[],
+                    refusal=None,
+                ),
+            )
+        ],
+        usage=SimpleNamespace(
+            prompt_tokens=10,
+            completion_tokens=5,
+            prompt_tokens_details=None,
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -334,3 +378,173 @@ def test_openai_classic_models_use_max_tokens(model: str) -> None:
     )
 
     assert _uses_max_completion_tokens(model) is False
+
+
+@pytest.mark.asyncio
+async def test_structured_output_default_mode_uses_parse() -> None:
+    """Default json_schema mode uses parse(), not the json_object path."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return(
+            '{"answer": "ok"}', parsed=_StructuredResponse(answer="ok")
+        )
+    )
+    client.chat.completions.create = AsyncMock()
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+    )
+
+    assert client.chat.completions.parse.await_count == 1
+    assert client.chat.completions.create.await_count == 0
+    parse_call = _await_kwargs(client.chat.completions.parse)
+    assert parse_call["response_format"] is _StructuredResponse
+    assert isinstance(result.content, _StructuredResponse)
+
+
+@pytest.mark.asyncio
+async def test_structured_output_parse_failure_returns_empty_without_second_request() -> (
+    None
+):
+    """parse() failure returns an empty representation, no second request (#797)."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        side_effect=json.JSONDecodeError("Expecting value", "not json", 0)
+    )
+    client.chat.completions.create = AsyncMock()
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=PromptRepresentation,
+    )
+
+    assert client.chat.completions.parse.await_count == 1
+    assert client.chat.completions.create.await_count == 0  # no second request
+    assert isinstance(result.content, PromptRepresentation)
+    assert result.content.explicit == []
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_mode_request_shape() -> None:
+    """json_object mode skips parse(), requests json_object, injects the schema."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok"}')
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    assert client.chat.completions.parse.await_count == 0
+    assert client.chat.completions.create.await_count == 1
+    call = _await_kwargs(client.chat.completions.create)
+    assert call["response_format"] == {"type": "json_object"}
+
+    system_messages = [m for m in call["messages"] if m["role"] == "system"]
+    assert system_messages, "expected a system message carrying the schema"
+    system_content = system_messages[0]["content"]
+    assert "JSON" in system_content
+    assert "answer" in system_content  # schema property serialized in
+    assert isinstance(result.content, _StructuredResponse)
+    assert result.content.answer == "ok"
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_mode_repairs_markdown() -> None:
+    """A provider that ignores json_object and returns prose must not crash —
+    PromptRepresentation repairs to an empty representation, not an exception."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return(
+            "Sure! Here are the facts:\n- the user likes coffee"
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=PromptRepresentation,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    assert isinstance(result.content, PromptRepresentation)
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_mode_does_not_mutate_messages() -> None:
+    """The schema-injection helper must copy, never mutate the caller's list."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok"}')
+    )
+
+    backend = OpenAIBackend(client)
+    original_messages = [{"role": "user", "content": "Hello"}]
+    await backend.complete(
+        model="glm-4.6",
+        messages=original_messages,
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    assert original_messages == [{"role": "user", "content": "Hello"}]
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_default_mode_uses_json_schema() -> None:
+    """Streaming in default mode converts the model to a json_schema dict."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(return_value=_empty_stream())
+
+    backend = OpenAIBackend(client)
+    async for _ in backend.stream(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+    ):
+        pass
+
+    call = _await_kwargs(client.chat.completions.create)
+    assert call["response_format"]["type"] == "json_schema"
+    assert call["response_format"]["json_schema"]["name"] == "_StructuredResponse"
+
+
+@pytest.mark.asyncio
+async def test_stream_structured_output_json_object_mode() -> None:
+    """Streaming in json_object mode requests json_object + injects the schema."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(return_value=_empty_stream())
+
+    backend = OpenAIBackend(client)
+    async for _ in backend.stream(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        extra_params={"structured_output_mode": "json_object"},
+    ):
+        pass
+
+    call = _await_kwargs(client.chat.completions.create)
+    assert call["response_format"] == {"type": "json_object"}
+    system_messages = [m for m in call["messages"] if m["role"] == "system"]
+    assert system_messages and "JSON" in system_messages[0]["content"]

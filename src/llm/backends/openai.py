@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.structured_output import (
+    empty_structured_output,
     repair_response_model_json,
     validate_structured_output,
 )
@@ -142,6 +143,16 @@ class OpenAIBackend:
         )
 
         if isinstance(response_format, type):
+            if self._structured_output_mode(extra_params) == "json_object":
+                params["messages"] = self._with_json_schema_instructions(
+                    params["messages"], response_format
+                )
+                params["response_format"] = {"type": "json_object"}
+                response = await self._client.chat.completions.create(**params)
+                content = self._parse_or_repair_structured_content(
+                    response, response_format, model
+                )
+                return self._normalize_response(response, content_override=content)
             params["response_format"] = response_format
             try:
                 response = await self._client.chat.completions.parse(**params)
@@ -157,19 +168,20 @@ class OpenAIBackend:
                     truncated,
                     content_override=content,
                 )
-            except (BadRequestError, json.JSONDecodeError, ValidationError):
-                fallback_response = await self._create_structured_response(
-                    params=params,
-                    response_format=response_format,
-                )
-                content = self._parse_or_repair_structured_content(
-                    fallback_response,
-                    response_format,
+            except (BadRequestError, json.JSONDecodeError, ValidationError) as exc:
+                # No retry: a provider that rejects json_schema rejects it again,
+                # so the old second request just doubled latency (#797). Return
+                # empty so existing flows don't start erroring; the warning is
+                # the signal to set structured_output_mode=json_object.
+                logger.warning(
+                    "Structured output via json_schema failed for model %s (%s); "
+                    + "set structured_output_mode=json_object if the provider does "
+                    + "not support OpenAI Structured Outputs.",
                     model,
+                    exc.__class__.__name__,
                 )
-                return self._normalize_response(
-                    fallback_response,
-                    content_override=content,
+                return CompletionResult(
+                    content=empty_structured_output(response_format)
                 )
             parsed = response.choices[0].message.parsed
             raw_content = response.choices[0].message.content or ""
@@ -232,15 +244,23 @@ class OpenAIBackend:
         params["stream"] = True
         params["stream_options"] = {"include_usage": True}
         if isinstance(response_format, type):
-            # parse() supports BaseModel types but streaming create() does not —
-            # convert to a json_schema dict so the streaming path works.
-            params["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": response_format.__name__,
-                    "schema": response_format.model_json_schema(),
-                },
-            }
+            if self._structured_output_mode(extra_params) == "json_object":
+                # Inject the schema into the prompt for providers without
+                # json_schema support; repair happens downstream.
+                params["messages"] = self._with_json_schema_instructions(
+                    params["messages"], response_format
+                )
+                params["response_format"] = {"type": "json_object"}
+            else:
+                # Streaming create() can't take a BaseModel like parse() does;
+                # convert to a json_schema dict.
+                params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_format.__name__,
+                        "schema": response_format.model_json_schema(),
+                    },
+                }
         elif response_format is not None:
             params["response_format"] = response_format
         elif extra_params and extra_params.get("json_mode"):
@@ -374,21 +394,33 @@ class OpenAIBackend:
             raw_response=response,
         )
 
-    async def _create_structured_response(
-        self,
-        *,
-        params: dict[str, Any],
+    @staticmethod
+    def _structured_output_mode(extra_params: dict[str, Any] | None) -> str | None:
+        # Threaded in via extra_params (see build_config_extra_params).
+        if not extra_params:
+            return None
+        return extra_params.get("structured_output_mode")
+
+    @staticmethod
+    def _with_json_schema_instructions(
+        messages: list[dict[str, Any]],
         response_format: type[BaseModel],
-    ) -> Any:
-        structured_params = dict(params)
-        structured_params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": response_format.__name__,
-                "schema": response_format.model_json_schema(),
-            },
-        }
-        return await self._client.chat.completions.create(**structured_params)
+    ) -> list[dict[str, Any]]:
+        """Add JSON-schema instructions to a copy of messages for json_object mode."""
+        # "JSON" must appear in the messages to satisfy the json_object contract.
+        instruction = (
+            "You must respond with a single JSON object that conforms exactly to "
+            "the following JSON schema. Do not include any text, markdown, or code "
+            "fences outside the JSON object.\n\nJSON schema:\n"
+            f"{json.dumps(response_format.model_json_schema())}"
+        )
+        new_messages = [dict(message) for message in messages]
+        if new_messages and new_messages[0].get("role") == "system":
+            existing = new_messages[0].get("content") or ""
+            new_messages[0]["content"] = f"{existing}\n\n{instruction}".strip()
+        else:
+            new_messages.insert(0, {"role": "system", "content": instruction})
+        return new_messages
 
     @staticmethod
     def _parse_or_repair_structured_content(

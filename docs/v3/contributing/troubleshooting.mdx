@@ -142,7 +142,19 @@ If calls to an OpenAI-compatible proxy fail:
    DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=http://host.docker.internal:8000/v1
    ```
 
-3. **Structured output failures** — vLLM's structured output support is limited to certain response formats. If you see JSON parsing errors, check the deriver/dream logs for the raw response.
+3. **Structured output failures** — vLLM's structured output support is limited to certain response formats. If you see JSON parsing errors, check the deriver/dream logs for the raw response. See [Deriver produces no observations](#deriver-produces-no-observations) below.
+
+### Deriver produces no observations
+
+If messages are processed (the queue drains, no errors in logs) but peers never accumulate observations — and you're using an OpenAI-compatible provider — the likely cause is that the provider doesn't support OpenAI Structured Outputs (`json_schema`). The OpenAI backend requests `json_schema` by default; providers like **Z.AI GLM** and some **Ollama/vLLM** deployments either reject it or silently ignore it and return prose, which the deriver can't parse into observations.
+
+**Fix:** set `STRUCTURED_OUTPUT_MODE=json_object` on the deriver's model config to request loose JSON mode, which injects the schema into the prompt instead:
+
+```bash
+DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object
+```
+
+This is a per-model-config setting on the OpenAI transport; set it on whichever features use the affected provider (e.g. `DREAM_DEDUCTION_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE`).
 
 ### Thinking budget errors with non-Anthropic providers
 

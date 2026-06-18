@@ -61,6 +61,10 @@ ThinkingEffortLevel = Literal[
     "none", "minimal", "low", "medium", "high", "xhigh", "max"
 ]
 
+# "json_object" injects the schema into the prompt for OpenAI-compatible
+# providers that don't support json_schema (Structured Outputs).
+StructuredOutputMode = Literal["json_schema", "json_object"]
+
 
 class ModelOverrideSettings(BaseModel):
     """Advanced module-level transport overrides."""
@@ -136,6 +140,8 @@ class FallbackModelSettings(BaseModel):
     )
     thinking_budget_tokens: int | None = None
 
+    structured_output_mode: StructuredOutputMode | None = None
+
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
@@ -178,6 +184,8 @@ class ConfiguredModelSettings(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+
+    structured_output_mode: StructuredOutputMode | None = None
 
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
@@ -223,6 +231,7 @@ class ResolvedFallbackConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+    structured_output_mode: StructuredOutputMode | None = None
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -258,6 +267,7 @@ class ModelConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+    structured_output_mode: StructuredOutputMode | None = None
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -394,6 +404,7 @@ def _resolve_fallback_config(
         seed=fallback.seed,
         thinking_effort=fallback.thinking_effort,
         thinking_budget_tokens=fallback.thinking_budget_tokens,
+        structured_output_mode=fallback.structured_output_mode,
         provider_params=fallback.overrides.provider_params,
         max_output_tokens=fallback.max_output_tokens,
         stop_sequences=fallback.stop_sequences,
@@ -427,6 +438,7 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
         seed=configured.seed,
         thinking_effort=configured.thinking_effort,
         thinking_budget_tokens=configured.thinking_budget_tokens,
+        structured_output_mode=configured.structured_output_mode,
         provider_params=configured.overrides.provider_params,
         max_output_tokens=configured.max_output_tokens,
         stop_sequences=configured.stop_sequences,
