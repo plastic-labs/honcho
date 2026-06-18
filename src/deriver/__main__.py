@@ -20,12 +20,13 @@ logger = logging.getLogger(__name__)
 
 
 def start_metrics_server() -> None:
-    """Start the Prometheus metrics HTTP server on port 9090."""
-    start_http_server(9090)
+    """Start the Prometheus metrics HTTP server."""
+    metrics_port = int(os.getenv("DERIVER_METRICS_PORT", "9090"))
+    start_http_server(metrics_port)
     # Expose DB connection-pool stats for this deriver instance.
     register_db_pool_collector("deriver")
     register_db_query_instrumentation("deriver")
-    logger.info("Prometheus metrics server started on port 9090")
+    logger.info(f"Prometheus metrics server started on port {metrics_port}")
 
 
 def setup_logging():
