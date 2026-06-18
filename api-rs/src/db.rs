@@ -1224,6 +1224,220 @@ pub async fn fetch_messages_by_ids(
         .collect())
 }
 
+/// Mirror of `settings.GET_CONTEXT_MAX_TOKENS` (default 100_000): the default
+/// and upper bound for the `get_context` `tokens` query parameter.
+pub const GET_CONTEXT_MAX_TOKENS: i64 = 100_000;
+
+/// Port of `crud.get_messages_id_range`. Returns message rows by internal PK id
+/// range, optionally constrained by a descending running-token-sum window.
+///
+/// Faithful to the Python guard (`start_id < 0`, or a degenerate `end_id` range,
+/// → empty), the `if token_limit:` truthiness (`None`/`Some(0)` take the
+/// unordered "all rows" branch; any non-zero limit takes the windowed branch),
+/// and the ascending-id ordering of the windowed branch.
+async fn get_messages_id_range(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    start_id: i64,
+    end_id: Option<i64>,
+    token_limit: Option<i64>,
+) -> Result<Vec<MessageRow>, sqlx::Error> {
+    if start_id < 0 {
+        return Ok(Vec::new());
+    }
+    if let Some(end) = end_id
+        && (start_id >= end || end <= 0)
+    {
+        return Ok(Vec::new());
+    }
+
+    // `if token_limit:` in Python — 0 (and None) is falsy.
+    let token_window = matches!(token_limit, Some(limit) if limit != 0);
+    let limit_value = token_limit.unwrap_or(0);
+
+    let rows = match (end_id, token_window) {
+        (None, true) => {
+            sqlx::query_as::<_, MessageRow>(
+                "SELECT m.public_id, m.content, m.peer_name, m.session_name, m.metadata, \
+                 m.created_at, m.workspace_name, m.token_count \
+                 FROM messages m \
+                 JOIN (SELECT id, SUM(token_count) OVER (ORDER BY id DESC) AS running_token_sum \
+                       FROM messages \
+                       WHERE workspace_name = $1 AND session_name = $2 AND id >= $3) sub \
+                 ON m.id = sub.id \
+                 WHERE sub.running_token_sum <= $4 \
+                 ORDER BY m.id",
+            )
+            .bind(workspace_name)
+            .bind(session_name)
+            .bind(start_id)
+            .bind(limit_value)
+            .fetch_all(pool)
+            .await?
+        }
+        (Some(end), true) => {
+            sqlx::query_as::<_, MessageRow>(
+                "SELECT m.public_id, m.content, m.peer_name, m.session_name, m.metadata, \
+                 m.created_at, m.workspace_name, m.token_count \
+                 FROM messages m \
+                 JOIN (SELECT id, SUM(token_count) OVER (ORDER BY id DESC) AS running_token_sum \
+                       FROM messages \
+                       WHERE workspace_name = $1 AND session_name = $2 AND id >= $3 AND id < $4) sub \
+                 ON m.id = sub.id \
+                 WHERE sub.running_token_sum <= $5 \
+                 ORDER BY m.id",
+            )
+            .bind(workspace_name)
+            .bind(session_name)
+            .bind(start_id)
+            .bind(end)
+            .bind(limit_value)
+            .fetch_all(pool)
+            .await?
+        }
+        (None, false) => {
+            sqlx::query_as::<_, MessageRow>(
+                "SELECT public_id, content, peer_name, session_name, metadata, created_at, \
+                 workspace_name, token_count \
+                 FROM messages \
+                 WHERE workspace_name = $1 AND session_name = $2 AND id >= $3",
+            )
+            .bind(workspace_name)
+            .bind(session_name)
+            .bind(start_id)
+            .fetch_all(pool)
+            .await?
+        }
+        (Some(end), false) => {
+            sqlx::query_as::<_, MessageRow>(
+                "SELECT public_id, content, peer_name, session_name, metadata, created_at, \
+                 workspace_name, token_count \
+                 FROM messages \
+                 WHERE workspace_name = $1 AND session_name = $2 AND id >= $3 AND id < $4",
+            )
+            .bind(workspace_name)
+            .bind(session_name)
+            .bind(start_id)
+            .bind(end)
+            .fetch_all(pool)
+            .await?
+        }
+    };
+
+    Ok(rows)
+}
+
+/// Port of the base (no-perspective) path of `get_session_context` —
+/// `summarizer.get_session_context` + the router's `SessionContext`
+/// serialization. Returns the JSON body: `{id, messages, summary,
+/// peer_representation, peer_card}` with the latter two always null on this path.
+///
+/// Allocates 40% of the token budget to a summary (longest that fits, long
+/// preferred over short when strictly larger) and the remainder to the most
+/// recent messages after the summary's coverage point. `token_limit <= 0`
+/// short-circuits to an empty context with no DB access, matching Python.
+pub async fn get_session_context(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    token_limit: i64,
+    include_summary: bool,
+) -> Result<Value, sqlx::Error> {
+    if token_limit <= 0 {
+        return Ok(session_context_json(session_name, Value::Null, Vec::new()));
+    }
+
+    let mut messages_tokens = token_limit;
+    let mut messages_start_id: i64 = 0;
+    let mut summary_json = Value::Null;
+
+    if include_summary {
+        let summary_tokens_limit = (token_limit as f64 * 0.4) as i64;
+        let internal_metadata =
+            fetch_session_internal_metadata(pool, workspace_name, session_name).await?;
+        let summaries = internal_metadata.get("summaries").and_then(Value::as_object);
+        let short = summaries.and_then(|items| items.get("honcho_chat_summary_short"));
+        let long = summaries.and_then(|items| items.get("honcho_chat_summary_long"));
+
+        let long_len = match long {
+            Some(summary) => summary_field_i64(summary, "token_count")?,
+            None => 0,
+        };
+        let short_len = match short {
+            Some(summary) => summary_field_i64(summary, "token_count")?,
+            None => 0,
+        };
+
+        if let Some(long_summary) = long
+            && long_len <= summary_tokens_limit
+            && long_len > short_len
+        {
+            summary_json = schema_summary_json(long_summary)?;
+            messages_tokens = token_limit - long_len;
+            messages_start_id = summary_field_i64(long_summary, "message_id")?;
+        }
+
+        if summary_json.is_null()
+            && let Some(short_summary) = short
+            && short_len <= summary_tokens_limit
+            && short_len > 0
+        {
+            summary_json = schema_summary_json(short_summary)?;
+            messages_tokens = token_limit - short_len;
+            messages_start_id = summary_field_i64(short_summary, "message_id")?;
+        }
+    }
+
+    let messages = get_messages_id_range(
+        pool,
+        workspace_name,
+        session_name,
+        messages_start_id,
+        None,
+        Some(messages_tokens),
+    )
+    .await?;
+
+    Ok(session_context_json(session_name, summary_json, messages))
+}
+
+fn session_context_json(session_name: &str, summary: Value, messages: Vec<MessageRow>) -> Value {
+    json!({
+        "id": session_name,
+        "messages": Value::Array(messages.into_iter().map(message_json).collect()),
+        "summary": summary,
+        "peer_representation": Value::Null,
+        "peer_card": Value::Null
+    })
+}
+
+async fn fetch_session_internal_metadata(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+) -> Result<Value, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT internal_metadata FROM sessions WHERE workspace_name = $1 AND name = $2",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(match row {
+        Some(row) => row.try_get("internal_metadata")?,
+        None => Value::Null,
+    })
+}
+
+fn summary_field_i64(summary: &Value, key: &str) -> Result<i64, sqlx::Error> {
+    let object = summary
+        .as_object()
+        .ok_or_else(|| invalid_summary_error("summary entry must be an object"))?;
+    require_i64(object, key)
+}
+
 pub async fn list_conclusions(
     pool: &PgPool,
     workspace_name: &str,

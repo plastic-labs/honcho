@@ -35,6 +35,12 @@ pub enum ApiError {
     Validation(String),
     #[error("request validation failed")]
     RequestValidation(Value),
+    /// A route path that exists in the Python API but is not yet ported to the
+    /// Rust sidecar (e.g. perspective-scoped session context, which needs the
+    /// representation/embedding subsystem). Surfaces as 501 so the boundary is
+    /// explicit rather than silently returning a wrong-shaped 200.
+    #[error("{0}")]
+    NotImplemented(String),
 }
 
 impl IntoResponse for ApiError {
@@ -52,6 +58,7 @@ impl IntoResponse for ApiError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::Disabled | Self::WriteDisabled => StatusCode::METHOD_NOT_ALLOWED,
+            Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
         };
         let detail = match self {
             Self::RequestValidation(detail) => detail,

@@ -905,3 +905,160 @@ async fn clone_session_copies_messages_up_to_cutoff() {
 
     test_db.teardown().await;
 }
+
+/// A message with an explicit token_count, for exercising the running-token-sum
+/// window in `get_session_context` / `get_messages_id_range`.
+fn message_tok(peer: &str, content: &str, token_count: i32) -> MessageInsert {
+    MessageInsert {
+        peer_name: peer.to_string(),
+        content: content.to_string(),
+        metadata: json!({}),
+        created_at: None,
+        token_count,
+    }
+}
+
+async fn set_session_summaries(pool: &PgPool, session_name: &str, summaries: Value) {
+    sqlx::query("UPDATE sessions SET internal_metadata = $1 WHERE name = $2")
+        .bind(json!({ "summaries": summaries }))
+        .bind(session_name)
+        .execute(pool)
+        .await
+        .expect("set session summaries");
+}
+
+#[tokio::test]
+async fn get_session_context_selects_long_summary_and_windows_messages() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message_tok("alice", "m1", 10),
+            message_tok("alice", "m2", 10),
+            message_tok("alice", "m3", 10),
+            message_tok("alice", "m4", 10),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+
+    // Long summary (token_count 30) covers up to m2; short (10) covers up to m1.
+    // With token_limit 100 -> summary budget 40; long fits (30<=40) and is larger
+    // than short (10), so it is chosen. message budget becomes 70, start at m2.id.
+    set_session_summaries(
+        &test_db.pool,
+        "sess",
+        json!({
+            "honcho_chat_summary_long": {
+                "content": "LONG",
+                "message_id": created[1].id,
+                "summary_type": "long",
+                "created_at": "2026-01-01T00:00:00Z",
+                "token_count": 30,
+                "message_public_id": created[1].public_id,
+            },
+            "honcho_chat_summary_short": {
+                "content": "SHORT",
+                "message_id": created[0].id,
+                "summary_type": "short",
+                "created_at": "2026-01-01T00:00:00Z",
+                "token_count": 10,
+                "message_public_id": created[0].public_id,
+            },
+        }),
+    )
+    .await;
+
+    let ctx = db::get_session_context(&test_db.pool, "ws", "sess", 100, true)
+        .await
+        .expect("get context");
+
+    assert_eq!(ctx["id"], json!("sess"));
+    assert_eq!(ctx["peer_representation"], Value::Null);
+    assert_eq!(ctx["peer_card"], Value::Null);
+    assert_eq!(
+        ctx["summary"],
+        json!({
+            "content": "LONG",
+            "message_id": created[1].public_id,
+            "summary_type": "long",
+            "created_at": "2026-01-01T00:00:00Z",
+            "token_count": 30
+        })
+    );
+    // Messages from m2 onward (id >= start), ascending; all fit in the 70 budget.
+    let ids: Vec<&str> = ctx["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            created[1].public_id.as_str(),
+            created[2].public_id.as_str(),
+            created[3].public_id.as_str(),
+        ]
+    );
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn get_session_context_token_budget_drops_oldest_messages() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message_tok("alice", "m1", 10),
+            message_tok("alice", "m2", 10),
+            message_tok("alice", "m3", 10),
+            message_tok("alice", "m4", 10),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+
+    // No summaries set: full token_limit goes to messages from the start. The
+    // descending running sum keeps only the newest messages within the budget.
+    // limit 25 -> m4 (sum 10), m3 (sum 20); m2 would be 30 (> 25) -> excluded.
+    let ctx = db::get_session_context(&test_db.pool, "ws", "sess", 25, true)
+        .await
+        .expect("get context");
+
+    assert_eq!(ctx["summary"], Value::Null);
+    let ids: Vec<&str> = ctx["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![created[2].public_id.as_str(), created[3].public_id.as_str()]
+    );
+
+    // A non-positive token limit short-circuits to an empty context.
+    let empty = db::get_session_context(&test_db.pool, "ws", "sess", 0, true)
+        .await
+        .expect("get empty context");
+    assert_eq!(empty["messages"], json!([]));
+    assert_eq!(empty["summary"], Value::Null);
+
+    test_db.teardown().await;
+}

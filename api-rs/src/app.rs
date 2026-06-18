@@ -105,6 +105,19 @@ pub struct PeerCardQuery {
     pub target: Option<String>,
 }
 
+/// Query parameters for `GET .../sessions/{id}/context`. Numeric/boolean params
+/// are captured as raw strings so the handler can reproduce FastAPI's
+/// `int_parsing` / `less_than_equal` / `bool_parsing` error shapes byte-for-byte.
+/// Only the base (no-`peer_target`) path is ported; the perspective params are
+/// captured solely to branch onto a 501.
+#[derive(Debug, Deserialize)]
+pub struct GetContextQuery {
+    pub tokens: Option<String>,
+    pub summary: Option<String>,
+    pub peer_target: Option<String>,
+    pub peer_perspective: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CloneSessionQuery {
     pub message_id: Option<String>,
@@ -225,6 +238,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v3/workspaces/{workspace_id}/sessions/{session_id}/summaries",
             get(get_session_summaries),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/sessions/{session_id}/context",
+            get(get_session_context),
         )
         .route(
             "/v3/workspaces/{workspace_id}/queue/status",
@@ -1113,6 +1130,57 @@ async fn get_session_summaries(
         Some(&session_id),
     )?;
     let value = db::get_session_summaries(state.pool()?, &workspace_id, &session_id).await?;
+    Ok(Json(value))
+}
+
+async fn get_session_context(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, session_id)): Path<(String, String)>,
+    Query(query): Query<GetContextQuery>,
+) -> Result<Json<Value>, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        Some(&session_id),
+    )?;
+
+    let token_limit = match query.tokens.as_deref() {
+        Some(raw) => parse_context_tokens(raw)?,
+        None => db::GET_CONTEXT_MAX_TOKENS,
+    };
+    let include_summary = match query.summary.as_deref() {
+        Some(raw) => parse_query_bool(raw, "summary")?,
+        None => true,
+    };
+
+    if query.peer_perspective.is_some() && query.peer_target.is_none() {
+        return Err(ApiError::Validation(
+            "peer_target must be provided if peer_perspective is provided".to_string(),
+        ));
+    }
+
+    // The perspective path needs the representation/embedding subsystem, which
+    // is not ported. Surface a 501 rather than silently dropping the requested
+    // representation + peer card.
+    if query.peer_target.is_some() {
+        return Err(ApiError::NotImplemented(
+            "Perspective-scoped session context (peer_target) is not yet supported by the Rust API"
+                .to_string(),
+        ));
+    }
+
+    let value = db::get_session_context(
+        state.pool()?,
+        &workspace_id,
+        &session_id,
+        token_limit,
+        include_summary,
+    )
+    .await?;
     Ok(Json(value))
 }
 
@@ -2677,6 +2745,77 @@ fn strip_nulls(value: Value) -> Value {
                 .collect(),
         ),
         other => other,
+    }
+}
+
+/// Build a query-parameter validation error (`loc: ["query", name]`, no leading
+/// `"body"`), matching FastAPI's coercion errors. `input` is the raw query
+/// string, exactly as FastAPI reports it.
+fn query_validation_error(
+    error_type: &str,
+    name: &str,
+    msg: &str,
+    raw: &str,
+    ctx: Option<Value>,
+) -> ApiError {
+    let mut error = serde_json::Map::from_iter([
+        ("type".to_string(), Value::String(error_type.to_string())),
+        (
+            "loc".to_string(),
+            Value::Array(vec![
+                Value::String("query".to_string()),
+                Value::String(name.to_string()),
+            ]),
+        ),
+        ("msg".to_string(), Value::String(msg.to_string())),
+        ("input".to_string(), Value::String(raw.to_string())),
+    ]);
+    if let Some(ctx) = ctx {
+        error.insert("ctx".to_string(), ctx);
+    }
+    ApiError::RequestValidation(Value::Array(vec![Value::Object(error)]))
+}
+
+/// Parse the `tokens` query param the way FastAPI's `int | None = Query(None,
+/// le=GET_CONTEXT_MAX_TOKENS)` does: integer coercion (whitespace-trimmed) then
+/// the `le` upper bound. No lower bound — negative/zero values are accepted and
+/// short-circuit to an empty context downstream.
+fn parse_context_tokens(raw: &str) -> Result<i64, ApiError> {
+    let value: i64 = raw.trim().parse().map_err(|_| {
+        query_validation_error(
+            "int_parsing",
+            "tokens",
+            "Input should be a valid integer, unable to parse string as an integer",
+            raw,
+            None,
+        )
+    })?;
+    if value > db::GET_CONTEXT_MAX_TOKENS {
+        return Err(query_validation_error(
+            "less_than_equal",
+            "tokens",
+            &format!("Input should be less than or equal to {}", db::GET_CONTEXT_MAX_TOKENS),
+            raw,
+            Some(json!({ "le": db::GET_CONTEXT_MAX_TOKENS })),
+        ));
+    }
+    Ok(value)
+}
+
+/// Parse a boolean query param using Pydantic v2's accepted token set
+/// (case-insensitive, whitespace-trimmed); anything else yields a `bool_parsing`
+/// error.
+fn parse_query_bool(raw: &str, name: &str) -> Result<bool, ApiError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "on" | "t" | "true" | "y" | "yes" => Ok(true),
+        "0" | "off" | "f" | "false" | "n" | "no" => Ok(false),
+        _ => Err(query_validation_error(
+            "bool_parsing",
+            name,
+            "Input should be a valid boolean, unable to interpret input",
+            raw,
+            None,
+        )),
     }
 }
 

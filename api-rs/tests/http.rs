@@ -1255,3 +1255,84 @@ async fn response_json(response: axum::response::Response) -> Value {
         .expect("body should be readable");
     serde_json::from_slice(&bytes).expect("body should be JSON")
 }
+
+fn no_auth_state() -> AppState {
+    AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    })
+}
+
+async fn get_context(query: &str) -> axum::response::Response {
+    let uri = format!("/v3/workspaces/workspace-a/sessions/session-a/context{query}");
+    build_router(no_auth_state())
+        .oneshot(Request::get(&uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn get_context_rejects_tokens_above_max_with_fastapi_shape() {
+    let response = get_context("?tokens=150000").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "less_than_equal",
+            "loc": ["query", "tokens"],
+            "msg": "Input should be less than or equal to 100000",
+            "input": "150000",
+            "ctx": {"le": 100000}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn get_context_rejects_non_integer_tokens_with_fastapi_shape() {
+    let response = get_context("?tokens=abc").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "int_parsing",
+            "loc": ["query", "tokens"],
+            "msg": "Input should be a valid integer, unable to parse string as an integer",
+            "input": "abc"
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn get_context_rejects_invalid_summary_bool_with_fastapi_shape() {
+    let response = get_context("?summary=maybe").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "bool_parsing",
+            "loc": ["query", "summary"],
+            "msg": "Input should be a valid boolean, unable to interpret input",
+            "input": "maybe"
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn get_context_requires_peer_target_when_perspective_given() {
+    let response = get_context("?peer_perspective=alice").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "peer_target must be provided if peer_perspective is provided"})
+    );
+}
+
+#[tokio::test]
+async fn get_context_perspective_path_is_not_implemented() {
+    let response = get_context("?peer_target=alice").await;
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Perspective-scoped session context (peer_target) is not yet supported by the Rust API"})
+    );
+}
