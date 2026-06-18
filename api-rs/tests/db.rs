@@ -15,8 +15,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use honcho_api_rs::db;
+use honcho_api_rs::db::MessageInsert;
 use serde_json::json;
-use sqlx::{Connection, Executor, PgConnection, PgPool};
+use sqlx::{Connection, Executor, PgConnection, PgPool, Row};
 
 /// The honcho schema captured from the app database (psql meta-commands
 /// stripped so sqlx's SQL executor can run it as a single batch).
@@ -141,6 +142,108 @@ async fn update_workspace_merges_configuration_and_replaces_metadata() {
 
     assert_eq!(updated["metadata"], json!({"b": 2}));
     assert_eq!(updated["configuration"], json!({"x": 1, "y": 2}));
+
+    test_db.teardown().await;
+}
+
+fn message(peer: &str, content: &str) -> MessageInsert {
+    MessageInsert {
+        peer_name: peer.to_string(),
+        content: content.to_string(),
+        metadata: json!({}),
+        created_at: None,
+        token_count: 1,
+    }
+}
+
+#[tokio::test]
+async fn create_messages_assigns_gap_free_sequence_numbers() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // create_messages auto-creates the session and joins sender peers.
+    let first = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("alice", "hello"), message("bob", "hi")],
+        false,
+        8192,
+    )
+    .await
+    .expect("create first batch");
+    assert_eq!(first.len(), 2);
+    assert_eq!(first[0].seq_in_session, 1);
+    assert_eq!(first[1].seq_in_session, 2);
+    assert_eq!(first[0].content, "hello");
+
+    // A second batch continues the sequence without gaps.
+    let second = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("alice", "again")],
+        false,
+        8192,
+    )
+    .await
+    .expect("create second batch");
+    assert_eq!(second[0].seq_in_session, 3);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_messages_inserts_pending_embeddings_when_enabled() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("alice", "embed me please")],
+        true,
+        8192,
+    )
+    .await
+    .expect("create with embeddings");
+
+    // One pending embedding row per chunk; short content -> a single chunk.
+    let row = sqlx::query(
+        "SELECT count(*) AS n, bool_and(sync_state = 'pending') AS all_pending \
+         FROM message_embeddings WHERE message_id = $1",
+    )
+    .bind(&created[0].public_id)
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("count embeddings");
+    let count: i64 = row.get("n");
+    let all_pending: bool = row.get("all_pending");
+    assert_eq!(count, 1);
+    assert!(all_pending);
+
+    // With embedding disabled, no rows are written.
+    let none = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("alice", "no embed")],
+        false,
+        8192,
+    )
+    .await
+    .expect("create without embeddings");
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM message_embeddings WHERE message_id = $1",
+    )
+    .bind(&none[0].public_id)
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("count none");
+    assert_eq!(n, 0);
 
     test_db.teardown().await;
 }
