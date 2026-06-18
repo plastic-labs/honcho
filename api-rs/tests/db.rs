@@ -699,6 +699,162 @@ async fn enqueue_legs_observer_query_and_queue_insert() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn delete_conclusion_soft_deletes_once() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("peer");
+
+    // Seed the (observer, observed) collection and a conclusion document.
+    let collection_id = "a".repeat(21);
+    let document_id = "b".repeat(21);
+    sqlx::query(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, 'ws', 'alice', 'alice')",
+    )
+    .bind(&collection_id)
+    .execute(&test_db.pool)
+    .await
+    .expect("seed collection");
+    sqlx::query(
+        "INSERT INTO documents (id, content, workspace_name, observer, observed) \
+         VALUES ($1, 'a fact', 'ws', 'alice', 'alice')",
+    )
+    .bind(&document_id)
+    .execute(&test_db.pool)
+    .await
+    .expect("seed document");
+
+    // First delete soft-deletes (sets deleted_at) and reports success.
+    let deleted = db::delete_conclusion(&test_db.pool, "ws", &document_id)
+        .await
+        .expect("delete");
+    assert!(deleted);
+    let deleted_at: Option<chrono::DateTime<Utc>> =
+        sqlx::query_scalar("SELECT deleted_at FROM documents WHERE id = $1")
+            .bind(&document_id)
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("read deleted_at");
+    assert!(deleted_at.is_some());
+
+    // A second delete is a no-op (WHERE deleted_at IS NULL) -> false.
+    let again = db::delete_conclusion(&test_db.pool, "ws", &document_id)
+        .await
+        .expect("delete again");
+    assert!(!again);
+
+    // An unknown id -> false.
+    let unknown = db::delete_conclusion(&test_db.pool, "ws", &"c".repeat(21))
+        .await
+        .expect("delete unknown");
+    assert!(!unknown);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn update_message_replaces_metadata_and_none_is_unchanged() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[MessageInsert {
+            peer_name: "alice".to_string(),
+            content: "hi".to_string(),
+            metadata: json!({"a": 1}),
+            created_at: None,
+            token_count: 1,
+        }],
+        false,
+        8192,
+    )
+    .await
+    .expect("create message");
+    let id = created[0].public_id.clone();
+
+    // Some(metadata) overwrites.
+    let updated = db::update_message(&test_db.pool, "ws", "sess", &id, Some(json!({"b": 2})))
+        .await
+        .expect("update")
+        .expect("message exists");
+    assert_eq!(updated["metadata"], json!({"b": 2}));
+
+    // None returns the row unchanged (metadata still {"b":2}).
+    let unchanged = db::update_message(&test_db.pool, "ws", "sess", &id, None)
+        .await
+        .expect("update none")
+        .expect("message exists");
+    assert_eq!(unchanged["metadata"], json!({"b": 2}));
+
+    // get_message round-trips; unknown id -> None.
+    let fetched = db::get_message(&test_db.pool, "ws", "sess", &id)
+        .await
+        .expect("get message");
+    assert_eq!(fetched.expect("exists")["id"], json!(id));
+    let missing = db::get_message(&test_db.pool, "ws", "sess", "nope")
+        .await
+        .expect("get missing");
+    assert_eq!(missing, None);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn peer_card_self_and_other_labels_coexist() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    // Self card -> stored under "peer_card".
+    db::set_peer_card(&test_db.pool, "ws", "alice", "alice", &["i am alice".to_string()])
+        .await
+        .expect("set self card");
+    let self_card = db::get_peer_card(&test_db.pool, "ws", "alice", "alice")
+        .await
+        .expect("get self card");
+    assert_eq!(self_card, Some(json!({"peer_card": ["i am alice"]})));
+
+    // Card about another peer -> stored under "{observed}_peer_card", merged
+    // alongside the self card rather than clobbering it.
+    db::set_peer_card(&test_db.pool, "ws", "alice", "bob", &["bob is helpful".to_string()])
+        .await
+        .expect("set other card");
+    let bob_card = db::get_peer_card(&test_db.pool, "ws", "alice", "bob")
+        .await
+        .expect("get other card");
+    assert_eq!(bob_card, Some(json!({"peer_card": ["bob is helpful"]})));
+
+    // The self card is still intact after the other-card merge.
+    let still_self = db::get_peer_card(&test_db.pool, "ws", "alice", "alice")
+        .await
+        .expect("get self card again");
+    assert_eq!(still_self, Some(json!({"peer_card": ["i am alice"]})));
+
+    // A peer with no card row at all -> None.
+    let missing = db::get_peer_card(&test_db.pool, "ws", "ghost", "ghost")
+        .await
+        .expect("get missing card");
+    assert_eq!(missing, None);
+
+    test_db.teardown().await;
+}
+
 async fn message_count(pool: &PgPool, session_name: &str) -> i64 {
     sqlx::query_scalar("SELECT count(*) FROM messages WHERE session_name = $1 AND workspace_name = 'ws'")
         .bind(session_name)
