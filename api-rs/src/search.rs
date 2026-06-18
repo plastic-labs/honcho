@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 use std::hash::Hash;
 
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 /// RRF constant (`k`) controlling how steeply rank position discounts score.
@@ -192,6 +193,64 @@ pub async fn fulltext_search(
     };
 
     Ok(rows.into_iter().map(|(public_id,)| public_id).collect())
+}
+
+/// The fields the peer-perspective filter reads from a (hydrated) message.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MessageRef {
+    pub public_id: String,
+    pub session_name: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Keep only messages created while `peer_name` was a member of their session,
+/// porting `_filter_by_peer_perspective`. A message survives when its session
+/// has at least one membership window `[joined_at, left_at]` (a `NULL` `left_at`
+/// being still-open) that contains the message's `created_at`. Order is
+/// preserved; messages in sessions the peer never joined are dropped.
+pub async fn filter_by_peer_perspective(
+    pool: &PgPool,
+    workspace_name: &str,
+    peer_name: &str,
+    messages: &[MessageRef],
+) -> Result<Vec<MessageRef>, sqlx::Error> {
+    if messages.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let memberships: Vec<(String, DateTime<Utc>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "SELECT session_name, joined_at, left_at FROM session_peers \
+         WHERE workspace_name = $1 AND peer_name = $2",
+    )
+    .bind(workspace_name)
+    .bind(peer_name)
+    .fetch_all(pool)
+    .await?;
+
+    // session_name -> [(joined_at, left_at)] membership windows.
+    type Windows = HashMap<String, Vec<(DateTime<Utc>, Option<DateTime<Utc>>)>>;
+    let mut windows: Windows = HashMap::new();
+    for (session_name, joined_at, left_at) in memberships {
+        windows
+            .entry(session_name)
+            .or_default()
+            .push((joined_at, left_at));
+    }
+
+    let mut filtered = Vec::new();
+    for message in messages {
+        let Some(session_windows) = windows.get(&message.session_name) else {
+            continue;
+        };
+        let in_window = session_windows.iter().any(|(joined_at, left_at)| {
+            message.created_at >= *joined_at
+                && left_at.is_none_or(|left| message.created_at <= left)
+        });
+        if in_window {
+            filtered.push(message.clone());
+        }
+    }
+    Ok(filtered)
 }
 
 #[cfg(test)]

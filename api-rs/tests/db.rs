@@ -14,9 +14,11 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use chrono::{TimeZone, Utc};
 use honcho_api_rs::db;
 use honcho_api_rs::db::MessageInsert;
 use honcho_api_rs::search;
+use honcho_api_rs::search::MessageRef;
 use serde_json::json;
 use sqlx::{Connection, Executor, PgConnection, PgPool, Row};
 
@@ -409,6 +411,76 @@ async fn fulltext_search_matches_fts_and_special_char_ilike() {
         .await
         .expect("ilike c++");
     assert_eq!(cpp.len(), 1);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn peer_perspective_filter_keeps_only_in_window_messages() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("peer");
+    db::get_or_create_session(&test_db.pool, "ws", "sess", None, None)
+        .await
+        .expect("session");
+
+    // alice was a member of "sess" only between 2020-01-01 and 2020-06-01.
+    let joined = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+    let left = Utc.with_ymd_and_hms(2020, 6, 1, 0, 0, 0).unwrap();
+    sqlx::query(
+        "INSERT INTO session_peers (workspace_name, session_name, peer_name, joined_at, left_at) \
+         VALUES ('ws', 'sess', 'alice', $1, $2)",
+    )
+    .bind(joined)
+    .bind(left)
+    .execute(&test_db.pool)
+    .await
+    .expect("seed membership");
+
+    let in_window = MessageRef {
+        public_id: "m_in".to_string(),
+        session_name: "sess".to_string(),
+        created_at: Utc.with_ymd_and_hms(2020, 3, 1, 0, 0, 0).unwrap(),
+    };
+    let before_join = MessageRef {
+        public_id: "m_before".to_string(),
+        session_name: "sess".to_string(),
+        created_at: Utc.with_ymd_and_hms(2019, 12, 1, 0, 0, 0).unwrap(),
+    };
+    let after_leave = MessageRef {
+        public_id: "m_after".to_string(),
+        session_name: "sess".to_string(),
+        created_at: Utc.with_ymd_and_hms(2020, 9, 1, 0, 0, 0).unwrap(),
+    };
+    let other_session = MessageRef {
+        public_id: "m_other".to_string(),
+        session_name: "other".to_string(),
+        created_at: Utc.with_ymd_and_hms(2020, 3, 1, 0, 0, 0).unwrap(),
+    };
+
+    let kept = search::filter_by_peer_perspective(
+        &test_db.pool,
+        "ws",
+        "alice",
+        &[
+            in_window.clone(),
+            before_join,
+            after_leave,
+            other_session,
+        ],
+    )
+    .await
+    .expect("perspective filter");
+
+    // Only the in-window message in a joined session survives.
+    assert_eq!(kept, vec![in_window]);
 
     test_db.teardown().await;
 }
