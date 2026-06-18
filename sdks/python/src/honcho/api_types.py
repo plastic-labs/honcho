@@ -140,7 +140,7 @@ class WorkspaceCreateParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    id: str = Field(min_length=1, max_length=100)
+    id: str = Field(min_length=1, max_length=512)
     metadata: dict[str, Any] = Field(default_factory=dict)
     configuration: WorkspaceConfiguration = Field(
         default_factory=WorkspaceConfiguration
@@ -186,7 +186,7 @@ class PeerCreateParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    id: str = Field(min_length=1, max_length=100)
+    id: str = Field(min_length=1, max_length=512)
     metadata: dict[str, Any] | None = None
     configuration: PeerConfig | None = None
 
@@ -268,7 +268,7 @@ class SessionCreateParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    id: str = Field(min_length=1, max_length=100)
+    id: str = Field(min_length=1, max_length=512)
     metadata: dict[str, Any] | None = None
     peers: dict[str, SessionPeerConfig] | None = None
     configuration: SessionConfiguration | None = None

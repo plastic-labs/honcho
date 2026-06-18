@@ -60,7 +60,7 @@ repos:
         language: system
         files: ^(src/|tests/|sdks/python/|scripts/).*\.py$
         require_serial: true
-        pass_filenames: false
+        pass_filenames: true
 
       # Run main application tests
       - id: pytest-main

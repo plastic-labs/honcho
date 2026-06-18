@@ -13,11 +13,13 @@ from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 from pydantic import ValidationError
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src._version import HONCHO_VERSION
 from src.cache.client import close_cache, init_cache
 from src.config import settings
-from src.db import engine, request_context
+from src.db import engine, register_db_query_instrumentation, request_context
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
@@ -28,10 +30,12 @@ from src.routers import (
     webhooks,
     workspaces,
 )
+from src.startup import validate_embedding_schema
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
     prometheus_metrics,
+    register_db_pool_collector,
     shutdown_telemetry,
 )
 from src.telemetry.logging import get_route_template
@@ -115,6 +119,8 @@ if SENTRY_ENABLED:
             FastApiIntegration(
                 transaction_style="endpoint",
             ),
+            # Explicit so DB-query spans are not reliant on auto-enabling.
+            SqlalchemyIntegration(),
         ],
         before_send=before_send,
     )
@@ -124,6 +130,16 @@ if SENTRY_ENABLED:
 async def lifespan(_: FastAPI):
     # Initialize CloudEvents telemetry
     await initialize_telemetry_async()
+
+    # Expose DB connection-pool stats for this API instance (no-op if metrics off)
+    register_db_pool_collector("api")
+    register_db_query_instrumentation("api")
+
+    # Validate embedding schema before serving any traffic. Fails closed: if
+    # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical
+    # pgvector columns, the process refuses to start rather than silently
+    # writing wrong-dim vectors.
+    await validate_embedding_schema(engine)
 
     try:
         await init_cache()
@@ -154,7 +170,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
-    version="3.0.6",
+    version=HONCHO_VERSION,
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -167,15 +183,9 @@ app = FastAPI(
     },
 )
 
-origins = [
-    "http://localhost",
-    "http://127.0.0.1:8000",
-    "https://api.honcho.dev",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

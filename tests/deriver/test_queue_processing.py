@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import patch
@@ -58,7 +59,7 @@ class TestQueueProcessing:
     async def test_work_unit_claiming(
         self,
         db_session: AsyncSession,
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+        sample_queue_items: list[models.QueueItem],  # noqa: ARG001 # pyright: ignore[reportUnusedParameter]
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ) -> None:
         """Test that work units can be claimed and are not available to other workers"""
@@ -92,7 +93,7 @@ class TestQueueProcessing:
     @pytest.mark.asyncio
     async def test_get_and_claim_excludes_already_claimed(
         self,
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+        sample_queue_items: list[models.QueueItem],  # noqa: ARG001 # pyright: ignore[reportUnusedParameter]
     ) -> None:
         queue_manager = QueueManager()
         first_batch = await queue_manager.get_and_claim_work_units()
@@ -106,7 +107,7 @@ class TestQueueProcessing:
     async def test_claim_work_unit_conflict_returns_false(
         self,
         db_session: AsyncSession,
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+        sample_queue_items: list[models.QueueItem],  # noqa: ARG001 # pyright: ignore[reportUnusedParameter]
     ) -> None:
         # Pre-create an active session for a key
         queue_manager = QueueManager()
@@ -183,29 +184,31 @@ class TestQueueProcessing:
         await db_session.commit()
         await db_session.refresh(aqs)
 
-        _, items_to_process, _ = await qm.get_queue_item_batch(
+        batch = await qm.get_queue_item_batch(
             task_type="representation",
             work_unit_key=first.work_unit_key,
             aqs_id=aqs.id,
         )
+        items_to_process = batch.items_to_process
         nxt = items_to_process[0] if items_to_process else None
         assert nxt is not None and nxt.id == first.id
 
         # Mark first processed, next should be the second
         first.processed = True
         await db_session.commit()
-        _, items_to_process2, _ = await qm.get_queue_item_batch(
+        batch2 = await qm.get_queue_item_batch(
             task_type="representation",
             work_unit_key=first.work_unit_key,
             aqs_id=aqs.id,
         )
+        items_to_process2 = batch2.items_to_process
         nxt2 = items_to_process2[0] if items_to_process2 else None
         assert nxt2 is not None and nxt2.id == second.id
 
     @pytest.mark.asyncio
     async def test_cleanup_work_unit_removes_row(
         self,
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
+        sample_queue_items: list[models.QueueItem],  # noqa: ARG001 # pyright: ignore[reportUnusedParameter]
         db_session: AsyncSession,
     ) -> None:
         qm = QueueManager()
@@ -358,6 +361,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
+            **_extra: Any,  # added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {
@@ -390,6 +394,203 @@ class TestQueueProcessing:
         assert processed_batches[0]["payload_count"] == 2
         assert processed_batches[1]["payload_count"] == 1
         assert all(b["task_type"] == "representation" for b in processed_batches)
+
+    @pytest.mark.asyncio
+    async def test_hit_batch_token_cap_reflects_post_filter_batch(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: `hit_batch_token_cap` must reflect the actually-returned
+        batch (post config-filter), not the pre-filter superset. Previously
+        the flag used pre-filter `messages_context[-1].id`, which inflated
+        the range queried for cap detection and produced false positives
+        when the config-filter trimmed the trailing item from the batch.
+        """
+        from src.deriver import queue_manager as qm_module
+
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+        cap = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
+        # M1 + M2 sum to exactly the cap; M3 pushes over it. After SQL,
+        # messages_context = [M1, M2]; the cap is genuinely binding *on the
+        # pre-filter batch*. items_to_process = [QI(M1), QI(M2)]. We then
+        # simulate a config-filter trim that keeps only QI(M1). The
+        # actually-returned batch is [M1] alone — sum=400 < cap — so the
+        # cap-flag must report False.
+        token_counts = [400, cap - 400, 300]
+        messages: list[models.Message] = []
+        for i, tc in enumerate(token_counts):
+            m = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"cap-test message {i}",
+                token_count=tc,
+                seq_in_session=i + 1,
+            )
+            db_session.add(m)
+            messages.append(m)
+        await db_session.commit()
+        for m in messages:
+            await db_session.refresh(m)
+
+        queue_items: list[models.QueueItem] = []
+        for m in messages:
+            payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=m,
+                task_type="representation",
+                observed=peer.name,
+                observer=peer.name,
+            )
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+            qi = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=m.id,
+            )
+            db_session.add(qi)
+            queue_items.append(qi)
+        await db_session.commit()
+        for qi in queue_items:
+            await db_session.refresh(qi)
+
+        # Trim items_to_process down to the first queue item — mimics
+        # `_resolve_batch_configuration` cutting at a configuration boundary.
+        real_resolve = qm_module._resolve_batch_configuration  # pyright: ignore[reportPrivateUsage]
+
+        def fake_resolve(
+            items: list[models.QueueItem],
+        ) -> tuple[list[models.QueueItem], Any]:
+            _kept, cfg = real_resolve(items)
+            return (items[:1] if items else []), cfg
+
+        monkeypatch.setattr(qm_module, "_resolve_batch_configuration", fake_resolve)
+
+        qm = qm_module.QueueManager()
+        work_unit_key = queue_items[0].work_unit_key
+        claimed = await qm.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        await db_session.commit()
+
+        result = await qm.get_queue_item_batch(
+            task_type="representation",
+            work_unit_key=work_unit_key,
+            aqs_id=aqs_id,
+        )
+
+        # Returned batch is [M1] alone (config-filter trimmed M2). The cap
+        # wasn't binding on this batch — sum=400 < cap. Pre-fix code reported
+        # True (false positive) because it used pre-filter max_kept_id=M2.
+        assert len(result.messages_context) == 1
+        assert result.messages_context[0].id == messages[0].id
+        assert result.hit_batch_token_cap is False
+
+    @pytest.mark.asyncio
+    async def test_hit_batch_token_cap_fires_when_trailing_context_trimmed(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Regression: when SQL kept trailing NON-QUEUE context past the last
+        queued item, and the config filter trims that context away, the cap
+        check must still recognize that the SQL cap clamped queue work.
+
+        Pre-fix used `messages_context[-1].id == sql_max_kept_id` which goes
+        False whenever trailing context is dropped — producing a false
+        negative for the very case the cap-hit flag exists to report.
+        Post-fix keys on the queue-item boundary, which is unaffected by
+        trailing-context trimming.
+        """
+        from src.deriver import queue_manager as qm_module
+
+        session, peers = sample_session_with_peers
+        peer_a = peers[0]
+        peer_b = peers[1] if len(peers) > 1 else peers[0]
+        cap = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+
+        # Layout: 4 messages, ordered.
+        #   M1 (peer_a, queue, 200)
+        #   M2 (peer_a, queue, 200)
+        #   M3 (peer_b, NON-queue context, cap - 300)
+        #   M4 (peer_a, queue, 400)
+        # Cumulative tokens: M1=200, M2=400, M3=cap+100, M4=cap+500.
+        # SQL keeps M1+M2 (cumulative <= cap), excludes M3 onwards (over cap).
+        # Wait — we want SQL to keep through M3 (trailing context) but exclude
+        # M4 (queue). Adjust so M3 fits but M4 doesn't.
+        token_counts: list[tuple[models.Peer, int]] = [
+            (peer_a, 200),  # M1 — queue
+            (peer_a, 200),  # M2 — queue
+            (peer_b, cap - 700),  # M3 — non-queue context; cumulative = cap-300
+            (peer_a, 400),  # M4 — queue; cumulative cap+100 > cap → excluded
+        ]
+        messages: list[models.Message] = []
+        for i, (msg_peer, tc) in enumerate(token_counts):
+            m = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=msg_peer.name,
+                content=f"cap-test message {i}",
+                token_count=tc,
+                seq_in_session=i + 1,
+            )
+            db_session.add(m)
+            messages.append(m)
+        await db_session.commit()
+        for m in messages:
+            await db_session.refresh(m)
+
+        # Queue items for M1, M2, M4 only — M3 is non-queue context (peer_b).
+        # observed = peer_a, so the deriver's representation work unit covers
+        # peer_a messages; peer_b is treated as conversational context.
+        queue_items: list[models.QueueItem] = []
+        for m in [messages[0], messages[1], messages[3]]:
+            payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=m,
+                task_type="representation",
+                observed=peer_a.name,
+                observer=peer_a.name,
+            )
+            work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+            qi = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=m.id,
+            )
+            db_session.add(qi)
+            queue_items.append(qi)
+        await db_session.commit()
+        for qi in queue_items:
+            await db_session.refresh(qi)
+
+        qm = qm_module.QueueManager()
+        work_unit_key = queue_items[0].work_unit_key
+        claimed = await qm.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed[work_unit_key]
+        await db_session.commit()
+
+        result = await qm.get_queue_item_batch(
+            task_type="representation",
+            work_unit_key=work_unit_key,
+            aqs_id=aqs_id,
+        )
+
+        # Cap fired: SQL stopped at M3 (cap budget exhausted), excluding the
+        # queue item M4. Config filter doesn't touch queue items here. The
+        # flag must report True.
+        assert result.hit_batch_token_cap is True
 
     @pytest.mark.asyncio
     async def test_token_batching_filters_by_work_unit(
@@ -485,11 +686,13 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(alice_aqs)
 
-            alice_messages, alice_items, _ = await qm.get_queue_item_batch(
+            alice_batch = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=alice_work_unit_key,
                 aqs_id=alice_aqs.id,
             )
+            alice_messages = alice_batch.messages_context
+            alice_items = alice_batch.items_to_process
 
             assert len(alice_messages) == 6
             alice_message_ids: set[int] = {m.id for m in alice_messages}
@@ -513,11 +716,13 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(bob_aqs)
 
-            bob_messages, bob_items, _ = await qm.get_queue_item_batch(
+            bob_batch = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=bob_work_unit_key,
                 aqs_id=bob_aqs.id,
             )
+            bob_messages = bob_batch.messages_context
+            bob_items = bob_batch.items_to_process
 
             # Bob should get 5 messages (1..5) - includes preceding alice message for context
             assert len(bob_messages) == 5
@@ -540,11 +745,13 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(steve_aqs)
 
-            steve_messages, steve_items, _ = await qm.get_queue_item_batch(
+            steve_batch = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=steve_work_unit_key,
                 aqs_id=steve_aqs.id,
             )
+            steve_messages = steve_batch.messages_context
+            steve_items = steve_batch.items_to_process
 
             # Steve should get 6 messages (2..7) - includes preceding bob message for context
             assert len(steve_messages) == 6
@@ -658,11 +865,12 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(alice_aqs)
 
-                alice_messages2, _, _ = await qm.get_queue_item_batch(
+                alice_batch2 = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=alice_work_unit_key,
                     aqs_id=alice_aqs.id,
                 )
+                alice_messages2 = alice_batch2.messages_context
 
                 # Includes preceding steve message for context -> [2,3,4]
                 assert len(alice_messages2) == 3
@@ -682,11 +890,12 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(bob_aqs)
 
-                bob_messages2, _, _ = await qm.get_queue_item_batch(
+                bob_batch2 = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=bob_work_unit_key,
                     aqs_id=bob_aqs.id,
                 )
+                bob_messages2 = bob_batch2.messages_context
 
                 assert len(bob_messages2) == 1
                 assert bob_messages2[0].id == messages[0].id  # bob only
@@ -702,11 +911,12 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(steve_aqs)
 
-                steve_messages2, _, _ = await qm.get_queue_item_batch(
+                steve_batch2 = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=steve_work_unit_key,
                     aqs_id=steve_aqs.id,
                 )
+                steve_messages2 = steve_batch2.messages_context
 
                 # Includes preceding bob message for context -> [1,2]
                 assert len(steve_messages2) == 2
@@ -926,6 +1136,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
+            **_extra: Any,  # added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {
@@ -1046,6 +1257,7 @@ class TestQueueProcessing:
             observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
             observers: list[str] | None = None,  # pyright: ignore[reportUnusedParameter]
             queue_item_message_ids: list[int] | None = None,  # pyright: ignore[reportUnusedParameter]
+            **_extra: Any,  # added hit_batch_token_cap / was_flush_enabled / batch_max_tokens
         ) -> None:
             processed_batches.append(
                 {
@@ -1372,3 +1584,62 @@ class TestQueueProcessing:
         claimed = await qm.get_and_claim_work_units()
         assert work_unit_key is not None
         assert work_unit_key in claimed
+
+
+class TestPollingJitter:
+    """Polling jitter: desynchronize poll loops without changing the schedule."""
+
+    def test_jitter_stays_within_ratio_bounds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.5)
+        qm = QueueManager()
+        samples = [qm._jitter(10.0) for _ in range(1000)]  # pyright: ignore[reportPrivateUsage]
+        assert all(5.0 <= s <= 15.0 for s in samples)
+        # A 0.5 ratio over 1000 samples should produce real spread, not a constant.
+        assert max(samples) - min(samples) > 1.0
+
+    def test_jitter_ratio_zero_is_identity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
+        qm = QueueManager()
+        assert all(qm._jitter(7.5) == 7.5 for _ in range(50))  # pyright: ignore[reportPrivateUsage]
+
+    def test_advance_jitters_return_but_keeps_deterministic_schedule(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.5)
+        monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_ENABLED", True)
+        monkeypatch.setattr(settings.DERIVER, "POLLING_BACKOFF_MULTIPLIER", 2.0)
+        monkeypatch.setattr(settings.DERIVER, "POLLING_SLEEP_INTERVAL_SECONDS", 1.0)
+        monkeypatch.setattr(
+            settings.DERIVER, "POLLING_SLEEP_MAX_INTERVAL_SECONDS", 30.0
+        )
+        qm = QueueManager()
+
+        # The underlying schedule advances 1 -> 2 -> 4 -> ... -> 30 deterministically;
+        # each returned sleep is jittered within [0.5x, 1.5x] of the pre-advance step.
+        expected_schedule = [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
+        for step in expected_schedule:
+            returned = qm._advance_poll_interval()  # pyright: ignore[reportPrivateUsage]
+            assert 0.5 * step <= returned <= 1.5 * step
+
+    @pytest.mark.asyncio
+    async def test_startup_jitter_disabled_returns_immediately(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_STARTUP_JITTER_SECONDS", 0.0)
+        qm = QueueManager()
+        # Window 0.0 must not sleep at all.
+        await qm._sleep_startup_jitter()  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
+    async def test_startup_jitter_interrupted_by_shutdown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "POLLING_STARTUP_JITTER_SECONDS", 300.0)
+        qm = QueueManager()
+        qm.shutdown_event.set()
+        # A shutdown already signalled must short-circuit the (long) jitter sleep.
+        await asyncio.wait_for(qm._sleep_startup_jitter(), timeout=1.0)  # pyright: ignore[reportPrivateUsage]

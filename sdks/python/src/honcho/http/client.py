@@ -367,7 +367,7 @@ class HonchoHTTPClient:
             from datetime import datetime
             from email.utils import parsedate_to_datetime
 
-            dt: datetime = cast(datetime, parsedate_to_datetime(header))
+            dt: datetime = parsedate_to_datetime(header)
             timestamp: float = dt.timestamp()
             return max(0.0, timestamp - time.time())
         except Exception:

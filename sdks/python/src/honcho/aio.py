@@ -92,24 +92,30 @@ class HonchoAio(AsyncMetadataConfigMixin):
     _honcho: "Honcho"
 
     def __init__(self, honcho: "Honcho") -> None:
+        """Create an async view backed by a sync Honcho client."""
         self._honcho = honcho
 
     # AsyncMetadataConfigMixin implementation
     def _get_async_http_client(self):
+        """Return the async HTTP client used by metadata helpers."""
         return self._honcho._async_http_client
 
     def _get_fetch_route(self) -> str:
+        """Return the workspace fetch route for metadata helpers."""
         return routes.workspaces()
 
     def _get_update_route(self) -> str:
+        """Return the workspace update route for metadata helpers."""
         return routes.workspace(self._honcho.workspace_id)
 
     def _get_fetch_body(self) -> dict[str, Any]:
+        """Return the request body used to fetch this workspace."""
         return {"id": self._honcho.workspace_id}
 
     def _parse_response(
         self, data: dict[str, Any]
     ) -> tuple[dict[str, object], dict[str, object]]:
+        """Parse workspace metadata and configuration from an API response."""
         workspace = WorkspaceResponse.model_validate(data)
         # Return configuration as dict for mixin compatibility
         return workspace.metadata or {}, workspace.configuration.model_dump(
@@ -117,18 +123,22 @@ class HonchoAio(AsyncMetadataConfigMixin):
         )
 
     def _set_metadata(self, metadata: dict[str, object]) -> None:
+        """Update cached workspace metadata on the parent client."""
         self._honcho._metadata = metadata
 
     def _set_configuration(self, configuration: dict[str, object]) -> None:
+        """Update cached workspace configuration on the parent client."""
         # Convert dict to typed configuration
         self._honcho._configuration = WorkspaceConfiguration.model_validate(
             configuration
         )
 
     def _get_metadata(self) -> dict[str, object]:
+        """Return cached workspace metadata from the parent client."""
         return self._honcho._metadata or {}
 
     def _get_configuration(self) -> dict[str, object]:
+        """Return cached workspace configuration from the parent client."""
         if self._honcho._configuration is None:
             return {}
         return self._honcho._configuration.model_dump(exclude_none=True)
@@ -216,6 +226,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         )
 
         def transform(peer: PeerResponse) -> Peer:
+            """Convert a peer API response into a Peer SDK object."""
             return Peer(
                 peer.id,
                 self._honcho,
@@ -225,6 +236,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
             )
 
         async def fetch_next(next_page: int) -> AsyncPage[PeerResponse, Peer]:
+            """Fetch the next page while preserving filters and ordering."""
             next_query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 next_query["reverse"] = "true"
@@ -243,6 +255,14 @@ class HonchoAio(AsyncMetadataConfigMixin):
         *,
         metadata: dict[str, object] | None = None,
         configuration: SessionConfiguration | None = None,
+        peers: str
+        | PeerBase
+        | tuple[str, SessionPeerConfig]
+        | tuple[PeerBase, SessionPeerConfig]
+        | list[PeerBase | str]
+        | list[tuple[PeerBase | str, SessionPeerConfig]]
+        | list[PeerBase | str | tuple[PeerBase | str, SessionPeerConfig]]
+        | None = None,
     ) -> Session:
         """
         Get or create a session with the given ID asynchronously.
@@ -251,6 +271,9 @@ class HonchoAio(AsyncMetadataConfigMixin):
             id: Unique identifier for the session within the workspace.
             metadata: Optional metadata dictionary to associate with this session.
             configuration: Optional configuration to set for this session.
+            peers: Optional peers to attach to the session at creation. Accepts the
+                same shape as Session.add_peers (peer ID string, Peer object, list
+                of either, or tuples with SessionPeerConfig).
 
         Returns:
             A Session object with cached values from the API response.
@@ -261,6 +284,8 @@ class HonchoAio(AsyncMetadataConfigMixin):
             body["metadata"] = metadata
         if configuration is not None:
             body["configuration"] = configuration.model_dump(exclude_none=True)
+        if peers is not None:
+            body["peers"] = normalize_peers_to_dict(peers)
 
         data = await self._honcho._async_http_client.post(
             routes.sessions(self._honcho.workspace_id), body=body
@@ -305,6 +330,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
         )
 
         def transform(session: SessionResponse) -> Session:
+            """Convert a session API response into a Session SDK object."""
             return Session(
                 session.id,
                 self._honcho,
@@ -315,6 +341,7 @@ class HonchoAio(AsyncMetadataConfigMixin):
             )
 
         async def fetch_next(next_page: int) -> AsyncPage[SessionResponse, Session]:
+            """Fetch the next page while preserving filters and ordering."""
             next_query: dict[str, Any] = {"page": next_page, "size": size}
             if reverse:
                 next_query["reverse"] = "true"
@@ -328,22 +355,37 @@ class HonchoAio(AsyncMetadataConfigMixin):
         return AsyncPage(data, SessionResponse, transform, fetch_next)
 
     async def workspaces(
-        self, filters: dict[str, object] | None = None
+        self,
+        filters: dict[str, object] | None = None,
+        *,
+        page: int = 1,
+        size: int = 50,
+        reverse: bool = False,
     ) -> AsyncPage[WorkspaceResponse, str]:
         """Get all workspace IDs asynchronously."""
+        query: dict[str, Any] = {"page": page, "size": size}
+        if reverse:
+            query["reverse"] = "true"
+
         data = await self._honcho._async_http_client.post(
             routes.workspaces_list(),
             body={"filters": filters} if filters else None,
+            query=query,
         )
 
         def transform(workspace: WorkspaceResponse) -> str:
+            """Convert a workspace API response into its workspace ID."""
             return workspace.id
 
-        async def fetch_next(page: int) -> AsyncPage[WorkspaceResponse, str]:
+        async def fetch_next(next_page: int) -> AsyncPage[WorkspaceResponse, str]:
+            """Fetch the next page while preserving filters and ordering."""
+            next_query: dict[str, Any] = {"page": next_page, "size": size}
+            if reverse:
+                next_query["reverse"] = "true"
             next_data = await self._honcho._async_http_client.post(
                 routes.workspaces_list(),
                 body={"filters": filters} if filters else None,
-                query={"page": page},
+                query=next_query,
             )
             return AsyncPage(next_data, WorkspaceResponse, transform, fetch_next)
 

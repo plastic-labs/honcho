@@ -25,11 +25,14 @@ from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from sqlalchemy.sql import func
 from typing_extensions import override
 
+from src.config import settings
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
 from .db import Base
 
 load_dotenv(override=True)
+
+_VECTOR_DIM: int = settings.EMBEDDING.VECTOR_DIMENSIONS
 
 logger = getLogger(__name__)
 
@@ -278,7 +281,7 @@ class MessageEmbedding(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
     )
@@ -386,7 +389,7 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
     source_ids: Mapped[list[str] | None] = mapped_column(
         JSONB, nullable=True, server_default=text("NULL")
     )

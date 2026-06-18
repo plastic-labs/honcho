@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from enum import Enum
 from typing import cast, final
 
@@ -10,9 +11,11 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
     Counter,
+    Gauge,
     disable_created_metrics,
     generate_latest,
 )
+from prometheus_client.core import GaugeMetricFamily
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -25,6 +28,12 @@ logger = logging.getLogger(__name__)
 
 class NamespacedCounter(Counter):
     def labels(self, **kwargs: str) -> NamespacedCounter:
+        kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
+        return super().labels(**kwargs)  # type: ignore[return-value]
+
+
+class NamespacedGauge(Gauge):
+    def labels(self, **kwargs: str) -> NamespacedGauge:
         kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)  # type: ignore[return-value]
 
@@ -90,6 +99,41 @@ dreamer_tokens_processed_counter = NamespacedCounter(
     "dreamer_tokens_processed",
     "Total tokens processed by the dreamer",
     ["namespace", "specialist_name", "token_type"],
+)
+
+# CloudEvents emitter health metrics. Split intentional (sampled out) vs unintentional
+# (dropped) so the dropped counter remains a real alert signal.
+telemetry_events_emitted_counter = NamespacedCounter(
+    "telemetry_events_emitted",
+    "CloudEvents successfully placed on the emitter buffer",
+    ["namespace", "type"],
+)
+
+telemetry_events_sampled_out_counter = NamespacedCounter(
+    "telemetry_events_sampled_out",
+    "CloudEvents intentionally dropped by HIGH_VOLUME_SAMPLE_RATE",
+    ["namespace", "type"],
+)
+
+telemetry_events_dropped_counter = NamespacedCounter(
+    "telemetry_events_dropped",
+    "CloudEvents lost unintentionally (buffer_full or send_failed)",
+    ["namespace", "reason"],
+)
+
+telemetry_buffer_size_gauge = NamespacedGauge(
+    "telemetry_buffer_size",
+    "Current size of the CloudEvents emitter buffer",
+    ["namespace"],
+)
+
+# DB connection-pool health. The in-flight gauge counts statements actually
+# executing on the wire, so checked_out minus in_flight reveals connections held
+# but parked (the "idle in transaction during an external call" antipattern).
+db_queries_in_flight_gauge = NamespacedGauge(
+    "db_queries_in_flight",
+    "DB statements currently executing on a connection for this instance",
+    ["namespace", "instance_type"],
 )
 
 
@@ -217,8 +261,81 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("record_dreamer_tokens", e)
 
+    def record_telemetry_event_emitted(self, *, event_type: str) -> None:
+        try:
+            telemetry_events_emitted_counter.labels(type=event_type).inc()
+        except Exception as e:
+            self._handle_metric_error("record_telemetry_event_emitted", e)
+
+    def record_telemetry_event_sampled_out(self, *, event_type: str) -> None:
+        try:
+            telemetry_events_sampled_out_counter.labels(type=event_type).inc()
+        except Exception as e:
+            self._handle_metric_error("record_telemetry_event_sampled_out", e)
+
+    def record_telemetry_event_dropped(self, *, reason: str) -> None:
+        # Reason is one of "buffer_full" | "send_failed".
+        try:
+            telemetry_events_dropped_counter.labels(reason=reason).inc()
+        except Exception as e:
+            self._handle_metric_error("record_telemetry_event_dropped", e)
+
+    def set_telemetry_buffer_size(self, *, size: int) -> None:
+        try:
+            telemetry_buffer_size_gauge.labels().set(size)
+        except Exception as e:
+            self._handle_metric_error("set_telemetry_buffer_size", e)
+
 
 prometheus_metrics = PrometheusMetrics()
+
+
+class DBPoolCollector:
+    """Scrape-time collector for SQLAlchemy connection-pool stats.
+
+    Computed live on each /metrics scrape from the async engine's pool, so it
+    is always current with no background task or sampling lag. One instance is
+    registered per process (the API server or a deriver worker).
+    """
+
+    def __init__(self, instance_type: str) -> None:
+        # instance_type: "api" | "deriver"
+        self.instance_type: str = instance_type
+
+    def collect(self) -> Iterator[GaugeMetricFamily]:
+        namespace = settings.METRICS.NAMESPACE or ""
+        gauge = GaugeMetricFamily(
+            "db_pool_connections",
+            "DB connections held by this instance, by pool state",
+            labels=["namespace", "instance_type", "state"],
+        )
+        # Fail soft: Prometheus aborts the entire scrape (dropping ALL metrics)
+        # if any collector raises, so never let a pool/import hiccup here sink
+        # the whole /metrics response.
+        try:
+            # Lazy import to avoid an import cycle at module load (db imports
+            # config, telemetry is imported widely). Reads engine.pool directly.
+            from src.db import get_pool_stats
+
+            stats = get_pool_stats()
+        except Exception:
+            logger.warning("Failed to collect DB pool stats", exc_info=True)
+            stats = {}
+        for state, value in stats.items():
+            gauge.add_metric([namespace, self.instance_type, state], value)
+        yield gauge
+
+
+_db_pool_collector_registered = False
+
+
+def register_db_pool_collector(instance_type: str) -> None:
+    """Register the DB pool collector once per process (no-op if metrics off)."""
+    global _db_pool_collector_registered
+    if _db_pool_collector_registered or not settings.METRICS.ENABLED:
+        return
+    REGISTRY.register(DBPoolCollector(instance_type))
+    _db_pool_collector_registered = True
 
 
 async def metrics_endpoint(_request: Request) -> Response:

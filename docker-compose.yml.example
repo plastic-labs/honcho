@@ -21,6 +21,18 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     # -- Development: mount source for live reload --
     # volumes:
     #   - .:/app
@@ -40,6 +52,8 @@ services:
       dockerfile: Dockerfile
     entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
     depends_on:
+      api:
+        condition: service_healthy
       database:
         condition: service_healthy
       redis:
@@ -67,6 +81,10 @@ services:
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+      # Allow passwordless connections from the host (port is bound to 127.0.0.1).
+      # Lets the local test suite and ad-hoc tools connect without supplying a
+      # password. Do NOT use this in production.
+      - POSTGRES_HOST_AUTH_METHOD=trust
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql

@@ -60,8 +60,17 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
+        trigger_reason: str | None = None,
+        delay_reason: str | None = None,
+        documents_since_last_dream_at_schedule: int | None = None,
+        document_threshold: int | None = None,
     ) -> None:
-        """Schedule a dream for a collection after a delay."""
+        """Schedule a dream for a collection after a delay.
+
+        telemetry kwargs are captured at schedule time and threaded
+        through the queue payload so DreamRunEvent can attribute the dream
+        back to its scheduling context.
+        """
         if not settings.DREAM.ENABLED:
             return
 
@@ -76,6 +85,10 @@ class DreamScheduler:
                 dream_type,
                 observer=observer,
                 observed=observed,
+                trigger_reason=trigger_reason,
+                delay_reason=delay_reason,
+                documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+                document_threshold=document_threshold,
             )
         )
         self.pending_dreams[work_unit_key] = task
@@ -133,6 +146,10 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
+        trigger_reason: str | None = None,
+        delay_reason: str | None = None,
+        documents_since_last_dream_at_schedule: int | None = None,
+        document_threshold: int | None = None,
     ) -> None:
         try:
             await asyncio.sleep(delay_minutes * 60)
@@ -142,6 +159,10 @@ class DreamScheduler:
                 dream_type,
                 observer=observer,
                 observed=observed,
+                trigger_reason=trigger_reason,
+                delay_reason=delay_reason,
+                documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+                document_threshold=document_threshold,
             )
             logger.info("Executed dream for %s", work_unit_key)
 
@@ -159,6 +180,10 @@ class DreamScheduler:
         *,
         observer: str,
         observed: str,
+        trigger_reason: str | None = None,
+        delay_reason: str | None = None,
+        documents_since_last_dream_at_schedule: int | None = None,
+        document_threshold: int | None = None,
     ) -> None:
         """Execute the dream by enqueueing it."""
         from src import crud
@@ -204,6 +229,10 @@ class DreamScheduler:
             observed=observed,
             dream_type=dream_type,
             session_name=session_name,
+            trigger_reason=trigger_reason,
+            delay_reason=delay_reason,
+            documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
+            document_threshold=document_threshold,
         )
 
     async def shutdown(self) -> None:
@@ -274,6 +303,14 @@ async def check_and_schedule_dream(
     )
 
     if documents_since_last_dream >= settings.DREAM.DOCUMENT_THRESHOLD:
+        # capture *why* this schedule fired (threshold) and
+        # *how* it will fire (idle vs immediate). The two gates were
+        # intentionally split — collapsing them into a single trigger_reason
+        # would lose the scheduling semantics.
+        trigger_reason = "document_threshold"
+        delay_reason = (
+            "idle_timeout" if settings.DREAM.IDLE_TIMEOUT_MINUTES > 0 else "immediate"
+        )
         if last_dream_at:
             try:
                 last_dream_time = datetime.fromisoformat(last_dream_at)
@@ -286,6 +323,9 @@ async def check_and_schedule_dream(
                         f"Skipping dream for {collection.observer}/{collection.observed}: only {hours_since_last_dream:.1f} hours "
                         + f"since last dream (minimum: {settings.DREAM.MIN_HOURS_BETWEEN_DREAMS})"
                     )
+                    # delay_reason = "min_hours_gate" if we DID schedule, but
+                    # we don't — return early. Telemetry only records dreams
+                    # that actually fire.
                     return False
             except (ValueError, TypeError) as e:
                 logger.warning(
@@ -345,6 +385,10 @@ async def check_and_schedule_dream(
                     dream_type=DreamType(dream_type),
                     observer=collection.observer,
                     observed=collection.observed,
+                    trigger_reason=trigger_reason,
+                    delay_reason=delay_reason,
+                    documents_since_last_dream_at_schedule=documents_since_last_dream,
+                    document_threshold=settings.DREAM.DOCUMENT_THRESHOLD,
                 )
                 logger.debug(
                     "Scheduled dream",
