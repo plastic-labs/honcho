@@ -823,6 +823,432 @@ async fn session_peer_config_route_is_disabled_by_default() {
     );
 }
 
+#[tokio::test]
+async fn message_create_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/sessions/session-a/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"messages":[{"content":"hi","peer_id":"peer-a"}]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
+async fn message_create_rejects_empty_batch() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/sessions/session-a/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"messages":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "too_short",
+                "loc": ["body", "messages"],
+                "msg": "List should have at least 1 item after validation, not 0",
+                "input": [],
+                "ctx": {"field_type": "List", "min_length": 1, "actual_length": 0}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn message_create_rejects_missing_content_with_integer_index_loc() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/sessions/session-a/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"messages":[{"peer_id":"peer-a"}]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "missing",
+                "loc": ["body", "messages", 0, "content"],
+                "msg": "Field required",
+                "input": {"peer_id": "peer-a"}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn message_create_rejects_missing_peer_id() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/sessions/session-a/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"messages":[{"content":"hello"}]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "missing",
+                "loc": ["body", "messages", 0, "peer_id"],
+                "msg": "Field required",
+                "input": {"content": "hello"}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn message_create_rejects_missing_messages_field() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/sessions/session-a/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "missing",
+                "loc": ["body", "messages"],
+                "msg": "Field required",
+                "input": {}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn message_update_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::put("/v3/workspaces/workspace-a/sessions/session-a/messages/msg-a")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"metadata":{"k":"v"}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
+async fn message_update_rejects_non_dict_metadata() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::put("/v3/workspaces/workspace-a/sessions/session-a/messages/msg-a")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"metadata":"not-a-dict"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "dict_type",
+                "loc": ["body", "metadata"],
+                "msg": "Input should be a valid dictionary",
+                "input": "not-a-dict"
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn webhook_create_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/webhooks")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"url":"https://example.com/hook"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
+async fn webhook_delete_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::delete("/v3/workspaces/workspace-a/webhooks/endpoint-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+#[tokio::test]
+async fn webhook_create_rejects_private_ip_url() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/webhooks")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"url":"http://127.0.0.1/hook"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "value_error",
+                "loc": ["body", "url"],
+                "msg": "Value error, Private/internal IP addresses are not allowed",
+                "input": "http://127.0.0.1/hook",
+                "ctx": {"error": {}}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn webhook_create_requires_url() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/webhooks")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "missing",
+                "loc": ["body", "url"],
+                "msg": "Field required",
+                "input": {}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn conclusion_delete_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::delete("/v3/workspaces/workspace-a/conclusions/conc-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
+async fn conclusion_delete_rejects_mismatched_workspace_scope() {
+    let token = create_hs256_token_for_test(&json!({"t": "", "w": "workspace-b"}), "secret");
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: true,
+        jwt_secret: Some("secret".to_string()),
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::delete("/v3/workspaces/workspace-a/conclusions/conc-a")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn set_peer_card_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::put("/v3/workspaces/workspace-a/peers/peer-a/card")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"peer_card":["likes cats"]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
+async fn set_peer_card_requires_peer_card_field() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::put("/v3/workspaces/workspace-a/peers/peer-a/card")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "missing",
+                "loc": ["body", "peer_card"],
+                "msg": "Field required",
+                "input": {}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn set_peer_card_rejects_non_string_item() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::put("/v3/workspaces/workspace-a/peers/peer-a/card")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"peer_card":["ok",42]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "string_type",
+                "loc": ["body", "peer_card", 1],
+                "msg": "Input should be a valid string",
+                "input": 42
+            }]
+        })
+    );
+}
+
 async fn response_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await

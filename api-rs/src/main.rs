@@ -34,6 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.db_schema,
         config.write_enabled,
         peer_cache,
+        config.embed_messages,
+        config.embedding_max_tokens,
     ));
 
     tracing::info!("honcho-api-rs listening on {bind_address}");

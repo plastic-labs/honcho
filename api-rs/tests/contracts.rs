@@ -42,6 +42,43 @@ fn config_defaults_and_normalizes_python_postgres_url() {
 }
 
 #[test]
+fn config_embedding_defaults_and_gemini_cap() {
+    // Defaults: EMBED_MESSAGES on, OpenAI provider uses MAX_INPUT_TOKENS as-is.
+    let config = AppConfig::from_pairs([(
+        "DB_CONNECTION_URI",
+        "postgresql://postgres:postgres@database/postgres",
+    )])
+    .expect("config should parse");
+    assert!(config.embed_messages);
+    assert_eq!(config.embedding_max_tokens, 8192);
+
+    // Gemini caps the per-chunk budget at 2048; EMBED_MESSAGES can be disabled.
+    let config = AppConfig::from_pairs([
+        (
+            "DB_CONNECTION_URI",
+            "postgresql://postgres:postgres@database/postgres",
+        ),
+        ("EMBED_MESSAGES", "false"),
+        ("EMBEDDING_PROVIDER", "gemini"),
+        ("EMBEDDING_MAX_INPUT_TOKENS", "8192"),
+    ])
+    .expect("config should parse");
+    assert!(!config.embed_messages);
+    assert_eq!(config.embedding_max_tokens, 2048);
+
+    // OpenAI honors a custom MAX_INPUT_TOKENS without the 2048 cap.
+    let config = AppConfig::from_pairs([
+        (
+            "DB_CONNECTION_URI",
+            "postgresql://postgres:postgres@database/postgres",
+        ),
+        ("EMBEDDING_MAX_INPUT_TOKENS", "4096"),
+    ])
+    .expect("config should parse");
+    assert_eq!(config.embedding_max_tokens, 4096);
+}
+
+#[test]
 fn config_parses_write_guard() {
     let config = AppConfig::from_pairs([
         (

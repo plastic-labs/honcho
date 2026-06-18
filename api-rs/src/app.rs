@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 
 use crate::auth::{AuthConfig, AuthError, JwtParams, authorize, create_scoped_key};
 use crate::cache::PeerCache;
@@ -24,15 +25,20 @@ pub struct AppState {
     pub db_schema: String,
     pub write_enabled: bool,
     pub peer_cache: PeerCache,
+    pub embed_messages: bool,
+    pub embedding_max_tokens: usize,
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pool: PgPool,
         auth: AuthConfig,
         db_schema: String,
         write_enabled: bool,
         peer_cache: PeerCache,
+        embed_messages: bool,
+        embedding_max_tokens: usize,
     ) -> Self {
         Self {
             pool: Some(pool),
@@ -40,6 +46,8 @@ impl AppState {
             db_schema,
             write_enabled,
             peer_cache,
+            embed_messages,
+            embedding_max_tokens,
         }
     }
 
@@ -50,6 +58,8 @@ impl AppState {
             db_schema: "public".to_string(),
             write_enabled: false,
             peer_cache: PeerCache::disabled(),
+            embed_messages: false,
+            embedding_max_tokens: 8192,
         }
     }
 
@@ -60,6 +70,8 @@ impl AppState {
             db_schema: "public".to_string(),
             write_enabled: true,
             peer_cache: PeerCache::disabled(),
+            embed_messages: false,
+            embedding_max_tokens: 8192,
         }
     }
 
@@ -177,7 +189,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/v3/workspaces/{workspace_id}/peers/{peer_id}/card",
-            get(get_peer_card),
+            get(get_peer_card).put(set_peer_card),
         )
         .route(
             "/v3/workspaces/{workspace_id}/sessions/list",
@@ -220,7 +232,19 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/v3/workspaces/{workspace_id}/webhooks",
-            get(list_webhook_endpoints),
+            get(list_webhook_endpoints).post(get_or_create_webhook_endpoint),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/webhooks/{endpoint_id}",
+            axum::routing::delete(delete_webhook_endpoint),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages",
+            post(create_messages_for_session),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/",
+            post(create_messages_for_session),
         )
         .route(
             "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/list",
@@ -231,8 +255,12 @@ pub fn build_router(state: AppState) -> Router {
             post(list_conclusions),
         )
         .route(
+            "/v3/workspaces/{workspace_id}/conclusions/{conclusion_id}",
+            axum::routing::delete(delete_conclusion),
+        )
+        .route(
             "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}",
-            get(get_message),
+            get(get_message).put(update_message),
         )
         .with_state(state)
 }
@@ -889,6 +917,34 @@ async fn get_peer_card(
     }
 }
 
+async fn set_peer_card(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, peer_id)): Path<(String, String)>,
+    Query(query): Query<PeerCardQuery>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        Some(&peer_id),
+        None,
+    )?;
+    ensure_writes_enabled(&state)?;
+
+    let peer_card = parse_peer_card_set(body)?;
+    // No target -> the observer sets its own card (observer == observed).
+    let observed = query.target.as_deref().unwrap_or(&peer_id);
+    db::set_peer_card(state.pool()?, &workspace_id, &peer_id, observed, &peer_card).await?;
+    state
+        .peer_cache
+        .invalidate_peer(&workspace_id, &peer_id)
+        .await;
+    Ok(Json(json!({ "peer_card": peer_card })))
+}
+
 async fn get_session_peers(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -980,6 +1036,69 @@ async fn list_webhook_endpoints(
     Ok(Json(value))
 }
 
+async fn get_or_create_webhook_endpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    let params = authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        None,
+        None,
+        None,
+    )?;
+    authorize_webhook_workspace(&params, &workspace_id)?;
+    ensure_writes_enabled(&state)?;
+
+    let url = parse_webhook_create(body)?;
+    match db::get_or_create_webhook_endpoint(state.pool()?, &workspace_id, &url).await {
+        Ok((value, created)) => {
+            let status = if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+            Ok((status, Json(value)).into_response())
+        }
+        Err(db::WebhookCreateError::WorkspaceNotFound) => Err(ApiError::NotFound(format!(
+            "Workspace {workspace_id} not found"
+        ))),
+        Err(db::WebhookCreateError::LimitReached) => Err(ApiError::Conflict(format!(
+            "Maximum number of webhook endpoints ({}) reached for this workspace.",
+            db::WEBHOOK_MAX_WORKSPACE_LIMIT
+        ))),
+        Err(db::WebhookCreateError::Database(error)) => Err(ApiError::Database(error)),
+    }
+}
+
+async fn delete_webhook_endpoint(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, endpoint_id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let params = authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        None,
+        None,
+        None,
+    )?;
+    authorize_webhook_workspace(&params, &workspace_id)?;
+    ensure_writes_enabled(&state)?;
+
+    if db::delete_webhook_endpoint(state.pool()?, &workspace_id, &endpoint_id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!(
+            "Webhook endpoint {endpoint_id} not found for workspace {workspace_id}"
+        )))
+    }
+}
+
 async fn get_session_summaries(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1054,6 +1173,30 @@ async fn list_conclusions(
     Ok(Json(value))
 }
 
+async fn delete_conclusion(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, conclusion_id)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        None,
+    )?;
+    ensure_writes_enabled(&state)?;
+
+    if db::delete_conclusion(state.pool()?, &workspace_id, &conclusion_id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!(
+            "Document {conclusion_id} not found or does not belong to workspace {workspace_id}"
+        )))
+    }
+}
+
 async fn get_message(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1074,6 +1217,139 @@ async fn get_message(
             Json(json!({ "detail": format!("Message with ID {message_id} not found") })),
         )
             .into_response()),
+    }
+}
+
+async fn create_messages_for_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, session_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        Some(&session_id),
+    )?;
+    ensure_writes_enabled(&state)?;
+    validate_resource_name(&workspace_id, "workspace_id")?;
+    validate_resource_name(&session_id, "session_id")?;
+
+    let parsed = parse_message_batch(body)?;
+    let inserts = parsed
+        .iter()
+        .map(|message| db::MessageInsert {
+            peer_name: message.peer_name.clone(),
+            content: message.content.clone(),
+            metadata: message.metadata.clone(),
+            created_at: message.created_at,
+            token_count: message.token_count,
+        })
+        .collect::<Vec<_>>();
+
+    let created = db::create_messages(
+        state.pool()?,
+        &workspace_id,
+        &session_id,
+        &inserts,
+        state.embed_messages,
+        state.embedding_max_tokens,
+    )
+    .await?;
+    let response = Value::Array(created.iter().map(db::CreatedMessage::to_json).collect());
+
+    // Enqueue is fire-and-forget in Python (a BackgroundTask whose failures are
+    // swallowed), so a queue-write failure must never fail message creation.
+    if let Err(error) =
+        enqueue_created_messages(&state, &workspace_id, &session_id, &created, &parsed).await
+    {
+        tracing::warn!(?error, "failed to enqueue created messages");
+    }
+
+    Ok((StatusCode::CREATED, Json(response)).into_response())
+}
+
+/// Build and insert the queue records for a freshly-created batch, porting the
+/// `enqueue` → `handle_session` → `generate_queue_records` path. Best-effort:
+/// the caller swallows errors to match Python's background-task semantics.
+async fn enqueue_created_messages(
+    state: &AppState,
+    workspace_id: &str,
+    session_id: &str,
+    created: &[db::CreatedMessage],
+    parsed: &[ParsedMessage],
+) -> Result<(), ApiError> {
+    let pool = state.pool()?;
+    let Some((session_internal_id, session_config)) =
+        db::fetch_session_for_enqueue(pool, workspace_id, session_id).await?
+    else {
+        return Ok(());
+    };
+    let workspace_config = db::get_workspace_configuration(pool, workspace_id).await?;
+    let peers = db::get_session_peer_configuration(pool, workspace_id, session_id).await?;
+
+    let mut records = Vec::new();
+    for (created_message, parsed_message) in created.iter().zip(parsed) {
+        let conf = crate::producer::resolve_configuration(
+            Some(&workspace_config),
+            Some(&session_config),
+            parsed_message.configuration.as_ref(),
+        );
+        let message = crate::producer::MessageForEnqueue {
+            workspace_name: workspace_id,
+            session_name: session_id,
+            message_id: created_message.id,
+            message_public_id: &created_message.public_id,
+            content: &created_message.content,
+            peer_name: &created_message.peer_name,
+            created_at: created_message.created_at,
+            seq_in_session: created_message.seq_in_session,
+        };
+        records.extend(crate::producer::generate_queue_records(
+            &message,
+            &peers,
+            &session_internal_id,
+            &conf,
+        )?);
+    }
+
+    db::insert_queue_records(pool, &records).await?;
+    Ok(())
+}
+
+async fn update_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, session_id, message_id)): Path<(String, String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        Some(&session_id),
+    )?;
+    ensure_writes_enabled(&state)?;
+    validate_resource_name(&workspace_id, "workspace_id")?;
+    validate_resource_name(&session_id, "session_id")?;
+
+    let metadata = parse_message_update(body)?;
+    match db::update_message(
+        state.pool()?,
+        &workspace_id,
+        &session_id,
+        &message_id,
+        metadata,
+    )
+    .await?
+    {
+        Some(value) => Ok(Json(value).into_response()),
+        None => Err(ApiError::NotFound("Message not found".to_string())),
     }
 }
 
@@ -1418,6 +1694,527 @@ fn parse_peer_name_list(input: Value) -> Result<Vec<String>, ApiError> {
     Ok(peer_names)
 }
 
+/// Mirror of Python's `settings.MAX_MESSAGE_SIZE` default (25_000), the
+/// `max_length` on `MessageCreate.content`. Making it config-driven is a
+/// follow-up like the custom-instructions token budget.
+const MAX_MESSAGE_SIZE: usize = 25_000;
+
+/// A single validated message ready for insertion plus enqueueing. `metadata` is
+/// the sanitized object (`{}` when absent); `configuration` is the normalized
+/// message-level override (reasoning-only, matching `MessageConfiguration`) or
+/// `None`; `token_count` is the o200k_base length of the sanitized content.
+#[derive(Debug, Clone)]
+pub struct ParsedMessage {
+    pub peer_name: String,
+    pub content: String,
+    pub metadata: Value,
+    pub configuration: Option<Value>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub token_count: i32,
+}
+
+fn parse_message_batch(input: Value) -> Result<Vec<ParsedMessage>, ApiError> {
+    let object = input.as_object().ok_or_else(|| {
+        validation_error(
+            "model_attributes_type",
+            &[],
+            "Input should be a valid dictionary or object to extract fields from",
+            input.clone(),
+            None,
+        )
+    })?;
+    let messages = match object.get("messages") {
+        None | Some(Value::Null) => {
+            return Err(validation_error(
+                "missing",
+                &["messages"],
+                "Field required",
+                input.clone(),
+                None,
+            ));
+        }
+        Some(value) => value,
+    };
+    let array = messages.as_array().ok_or_else(|| {
+        validation_error(
+            "list_type",
+            &["messages"],
+            "Input should be a valid list",
+            messages.clone(),
+            None,
+        )
+    })?;
+    if array.is_empty() {
+        return Err(validation_error(
+            "too_short",
+            &["messages"],
+            "List should have at least 1 item after validation, not 0",
+            messages.clone(),
+            Some(json!({"field_type": "List", "min_length": 1, "actual_length": 0})),
+        ));
+    }
+    if array.len() > 100 {
+        return Err(validation_error(
+            "too_long",
+            &["messages"],
+            &format!(
+                "List should have at most 100 items after validation, not {}",
+                array.len()
+            ),
+            messages.clone(),
+            Some(json!({"field_type": "List", "max_length": 100, "actual_length": array.len()})),
+        ));
+    }
+    array
+        .iter()
+        .enumerate()
+        .map(|(index, item)| parse_message_create(item, index))
+        .collect()
+}
+
+/// Parse a `PeerCardSet` body: a required `peer_card` list of strings, with NUL
+/// bytes stripped from each item (`sanitize_peer_card`).
+fn parse_peer_card_set(input: Value) -> Result<Vec<String>, ApiError> {
+    let object = input.as_object().ok_or_else(|| {
+        validation_error(
+            "model_attributes_type",
+            &[],
+            "Input should be a valid dictionary or object to extract fields from",
+            input.clone(),
+            None,
+        )
+    })?;
+    let items = match object.get("peer_card") {
+        None | Some(Value::Null) => {
+            return Err(validation_error(
+                "missing",
+                &["peer_card"],
+                "Field required",
+                input.clone(),
+                None,
+            ));
+        }
+        Some(Value::Array(items)) => items,
+        Some(value) => {
+            return Err(validation_error(
+                "list_type",
+                &["peer_card"],
+                "Input should be a valid list",
+                value.clone(),
+                None,
+            ));
+        }
+    };
+    let mut peer_card = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        match item {
+            Value::String(value) => peer_card.push(value.replace('\0', "")),
+            other => {
+                return Err(validation_error_parts(
+                    "string_type",
+                    &[
+                        Value::String("peer_card".to_string()),
+                        Value::Number(index.into()),
+                    ],
+                    "Input should be a valid string",
+                    other.clone(),
+                    None,
+                ));
+            }
+        }
+    }
+    Ok(peer_card)
+}
+
+/// Parse a `MessageUpdate` body, returning the sanitized metadata override (or
+/// `None` when absent/null, leaving the message unchanged).
+fn parse_message_update(input: Value) -> Result<Option<Value>, ApiError> {
+    let object = input.as_object().ok_or_else(|| {
+        validation_error(
+            "model_attributes_type",
+            &[],
+            "Input should be a valid dictionary or object to extract fields from",
+            input.clone(),
+            None,
+        )
+    })?;
+    match object.get("metadata") {
+        Some(value) if !value.is_null() => Ok(Some(validate_metadata(value.clone())?)),
+        _ => Ok(None),
+    }
+}
+
+fn parse_message_create(input: &Value, index: usize) -> Result<ParsedMessage, ApiError> {
+    let object = input.as_object().ok_or_else(|| {
+        message_error(
+            index,
+            &[],
+            "model_attributes_type",
+            "Input should be a valid dictionary or object to extract fields from",
+            input.clone(),
+            None,
+        )
+    })?;
+
+    // content: required, str, 0..=MAX_MESSAGE_SIZE, then NUL-sanitized.
+    let content = match object.get("content") {
+        None | Some(Value::Null) => {
+            return Err(message_error(
+                index,
+                &["content"],
+                "missing",
+                "Field required",
+                input.clone(),
+                None,
+            ));
+        }
+        Some(Value::String(content)) => content.clone(),
+        Some(value) => {
+            return Err(message_error(
+                index,
+                &["content"],
+                "string_type",
+                "Input should be a valid string",
+                value.clone(),
+                None,
+            ));
+        }
+    };
+    if content.chars().count() > MAX_MESSAGE_SIZE {
+        return Err(message_error(
+            index,
+            &["content"],
+            "string_too_long",
+            &format!("String should have at most {MAX_MESSAGE_SIZE} characters"),
+            Value::String(content),
+            Some(json!({"max_length": MAX_MESSAGE_SIZE})),
+        ));
+    }
+    let content = content.replace('\0', "");
+
+    // peer_id: required str (alias only — MessageCreate has no populate_by_name).
+    let peer_name = match object.get("peer_id") {
+        None | Some(Value::Null) => {
+            return Err(message_error(
+                index,
+                &["peer_id"],
+                "missing",
+                "Field required",
+                input.clone(),
+                None,
+            ));
+        }
+        Some(Value::String(peer_name)) => peer_name.clone(),
+        Some(value) => {
+            return Err(message_error(
+                index,
+                &["peer_id"],
+                "string_type",
+                "Input should be a valid string",
+                value.clone(),
+                None,
+            ));
+        }
+    };
+
+    let metadata = match object.get("metadata") {
+        Some(value) if !value.is_null() => validate_metadata_at(
+            value.clone(),
+            &[
+                Value::String("messages".to_string()),
+                Value::Number(index.into()),
+                Value::String("metadata".to_string()),
+            ],
+        )?,
+        _ => json!({}),
+    };
+
+    let configuration = match object.get("configuration") {
+        Some(value) if !value.is_null() => parse_message_configuration(value, index)?,
+        _ => None,
+    };
+
+    let created_at = match object.get("created_at") {
+        Some(value) if !value.is_null() => Some(parse_message_created_at(value, index)?),
+        _ => None,
+    };
+
+    let token_count = crate::tokens::estimate_tokens(&content) as i32;
+
+    Ok(ParsedMessage {
+        peer_name,
+        content,
+        metadata,
+        configuration,
+        created_at,
+        token_count,
+    })
+}
+
+/// Normalize a message-level `configuration` to the reasoning-only shape Pydantic
+/// keeps for `MessageConfiguration` (extras ignored). Returns `None` when no
+/// recognized override remains, so the producer applies no message-level change.
+fn parse_message_configuration(value: &Value, index: usize) -> Result<Option<Value>, ApiError> {
+    let object = value.as_object().ok_or_else(|| {
+        message_error(
+            index,
+            &["configuration"],
+            "model_attributes_type",
+            "Input should be a valid dictionary or object to extract fields from",
+            value.clone(),
+            None,
+        )
+    })?;
+    let mut normalized = serde_json::Map::new();
+    if let Some(reasoning) = object.get("reasoning").filter(|value| !value.is_null()) {
+        let reasoning = validate_message_reasoning(reasoning, index)?;
+        if !reasoning.as_object().is_none_or(serde_json::Map::is_empty) {
+            normalized.insert("reasoning".to_string(), reasoning);
+        }
+    }
+    if normalized.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(Value::Object(normalized)))
+    }
+}
+
+fn validate_message_reasoning(value: &Value, index: usize) -> Result<Value, ApiError> {
+    let object = value.as_object().ok_or_else(|| {
+        message_error(
+            index,
+            &["configuration", "reasoning"],
+            "model_attributes_type",
+            "Input should be a valid dictionary or object to extract fields from",
+            value.clone(),
+            None,
+        )
+    })?;
+    let mut out = serde_json::Map::new();
+    match object.get("enabled") {
+        None | Some(Value::Null) => {}
+        Some(value) => {
+            let parsed = coerce_bool(value).ok_or_else(|| {
+                message_error(
+                    index,
+                    &["configuration", "reasoning", "enabled"],
+                    "bool_parsing",
+                    "Input should be a valid boolean, unable to interpret input",
+                    value.clone(),
+                    None,
+                )
+            })?;
+            out.insert("enabled".to_string(), Value::Bool(parsed));
+        }
+    }
+    match object.get("custom_instructions") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(instructions)) => {
+            validate_custom_instructions_msg(instructions, index)?;
+            out.insert(
+                "custom_instructions".to_string(),
+                Value::String(instructions.clone()),
+            );
+        }
+        Some(value) => {
+            return Err(message_error(
+                index,
+                &["configuration", "reasoning", "custom_instructions"],
+                "string_type",
+                "Input should be a valid string",
+                value.clone(),
+                None,
+            ));
+        }
+    }
+    Ok(Value::Object(out))
+}
+
+fn validate_custom_instructions_msg(value: &str, index: usize) -> Result<(), ApiError> {
+    if value.trim().is_empty() {
+        return Ok(());
+    }
+    if crate::tokens::estimate_tokens(value) > 2000 {
+        return Err(message_error(
+            index,
+            &["configuration", "reasoning", "custom_instructions"],
+            "value_error",
+            "Value error, custom_instructions exceeds DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS (2000 tokens)",
+            Value::String(value.to_string()),
+            Some(json!({"error": {}})),
+        ));
+    }
+    Ok(())
+}
+
+fn parse_message_created_at(value: &Value, index: usize) -> Result<DateTime<Utc>, ApiError> {
+    if let Value::String(text) = value {
+        if let Ok(parsed) = DateTime::parse_from_rfc3339(text) {
+            return Ok(parsed.with_timezone(&Utc));
+        }
+        // Accept a naive ISO timestamp (no offset) as UTC, matching Pydantic's
+        // lenient datetime parsing for offset-less inputs.
+        if let Ok(parsed) = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f") {
+            return Ok(DateTime::from_naive_utc_and_offset(parsed, Utc));
+        }
+        return Err(message_error(
+            index,
+            &["created_at"],
+            "datetime_from_date_parsing",
+            "Input should be a valid datetime or date, input is too short",
+            value.clone(),
+            Some(json!({"error": "input is too short"})),
+        ));
+    }
+    Err(message_error(
+        index,
+        &["created_at"],
+        "datetime_type",
+        "Input should be a valid datetime",
+        value.clone(),
+        None,
+    ))
+}
+
+/// Parse a `WebhookEndpointCreate` body and validate its `url`, porting the
+/// `validate_webhook_url` field validator (scheme + host required, http/https
+/// only, private/internal IP literals rejected).
+fn parse_webhook_create(input: Value) -> Result<String, ApiError> {
+    let object = input.as_object().ok_or_else(|| {
+        validation_error(
+            "model_attributes_type",
+            &[],
+            "Input should be a valid dictionary or object to extract fields from",
+            input.clone(),
+            None,
+        )
+    })?;
+    let url = match object.get("url") {
+        None | Some(Value::Null) => {
+            return Err(validation_error(
+                "missing",
+                &["url"],
+                "Field required",
+                input.clone(),
+                None,
+            ));
+        }
+        Some(Value::String(url)) => url.clone(),
+        Some(value) => {
+            return Err(validation_error(
+                "string_type",
+                &["url"],
+                "Input should be a valid string",
+                value.clone(),
+                None,
+            ));
+        }
+    };
+    validate_webhook_url(&url)?;
+    Ok(url)
+}
+
+fn validate_webhook_url(url: &str) -> Result<(), ApiError> {
+    let Some((scheme, netloc)) = split_scheme_netloc(url) else {
+        return Err(webhook_url_error(url, "Invalid URL format"));
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return Err(webhook_url_error(
+            url,
+            "Only HTTP and HTTPS URLs are allowed",
+        ));
+    }
+    if hostname_from_netloc(&netloc)
+        .and_then(|hostname| hostname.parse::<IpAddr>().ok())
+        .is_some_and(|ip| is_blocked_ip(&ip))
+    {
+        return Err(webhook_url_error(
+            url,
+            "Private/internal IP addresses are not allowed",
+        ));
+    }
+    Ok(())
+}
+
+/// Approximate `urlparse`'s scheme/netloc split: requires a non-empty scheme
+/// before `://` and a non-empty network location before the first `/`, `?`, or
+/// `#`. Returns `None` when either is missing (Python's "Invalid URL format").
+fn split_scheme_netloc(url: &str) -> Option<(String, String)> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme.is_empty() {
+        return None;
+    }
+    let netloc_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let netloc = &rest[..netloc_end];
+    if netloc.is_empty() {
+        return None;
+    }
+    Some((scheme.to_string(), netloc.to_string()))
+}
+
+/// Extract the host from a netloc, stripping any `user:pass@` userinfo and the
+/// `:port` suffix, and unwrapping a `[..]` IPv6 literal.
+fn hostname_from_netloc(netloc: &str) -> Option<String> {
+    let host_port = netloc.rsplit_once('@').map_or(netloc, |(_, host)| host);
+    if let Some(after_bracket) = host_port.strip_prefix('[') {
+        let end = after_bracket.find(']')?;
+        return Some(after_bracket[..end].to_string());
+    }
+    let host = host_port.split(':').next().unwrap_or(host_port);
+    if host.is_empty() {
+        None
+    } else {
+        Some(host.to_string())
+    }
+}
+
+/// Block the same IP-literal categories as Python's `ipaddress` checks. IPv4 is
+/// covered by std helpers; for IPv6 the std private/link-local helpers are
+/// unstable, so unique-local (`fc00::/7`) and link-local (`fe80::/10`) are
+/// matched on the leading segment.
+fn is_blocked_ip(ip: &IpAddr) -> bool {
+    if ip.is_loopback() || ip.is_multicast() || ip.is_unspecified() {
+        return true;
+    }
+    match ip {
+        IpAddr::V4(addr) => {
+            // `Ipv4Addr::is_reserved` is unstable; match Python's reserved range
+            // (240.0.0.0/4) on the leading octet instead.
+            addr.is_private() || addr.is_link_local() || addr.octets()[0] >= 240
+        }
+        IpAddr::V6(addr) => {
+            let leading = addr.segments()[0];
+            (leading & 0xfe00) == 0xfc00 || (leading & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+fn webhook_url_error(input: &str, message: &str) -> ApiError {
+    validation_error(
+        "value_error",
+        &["url"],
+        &format!("Value error, {message}"),
+        Value::String(input.to_string()),
+        Some(json!({"error": {}})),
+    )
+}
+
+fn message_error(
+    index: usize,
+    tail: &[&str],
+    error_type: &str,
+    msg: &str,
+    input: Value,
+    ctx: Option<Value>,
+) -> ApiError {
+    let mut loc = vec![
+        Value::String("messages".to_string()),
+        Value::Number(index.into()),
+    ];
+    loc.extend(tail.iter().map(|part| Value::String((*part).to_string())));
+    validation_error_parts(error_type, &loc, msg, input, ctx)
+}
+
 fn session_peer_config_json(config: &SessionPeerConfig) -> Value {
     json!({
         "observe_me": config.observe_me,
@@ -1490,16 +2287,22 @@ fn validate_resource_name(value: &str, field: &str) -> Result<(), ApiError> {
 }
 
 fn validate_metadata(value: Value) -> Result<Value, ApiError> {
+    validate_metadata_at(value, &[Value::String("metadata".to_string())])
+}
+
+/// Metadata validation (`_validate_metadata` BeforeValidator) at an arbitrary
+/// field location, so nested message metadata reports the right `loc`.
+fn validate_metadata_at(value: Value, loc: &[Value]) -> Result<Value, ApiError> {
     if !value.is_object() {
-        return Err(validation_error(
+        return Err(validation_error_parts(
             "dict_type",
-            &["metadata"],
+            loc,
             "Input should be a valid dictionary",
             value,
             None,
         ));
     }
-    check_metadata_limits(&value, 1, &value)?;
+    check_metadata_limits(&value, 1, &value, loc)?;
     Ok(sanitize_value(value))
 }
 
@@ -1521,23 +2324,28 @@ fn empty_object() -> Value {
     json!({})
 }
 
-fn check_metadata_limits(value: &Value, depth: usize, root: &Value) -> Result<(), ApiError> {
+fn check_metadata_limits(
+    value: &Value,
+    depth: usize,
+    root: &Value,
+    loc: &[Value],
+) -> Result<(), ApiError> {
     let Some(object) = value.as_object() else {
         return Ok(());
     };
     if depth > 5 {
-        return Err(validation_error(
+        return Err(validation_error_parts(
             "value_error",
-            &["metadata"],
+            loc,
             "Value error, Metadata nesting exceeds maximum depth of 5",
             root.clone(),
             Some(json!({"error": {}})),
         ));
     }
     if depth == 1 && object.len() > 100 {
-        return Err(validation_error(
+        return Err(validation_error_parts(
             "value_error",
-            &["metadata"],
+            loc,
             "Value error, Metadata exceeds maximum of 100 top-level keys",
             value.clone(),
             Some(json!({"error": {}})),
@@ -1545,7 +2353,7 @@ fn check_metadata_limits(value: &Value, depth: usize, root: &Value) -> Result<()
     }
     for nested in object.values() {
         if nested.is_object() {
-            check_metadata_limits(nested, depth + 1, root)?;
+            check_metadata_limits(nested, depth + 1, root, loc)?;
         }
     }
     Ok(())
@@ -1736,24 +2544,33 @@ fn validate_optional_bool(value: Option<&Value>, loc: &[&str]) -> Result<Option<
     if value.is_null() {
         return Ok(None);
     }
-    if let Some(value) = value.as_bool() {
-        return Ok(Some(value));
+    match coerce_bool(value) {
+        Some(parsed) => Ok(Some(parsed)),
+        None => Err(bool_parsing_error(loc, value.clone())),
+    }
+}
+
+/// Pydantic-lax boolean coercion: native bools, integers `0`/`1`, and the string
+/// spellings Pydantic accepts. Returns `None` when the value cannot be coerced.
+fn coerce_bool(value: &Value) -> Option<bool> {
+    if let Some(parsed) = value.as_bool() {
+        return Some(parsed);
     }
     if let Some(number) = value.as_i64() {
         return match number {
-            0 => Ok(Some(false)),
-            1 => Ok(Some(true)),
-            _ => Err(bool_parsing_error(loc, value.clone())),
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
         };
     }
     if let Some(value_str) = value.as_str() {
         return match value_str.to_ascii_lowercase().as_str() {
-            "0" | "false" | "f" | "n" | "no" | "off" => Ok(Some(false)),
-            "1" | "true" | "t" | "y" | "yes" | "on" => Ok(Some(true)),
-            _ => Err(bool_parsing_error(loc, value.clone())),
+            "0" | "false" | "f" | "n" | "no" | "off" => Some(false),
+            "1" | "true" | "t" | "y" | "yes" | "on" => Some(true),
+            _ => None,
         };
     }
-    Err(bool_parsing_error(loc, value.clone()))
+    None
 }
 
 fn bool_parsing_error(loc: &[&str], input: Value) -> ApiError {
@@ -1870,8 +2687,25 @@ fn validation_error(
     input: Value,
     ctx: Option<Value>,
 ) -> ApiError {
+    let parts = loc
+        .iter()
+        .map(|value| Value::String((*value).to_string()))
+        .collect::<Vec<_>>();
+    validation_error_parts(error_type, &parts, msg, input, ctx)
+}
+
+/// Like `validation_error`, but accepts pre-built `loc` parts so list indices can
+/// be emitted as JSON numbers (matching Pydantic/FastAPI, which use integer
+/// indices in the `loc` of list-item errors).
+fn validation_error_parts(
+    error_type: &str,
+    loc: &[Value],
+    msg: &str,
+    input: Value,
+    ctx: Option<Value>,
+) -> ApiError {
     let mut location = vec![Value::String("body".to_string())];
-    location.extend(loc.iter().map(|value| Value::String((*value).to_string())));
+    location.extend(loc.iter().cloned());
     let mut error = serde_json::Map::from_iter([
         ("type".to_string(), Value::String(error_type.to_string())),
         ("loc".to_string(), Value::Array(location)),
@@ -2048,8 +2882,52 @@ fn session_write_error(error: sqlx::Error, workspace_id: &str, session_id: &str)
 
 #[cfg(test)]
 mod tests {
-    use crate::app::authorize_webhook_workspace;
+    use crate::app::{authorize_webhook_workspace, validate_webhook_url};
     use crate::auth::{AuthError, JwtParams};
+
+    #[test]
+    fn webhook_url_accepts_public_http_urls() {
+        assert!(validate_webhook_url("https://example.com/hook").is_ok());
+        assert!(validate_webhook_url("http://example.com:8080/hook?x=1").is_ok());
+        // A public IP literal is allowed.
+        assert!(validate_webhook_url("https://8.8.8.8/hook").is_ok());
+    }
+
+    #[test]
+    fn webhook_url_rejects_missing_scheme_or_host() {
+        for url in ["example.com/hook", "https://", "/just/a/path", "ftp://"] {
+            assert!(
+                validate_webhook_url(url).is_err(),
+                "expected {url:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn webhook_url_rejects_non_http_schemes() {
+        assert!(validate_webhook_url("ftp://example.com/x").is_err());
+        assert!(validate_webhook_url("ws://example.com/x").is_err());
+    }
+
+    #[test]
+    fn webhook_url_rejects_private_and_internal_ips() {
+        for url in [
+            "http://127.0.0.1/hook",   // loopback
+            "http://10.0.0.5/hook",    // private
+            "http://192.168.1.1/hook", // private
+            "http://169.254.1.1/hook", // link-local
+            "http://0.0.0.0/hook",     // unspecified
+            "http://240.0.0.1/hook",   // reserved
+            "http://[::1]/hook",       // ipv6 loopback
+            "http://[fc00::1]/hook",   // ipv6 unique-local
+            "http://[fe80::1]/hook",   // ipv6 link-local
+        ] {
+            assert!(
+                validate_webhook_url(url).is_err(),
+                "expected {url:?} to be rejected"
+            );
+        }
+    }
 
     #[test]
     fn webhook_workspace_auth_matches_unscoped_python_route() {

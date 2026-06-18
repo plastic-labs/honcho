@@ -14,6 +14,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 // Python global defaults (settings) baked in. These match `get_configuration`'s
@@ -266,10 +267,7 @@ pub fn summary_payload(
     );
     object.insert("configuration".into(), configuration.clone());
     if let Some(public_id) = message_public_id {
-        object.insert(
-            "message_public_id".into(),
-            Value::String(public_id.into()),
-        );
+        object.insert("message_public_id".into(), Value::String(public_id.into()));
     }
     Value::Object(object)
 }
@@ -354,6 +352,154 @@ pub fn construct_work_unit_key(
         }
         other => Err(ProducerError::InvalidTaskType(other.to_string())),
     }
+}
+
+/// A peer's configuration row as returned by the observer-selection query
+/// (`get_session_peer_configuration`). `peer_configuration` and
+/// `session_peer_configuration` are the raw JSONB objects (empty object when the
+/// column held `{}`); `is_active` is `left_at IS NULL`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerConfigEntry {
+    pub peer_configuration: Value,
+    pub session_peer_configuration: Value,
+    pub is_active: bool,
+}
+
+/// The per-message fields needed to build queue records, mirroring the dict
+/// elements `generate_queue_records` reads out of each enqueue payload.
+#[derive(Debug, Clone)]
+pub struct MessageForEnqueue<'a> {
+    pub workspace_name: &'a str,
+    pub session_name: &'a str,
+    pub message_id: i64,
+    pub message_public_id: &'a str,
+    pub content: &'a str,
+    pub peer_name: &'a str,
+    pub created_at: DateTime<Utc>,
+    pub seq_in_session: i64,
+}
+
+/// A fully-built queue row, mirroring the dict returned by
+/// `create_representation_record` / `create_summary_record`: the payload plus
+/// the dedicated `queue` columns (`work_unit_key`, `session_id`, `task_type`,
+/// `workspace_name`, `message_id`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueRecord {
+    pub work_unit_key: String,
+    pub payload: Value,
+    pub session_id: String,
+    pub task_type: String,
+    pub workspace_name: String,
+    pub message_id: i64,
+}
+
+/// Generate the queue records for a single message, porting
+/// `deriver.enqueue.generate_queue_records`.
+///
+/// `peers_with_configuration` maps every peer ever in the session (sorted by
+/// peer name for deterministic observer ordering) to its peer-level and
+/// session-level configuration plus active flag. A summary record is appended
+/// when summaries are enabled and the sequence number trips a threshold; a
+/// single representation record (with all observers) is appended when reasoning
+/// is enabled and the sender should be observed.
+pub fn generate_queue_records(
+    message: &MessageForEnqueue<'_>,
+    peers_with_configuration: &BTreeMap<String, PeerConfigEntry>,
+    session_id: &str,
+    conf: &ResolvedConfiguration,
+) -> Result<Vec<QueueRecord>, ProducerError> {
+    let observed = message.peer_name;
+    let configuration = conf.to_payload_value();
+    let mut records: Vec<QueueRecord> = Vec::new();
+
+    if conf.summary_enabled
+        && summary_due(
+            message.seq_in_session,
+            conf.messages_per_short_summary,
+            conf.messages_per_long_summary,
+        )
+    {
+        let payload = summary_payload(
+            message.session_name,
+            message.seq_in_session,
+            &configuration,
+            Some(message.message_public_id),
+        );
+        records.push(build_record(message, session_id, "summary", payload)?);
+    }
+
+    // Determine whether the sender should be observed. A sender absent from the
+    // map (left the session after sending) defaults to observe_me = true.
+    let sender_entry = peers_with_configuration.get(observed);
+    let should_observe = effective_observe_me(
+        sender_entry.map(|entry| &entry.peer_configuration),
+        sender_entry.map(|entry| &entry.session_peer_configuration),
+    );
+
+    if !conf.reasoning_enabled {
+        return Ok(records);
+    }
+
+    let mut observers: Vec<String> = Vec::new();
+    if should_observe {
+        // Self-observation: the sender observes themselves.
+        observers.push(observed.to_string());
+
+        for (peer_name, entry) in peers_with_configuration {
+            if peer_name == observed {
+                continue;
+            }
+            // Skip peers who have left the session.
+            if !entry.is_active {
+                continue;
+            }
+            let observe_others = entry
+                .session_peer_configuration
+                .as_object()
+                .and_then(|config| config.get("observe_others"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !observe_others {
+                continue;
+            }
+            observers.push(peer_name.clone());
+        }
+    }
+
+    if !observers.is_empty() {
+        let payload = representation_payload(
+            message.session_name,
+            message.content,
+            &observers,
+            observed,
+            message.created_at,
+            &configuration,
+        );
+        records.push(build_record(
+            message,
+            session_id,
+            "representation",
+            payload,
+        )?);
+    }
+
+    Ok(records)
+}
+
+fn build_record(
+    message: &MessageForEnqueue<'_>,
+    session_id: &str,
+    task_type: &str,
+    payload: Value,
+) -> Result<QueueRecord, ProducerError> {
+    Ok(QueueRecord {
+        work_unit_key: construct_work_unit_key(message.workspace_name, &payload)?,
+        payload,
+        session_id: session_id.to_string(),
+        task_type: task_type.to_string(),
+        workspace_name: message.workspace_name.to_string(),
+        message_id: message.message_id,
+    })
 }
 
 #[cfg(test)]
@@ -471,7 +617,8 @@ mod tests {
             construct_work_unit_key("ws1", &summary).unwrap(),
             "summary:ws1:s1:None:None"
         );
-        let deletion = json!({"task_type": "deletion", "deletion_type": "session", "resource_id": "s1"});
+        let deletion =
+            json!({"task_type": "deletion", "deletion_type": "session", "resource_id": "s1"});
         assert_eq!(
             construct_work_unit_key("ws1", &deletion).unwrap(),
             "deletion:ws1:session:s1"
@@ -486,7 +633,8 @@ mod tests {
     fn representation_payload_matches_python() {
         let config = resolve_configuration(None, None, None).to_payload_value();
         let observers = vec!["alice".to_string()];
-        let payload = representation_payload("s1", "hello world", &observers, "alice", dt(0), &config);
+        let payload =
+            representation_payload("s1", "hello world", &observers, "alice", dt(0), &config);
         let expected: Value = json!({
             "configuration": {
                 "dream": {"enabled": true},
@@ -532,5 +680,120 @@ mod tests {
             deletion_payload("session", "s1"),
             json!({"deletion_type": "session", "resource_id": "s1", "task_type": "deletion"})
         );
+    }
+
+    fn entry(peer: Value, session: Value, is_active: bool) -> PeerConfigEntry {
+        PeerConfigEntry {
+            peer_configuration: peer,
+            session_peer_configuration: session,
+            is_active,
+        }
+    }
+
+    fn message<'a>(peer_name: &'a str, seq: i64) -> MessageForEnqueue<'a> {
+        MessageForEnqueue {
+            workspace_name: "ws1",
+            session_name: "s1",
+            message_id: 42,
+            message_public_id: "pub_42",
+            content: "hello",
+            peer_name,
+            created_at: dt(0),
+            seq_in_session: seq,
+        }
+    }
+
+    #[test]
+    fn generate_records_self_observation_only() {
+        let conf = ResolvedConfiguration::default();
+        let mut peers = BTreeMap::new();
+        peers.insert("alice".to_string(), entry(json!({}), json!({}), true));
+        let records =
+            generate_queue_records(&message("alice", 5), &peers, "sess_internal", &conf).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].task_type, "representation");
+        assert_eq!(records[0].work_unit_key, "representation:ws1:s1:alice");
+        assert_eq!(records[0].payload["observers"], json!(["alice"]));
+        assert_eq!(records[0].session_id, "sess_internal");
+        assert_eq!(records[0].message_id, 42);
+    }
+
+    #[test]
+    fn generate_records_includes_observe_others_peers_sorted() {
+        let conf = ResolvedConfiguration::default();
+        let mut peers = BTreeMap::new();
+        peers.insert("alice".to_string(), entry(json!({}), json!({}), true));
+        peers.insert(
+            "carol".to_string(),
+            entry(json!({}), json!({"observe_others": true}), true),
+        );
+        peers.insert(
+            "bob".to_string(),
+            entry(json!({}), json!({"observe_others": true}), true),
+        );
+        // A peer who left the session is skipped even with observe_others.
+        peers.insert(
+            "dave".to_string(),
+            entry(json!({}), json!({"observe_others": true}), false),
+        );
+        let records =
+            generate_queue_records(&message("alice", 5), &peers, "sess_internal", &conf).unwrap();
+        let rep = records
+            .iter()
+            .find(|r| r.task_type == "representation")
+            .unwrap();
+        assert_eq!(rep.payload["observers"], json!(["alice", "bob", "carol"]));
+    }
+
+    #[test]
+    fn generate_records_skips_representation_when_observe_me_false() {
+        let conf = ResolvedConfiguration::default();
+        let mut peers = BTreeMap::new();
+        peers.insert(
+            "alice".to_string(),
+            entry(json!({}), json!({"observe_me": false}), true),
+        );
+        let records =
+            generate_queue_records(&message("alice", 5), &peers, "sess_internal", &conf).unwrap();
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn generate_records_summary_and_representation_on_threshold() {
+        let conf = ResolvedConfiguration::default();
+        let mut peers = BTreeMap::new();
+        peers.insert("alice".to_string(), entry(json!({}), json!({}), true));
+        let records =
+            generate_queue_records(&message("alice", 20), &peers, "sess_internal", &conf).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].task_type, "summary");
+        assert_eq!(records[0].payload["message_seq_in_session"], json!(20));
+        assert_eq!(records[0].payload["message_public_id"], json!("pub_42"));
+        assert_eq!(records[1].task_type, "representation");
+    }
+
+    #[test]
+    fn generate_records_summary_only_when_reasoning_disabled() {
+        let conf = ResolvedConfiguration {
+            reasoning_enabled: false,
+            ..ResolvedConfiguration::default()
+        };
+        let mut peers = BTreeMap::new();
+        peers.insert("alice".to_string(), entry(json!({}), json!({}), true));
+        let records =
+            generate_queue_records(&message("alice", 20), &peers, "sess_internal", &conf).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].task_type, "summary");
+    }
+
+    #[test]
+    fn generate_records_absent_sender_defaults_to_observed() {
+        let conf = ResolvedConfiguration::default();
+        // Sender left the session entirely; map has no entry for them.
+        let peers = BTreeMap::new();
+        let records =
+            generate_queue_records(&message("ghost", 5), &peers, "sess_internal", &conf).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].payload["observers"], json!(["ghost"]));
     }
 }

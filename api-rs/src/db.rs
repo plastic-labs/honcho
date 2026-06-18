@@ -9,6 +9,7 @@ use std::io;
 
 use crate::filters::FilterClause;
 use crate::pagination::{Pagination, page_response};
+use crate::producer::{PeerConfigEntry, QueueRecord};
 use crate::queue_status::{QueueStatusCounts, build_queue_status};
 
 const NANOID_ALPHABET: &[u8] = b"_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -66,6 +67,38 @@ struct MessageRow {
     created_at: DateTime<Utc>,
     workspace_name: String,
     token_count: i32,
+}
+
+/// A message row as returned from `create_messages`, carrying both the public
+/// response fields and the internal identifiers (`id`, `seq_in_session`) the
+/// enqueue step needs.
+#[derive(Debug, FromRow)]
+pub struct CreatedMessage {
+    pub id: i64,
+    pub public_id: String,
+    pub content: String,
+    pub peer_name: String,
+    pub session_name: String,
+    pub metadata: Value,
+    pub created_at: DateTime<Utc>,
+    pub workspace_name: String,
+    pub token_count: i32,
+    pub seq_in_session: i64,
+}
+
+impl CreatedMessage {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "id": self.public_id,
+            "content": self.content,
+            "peer_id": self.peer_name,
+            "session_id": self.session_name,
+            "metadata": self.metadata,
+            "created_at": self.created_at,
+            "workspace_id": self.workspace_name,
+            "token_count": self.token_count
+        })
+    }
 }
 
 #[derive(Debug, FromRow)]
@@ -1223,6 +1256,315 @@ pub async fn get_message(
     Ok(row.map(message_json))
 }
 
+/// Soft-delete a conclusion (document) by id, porting
+/// `crud.delete_document_by_id`. Sets `deleted_at`; the reconciler handles
+/// vector-store cleanup and hard deletion. Returns `false` when no live document
+/// with that id exists in the workspace.
+pub async fn delete_conclusion(
+    pool: &PgPool,
+    workspace_name: &str,
+    conclusion_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE documents SET deleted_at = now() \
+         WHERE id = $1 AND workspace_name = $2 AND deleted_at IS NULL",
+    )
+    .bind(conclusion_id)
+    .bind(workspace_name)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Overwrite a message's metadata, porting `crud.update_message`. When
+/// `metadata` is `None` the row is returned unchanged (Python skips the
+/// assignment but still commits and returns the message). Returns `None` when no
+/// such message exists in the session.
+pub async fn update_message(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    message_id: &str,
+    metadata: Option<Value>,
+) -> Result<Option<Value>, sqlx::Error> {
+    let row = match metadata {
+        Some(metadata) => {
+            sqlx::query_as::<_, MessageRow>(
+                "UPDATE messages SET metadata = $4 \
+                 WHERE workspace_name = $1 AND session_name = $2 AND public_id = $3 \
+                 RETURNING public_id, content, peer_name, session_name, metadata, \
+                           created_at, workspace_name, token_count",
+            )
+            .bind(workspace_name)
+            .bind(session_name)
+            .bind(message_id)
+            .bind(metadata)
+            .fetch_optional(pool)
+            .await?
+        }
+        None => {
+            sqlx::query_as::<_, MessageRow>(
+                "SELECT public_id, content, peer_name, session_name, metadata, created_at, \
+                 workspace_name, token_count \
+                 FROM messages \
+                 WHERE workspace_name = $1 AND session_name = $2 AND public_id = $3",
+            )
+            .bind(workspace_name)
+            .bind(session_name)
+            .bind(message_id)
+            .fetch_optional(pool)
+            .await?
+        }
+    };
+
+    Ok(row.map(message_json))
+}
+
+/// One message to insert, after request validation. `metadata` is the sanitized
+/// object (`{}` when absent), `created_at` is the optional caller-supplied
+/// timestamp, and `token_count` is the precomputed o200k_base length.
+#[derive(Debug, Clone)]
+pub struct MessageInsert {
+    pub peer_name: String,
+    pub content: String,
+    pub metadata: Value,
+    pub created_at: Option<DateTime<Utc>>,
+    pub token_count: i32,
+}
+
+/// Bulk-create messages for a session, porting `crud.create_messages`.
+///
+/// Mirrors the Python ordering: ensure the session exists with its sender peers
+/// joined, take a transaction-scoped advisory lock keyed on
+/// `(workspace, session)`, read the current max `seq_in_session`, then insert
+/// each message with a monotonically increasing sequence number. The advisory
+/// lock serializes concurrent writers so sequence numbers stay gap-free.
+///
+/// When `embed_messages` is set, one pending `MessageEmbedding` row is inserted
+/// per content chunk (within the same transaction), mirroring Python's
+/// `EMBED_MESSAGES` block — only the chunk text and `sync_state='pending'` are
+/// written; the reconciler generates vectors later.
+pub async fn create_messages(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    messages: &[MessageInsert],
+    embed_messages: bool,
+    embedding_max_tokens: usize,
+) -> Result<Vec<CreatedMessage>, sqlx::Error> {
+    // Ensure the session exists and every sender is joined with default config,
+    // matching Python's `get_or_create_session(peers={sender: SessionPeerConfig()})`.
+    get_or_create_session(pool, workspace_name, session_name, None, None).await?;
+    let mut sender_configs: BTreeMap<String, Value> = BTreeMap::new();
+    for message in messages {
+        sender_configs
+            .entry(message.peer_name.clone())
+            .or_insert_with(|| json!({"observe_me": null, "observe_others": null}));
+    }
+    for peer_name in sender_configs.keys() {
+        get_or_create_peer(pool, workspace_name, peer_name, None, None).await?;
+    }
+    upsert_session_peers(pool, workspace_name, session_name, &sender_configs).await?;
+
+    let mut transaction = pool.begin().await?;
+
+    sqlx::query("SET LOCAL lock_timeout = '5s'")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))")
+        .bind(workspace_name)
+        .bind(session_name)
+        .execute(&mut *transaction)
+        .await?;
+
+    let last_seq: i64 = sqlx::query_scalar(
+        "SELECT seq_in_session FROM messages \
+         WHERE workspace_name = $1 AND session_name = $2 \
+         ORDER BY seq_in_session DESC LIMIT 1",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .fetch_optional(&mut *transaction)
+    .await?
+    .unwrap_or(0);
+
+    let mut created = Vec::with_capacity(messages.len());
+    for (offset, message) in messages.iter().enumerate() {
+        let seq_in_session = last_seq + (offset as i64) + 1;
+        let row = sqlx::query_as::<_, CreatedMessage>(
+            "INSERT INTO messages \
+             (public_id, session_name, content, metadata, workspace_name, peer_name, \
+              seq_in_session, token_count, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, now())) \
+             RETURNING id, public_id, content, peer_name, session_name, metadata, \
+                       created_at, workspace_name, token_count, seq_in_session",
+        )
+        .bind(generate_nanoid())
+        .bind(session_name)
+        .bind(&message.content)
+        .bind(&message.metadata)
+        .bind(workspace_name)
+        .bind(&message.peer_name)
+        .bind(seq_in_session)
+        .bind(message.token_count)
+        .bind(message.created_at)
+        .fetch_one(&mut *transaction)
+        .await?;
+        created.push(row);
+    }
+
+    // EMBED_MESSAGES: persist one pending embedding row per content chunk, for
+    // messages whose content is non-empty after trimming (matching Python's
+    // `if content and content.strip()` filter).
+    if embed_messages {
+        let id_resource_dict = created
+            .iter()
+            .filter(|message| !message.content.trim().is_empty())
+            .map(|message| (message.public_id.clone(), message.content.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let chunks_by_id =
+            crate::embedding::prepare_chunks(&id_resource_dict, embedding_max_tokens);
+        let peer_by_id = created
+            .iter()
+            .map(|message| (message.public_id.as_str(), message.peer_name.as_str()))
+            .collect::<BTreeMap<_, _>>();
+        for message in &created {
+            let Some(chunks) = chunks_by_id.get(&message.public_id) else {
+                continue;
+            };
+            let peer_name = peer_by_id[message.public_id.as_str()];
+            for chunk in chunks {
+                sqlx::query(
+                    "INSERT INTO message_embeddings \
+                     (content, embedding, message_id, workspace_name, session_name, \
+                      peer_name, sync_state) \
+                     VALUES ($1, NULL, $2, $3, $4, $5, 'pending')",
+                )
+                .bind(chunk)
+                .bind(&message.public_id)
+                .bind(workspace_name)
+                .bind(session_name)
+                .bind(peer_name)
+                .execute(&mut *transaction)
+                .await?;
+            }
+        }
+    }
+
+    transaction.commit().await?;
+    Ok(created)
+}
+
+/// The active session's internal id plus its stored configuration, used as the
+/// `session_id` queue column and one rung of the configuration hierarchy.
+pub async fn fetch_session_for_enqueue(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+) -> Result<Option<(String, Value)>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, configuration FROM sessions \
+         WHERE workspace_name = $1 AND name = $2 AND is_active = true",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .fetch_optional(pool)
+    .await?;
+
+    match row {
+        Some(row) => Ok(Some((row.try_get("id")?, row.try_get("configuration")?))),
+        None => Ok(None),
+    }
+}
+
+/// The workspace's stored configuration object, the top rung of the hierarchy.
+pub async fn get_workspace_configuration(
+    pool: &PgPool,
+    workspace_name: &str,
+) -> Result<Value, sqlx::Error> {
+    let row = sqlx::query("SELECT configuration FROM workspaces WHERE name = $1")
+        .bind(workspace_name)
+        .fetch_optional(pool)
+        .await?;
+    match row {
+        Some(row) => row.try_get("configuration"),
+        None => Ok(json!({})),
+    }
+}
+
+/// Observer-selection query, porting `crud.get_session_peer_configuration`.
+///
+/// Returns every peer ever in the session (including those who left), keyed by
+/// peer name and ordered for deterministic observer ordering. `is_active`
+/// distinguishes current members (`left_at IS NULL`) from peers who left.
+pub async fn get_session_peer_configuration(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+) -> Result<BTreeMap<String, PeerConfigEntry>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT peer.name AS peer_name, \
+                peer.configuration AS peer_configuration, \
+                session_peer.configuration AS session_peer_configuration, \
+                (session_peer.left_at IS NULL) AS is_active \
+         FROM peers peer \
+         JOIN session_peers session_peer \
+           ON peer.name = session_peer.peer_name \
+          AND peer.workspace_name = session_peer.workspace_name \
+         WHERE session_peer.session_name = $1 \
+           AND peer.workspace_name = $2 \
+           AND session_peer.workspace_name = $2 \
+         ORDER BY peer.name",
+    )
+    .bind(session_name)
+    .bind(workspace_name)
+    .fetch_all(pool)
+    .await?;
+
+    let mut peers = BTreeMap::new();
+    for row in rows {
+        let peer_name: String = row.try_get("peer_name")?;
+        peers.insert(
+            peer_name,
+            PeerConfigEntry {
+                peer_configuration: row.try_get("peer_configuration")?,
+                session_peer_configuration: row.try_get("session_peer_configuration")?,
+                is_active: row.try_get("is_active")?,
+            },
+        );
+    }
+    Ok(peers)
+}
+
+/// Insert the generated queue records in one transaction, mirroring the single
+/// batched `INSERT INTO queue ... ` Python performs after building the records.
+pub async fn insert_queue_records(
+    pool: &PgPool,
+    records: &[QueueRecord],
+) -> Result<(), sqlx::Error> {
+    if records.is_empty() {
+        return Ok(());
+    }
+    let mut transaction = pool.begin().await?;
+    for record in records {
+        sqlx::query(
+            "INSERT INTO queue \
+             (work_unit_key, payload, session_id, task_type, workspace_name, message_id) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(&record.work_unit_key)
+        .bind(&record.payload)
+        .bind(&record.session_id)
+        .bind(&record.task_type)
+        .bind(&record.workspace_name)
+        .bind(record.message_id)
+        .execute(&mut *transaction)
+        .await?;
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
 async fn fetch_count(pool: &PgPool, sql: &str, bindings: &[Value]) -> Result<i64, sqlx::Error> {
     fetch_count_with_tail(pool, sql, bindings, &[]).await
 }
@@ -1367,6 +1709,98 @@ fn conclusion_json(row: ConclusionRow) -> Value {
     })
 }
 
+/// Mirror of Python's `settings.WEBHOOK.MAX_WORKSPACE_LIMIT` default (10).
+pub const WEBHOOK_MAX_WORKSPACE_LIMIT: i64 = 10;
+
+#[derive(Debug)]
+pub enum WebhookCreateError {
+    WorkspaceNotFound,
+    LimitReached,
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for WebhookCreateError {
+    fn from(error: sqlx::Error) -> Self {
+        WebhookCreateError::Database(error)
+    }
+}
+
+/// Get-or-create a webhook endpoint, porting `crud.get_or_create_webhook_endpoint`.
+///
+/// The workspace must already exist (Python uses `get_workspace`, not the
+/// get-or-create variant). An endpoint with a matching URL is returned as-is
+/// (`created = false`); otherwise a new one is inserted unless the workspace is
+/// already at `WEBHOOK_MAX_WORKSPACE_LIMIT`.
+pub async fn get_or_create_webhook_endpoint(
+    pool: &PgPool,
+    workspace_name: &str,
+    url: &str,
+) -> Result<(Value, bool), WebhookCreateError> {
+    let exists = sqlx::query("SELECT EXISTS(SELECT 1 FROM workspaces WHERE name = $1) AS exists")
+        .bind(workspace_name)
+        .fetch_one(pool)
+        .await?;
+    if !exists.try_get::<bool, _>("exists")? {
+        return Err(WebhookCreateError::WorkspaceNotFound);
+    }
+
+    let existing = sqlx::query_as::<_, WebhookEndpointRow>(
+        "SELECT id, workspace_name, url, created_at \
+         FROM webhook_endpoints \
+         WHERE workspace_name = $1",
+    )
+    .bind(workspace_name)
+    .fetch_all(pool)
+    .await?;
+
+    if let Some(row) = existing.iter().find(|row| row.url == url) {
+        return Ok((
+            webhook_endpoint_json(
+                row.id.clone(),
+                row.workspace_name.clone(),
+                row.url.clone(),
+                row.created_at,
+            ),
+            false,
+        ));
+    }
+
+    if existing.len() as i64 >= WEBHOOK_MAX_WORKSPACE_LIMIT {
+        return Err(WebhookCreateError::LimitReached);
+    }
+
+    let row = sqlx::query_as::<_, WebhookEndpointRow>(
+        "INSERT INTO webhook_endpoints (id, workspace_name, url) \
+         VALUES ($1, $2, $3) \
+         RETURNING id, workspace_name, url, created_at",
+    )
+    .bind(generate_nanoid())
+    .bind(workspace_name)
+    .bind(url)
+    .fetch_one(pool)
+    .await?;
+
+    Ok((
+        webhook_endpoint_json(row.id, row.workspace_name, row.url, row.created_at),
+        true,
+    ))
+}
+
+/// Delete a webhook endpoint, porting `crud.delete_webhook_endpoint`. Returns
+/// `false` when no matching endpoint exists in the workspace.
+pub async fn delete_webhook_endpoint(
+    pool: &PgPool,
+    workspace_name: &str,
+    endpoint_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM webhook_endpoints WHERE id = $1 AND workspace_name = $2")
+        .bind(endpoint_id)
+        .bind(workspace_name)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub fn webhook_endpoint_json(
     id: String,
     workspace_name: String,
@@ -1379,6 +1813,38 @@ pub fn webhook_endpoint_json(
         "url": url,
         "created_at": created_at
     })
+}
+
+/// Set the peer card the `observer` holds for `observed`, porting
+/// `crud.set_peer_card`. The card is merged into the observer peer's
+/// `internal_metadata` under the `peer_card` / `{observed}_peer_card` label. The
+/// observer is get-or-created first (so the row always exists), matching Python.
+pub async fn set_peer_card(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    peer_card: &[String],
+) -> Result<(), sqlx::Error> {
+    get_or_create_peer(pool, workspace_name, observer, None, None).await?;
+
+    let label = if observer == observed {
+        "peer_card".to_string()
+    } else {
+        format!("{observed}_peer_card")
+    };
+    let patch = json!({ label: peer_card });
+
+    sqlx::query(
+        "UPDATE peers SET internal_metadata = internal_metadata || $3::jsonb \
+         WHERE workspace_name = $1 AND name = $2",
+    )
+    .bind(workspace_name)
+    .bind(observer)
+    .bind(patch)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub fn peer_card_json(observer: &str, observed: &str, internal_metadata: &Value) -> Value {

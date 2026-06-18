@@ -15,6 +15,13 @@ pub struct AppConfig {
     pub auth: AuthConfig,
     pub write_enabled: bool,
     pub cache: CacheConfig,
+    /// Whether message creation also persists pending `MessageEmbedding` chunk
+    /// rows (Python `settings.EMBED_MESSAGES`, default true).
+    pub embed_messages: bool,
+    /// Per-chunk token budget for embedding chunking, derived like the Python
+    /// `_EmbeddingClient`: Gemini caps at `min(MAX_INPUT_TOKENS, 2048)`, OpenAI
+    /// (default provider) uses `MAX_INPUT_TOKENS` directly.
+    pub embedding_max_tokens: usize,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -98,6 +105,29 @@ impl AppConfig {
             })
             .unwrap_or(default_cache_namespace())
             .to_string();
+        let embed_messages = values
+            .get("EMBED_MESSAGES")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(parse_bool)
+            .unwrap_or(true);
+        let embedding_provider = values
+            .get("EMBEDDING_PROVIDER")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("openai")
+            .to_ascii_lowercase();
+        let embedding_max_input_tokens = values
+            .get("EMBEDDING_MAX_INPUT_TOKENS")
+            .map(String::as_str)
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(8192);
+        let embedding_max_tokens = if embedding_provider == "gemini" {
+            embedding_max_input_tokens.min(2048)
+        } else {
+            embedding_max_input_tokens
+        };
+
         let jwt_secret = values
             .get("AUTH_JWT_SECRET")
             .map(String::as_str)
@@ -122,6 +152,8 @@ impl AppConfig {
                 url: cache_url,
                 namespace: cache_namespace,
             },
+            embed_messages,
+            embedding_max_tokens,
         })
     }
 }
