@@ -300,8 +300,10 @@ class OpenAIBackend:
         # Token-budget style thinking is not part of the native OpenAI API, but
         # OpenAI-compatible proxies (OpenRouter, etc.) accept a `reasoning` object
         # on the request body. Pass through via extra_body so it reaches those
-        # backends; operators on providers that need a different shape (vLLM,
-        # Fireworks, ...) can override via ModelConfig.provider_params.
+        # backends. Operators on providers that need a different shape (e.g.
+        # Anthropic-via-Vertex behind litellm wants `thinking`, not `reasoning`)
+        # supply that shape via ModelConfig.provider_params.extra_body and unset
+        # thinking_budget_tokens themselves — Honcho does not try to translate.
         if thinking_budget_tokens is not None and thinking_budget_tokens > 0:
             params.setdefault("extra_body", {}).setdefault("reasoning", {})[
                 "max_tokens"
@@ -322,6 +324,15 @@ class OpenAIBackend:
             ):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            # Operator escape hatch: forward OpenAI SDK passthrough kwargs from
+            # ModelConfig.provider_params. Shallow merge with operator-wins —
+            # if the operator supplies `extra_body.reasoning`, it replaces any
+            # value Honcho auto-injected above.
+            for passthrough_key in ("extra_body", "extra_headers", "extra_query"):
+                operator_value = extra_params.get(passthrough_key)
+                if operator_value:
+                    existing = params.setdefault(passthrough_key, {})
+                    existing.update(operator_value)
         return params
 
     def _normalize_response(

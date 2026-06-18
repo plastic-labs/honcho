@@ -69,6 +69,13 @@ class AnthropicBackend:
             for key in ("top_p", "top_k"):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            # Operator escape hatch: forward Anthropic SDK passthrough kwargs
+            # from ModelConfig.provider_params. Shallow merge with operator-wins.
+            for passthrough_key in ("extra_body", "extra_headers", "extra_query"):
+                operator_value = extra_params.get(passthrough_key)
+                if operator_value:
+                    existing = params.setdefault(passthrough_key, {})
+                    existing.update(operator_value)
 
         use_json_prefill = (
             bool(response_format or self._json_mode(extra_params))
@@ -148,6 +155,13 @@ class AnthropicBackend:
             for key in ("top_p", "top_k"):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            # Operator escape hatch: forward Anthropic SDK passthrough kwargs
+            # from ModelConfig.provider_params. Shallow merge with operator-wins.
+            for passthrough_key in ("extra_body", "extra_headers", "extra_query"):
+                operator_value = extra_params.get(passthrough_key)
+                if operator_value:
+                    existing = params.setdefault(passthrough_key, {})
+                    existing.update(operator_value)
         use_json_prefill = (
             bool(response_format or is_json_mode)
             and not thinking_budget_tokens

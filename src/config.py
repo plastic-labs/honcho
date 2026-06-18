@@ -69,7 +69,23 @@ class ModelOverrideSettings(BaseModel):
     api_key_env: str | None = None
     base_url: str | None = None
 
-    provider_params: dict[str, Any] = Field(default_factory=dict)
+    provider_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Operator escape hatch for provider-specific request fields. "
+            "Three recognized keys: `extra_body` (merged into the request body), "
+            "`extra_headers` (HTTP headers), `extra_query` (URL query params). "
+            "OpenAI and Anthropic transports forward these as identically-named "
+            "SDK kwargs. The Gemini transport merges `extra_body` into the "
+            "GenerateContentConfig dict and folds `extra_headers` into "
+            "`http_options.headers`; `extra_query` is unsupported. Shallow merge "
+            "with operator-wins — if Honcho and the operator both set the same "
+            "key inside `extra_body`, the operator's value replaces Honcho's. "
+            "Operators are responsible for picking a coherent combination of "
+            "this and other config (e.g. unset `thinking_budget_tokens` when "
+            "supplying an `extra_body.thinking` for Anthropic-via-proxy)."
+        ),
+    )
 
 
 class PromptCachePolicy(BaseModel):
