@@ -189,7 +189,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/v3/keys", post(create_key))
         .route("/v3/workspaces", post(get_or_create_workspace))
-        .route("/v3/workspaces/{workspace_id}", put(update_workspace))
+        .route(
+            "/v3/workspaces/{workspace_id}",
+            put(update_workspace).delete(delete_workspace),
+        )
         .route(
             "/v3/workspaces/{workspace_id}/peers",
             post(get_or_create_peer),
@@ -391,6 +394,38 @@ async fn update_workspace(
     )
     .await?;
     Ok(Json(value))
+}
+
+async fn delete_workspace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+) -> Result<Response, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        None,
+    )?;
+    ensure_writes_enabled(&state)?;
+
+    match db::enqueue_workspace_deletion(state.pool()?, &workspace_id).await {
+        Ok(()) => Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({ "message": "Workspace deletion accepted" })),
+        )
+            .into_response()),
+        Err(db::WorkspaceDeleteError::NotFound) => {
+            Err(ApiError::NotFound(format!("Workspace {workspace_id} not found")))
+        }
+        Err(db::WorkspaceDeleteError::ActiveSessions) => Err(ApiError::Conflict(format!(
+            "Cannot delete workspace '{workspace_id}': active session(s) remain. \
+             Delete all sessions first."
+        ))),
+        Err(db::WorkspaceDeleteError::Database(error)) => Err(ApiError::Database(error)),
+    }
 }
 
 async fn get_or_create_peer(

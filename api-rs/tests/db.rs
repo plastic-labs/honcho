@@ -1062,3 +1062,60 @@ async fn get_session_context_token_budget_drops_oldest_messages() {
 
     test_db.teardown().await;
 }
+
+#[tokio::test]
+async fn enqueue_workspace_deletion_inserts_queue_item_and_guards() {
+    use honcho_api_rs::db::WorkspaceDeleteError;
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // Missing workspace -> NotFound (404), no queue row.
+    let missing = db::enqueue_workspace_deletion(&test_db.pool, "nope").await;
+    assert!(matches!(missing, Err(WorkspaceDeleteError::NotFound)));
+
+    db::get_or_create_workspace(&test_db.pool, "ws-del", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    // Workspace exists, no sessions -> accepted; one deletion queue item written.
+    db::enqueue_workspace_deletion(&test_db.pool, "ws-del")
+        .await
+        .expect("enqueue deletion");
+
+    let row = sqlx::query(
+        "SELECT work_unit_key, payload, task_type, workspace_name, session_id, message_id \
+         FROM queue WHERE workspace_name = $1 AND task_type = 'deletion'",
+    )
+    .bind("ws-del")
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("deletion queue row");
+    let work_unit_key: String = row.get("work_unit_key");
+    let payload: Value = row.get("payload");
+    let session_id: Option<String> = row.get("session_id");
+    let message_id: Option<i64> = row.get("message_id");
+    assert_eq!(work_unit_key, "deletion:ws-del:workspace:ws-del");
+    assert_eq!(
+        payload,
+        json!({"task_type": "deletion", "deletion_type": "workspace", "resource_id": "ws-del"})
+    );
+    assert_eq!(session_id, None);
+    assert_eq!(message_id, None);
+
+    // Create an active session -> deletion is refused with ActiveSessions (409).
+    db::create_messages(
+        &test_db.pool,
+        "ws-del",
+        "sess-active",
+        &[message("alice", "hi")],
+        false,
+        8192,
+    )
+    .await
+    .expect("create message in session");
+    let conflict = db::enqueue_workspace_deletion(&test_db.pool, "ws-del").await;
+    assert!(matches!(conflict, Err(WorkspaceDeleteError::ActiveSessions)));
+
+    test_db.teardown().await;
+}

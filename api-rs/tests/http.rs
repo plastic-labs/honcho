@@ -195,6 +195,28 @@ async fn workspace_update_route_is_disabled_by_default() {
 }
 
 #[tokio::test]
+async fn workspace_delete_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::delete("/v3/workspaces/workspace-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
 async fn workspace_update_route_rejects_invalid_path_name() {
     let state = AppState::for_test_with_writes(AuthConfig {
         use_auth: false,

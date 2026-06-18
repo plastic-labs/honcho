@@ -1810,6 +1810,77 @@ pub async fn insert_queue_records(
     Ok(())
 }
 
+/// Failure modes of `enqueue_workspace_deletion`, mapped to the same HTTP
+/// statuses Python's `delete_workspace` produces.
+#[derive(Debug)]
+pub enum WorkspaceDeleteError {
+    /// Workspace does not exist → 404 (`ResourceNotFoundException`).
+    NotFound,
+    /// Workspace still has active sessions → 409 (`ConflictException`).
+    ActiveSessions,
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for WorkspaceDeleteError {
+    fn from(error: sqlx::Error) -> Self {
+        WorkspaceDeleteError::Database(error)
+    }
+}
+
+/// Port of `delete_workspace`'s accept-and-enqueue path: verify the workspace
+/// exists, refuse if any active session remains, then enqueue a single
+/// `deletion` queue item (the deriver performs the cascading delete). All three
+/// steps share one transaction, matching the Python handler's single commit.
+pub async fn enqueue_workspace_deletion(
+    pool: &PgPool,
+    workspace_name: &str,
+) -> Result<(), WorkspaceDeleteError> {
+    let mut transaction = pool.begin().await?;
+
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workspaces WHERE name = $1)")
+            .bind(workspace_name)
+            .fetch_one(&mut *transaction)
+            .await?;
+    if !exists {
+        return Err(WorkspaceDeleteError::NotFound);
+    }
+
+    let has_active_sessions: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sessions \
+         WHERE workspace_name = $1 AND is_active = true)",
+    )
+    .bind(workspace_name)
+    .fetch_one(&mut *transaction)
+    .await?;
+    if has_active_sessions {
+        return Err(WorkspaceDeleteError::ActiveSessions);
+    }
+
+    // Mirror of `create_deletion_record`: payload is the `DeletionPayload`
+    // model_dump (exclude_none — all fields present), work_unit_key is the
+    // `construct_work_unit_key` deletion form, session_id/message_id are NULL.
+    let payload = json!({
+        "task_type": "deletion",
+        "deletion_type": "workspace",
+        "resource_id": workspace_name
+    });
+    let work_unit_key = format!("deletion:{workspace_name}:workspace:{workspace_name}");
+    sqlx::query(
+        "INSERT INTO queue \
+         (work_unit_key, payload, session_id, task_type, workspace_name, message_id) \
+         VALUES ($1, $2, NULL, 'deletion', $3, NULL)",
+    )
+    .bind(&work_unit_key)
+    .bind(&payload)
+    .bind(workspace_name)
+    .execute(&mut *transaction)
+    .await?;
+
+    transaction.commit().await?;
+    Ok(())
+}
+
 async fn fetch_count(pool: &PgPool, sql: &str, bindings: &[Value]) -> Result<i64, sqlx::Error> {
     fetch_count_with_tail(pool, sql, bindings, &[]).await
 }
