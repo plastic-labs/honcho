@@ -1909,7 +1909,7 @@ fn bind_values<'q>(
     query
 }
 
-fn bind_values_as<'q, O>(
+pub(crate) fn bind_values_as<'q, O>(
     mut query: QueryAs<'q, Postgres, O, PgArguments>,
     bindings: &[Value],
 ) -> QueryAs<'q, Postgres, O, PgArguments>

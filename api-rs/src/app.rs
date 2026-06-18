@@ -13,10 +13,14 @@ use std::net::IpAddr;
 
 use crate::auth::{AuthConfig, AuthError, JwtParams, authorize, create_scoped_key};
 use crate::cache::PeerCache;
+use crate::config::EmbeddingConfig;
 use crate::db;
+use crate::embedding::{self, EmbedError};
 use crate::error::ApiError;
 use crate::filters::{FilterTarget, build_filter_clause};
+use crate::llm::http::{Credentials, ReqwestHttp};
 use crate::pagination::Pagination;
+use crate::search::{self, HybridSearchParams};
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -27,6 +31,18 @@ pub struct AppState {
     pub peer_cache: PeerCache,
     pub embed_messages: bool,
     pub embedding_max_tokens: usize,
+    pub embedding: EmbeddingConfig,
+}
+
+fn default_test_embedding_config() -> EmbeddingConfig {
+    EmbeddingConfig {
+        model: "text-embedding-3-small".to_string(),
+        vector_dimensions: 1536,
+        send_dimensions: false,
+        max_tokens: 8192,
+        api_key: None,
+        base_url: None,
+    }
 }
 
 impl AppState {
@@ -39,6 +55,7 @@ impl AppState {
         peer_cache: PeerCache,
         embed_messages: bool,
         embedding_max_tokens: usize,
+        embedding: EmbeddingConfig,
     ) -> Self {
         Self {
             pool: Some(pool),
@@ -48,6 +65,7 @@ impl AppState {
             peer_cache,
             embed_messages,
             embedding_max_tokens,
+            embedding,
         }
     }
 
@@ -60,6 +78,7 @@ impl AppState {
             peer_cache: PeerCache::disabled(),
             embed_messages: false,
             embedding_max_tokens: 8192,
+            embedding: default_test_embedding_config(),
         }
     }
 
@@ -72,6 +91,7 @@ impl AppState {
             peer_cache: PeerCache::disabled(),
             embed_messages: false,
             embedding_max_tokens: 8192,
+            embedding: default_test_embedding_config(),
         }
     }
 
@@ -196,6 +216,15 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v3/workspaces/{workspace_id}/peers",
             post(get_or_create_peer),
+        )
+        .route("/v3/workspaces/{workspace_id}/search", post(search_workspace))
+        .route(
+            "/v3/workspaces/{workspace_id}/peers/{peer_id}/search",
+            post(search_peer),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/sessions/{session_id}/search",
+            post(search_session),
         )
         .route("/v3/workspaces/list", post(list_workspaces))
         .route("/v3/workspaces/{workspace_id}/peers/list", post(list_peers))
@@ -1217,6 +1246,271 @@ async fn get_session_context(
     )
     .await?;
     Ok(Json(value))
+}
+
+async fn search_workspace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        None,
+    )?;
+    run_search(&state, &workspace_id, &[], body).await
+}
+
+async fn search_peer(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, peer_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        Some(&peer_id),
+        None,
+    )?;
+    run_search(&state, &workspace_id, &[("peer_id", &peer_id)], body).await
+}
+
+async fn search_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, session_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        Some(&session_id),
+    )?;
+    run_search(&state, &workspace_id, &[("session_id", &session_id)], body).await
+}
+
+/// Shared core of the three search routes, porting `utils.search.search`. Builds
+/// the effective filter (`body.filters` + the path-derived ids, with
+/// `workspace_id` forced in like the routes do), extracts the `peer_perspective`
+/// special filter, embeds the query when `EMBED_MESSAGES` is on, and fuses the
+/// hybrid-search legs. Returns a plain `list[Message]` (no pagination).
+async fn run_search(
+    state: &AppState,
+    workspace_id: &str,
+    extra_filters: &[(&str, &str)],
+    body: Value,
+) -> Result<Json<Value>, ApiError> {
+    let options = parse_search_options(body)?;
+
+    // Build the effective filter object: user filters + path ids (workspace
+    // always; peer/session when present), matching the per-route Python code.
+    let mut filters = match options.filters {
+        Some(Value::Object(map)) => map,
+        _ => serde_json::Map::new(),
+    };
+    filters.insert("workspace_id".to_string(), json!(workspace_id));
+    for (key, value) in extra_filters {
+        filters.insert((*key).to_string(), json!(value));
+    }
+
+    // Pull out the `peer_perspective` special filter before building the SQL
+    // filter clause (Python removes it so apply_filter never sees it). Workspace
+    // scope is guaranteed (we just inserted workspace_id), so the scope-validation
+    // raise can never fire.
+    let peer_perspective = match filters.remove("peer_perspective") {
+        Some(Value::String(name)) => Some(name),
+        _ => None,
+    };
+
+    let filters_value = Value::Object(filters);
+    let filter = build_filter_clause(FilterTarget::Message, Some(&filters_value))?;
+
+    // Pre-compute the query embedding (best-effort semantic leg). Mirrors
+    // `search()`: a token-limit / dimension `ValueError` becomes a 422
+    // ValidationException; other failures propagate as 500.
+    let mut embedding_vec: Option<Vec<f32>> = None;
+    if state.embed_messages {
+        let api_key = state.embedding.api_key.as_ref().ok_or_else(|| {
+            ApiError::Embedding(
+                "EMBED_MESSAGES is enabled but no embedding API key is configured".to_string(),
+            )
+        })?;
+        let credentials =
+            Credentials::with_base_url(api_key.clone(), state.embedding.base_url.clone());
+        let http = ReqwestHttp::default();
+        match embedding::embed_openai(
+            &http,
+            &credentials,
+            &state.embedding.model,
+            &options.query,
+            state.embedding.vector_dimensions,
+            state.embedding.send_dimensions,
+            state.embedding.max_tokens,
+        )
+        .await
+        {
+            Ok(vector) => embedding_vec = Some(vector),
+            Err(EmbedError::TokenLimit { .. } | EmbedError::DimensionMismatch { .. }) => {
+                return Err(ApiError::Validation(format!(
+                    "Query exceeds maximum token limit of {}.",
+                    state.embedding.max_tokens
+                )));
+            }
+            Err(other) => return Err(ApiError::Embedding(other.to_string())),
+        }
+    }
+
+    let params = HybridSearchParams {
+        workspace_name: workspace_id,
+        query: &options.query,
+        filter: &filter,
+        query_embedding: embedding_vec.as_deref(),
+        peer_perspective: peer_perspective.as_deref(),
+        limit: options.limit as usize,
+    };
+    let results = search::hybrid_search(state.pool()?, &params).await?;
+    Ok(Json(Value::Array(results)))
+}
+
+struct SearchOptions {
+    query: String,
+    filters: Option<Value>,
+    limit: i64,
+}
+
+/// Port of `MessageSearchOptions` validation: `query` (required string,
+/// NUL-stripped), optional `filters` dict, `limit` (int, default 10, 1..=100).
+/// Reproduces Pydantic's per-field error shapes; returns the first error
+/// encountered (query → filters → limit), the house single-error convention.
+fn parse_search_options(body: Value) -> Result<SearchOptions, ApiError> {
+    let object = body.as_object();
+
+    let query = match object.and_then(|map| map.get("query")) {
+        Some(Value::String(value)) => value.replace('\u{0}', ""),
+        Some(other) => {
+            return Err(validation_error(
+                "string_type",
+                &["query"],
+                "Input should be a valid string",
+                other.clone(),
+                None,
+            ));
+        }
+        None => {
+            return Err(validation_error(
+                "missing",
+                &["query"],
+                "Field required",
+                body.clone(),
+                None,
+            ));
+        }
+    };
+
+    let filters = match object.and_then(|map| map.get("filters")) {
+        None | Some(Value::Null) => None,
+        Some(value @ Value::Object(_)) => Some(value.clone()),
+        Some(other) => {
+            return Err(validation_error(
+                "dict_type",
+                &["filters"],
+                "Input should be a valid dictionary",
+                other.clone(),
+                None,
+            ));
+        }
+    };
+
+    let limit = match object.and_then(|map| map.get("limit")) {
+        None | Some(Value::Null) => 10,
+        Some(value) => parse_search_limit(value)?,
+    };
+
+    Ok(SearchOptions {
+        query,
+        filters,
+        limit,
+    })
+}
+
+/// Coerce + bound-check the `limit` field like Pydantic's `int = Field(ge=1,
+/// le=100)` in lax (JSON-body) mode.
+fn parse_search_limit(value: &Value) -> Result<i64, ApiError> {
+    let limit = match value {
+        Value::Number(number) => {
+            if let Some(integer) = number.as_i64() {
+                integer
+            } else if let Some(float) = number.as_f64() {
+                if float.fract() == 0.0 {
+                    float as i64
+                } else {
+                    return Err(validation_error(
+                        "int_from_float",
+                        &["limit"],
+                        "Input should be a valid integer, got a number with a fractional part",
+                        value.clone(),
+                        None,
+                    ));
+                }
+            } else {
+                return Err(validation_error(
+                    "int_parsing",
+                    &["limit"],
+                    "Input should be a valid integer, unable to parse string as an integer",
+                    value.clone(),
+                    None,
+                ));
+            }
+        }
+        Value::String(text) => text.trim().parse::<i64>().map_err(|_| {
+            validation_error(
+                "int_parsing",
+                &["limit"],
+                "Input should be a valid integer, unable to parse string as an integer",
+                value.clone(),
+                None,
+            )
+        })?,
+        other => {
+            return Err(validation_error(
+                "int_type",
+                &["limit"],
+                "Input should be a valid integer",
+                other.clone(),
+                None,
+            ));
+        }
+    };
+
+    if limit < 1 {
+        return Err(validation_error(
+            "greater_than_equal",
+            &["limit"],
+            "Input should be greater than or equal to 1",
+            json!(limit),
+            Some(json!({ "ge": 1 })),
+        ));
+    }
+    if limit > 100 {
+        return Err(validation_error(
+            "less_than_equal",
+            &["limit"],
+            "Input should be less than or equal to 100",
+            json!(limit),
+            Some(json!({ "le": 100 })),
+        ));
+    }
+    Ok(limit)
 }
 
 async fn list_messages(

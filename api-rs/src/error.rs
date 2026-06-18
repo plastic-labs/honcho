@@ -41,6 +41,11 @@ pub enum ApiError {
     /// explicit rather than silently returning a wrong-shaped 200.
     #[error("{0}")]
     NotImplemented(String),
+    /// A non-`ValueError` embedding-call failure (transport/auth/no-vector).
+    /// Mirrors Python letting these propagate out of `search()` as a 500
+    /// (only token-limit / dimension `ValueError`s become 422 validation errors).
+    #[error("{0}")]
+    Embedding(String),
 }
 
 impl IntoResponse for ApiError {
@@ -54,7 +59,7 @@ impl IntoResponse for ApiError {
             Self::Filter(_) | Self::Validation(_) | Self::RequestValidation(_) => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
-            Self::MissingPool | Self::Database(_) | Self::Producer(_) => {
+            Self::MissingPool | Self::Database(_) | Self::Producer(_) | Self::Embedding(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::Disabled | Self::WriteDisabled => StatusCode::METHOD_NOT_ALLOWED,

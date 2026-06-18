@@ -22,6 +22,48 @@ pub struct AppConfig {
     /// `_EmbeddingClient`: Gemini caps at `min(MAX_INPUT_TOKENS, 2048)`, OpenAI
     /// (default provider) uses `MAX_INPUT_TOKENS` directly.
     pub embedding_max_tokens: usize,
+    /// Embedding model name (`EMBEDDING_MODEL`, default `text-embedding-3-small`).
+    pub embedding_model: String,
+    /// Target embedding dimensionality (`EMBEDDING_VECTOR_DIMENSIONS`, default 1536).
+    pub embedding_vector_dimensions: usize,
+    /// Whether OpenAI embedding requests forward `dimensions=`, mirroring
+    /// `EmbeddingSettings.resolve_send_dimensions` (`EMBEDDING_DIMENSIONS_MODE`
+    /// `always`/`never`/`auto`; `auto` sends only when `EMBEDDING_VECTOR_DIMENSIONS`
+    /// is explicitly set and the model isn't a known-rejecting one).
+    pub embedding_send_dimensions: bool,
+    /// OpenAI API key for the synchronous search-query embedding, defaulting to
+    /// `LLM_OPENAI_API_KEY` (Python `_default_embedding_api_key`). `None` disables
+    /// the semantic search leg (search falls back to full-text only).
+    pub embedding_api_key: Option<String>,
+    /// Optional embedding endpoint override (`EMBEDDING_BASE_URL`).
+    pub embedding_base_url: Option<String>,
+}
+
+/// The resolved embedding configuration the synchronous search-query embedding
+/// needs (the message-ingest embedding path is decoupled and only needs
+/// `embedding_max_tokens`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingConfig {
+    pub model: String,
+    pub vector_dimensions: usize,
+    pub send_dimensions: bool,
+    pub max_tokens: usize,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+}
+
+impl AppConfig {
+    /// Bundle the embedding-related fields for the search route.
+    pub fn embedding_config(&self) -> EmbeddingConfig {
+        EmbeddingConfig {
+            model: self.embedding_model.clone(),
+            vector_dimensions: self.embedding_vector_dimensions,
+            send_dimensions: self.embedding_send_dimensions,
+            max_tokens: self.embedding_max_tokens,
+            api_key: self.embedding_api_key.clone(),
+            base_url: self.embedding_base_url.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -127,6 +169,45 @@ impl AppConfig {
         } else {
             embedding_max_input_tokens
         };
+        let embedding_model = values
+            .get("EMBEDDING_MODEL")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("text-embedding-3-small")
+            .to_string();
+        let vector_dimensions_set = values
+            .get("EMBEDDING_VECTOR_DIMENSIONS")
+            .map(String::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        let embedding_vector_dimensions = values
+            .get("EMBEDDING_VECTOR_DIMENSIONS")
+            .map(String::as_str)
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(1536);
+        // Mirror of `EmbeddingSettings.resolve_send_dimensions`: `auto` (default)
+        // sends `dimensions=` only when VECTOR_DIMENSIONS was explicitly set and
+        // the model isn't a known-rejecting one (only `text-embedding-ada-002`).
+        let dimensions_mode = values
+            .get("EMBEDDING_DIMENSIONS_MODE")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("auto")
+            .to_ascii_lowercase();
+        let embedding_send_dimensions = match dimensions_mode.as_str() {
+            "always" => true,
+            "never" => false,
+            _ => vector_dimensions_set && embedding_model != "text-embedding-ada-002",
+        };
+        let embedding_api_key = values
+            .get("LLM_OPENAI_API_KEY")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
+        let embedding_base_url = values
+            .get("EMBEDDING_BASE_URL")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
 
         let jwt_secret = values
             .get("AUTH_JWT_SECRET")
@@ -154,6 +235,11 @@ impl AppConfig {
             },
             embed_messages,
             embedding_max_tokens,
+            embedding_model,
+            embedding_vector_dimensions,
+            embedding_send_dimensions,
+            embedding_api_key,
+            embedding_base_url,
         })
     }
 }

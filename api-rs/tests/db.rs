@@ -17,9 +17,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{TimeZone, Utc};
 use honcho_api_rs::db;
 use honcho_api_rs::db::MessageInsert;
+use honcho_api_rs::embedding;
+use honcho_api_rs::filters::{FilterClause, FilterTarget, build_filter_clause};
+use honcho_api_rs::llm::http::{Credentials, ReqwestHttp};
 use honcho_api_rs::search;
 use honcho_api_rs::producer::QueueRecord;
-use honcho_api_rs::search::MessageRef;
+use honcho_api_rs::search::{HybridSearchParams, MessageRef};
 use serde_json::json;
 use serde_json::Value;
 use sqlx::{Connection, Executor, PgConnection, PgPool, Row};
@@ -216,6 +219,17 @@ async fn get_or_create_peer_updates_metadata_on_conflict() {
     test_db.teardown().await;
 }
 
+/// Build the message `FilterClause` the search route passes to the legs:
+/// `{"workspace_id": name, ...extra}` (mirrors the route forcing `workspace_id`
+/// into the filter dict).
+fn message_filter(value: Value) -> FilterClause {
+    build_filter_clause(FilterTarget::Message, Some(&value)).expect("valid filter")
+}
+
+fn ws_filter(name: &str) -> FilterClause {
+    message_filter(json!({ "workspace_id": name }))
+}
+
 fn message(peer: &str, content: &str) -> MessageInsert {
     MessageInsert {
         peer_name: peer.to_string(),
@@ -358,7 +372,7 @@ async fn semantic_search_orders_by_cosine_distance_and_dedups() {
 
     // A query leaning on dim 0 is closest to apple.
     let toward_apple = query_vector(&[(0, 1.0), (5, 0.2)]);
-    let ranked = search::semantic_search_pgvector(&test_db.pool, "ws", &toward_apple, 10)
+    let ranked = search::semantic_search_pgvector(&test_db.pool, "ws", &ws_filter("ws"), &toward_apple, 10)
         .await
         .expect("semantic search");
     assert_eq!(ranked, vec![apple_id.clone(), banana_id.clone()]);
@@ -367,7 +381,7 @@ async fn semantic_search_orders_by_cosine_distance_and_dedups() {
 
     // Flip the query toward dim 5 and banana ranks first.
     let toward_banana = query_vector(&[(5, 1.0), (0, 0.2)]);
-    let ranked = search::semantic_search_pgvector(&test_db.pool, "ws", &toward_banana, 10)
+    let ranked = search::semantic_search_pgvector(&test_db.pool, "ws", &ws_filter("ws"), &toward_banana, 10)
         .await
         .expect("semantic search");
     assert_eq!(ranked.first(), Some(&banana_id));
@@ -397,19 +411,19 @@ async fn fulltext_search_matches_fts_and_special_char_ilike() {
     .expect("create messages");
 
     // Natural-language query -> FTS leg; only the fox message matches "fox".
-    let fox = search::fulltext_search(&test_db.pool, "ws", "fox", 10)
+    let fox = search::fulltext_search(&test_db.pool, &ws_filter("ws"), "fox", 10)
         .await
         .expect("fts fox");
     assert_eq!(fox.len(), 1);
 
     // "dog" stems to match "dogs" via the english FTS config.
-    let dog = search::fulltext_search(&test_db.pool, "ws", "dog", 10)
+    let dog = search::fulltext_search(&test_db.pool, &ws_filter("ws"), "dog", 10)
         .await
         .expect("fts dog");
     assert_eq!(dog.len(), 1);
 
     // A query with FTS-hostile chars ("c++") takes the literal ILIKE path.
-    let cpp = search::fulltext_search(&test_db.pool, "ws", "c++", 10)
+    let cpp = search::fulltext_search(&test_db.pool, &ws_filter("ws"), "c++", 10)
         .await
         .expect("ilike c++");
     assert_eq!(cpp.len(), 1);
@@ -562,9 +576,11 @@ async fn hybrid_search_fuses_semantic_and_fulltext_legs() {
     // FTS "apple" matches only alpha; the embedding leans toward alpha (dim 0).
     // alpha appears top of BOTH legs, so RRF ranks it first.
     let embedding = query_vector(&[(0, 1.0), (1, 0.3), (2, 0.1)]);
+    let filter = ws_filter("ws");
     let params = search::HybridSearchParams {
         workspace_name: "ws",
         query: "apple",
+        filter: &filter,
         query_embedding: Some(&embedding),
         peer_perspective: None,
         limit: 10,
@@ -605,9 +621,11 @@ async fn hybrid_search_without_embedding_uses_fulltext_only() {
     .expect("create messages");
 
     // No embedding -> only the full-text leg runs; "banana" matches beta alone.
+    let filter = ws_filter("ws");
     let params = search::HybridSearchParams {
         workspace_name: "ws",
         query: "banana",
+        filter: &filter,
         query_embedding: None,
         peer_perspective: None,
         limit: 10,
@@ -1116,6 +1134,146 @@ async fn enqueue_workspace_deletion_inserts_queue_item_and_guards() {
     .expect("create message in session");
     let conflict = db::enqueue_workspace_deletion(&test_db.pool, "ws-del").await;
     assert!(matches!(conflict, Err(WorkspaceDeleteError::ActiveSessions)));
+
+    test_db.teardown().await;
+}
+
+/// A real (or arbitrary) 1536-d vector as a pgvector text literal `[v1,v2,...]`.
+fn vector_literal(values: &[f32]) -> String {
+    let mut s = String::from("[");
+    for (i, v) in values.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&v.to_string());
+    }
+    s.push(']');
+    s
+}
+
+async fn seed_embedding_vector(
+    pool: &PgPool,
+    message_public_id: &str,
+    peer: &str,
+    content: &str,
+    vector: &[f32],
+) {
+    sqlx::query(
+        "INSERT INTO message_embeddings \
+         (content, embedding, message_id, workspace_name, session_name, peer_name, sync_state) \
+         VALUES ($1, $2::vector, $3, 'ws', 'sess', $4, 'synced')",
+    )
+    .bind(content)
+    .bind(vector_literal(vector))
+    .bind(message_public_id)
+    .bind(peer)
+    .execute(pool)
+    .await
+    .expect("seed embedding vector");
+}
+
+#[tokio::test]
+async fn search_filter_scopes_fulltext_to_peer() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // Both peers send a message matching "report"; the peer_id filter must keep
+    // only alice's, exercising the FilterClause threaded into the FTS leg.
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "alice quarterly report"),
+            message("bob", "bob annual report"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+
+    let unfiltered = search::fulltext_search(&test_db.pool, &ws_filter("ws"), "report", 10)
+        .await
+        .expect("fts unfiltered");
+    assert_eq!(unfiltered.len(), 2);
+
+    let alice_filter = message_filter(json!({"workspace_id": "ws", "peer_id": "alice"}));
+    let alice_only = search::fulltext_search(&test_db.pool, &alice_filter, "report", 10)
+        .await
+        .expect("fts filtered");
+    assert_eq!(alice_only.len(), 1);
+
+    test_db.teardown().await;
+}
+
+/// End-to-end semantic search against the live OpenAI embeddings API. Gated on
+/// BOTH `TEST_DATABASE_URL` and `OPENAI_TEST_TOKEN`; skips cleanly otherwise.
+/// Embeds two message bodies and a query for real, stores the message vectors as
+/// pgvector rows, and asserts the semantically-relevant message tops the fused
+/// hybrid-search ranking.
+#[tokio::test]
+async fn search_with_live_openai_embedding_ranks_semantically() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    let Ok(api_key) = std::env::var("OPENAI_TEST_TOKEN") else {
+        test_db.teardown().await;
+        return;
+    };
+
+    let http = ReqwestHttp::default();
+    let credentials = Credentials::new(api_key);
+    let model = "text-embedding-3-small";
+    let dims = 1536;
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "I really enjoy eating fresh apples, mangoes and oranges"),
+            message("alice", "The quarterly financial report shows rising interest rates"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("create messages");
+
+    for msg in &created {
+        let vector =
+            embedding::embed_openai(&http, &credentials, model, &msg.content, dims, false, 8192)
+                .await
+                .expect("embed message content");
+        assert_eq!(vector.len(), dims);
+        seed_embedding_vector(&test_db.pool, &msg.public_id, "alice", &msg.content, &vector).await;
+    }
+
+    let query_embedding =
+        embedding::embed_openai(&http, &credentials, model, "tropical fruit", dims, false, 8192)
+            .await
+            .expect("embed query");
+
+    let filter = ws_filter("ws");
+    let params = HybridSearchParams {
+        workspace_name: "ws",
+        query: "tropical fruit",
+        filter: &filter,
+        query_embedding: Some(&query_embedding),
+        peer_perspective: None,
+        limit: 10,
+    };
+    let results = search::hybrid_search(&test_db.pool, &params)
+        .await
+        .expect("hybrid search");
+
+    // The fruit message is semantically closest to "tropical fruit".
+    assert_eq!(
+        results.first().and_then(|m| m["content"].as_str()),
+        Some(created[0].content.as_str())
+    );
 
     test_db.teardown().await;
 }

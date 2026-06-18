@@ -5,8 +5,9 @@
 //! id lists RRF fuses: [`semantic_search_pgvector`] (pgvector cosine distance)
 //! and [`fulltext_search`] (Postgres FTS with an ILIKE fallback). The query
 //! embedding the semantic leg consumes is produced upstream by
-//! [`crate::embedding::embed_openai`]; per-message metadata/peer-perspective
-//! filtering is applied by the route on top of these workspace-scoped legs.
+//! [`crate::embedding::embed_openai`]. Per-message metadata filtering is
+//! threaded into both legs via a [`crate::filters::FilterClause`]; the
+//! peer-perspective temporal filter is applied on top.
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -16,6 +17,8 @@ use std::hash::Hash;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
+
+use crate::filters::FilterClause;
 
 /// RRF constant (`k`) controlling how steeply rank position discounts score.
 /// Matches the Python default.
@@ -116,22 +119,37 @@ fn vector_literal(embedding: &[f32]) -> String {
 pub async fn semantic_search_pgvector(
     pool: &PgPool,
     workspace_name: &str,
+    filter: &FilterClause,
     embedding_query: &[f32],
     limit: usize,
 ) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT m.public_id \
-         FROM messages m \
-         JOIN message_embeddings me ON m.public_id = me.message_id \
-         WHERE me.embedding IS NOT NULL AND me.workspace_name = $1 \
-         ORDER BY me.embedding <=> $2::vector \
-         LIMIT $3",
-    )
-    .bind(workspace_name)
-    .bind(vector_literal(embedding_query))
-    .bind((limit * 2) as i64)
-    .fetch_all(pool)
-    .await?;
+    // The embedding columns are isolated in a subquery (`me`) so the outer
+    // metadata `filter` can reference bare `messages` columns without ambiguity
+    // (both tables carry `workspace_name`/`created_at`). The embeddings-side
+    // `workspace_name` filter mirrors Python's explicit
+    // `MessageEmbedding.workspace_name == workspace_name`; the message-side
+    // workspace scope rides in via `filter` (the route forces `workspace_id`
+    // into the filter dict, exactly like `apply_filter`).
+    let ws_idx = filter.bindings.len() + 1;
+    let vec_idx = filter.bindings.len() + 2;
+    let limit_idx = filter.bindings.len() + 3;
+    let sql = format!(
+        "SELECT messages.public_id \
+         FROM messages \
+         JOIN (SELECT message_id, embedding FROM message_embeddings \
+               WHERE embedding IS NOT NULL AND workspace_name = ${ws_idx}) me \
+         ON messages.public_id = me.message_id \
+         WHERE TRUE{} \
+         ORDER BY me.embedding <=> ${vec_idx}::vector \
+         LIMIT ${limit_idx}",
+        filter.sql
+    );
+    let mut query = crate::db::bind_values_as(sqlx::query_as(&sql), &filter.bindings);
+    query = query
+        .bind(workspace_name)
+        .bind(vector_literal(embedding_query))
+        .bind((limit * 2) as i64);
+    let rows: Vec<(String,)> = query.fetch_all(pool).await?;
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut deduped: Vec<String> = Vec::new();
@@ -154,43 +172,48 @@ pub async fn semantic_search_pgvector(
 /// is escaped for the `ILIKE` pattern via [`escape_ilike_pattern`] (`\` escape).
 pub async fn fulltext_search(
     pool: &PgPool,
-    workspace_name: &str,
+    filter: &FilterClause,
     query: &str,
     limit: usize,
 ) -> Result<Vec<String>, sqlx::Error> {
+    // Single table (no JOIN), so bare `filter` columns are unambiguous. The
+    // workspace scope rides in via `filter` (Python's base stmt is already
+    // `apply_filter`-ed with workspace + user filters before the FTS leg).
     let ilike_pattern = format!("%{}%", escape_ilike_pattern(query));
 
     let rows: Vec<(String,)> = if query_has_special_chars(query) {
-        sqlx::query_as(
+        let ilike_idx = filter.bindings.len() + 1;
+        let limit_idx = filter.bindings.len() + 2;
+        let sql = format!(
             "SELECT public_id FROM messages \
-             WHERE workspace_name = $1 AND content ILIKE $2 ESCAPE '\\' \
+             WHERE TRUE{} AND content ILIKE ${ilike_idx} ESCAPE '\\' \
              ORDER BY created_at DESC \
-             LIMIT $3",
-        )
-        .bind(workspace_name)
-        .bind(&ilike_pattern)
-        .bind(limit as i64)
-        .fetch_all(pool)
-        .await?
+             LIMIT ${limit_idx}",
+            filter.sql
+        );
+        let mut q = crate::db::bind_values_as(sqlx::query_as(&sql), &filter.bindings);
+        q = q.bind(&ilike_pattern).bind(limit as i64);
+        q.fetch_all(pool).await?
     } else {
-        sqlx::query_as(
+        let q_idx = filter.bindings.len() + 1;
+        let ilike_idx = filter.bindings.len() + 2;
+        let limit_idx = filter.bindings.len() + 3;
+        let sql = format!(
             "SELECT public_id FROM messages \
-             WHERE workspace_name = $1 AND ( \
-                 to_tsvector('english', content) @@ plainto_tsquery('english', $2) \
-                 OR content ILIKE $3 ESCAPE '\\' \
+             WHERE TRUE{} AND ( \
+                 to_tsvector('english', content) @@ plainto_tsquery('english', ${q_idx}) \
+                 OR content ILIKE ${ilike_idx} ESCAPE '\\' \
              ) \
              ORDER BY coalesce( \
-                 ts_rank(to_tsvector('english', content), plainto_tsquery('english', $2)), \
+                 ts_rank(to_tsvector('english', content), plainto_tsquery('english', ${q_idx})), \
                  0 \
              ) DESC, created_at DESC \
-             LIMIT $4",
-        )
-        .bind(workspace_name)
-        .bind(query)
-        .bind(&ilike_pattern)
-        .bind(limit as i64)
-        .fetch_all(pool)
-        .await?
+             LIMIT ${limit_idx}",
+            filter.sql
+        );
+        let mut q = crate::db::bind_values_as(sqlx::query_as(&sql), &filter.bindings);
+        q = q.bind(query).bind(&ilike_pattern).bind(limit as i64);
+        q.fetch_all(pool).await?
     };
 
     Ok(rows.into_iter().map(|(public_id,)| public_id).collect())
@@ -303,6 +326,11 @@ async fn peer_filter_ids(
 pub struct HybridSearchParams<'a> {
     pub workspace_name: &'a str,
     pub query: &'a str,
+    /// The metadata filter applied to both legs, built from the request's
+    /// `filters` with `workspace_id` forced in (mirroring `apply_filter`). The
+    /// route is responsible for building this; the legs reference its bare
+    /// `messages` columns.
+    pub filter: &'a FilterClause,
     /// Pre-computed query embedding, or `None` when semantic search is disabled
     /// (no `EMBED_MESSAGES` / no embedding produced). Computed upstream by the
     /// route via [`crate::embedding::embed_openai`].
@@ -331,15 +359,21 @@ pub async fn hybrid_search(
     let mut ranked_lists: Vec<Vec<String>> = Vec::new();
 
     if let Some(embedding) = params.query_embedding {
-        let mut ids =
-            semantic_search_pgvector(pool, params.workspace_name, embedding, semantic_limit).await?;
+        let mut ids = semantic_search_pgvector(
+            pool,
+            params.workspace_name,
+            params.filter,
+            embedding,
+            semantic_limit,
+        )
+        .await?;
         if let Some(peer) = params.peer_perspective {
             ids = peer_filter_ids(pool, params.workspace_name, peer, &ids).await?;
         }
         ranked_lists.push(ids);
     }
 
-    let mut fulltext_ids = fulltext_search(pool, params.workspace_name, params.query, limit * 2).await?;
+    let mut fulltext_ids = fulltext_search(pool, params.filter, params.query, limit * 2).await?;
     if let Some(peer) = params.peer_perspective {
         fulltext_ids = peer_filter_ids(pool, params.workspace_name, peer, &fulltext_ids).await?;
     }

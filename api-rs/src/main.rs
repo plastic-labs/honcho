@@ -28,6 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .connect(&config.database_url)
         .await?;
     let bind_address = config.bind_address;
+    let embedding = config.embedding_config();
     let app = build_router(AppState::new(
         pool,
         config.auth,
@@ -36,6 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         peer_cache,
         config.embed_messages,
         config.embedding_max_tokens,
+        embedding,
     ));
 
     tracing::info!("honcho-api-rs listening on {bind_address}");

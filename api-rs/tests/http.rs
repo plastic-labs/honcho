@@ -1293,6 +1293,110 @@ async fn get_context(query: &str) -> axum::response::Response {
         .unwrap()
 }
 
+async fn post_search(body: &str) -> axum::response::Response {
+    build_router(no_auth_state())
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/search")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn search_requires_query_with_fastapi_shape() {
+    let response = post_search("{}").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "missing",
+            "loc": ["body", "query"],
+            "msg": "Field required",
+            "input": {}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn search_rejects_non_string_query() {
+    let response = post_search(r#"{"query": 123}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "string_type",
+            "loc": ["body", "query"],
+            "msg": "Input should be a valid string",
+            "input": 123
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn search_rejects_limit_below_minimum() {
+    let response = post_search(r#"{"query": "hi", "limit": 0}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "greater_than_equal",
+            "loc": ["body", "limit"],
+            "msg": "Input should be greater than or equal to 1",
+            "input": 0,
+            "ctx": {"ge": 1}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn search_rejects_limit_above_maximum() {
+    let response = post_search(r#"{"query": "hi", "limit": 101}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "less_than_equal",
+            "loc": ["body", "limit"],
+            "msg": "Input should be less than or equal to 100",
+            "input": 101,
+            "ctx": {"le": 100}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn search_rejects_fractional_limit() {
+    let response = post_search(r#"{"query": "hi", "limit": 1.5}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "int_from_float",
+            "loc": ["body", "limit"],
+            "msg": "Input should be a valid integer, got a number with a fractional part",
+            "input": 1.5
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn search_rejects_non_dict_filters() {
+    let response = post_search(r#"{"query": "hi", "filters": 5}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "dict_type",
+            "loc": ["body", "filters"],
+            "msg": "Input should be a valid dictionary",
+            "input": 5
+        }]})
+    );
+}
+
 #[tokio::test]
 async fn get_context_rejects_tokens_above_max_with_fastapi_shape() {
     let response = get_context("?tokens=150000").await;
