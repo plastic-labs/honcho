@@ -75,9 +75,11 @@ class LLMTelemetryContext:
     # agent — dialectic/deduction/induction. Used by agent iteration
     # event and tool call event.
     agent_type: str | None = None
-    # Human-readable name for the Langfuse trace (e.g. "Dialectic Agent",
-    # "Minimal Deriver"). Populated by honcho_llm_call from its track_name
-    # kwarg so honcho_llm_call_inner can name each per-call trace.
+    # Human-readable name for the Langfuse trace + per-call generation
+    # (e.g. "Dialectic Agent", "Minimal Deriver"). Sole home for this name —
+    # callers set it here; `honcho_llm_call` no longer takes a separate kwarg.
+    # Also used to label the sentry `ai_track` decorator and as the source for
+    # the run-level `langfuse_agent_run` label.
     track_name: str | None = None
 
 

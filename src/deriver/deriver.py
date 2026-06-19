@@ -147,7 +147,6 @@ async def process_representation_tasks_batch(
         model_config=model_config,
         prompt=prompt,
         max_tokens=max_tokens,
-        track_name="Minimal Deriver",
         response_model=PromptRepresentation,
         json_mode=True,
         max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
@@ -159,6 +158,7 @@ async def process_representation_tasks_batch(
             call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
             parent_category="representation",
             observed=observed,
+            track_name="Minimal Deriver",
         ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000

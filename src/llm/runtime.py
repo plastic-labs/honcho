@@ -38,7 +38,36 @@ current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
 # nested generation (run owns the trace attrs → stay silent) be told apart from
 # one that escaped its run root — e.g. the streamed final answer, drained after
 # the run trace closed, which must self-stamp and rejoin the session by run_id.
+# `stream_final_response` explicitly resets this to False around its drain so
+# the escaped-stream case doesn't depend on the run context having already
+# exited by the time chunks are consumed.
 _in_agent_run: ContextVar[bool] = ContextVar("_in_agent_run", default=False)
+
+
+def _stamp_trace_attributes(
+    *,
+    user_id: str,
+    session_id: str | None,
+    trace_name: str | None,
+    metadata: dict[str, str],
+) -> None:
+    """Apply trace-level attributes to the current @observe root span.
+
+    ``propagate_attributes`` is the only Langfuse SDK surface that sets
+    user_id / session_id / trace_name on the active trace (there is no
+    ``update_current_trace``). The context manager stamps on ``__enter__``
+    and is a no-op on ``__exit__``, so we enter and immediately exit.
+    """
+    from langfuse import propagate_attributes
+
+    cm = propagate_attributes(
+        user_id=user_id,
+        session_id=session_id,
+        trace_name=trace_name,
+        metadata=metadata,
+    )
+    cm.__enter__()
+    cm.__exit__(None, None, None)
 
 
 def annotate_current_langfuse_trace(
@@ -60,13 +89,11 @@ def annotate_current_langfuse_trace(
         return
 
     try:
-        from langfuse import get_client, propagate_attributes
+        from langfuse import get_client
 
         run_id = telemetry.run_id if telemetry is not None else None
         inside_run = run_id is not None and _in_agent_run.get()
 
-        # Only a trace-root generation stamps trace attrs; nested ones inherit
-        # them from the run root.
         if not inside_run:
             metadata = (
                 _step_metadata(telemetry)
@@ -77,18 +104,13 @@ def annotate_current_langfuse_trace(
             metadata["model"] = str(model)
             trace_name = telemetry.track_name if telemetry is not None else None
 
-            # Entering propagate_attributes stamps the active @observe root span;
-            # the empty body is intentional (no child spans to wrap here).
-            with propagate_attributes(
+            _stamp_trace_attributes(
                 user_id=str(settings.NAMESPACE),
                 session_id=run_id,
                 trace_name=trace_name,
                 metadata=metadata,
-            ):
-                pass
+            )
 
-        # Name the generation per agent (e.g. "Dialectic Agent LLM call") for
-        # clean by-name cost aggregation.
         if telemetry is not None and telemetry.track_name:
             get_client().update_current_generation(
                 name=f"{telemetry.track_name} LLM call"
@@ -97,8 +119,11 @@ def annotate_current_langfuse_trace(
         logger.debug("Failed to update Langfuse trace metadata: %s", exc)
 
 
-def _step_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
-    """Routing/attribution metadata, str-coerced for propagate_attributes."""
+def _base_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
+    """Static routing/attribution metadata (everything except ``iteration``).
+
+    Rebuilt per run (cheap); callers that need ``iteration`` copy and add it.
+    """
     metadata: dict[str, str] = {"namespace": str(settings.NAMESPACE)}
     for key, value in (
         ("workspace_name", telemetry.workspace_name),
@@ -107,10 +132,20 @@ def _step_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
         ("observer", telemetry.observer),
         ("observed", telemetry.observed),
         ("peer_name", telemetry.peer_name),
-        ("iteration", telemetry.iteration),
     ):
         if value is not None:
             metadata[key] = str(value)
+    return metadata
+
+
+def _step_metadata(
+    telemetry: LLMTelemetryContext,
+    base: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Per-step metadata: ``base`` (or freshly computed) plus ``iteration``."""
+    metadata = dict(base) if base is not None else _base_metadata(telemetry)
+    if telemetry.iteration is not None:
+        metadata["iteration"] = str(telemetry.iteration)
     return metadata
 
 
@@ -139,15 +174,17 @@ def langfuse_agent_run(
             user_id=str(settings.NAMESPACE),
             session_id=telemetry.run_id,
             trace_name=name,
-            metadata=_step_metadata(telemetry),
+            metadata=_base_metadata(telemetry),
         )
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         logger.debug("Failed to open Langfuse agent run: %s", exc)
         yield None
         return
 
-    # Nested generations stay silent while set; reset lets a streamed final
-    # answer drained afterward self-stamp as its own session-joined trace.
+    # Nested generations stay silent while set; `stream_final_response`
+    # explicitly resets this to False around its drain so a streamed final
+    # answer self-stamps as its own session-joined trace regardless of
+    # whether this context has exited by then.
     token = _in_agent_run.set(True)
     try:
         with obs_cm as span, attr_cm:

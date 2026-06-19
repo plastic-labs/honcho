@@ -286,7 +286,6 @@ If you update it, send the full deduplicated list and remove stale entries.
                 tool_executor=tool_executor,
                 max_tool_iterations=self.get_max_iterations(),
                 messages=messages,
-                track_name=f"Dreamer/{self.name}",
                 telemetry=LLMTelemetryContext(
                     workspace_name=workspace_name,
                     call_purpose=call_purpose_slug,
@@ -295,6 +294,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                     run_id=run_id,
                     observer=observer,
                     observed=observed,
+                    track_name=f"Dreamer/{self.name}",
                 ),
             )
 

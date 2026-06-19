@@ -11,7 +11,6 @@ Orchestrates:
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal, TypeVar, cast, overload
@@ -55,7 +54,6 @@ async def honcho_llm_call(
     model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
-    track_name: str | None = None,
     response_model: type[M],
     json_mode: bool = False,
     temperature: float | None = None,
@@ -85,7 +83,6 @@ async def honcho_llm_call(
     model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
-    track_name: str | None = None,
     response_model: None = None,
     json_mode: bool = False,
     temperature: float | None = None,
@@ -115,7 +112,6 @@ async def honcho_llm_call(
     model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
-    track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
@@ -144,7 +140,6 @@ async def honcho_llm_call(
     model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
-    track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
@@ -181,14 +176,8 @@ async def honcho_llm_call(
     """
     runtime_model_config = resolve_runtime_model_config(model_config)
 
-    # Default telemetry.track_name to track_name so per-call traces are named
-    # per agent rather than after the bare function.
-    if (
-        telemetry is not None
-        and track_name is not None
-        and telemetry.track_name is None
-    ):
-        telemetry = dataclasses.replace(telemetry, track_name=track_name)
+    # `track_name` for Langfuse trace/step naming lives exclusively on
+    # `telemetry.track_name` — set it there at the call site.
 
     # Caller kwargs left at None are resolved downstream by
     # effective_config_for_call against whichever ModelConfig wins the
@@ -271,8 +260,9 @@ async def honcho_llm_call(
 
     decorated = _call_with_provider_selection
 
-    if track_name:
-        decorated = ai_track(track_name)(decorated)
+    sentry_track_name = telemetry.track_name if telemetry is not None else None
+    if sentry_track_name:
+        decorated = ai_track(sentry_track_name)(decorated)
 
     def before_retry_callback(retry_state: Any) -> None:
         """Update attempt counter before each retry + log transient failures.
@@ -401,8 +391,8 @@ async def honcho_llm_call(
                 )
 
             wrapped = _toolless_call
-            if track_name:
-                wrapped = ai_track(track_name)(wrapped)
+            if sentry_track_name:
+                wrapped = ai_track(sentry_track_name)(wrapped)
             if enable_retry:
                 wrapped = retry(
                     stop=stop_after_attempt(retry_attempts),

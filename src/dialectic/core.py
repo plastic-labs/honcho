@@ -301,13 +301,14 @@ class DialecticAgent:
 
         return tool_executor, task_name, run_id, start_time
 
-    def _telemetry_context(self) -> LLMTelemetryContext:
+    def _telemetry_context(self, track_name: str | None = None) -> LLMTelemetryContext:
         """Build the LLMTelemetryContext shared by answer() and answer_stream().
 
         Carries the instance's `_run_id` (always set in __init__) + workspace +
         peer identifiers so LLMCallCompletedEvent and 's
         AgentIterationEvent can attribute every per-iteration LLM call back to
-        this dialectic invocation.
+        this dialectic invocation. `track_name` names the Langfuse trace/step
+        (e.g. "Dialectic Agent" vs "Dialectic Agent Stream").
         """
         return LLMTelemetryContext(
             workspace_name=self.workspace_name,
@@ -316,6 +317,7 @@ class DialecticAgent:
             agent_type="dialectic",
             run_id=self._run_id,
             peer_name=self.observed,
+            track_name=track_name,
         )
 
     def _log_response_metrics(
@@ -446,10 +448,9 @@ class DialecticAgent:
             tool_executor=tool_executor,
             max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
             messages=self.messages,
-            track_name="Dialectic Agent",
             max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
             trace_name="dialectic_chat",
-            telemetry=self._telemetry_context(),
+            telemetry=self._telemetry_context(track_name="Dialectic Agent"),
         )
 
         self._log_response_metrics(
@@ -515,10 +516,9 @@ class DialecticAgent:
                 tool_executor=tool_executor,
                 max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
                 messages=self.messages,
-                track_name="Dialectic Agent Stream",
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
-                telemetry=self._telemetry_context(),
+                telemetry=self._telemetry_context(track_name="Dialectic Agent Stream"),
             ),
         )
 

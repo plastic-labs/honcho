@@ -34,6 +34,7 @@ from .executor import honcho_llm_call_inner
 from .registry import history_adapter_for_provider
 from .runtime import (
     AttemptPlan,
+    _in_agent_run,  # pyright: ignore[reportPrivateUsage]  # intra-package
     annotate_langfuse_step_io,
     current_attempt,
     effective_temperature,
@@ -223,6 +224,14 @@ async def stream_final_response(
     # value — telemetry can't tell the retry sequence apart.
     stream_attempt = 0
 
+    # Streamed chunks drain after `langfuse_agent_run` has exited, so the
+    # generation inside `_setup_stream` is its own trace and self-stamps the
+    # session via run_id. Reset `_in_agent_run` locally so this decoupling no
+    # longer depends on the run context's exit timing — if a caller ever
+    # drains the stream while the run span is still open (eager iteration,
+    # nested wrapping), the inner @observe still self-stamps correctly.
+    token = _in_agent_run.set(False)
+
     async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
         nonlocal stream_attempt
         stream_attempt += 1
@@ -257,18 +266,21 @@ async def stream_final_response(
             telemetry=telemetry,
         )
 
-    if enable_retry:
-        wrapped = retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            before_sleep=before_retry_callback,
-        )(_setup_stream)
-        stream = await wrapped()
-    else:
-        stream = await _setup_stream()
+    try:
+        if enable_retry:
+            wrapped = retry(
+                stop=stop_after_attempt(retry_attempts),
+                wait=wait_exponential(multiplier=1, min=4, max=10),
+                before_sleep=before_retry_callback,
+            )(_setup_stream)
+            stream = await wrapped()
+        else:
+            stream = await _setup_stream()
 
-    async for chunk in stream:
-        yield chunk
+        async for chunk in stream:
+            yield chunk
+    finally:
+        _in_agent_run.reset(token)
 
 
 @_with_iteration_scope
@@ -545,28 +557,30 @@ async def execute_tool_loop(
 
             append_tool_results(current_provider, tool_results, conversation_messages)
 
-            if iteration_callback is not None:
-                try:
-                    iteration_data = IterationData(
-                        iteration=iteration + 1,
-                        tool_calls=[tc["name"] for tc in response.tool_calls_made],
-                        input_tokens=response.input_tokens,
-                        output_tokens=response.output_tokens,
-                        cache_read_tokens=response.cache_read_input_tokens or 0,
-                        cache_creation_tokens=response.cache_creation_input_tokens or 0,
-                    )
-                    iteration_callback(iteration_data)
-                except Exception:
-                    logger.warning("iteration_callback failed", exc_info=True)
-
-            # After first iteration, switch "required"/"any" → "auto" so the model can stop.
-            if iteration == 0 and effective_tool_choice in ("required", "any"):
-                effective_tool_choice = "auto"
-                logger.debug(
-                    "Switched tool_choice from 'required'/'any' to 'auto' after first iteration"
+        # Between-turn bookkeeping lives outside the step span — the span
+        # scopes the LLM call + its tools, not the iteration accounting.
+        if iteration_callback is not None:
+            try:
+                iteration_data = IterationData(
+                    iteration=iteration + 1,
+                    tool_calls=[tc["name"] for tc in response.tool_calls_made],
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                    cache_read_tokens=response.cache_read_input_tokens or 0,
+                    cache_creation_tokens=response.cache_creation_input_tokens or 0,
                 )
+                iteration_callback(iteration_data)
+            except Exception:
+                logger.warning("iteration_callback failed", exc_info=True)
 
-            iteration += 1
+        # After first iteration, switch "required"/"any" → "auto" so the model can stop.
+        if iteration == 0 and effective_tool_choice in ("required", "any"):
+            effective_tool_choice = "auto"
+            logger.debug(
+                "Switched tool_choice from 'required'/'any' to 'auto' after first iteration"
+            )
+
+        iteration += 1
 
     logger.warning(
         f"Tool execution loop reached max iterations ({max_tool_iterations})"
