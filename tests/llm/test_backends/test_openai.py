@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from src.exceptions import ValidationException
 from src.llm.backends.openai import OpenAIBackend
 
 
@@ -363,6 +364,26 @@ async def test_openai_backend_operator_extra_body_wins_over_auto_injection() -> 
     call = await_args.kwargs
     # Operator's whole `reasoning` dict replaces Honcho's auto-injected one.
     assert call["extra_body"] == {"reasoning": {"effort": "high", "max_tokens": 9999}}
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_rejects_non_mapping_passthrough() -> None:
+    """A non-mapping passthrough (operator misconfiguration) raises a clear
+    ValidationException instead of an opaque TypeError deep in the transport.
+    """
+    client = Mock()
+    client.chat.completions.create = AsyncMock()
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(ValidationException, match="provider_params.extra_headers"):
+        await backend.complete(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            extra_params={"extra_headers": [["X-Foo", "bar"]]},
+        )
+
+    client.chat.completions.create.assert_not_awaited()
 
 
 @pytest.mark.asyncio

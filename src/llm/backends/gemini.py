@@ -14,6 +14,7 @@ from src.llm.caching import (
     build_cache_key,
     gemini_cache_store,
 )
+from src.llm.request_builder import coerce_passthrough_mapping
 from src.llm.structured_output import repair_response_model_json
 
 GEMINI_BLOCKED_FINISH_REASONS = {
@@ -256,12 +257,16 @@ class GeminiBackend:
         if extra_params:
             operator_extra_body = extra_params.get("extra_body")
             if operator_extra_body:
-                config.update(operator_extra_body)
+                config.update(
+                    coerce_passthrough_mapping("extra_body", operator_extra_body)
+                )
             operator_extra_headers = extra_params.get("extra_headers")
             if operator_extra_headers:
                 http_options = config.setdefault("http_options", {})
                 existing_headers = http_options.setdefault("headers", {})
-                existing_headers.update(operator_extra_headers)
+                existing_headers.update(
+                    coerce_passthrough_mapping("extra_headers", operator_extra_headers)
+                )
         return config
 
     def _normalize_response(

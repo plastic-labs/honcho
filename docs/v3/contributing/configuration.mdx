@@ -185,6 +185,33 @@ Each model config supports an `overrides.provider_params` dict for passing arbit
 verbosity = "low"
 ```
 
+#### Transport passthrough keys
+
+Three keys inside `provider_params` are recognized as request-level escape hatches and forwarded to the underlying transport. Their values must be mappings — a non-mapping value raises a configuration error:
+
+- **`extra_body`** — merged into the request body
+- **`extra_headers`** — extra HTTP headers
+- **`extra_query`** — extra URL query parameters
+
+How each transport forwards them differs:
+
+- **OpenAI and Anthropic** forward all three as identically-named SDK kwargs (`extra_body`, `extra_headers`, `extra_query`).
+- **Gemini** has no SDK kwargs for these. It merges `extra_body` into the `GenerateContentConfig` dict and folds `extra_headers` into `http_options.headers`; `extra_query` is **unsupported and silently ignored**.
+
+The merge is shallow and **operator-wins**: if Honcho and your config both set the same top-level key inside `extra_body`, your value replaces Honcho's. You are responsible for choosing a coherent combination — e.g. unset `thinking_budget_tokens` when supplying an `extra_body.thinking` for Anthropic-via-proxy, since Honcho will not translate between the two shapes.
+
+Because Gemini merges `extra_body` directly into `GenerateContentConfig` (rather than a nested request body), an `extra_body` written for OpenAI/Anthropic generally will not transfer to Gemini unchanged — and a key collision there can overwrite a field Honcho manages (`thinking_config`, `response_schema`, `tools`, …).
+
+```toml
+# Example: route an OpenAI-compatible proxy and tag requests for tracing
+[deriver.model_config.overrides.provider_params.extra_headers]
+X-Proxy-Route = "vertex"
+
+[deriver.model_config.overrides.provider_params.extra_body]
+# Provider-native body fields the standard config doesn't expose
+anthropic_beta = ["context-1m-2025-01-15"]
+```
+
 ### Changing Transport
 
 When changing a feature's `transport`, always specify `model` explicitly. Partial overrides that change transport without model will keep the previous model name, which may not be valid for the new provider.

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
+from src.llm.request_builder import apply_sdk_passthroughs
 from src.llm.structured_output import (
     repair_response_model_json,
     validate_structured_output,
@@ -328,11 +329,7 @@ class OpenAIBackend:
             # ModelConfig.provider_params. Shallow merge with operator-wins —
             # if the operator supplies `extra_body.reasoning`, it replaces any
             # value Honcho auto-injected above.
-            for passthrough_key in ("extra_body", "extra_headers", "extra_query"):
-                operator_value = extra_params.get(passthrough_key)
-                if operator_value:
-                    existing = params.setdefault(passthrough_key, {})
-                    existing.update(operator_value)
+            apply_sdk_passthroughs(params, extra_params)
         return params
 
     def _normalize_response(
