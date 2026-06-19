@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{TimeZone, Utc};
 use honcho_api_rs::db;
-use honcho_api_rs::db::{ConclusionWriteError, MessageInsert, NewConclusion};
+use honcho_api_rs::db::{ConclusionWriteError, MessageInsert, MessageSnippet, NewConclusion};
 use honcho_api_rs::embedding;
 use honcho_api_rs::filters::{FilterClause, FilterTarget, build_filter_clause};
 use honcho_api_rs::llm::http::{Credentials, ReqwestHttp};
@@ -1193,6 +1193,69 @@ async fn enqueue_dream_inserts_queue_item_and_dedups() {
     .await
     .expect("count dream rows");
     assert_eq!(count, 1);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn grep_messages_builds_and_merges_context_snippets() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // seqs 1..6 assigned in insertion order.
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "alpha"),
+            message("bob", "find me here"),
+            message("alice", "beta"),
+            message("bob", "gamma"),
+            message("alice", "delta"),
+            message("bob", "find me too"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+
+    // context_window = 1: the two matches (seq 2 and seq 6) are far enough apart
+    // (3 + 1 < 5) to stay separate -> two snippets, each re-sorted by sequence.
+    let snippets: Vec<MessageSnippet> =
+        db::grep_messages(&test_db.pool, "ws", Some("sess"), "find me", 10, 1, None)
+            .await
+            .expect("grep cw=1");
+    assert_eq!(snippets.len(), 2);
+    // First snippet: match seq 2, context seq 1..=3.
+    assert_eq!(snippets[0].matched.len(), 1);
+    assert_eq!(snippets[0].matched[0]["content"], json!("find me here"));
+    assert_eq!(snippets[0].context.len(), 3);
+    assert_eq!(snippets[0].context[0]["content"], json!("alpha"));
+    assert_eq!(snippets[0].context[2]["content"], json!("beta"));
+    // Second snippet: match seq 6, context seq 5..=6 (no seq 7 exists).
+    assert_eq!(snippets[1].matched.len(), 1);
+    assert_eq!(snippets[1].matched[0]["content"], json!("find me too"));
+    assert_eq!(snippets[1].context.len(), 2);
+    assert_eq!(snippets[1].context[0]["content"], json!("delta"));
+
+    // context_window = 2: seq-2 window [0,4] and seq-6 window [4,8] are adjacent
+    // (4 <= 4 + 1) -> merged into one snippet covering all six messages.
+    let merged: Vec<MessageSnippet> =
+        db::grep_messages(&test_db.pool, "ws", Some("sess"), "find me", 10, 2, None)
+            .await
+            .expect("grep cw=2");
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].matched.len(), 2);
+    assert_eq!(merged[0].context.len(), 6);
+
+    // observer with no session memberships -> empty, before any message scan.
+    let none = db::grep_messages(&test_db.pool, "ws", None, "find me", 10, 1, Some("ghost"))
+        .await
+        .expect("grep ghost observer");
+    assert!(none.is_empty());
 
     test_db.teardown().await;
 }

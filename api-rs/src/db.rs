@@ -1573,6 +1573,176 @@ pub async fn get_messages_by_date_range(
     Ok(rows.into_iter().map(message_json).collect())
 }
 
+/// A message row carrying `seq_in_session`, needed by the snippet-merging logic
+/// behind `grep_messages` / `search_messages` (the date-range/list paths don't
+/// need the sequence number, so the leaner [`MessageRow`] is used there).
+#[derive(Debug, FromRow)]
+struct SnippetMessageRow {
+    public_id: String,
+    content: String,
+    peer_name: String,
+    session_name: String,
+    metadata: Value,
+    created_at: DateTime<Utc>,
+    workspace_name: String,
+    token_count: i32,
+    seq_in_session: i64,
+}
+
+fn snippet_message_json(row: &SnippetMessageRow) -> Value {
+    json!({
+        "id": row.public_id,
+        "content": row.content,
+        "peer_id": row.peer_name,
+        "session_id": row.session_name,
+        "metadata": row.metadata,
+        "created_at": row.created_at,
+        "workspace_id": row.workspace_name,
+        "token_count": row.token_count
+    })
+}
+
+/// One conversation snippet: the matched messages merged into this range, plus
+/// the full context window around them (which includes the matched messages),
+/// ordered chronologically by `seq_in_session`. Ports the
+/// `(matched, context)` tuple the dialectic `grep_messages` / `search_messages`
+/// tools return. Messages are serialized in the public message JSON shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MessageSnippet {
+    pub matched: Vec<Value>,
+    pub context: Vec<Value>,
+}
+
+/// Port of `crud.grep_messages` (the dialectic `grep_messages` tool's data
+/// layer): case-insensitive substring match (`ILIKE %text%` with `\` escape,
+/// newest-first, limited), optionally scoped to a session — or, when `observer`
+/// is given without a session, to that peer's sessions (no memberships → empty)
+/// — then grouped into merged context-window snippets via
+/// [`build_merged_snippets`].
+#[allow(clippy::too_many_arguments)]
+pub async fn grep_messages(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: Option<&str>,
+    text: &str,
+    limit: i64,
+    context_window: i64,
+    observer: Option<&str>,
+) -> Result<Vec<MessageSnippet>, sqlx::Error> {
+    let allowed_sessions: Option<Vec<String>> = match (observer, session_name) {
+        (Some(observer), None) => {
+            let names = fetch_peer_session_names(pool, workspace_name, observer).await?;
+            if names.is_empty() {
+                return Ok(Vec::new());
+            }
+            Some(names)
+        }
+        _ => None,
+    };
+
+    let pattern = format!("%{}%", crate::search::escape_ilike_pattern(text));
+    let mut sql = String::from(
+        "SELECT public_id, content, peer_name, session_name, metadata, created_at, \
+         workspace_name, token_count, seq_in_session FROM messages \
+         WHERE workspace_name = $1 AND content ILIKE $2 ESCAPE '\\'",
+    );
+    let mut placeholder = 2;
+    if session_name.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND session_name = ${placeholder}"));
+    } else if allowed_sessions.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND session_name = ANY(${placeholder})"));
+    }
+    placeholder += 1;
+    sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ${placeholder}"));
+
+    let mut query = sqlx::query_as::<_, SnippetMessageRow>(&sql)
+        .bind(workspace_name)
+        .bind(pattern);
+    if let Some(session) = session_name {
+        query = query.bind(session);
+    } else if let Some(names) = allowed_sessions.as_ref() {
+        query = query.bind(names);
+    }
+    query = query.bind(limit);
+    let matched = query.fetch_all(pool).await?;
+
+    build_merged_snippets(pool, workspace_name, matched, context_window).await
+}
+
+/// Port of `_build_merged_snippets`: group matches by session (preserving the
+/// first-seen session order, like Python's insertion-ordered dict), sort each
+/// session's matches by `seq_in_session`, merge overlapping/adjacent
+/// context windows (`start <= prev_end + 1`), then fetch the full message range
+/// for each merged window. Returns one snippet per merged range.
+async fn build_merged_snippets(
+    pool: &PgPool,
+    workspace_name: &str,
+    matched_messages: Vec<SnippetMessageRow>,
+    context_window: i64,
+) -> Result<Vec<MessageSnippet>, sqlx::Error> {
+    if matched_messages.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Group by session, preserving first-seen order (Python dict semantics).
+    let mut session_matches: Vec<(String, Vec<SnippetMessageRow>)> = Vec::new();
+    for msg in matched_messages {
+        match session_matches
+            .iter_mut()
+            .find(|(name, _)| name == &msg.session_name)
+        {
+            Some((_, matches)) => matches.push(msg),
+            None => session_matches.push((msg.session_name.clone(), vec![msg])),
+        }
+    }
+
+    let mut snippets: Vec<MessageSnippet> = Vec::new();
+    for (sess_name, mut matches) in session_matches {
+        // Stable sort by sequence number (Python list.sort is stable).
+        matches.sort_by_key(|m| m.seq_in_session);
+
+        // Merge ranges: (start, end, matched-rows-in-range).
+        let mut merged: Vec<(i64, i64, Vec<SnippetMessageRow>)> = Vec::new();
+        for m in matches {
+            let start = m.seq_in_session - context_window;
+            let end = m.seq_in_session + context_window;
+            if let Some(last) = merged.last_mut()
+                && start <= last.1 + 1
+            {
+                last.1 = last.1.max(end);
+                last.2.push(m);
+                continue;
+            }
+            merged.push((start, end, vec![m]));
+        }
+
+        for (start, end, range_matches) in merged {
+            let context_rows: Vec<SnippetMessageRow> = sqlx::query_as(
+                "SELECT public_id, content, peer_name, session_name, metadata, created_at, \
+                 workspace_name, token_count, seq_in_session FROM messages \
+                 WHERE workspace_name = $1 AND session_name = $2 \
+                 AND seq_in_session BETWEEN $3 AND $4 \
+                 ORDER BY seq_in_session ASC",
+            )
+            .bind(workspace_name)
+            .bind(&sess_name)
+            .bind(start)
+            .bind(end)
+            .fetch_all(pool)
+            .await?;
+
+            snippets.push(MessageSnippet {
+                matched: range_matches.iter().map(snippet_message_json).collect(),
+                context: context_rows.iter().map(snippet_message_json).collect(),
+            });
+        }
+    }
+
+    Ok(snippets)
+}
+
 /// A validated conclusion to create, plus its pre-computed embedding (computed
 /// in the handler, outside any DB session).
 #[derive(Debug, Clone)]
