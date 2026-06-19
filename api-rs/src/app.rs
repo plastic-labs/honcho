@@ -32,6 +32,7 @@ pub struct AppState {
     pub embed_messages: bool,
     pub embedding_max_tokens: usize,
     pub embedding: EmbeddingConfig,
+    pub dream_enabled: bool,
 }
 
 fn default_test_embedding_config() -> EmbeddingConfig {
@@ -56,6 +57,7 @@ impl AppState {
         embed_messages: bool,
         embedding_max_tokens: usize,
         embedding: EmbeddingConfig,
+        dream_enabled: bool,
     ) -> Self {
         Self {
             pool: Some(pool),
@@ -66,6 +68,7 @@ impl AppState {
             embed_messages,
             embedding_max_tokens,
             embedding,
+            dream_enabled,
         }
     }
 
@@ -79,6 +82,7 @@ impl AppState {
             embed_messages: false,
             embedding_max_tokens: 8192,
             embedding: default_test_embedding_config(),
+            dream_enabled: true,
         }
     }
 
@@ -92,6 +96,7 @@ impl AppState {
             embed_messages: false,
             embedding_max_tokens: 8192,
             embedding: default_test_embedding_config(),
+            dream_enabled: true,
         }
     }
 
@@ -278,6 +283,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v3/workspaces/{workspace_id}/queue/status",
             get(queue_status),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/schedule_dream",
+            post(schedule_dream),
         )
         .route(
             "/v3/workspaces/{workspace_id}/webhooks",
@@ -1103,6 +1112,148 @@ async fn queue_status(
     )
     .await?;
     Ok(Json(value))
+}
+
+async fn schedule_dream(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        None,
+    )?;
+    ensure_writes_enabled(&state)?;
+
+    let request = parse_schedule_dream(body)?;
+
+    // FastAPI validates the body before the handler, so a 422 precedes this 400.
+    if !state.dream_enabled {
+        return Err(ApiError::BadRequest(
+            "Dreams are not enabled in the system configuration".to_string(),
+        ));
+    }
+
+    // observed defaults to observer.
+    let observed = request.observed.as_deref().unwrap_or(&request.observer);
+    db::enqueue_dream(
+        state.pool()?,
+        &workspace_id,
+        &request.observer,
+        observed,
+        request.dream_type.as_str(),
+        request.session_id.as_deref(),
+    )
+    .await?;
+
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+struct ScheduleDreamRequest {
+    observer: String,
+    observed: Option<String>,
+    dream_type: String,
+    session_id: Option<String>,
+}
+
+/// Port of `ScheduleDreamRequest` validation: `observer` (required string),
+/// `observed` (optional string), `dream_type` (required `DreamType` enum — only
+/// `"omni"`), `session_id` (optional string). First error wins in field order.
+fn parse_schedule_dream(body: Value) -> Result<ScheduleDreamRequest, ApiError> {
+    let object = body.as_object();
+
+    let observer = match object.and_then(|map| map.get("observer")) {
+        Some(Value::String(value)) => value.clone(),
+        Some(other) => {
+            return Err(validation_error(
+                "string_type",
+                &["observer"],
+                "Input should be a valid string",
+                other.clone(),
+                None,
+            ));
+        }
+        None => {
+            return Err(validation_error(
+                "missing",
+                &["observer"],
+                "Field required",
+                body.clone(),
+                None,
+            ));
+        }
+    };
+
+    let observed = match object.and_then(|map| map.get("observed")) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(other) => {
+            return Err(validation_error(
+                "string_type",
+                &["observed"],
+                "Input should be a valid string",
+                other.clone(),
+                None,
+            ));
+        }
+    };
+
+    let dream_type = match object.and_then(|map| map.get("dream_type")) {
+        Some(Value::String(value)) if value == "omni" => value.clone(),
+        Some(value @ Value::String(_)) => {
+            return Err(validation_error(
+                "enum",
+                &["dream_type"],
+                "Input should be 'omni'",
+                value.clone(),
+                Some(json!({ "expected": "'omni'" })),
+            ));
+        }
+        Some(other) => {
+            return Err(validation_error(
+                "enum",
+                &["dream_type"],
+                "Input should be 'omni'",
+                other.clone(),
+                Some(json!({ "expected": "'omni'" })),
+            ));
+        }
+        None => {
+            return Err(validation_error(
+                "missing",
+                &["dream_type"],
+                "Field required",
+                body.clone(),
+                None,
+            ));
+        }
+    };
+
+    let session_id = match object.and_then(|map| map.get("session_id")) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(other) => {
+            return Err(validation_error(
+                "string_type",
+                &["session_id"],
+                "Input should be a valid string",
+                other.clone(),
+                None,
+            ));
+        }
+    };
+
+    Ok(ScheduleDreamRequest {
+        observer,
+        observed,
+        dream_type,
+        session_id,
+    })
 }
 
 async fn list_webhook_endpoints(

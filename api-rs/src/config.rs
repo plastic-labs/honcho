@@ -37,6 +37,9 @@ pub struct AppConfig {
     pub embedding_api_key: Option<String>,
     /// Optional embedding endpoint override (`EMBEDDING_BASE_URL`).
     pub embedding_base_url: Option<String>,
+    /// Whether dream scheduling is enabled (`DREAM_ENABLED`, Python
+    /// `settings.DREAM.ENABLED`, default true). `schedule_dream` 400s when off.
+    pub dream_enabled: bool,
 }
 
 /// The resolved embedding configuration the synchronous search-query embedding
@@ -208,6 +211,12 @@ impl AppConfig {
             .map(String::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
+        let dream_enabled = values
+            .get("DREAM_ENABLED")
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(parse_bool)
+            .unwrap_or(true);
 
         let jwt_secret = values
             .get("AUTH_JWT_SECRET")
@@ -240,6 +249,7 @@ impl AppConfig {
             embedding_send_dimensions,
             embedding_api_key,
             embedding_base_url,
+            dream_enabled,
         })
     }
 }

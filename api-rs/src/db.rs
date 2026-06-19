@@ -2168,6 +2168,67 @@ pub async fn insert_queue_records(
     Ok(())
 }
 
+/// Port of `enqueue_dream` (the `schedule_dream` route's manual path): enqueue
+/// a `dream` queue item for `(observer, observed)`, deduplicated against an
+/// in-progress `active_queue_sessions` row or a pending (`processed = false`)
+/// queue item with the same work_unit_key. A skipped enqueue is a no-op (the
+/// route still returns 204). Payload mirrors `DreamPayload` model_dump with the
+/// manual `trigger_reason`/`delay_reason` sentinels.
+pub async fn enqueue_dream(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    dream_type: &str,
+    session_name: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    let work_unit_key = format!("dream:{dream_type}:{workspace_name}:{observer}:{observed}");
+
+    let in_progress: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM active_queue_sessions WHERE work_unit_key = $1)",
+    )
+    .bind(&work_unit_key)
+    .fetch_one(pool)
+    .await?;
+    if in_progress {
+        return Ok(());
+    }
+
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM queue WHERE work_unit_key = $1 AND processed = false)",
+    )
+    .bind(&work_unit_key)
+    .fetch_one(pool)
+    .await?;
+    if pending {
+        return Ok(());
+    }
+
+    let mut payload = serde_json::Map::from_iter([
+        ("task_type".to_string(), Value::String("dream".to_string())),
+        ("dream_type".to_string(), Value::String(dream_type.to_string())),
+        ("observer".to_string(), Value::String(observer.to_string())),
+        ("observed".to_string(), Value::String(observed.to_string())),
+    ]);
+    if let Some(session) = session_name {
+        payload.insert("session_name".to_string(), Value::String(session.to_string()));
+    }
+    payload.insert("trigger_reason".to_string(), Value::String("manual".to_string()));
+    payload.insert("delay_reason".to_string(), Value::String("immediate".to_string()));
+
+    sqlx::query(
+        "INSERT INTO queue \
+         (work_unit_key, payload, session_id, task_type, workspace_name, message_id) \
+         VALUES ($1, $2, NULL, 'dream', $3, NULL)",
+    )
+    .bind(&work_unit_key)
+    .bind(Value::Object(payload))
+    .bind(workspace_name)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Failure modes of `enqueue_workspace_deletion`, mapped to the same HTTP
 /// statuses Python's `delete_workspace` produces.
 #[derive(Debug)]

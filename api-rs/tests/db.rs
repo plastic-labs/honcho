@@ -1138,6 +1138,65 @@ async fn enqueue_workspace_deletion_inserts_queue_item_and_guards() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn enqueue_dream_inserts_queue_item_and_dedups() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws-dream", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    // First enqueue writes a single `dream` queue item.
+    db::enqueue_dream(&test_db.pool, "ws-dream", "alice", "alice", "omni", None)
+        .await
+        .expect("enqueue dream");
+
+    let row = sqlx::query(
+        "SELECT work_unit_key, payload, task_type, workspace_name, session_id, message_id \
+         FROM queue WHERE workspace_name = $1 AND task_type = 'dream'",
+    )
+    .bind("ws-dream")
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("dream queue row");
+    let work_unit_key: String = row.get("work_unit_key");
+    let payload: Value = row.get("payload");
+    let session_id: Option<String> = row.get("session_id");
+    let message_id: Option<i64> = row.get("message_id");
+    assert_eq!(work_unit_key, "dream:omni:ws-dream:alice:alice");
+    assert_eq!(
+        payload,
+        json!({
+            "task_type": "dream",
+            "dream_type": "omni",
+            "observer": "alice",
+            "observed": "alice",
+            "trigger_reason": "manual",
+            "delay_reason": "immediate"
+        })
+    );
+    assert_eq!(session_id, None);
+    assert_eq!(message_id, None);
+
+    // A second enqueue with the same work_unit_key is skipped while the first is
+    // still pending (processed = false) -> still exactly one row.
+    db::enqueue_dream(&test_db.pool, "ws-dream", "alice", "alice", "omni", None)
+        .await
+        .expect("enqueue dream (dedup)");
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queue WHERE workspace_name = $1 AND task_type = 'dream'",
+    )
+    .bind("ws-dream")
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("count dream rows");
+    assert_eq!(count, 1);
+
+    test_db.teardown().await;
+}
+
 /// A real (or arbitrary) 1536-d vector as a pgvector text literal `[v1,v2,...]`.
 fn vector_literal(values: &[f32]) -> String {
     let mut s = String::from("[");

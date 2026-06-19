@@ -217,6 +217,116 @@ async fn workspace_delete_route_is_disabled_by_default() {
 }
 
 #[tokio::test]
+async fn schedule_dream_route_is_disabled_by_default() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/schedule_dream")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"observer":"alice","dream_type":"omni"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
+async fn schedule_dream_requires_observer() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/schedule_dream")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"dream_type":"omni"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "missing",
+                "loc": ["body", "observer"],
+                "msg": "Field required",
+                "input": {"dream_type": "omni"}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn schedule_dream_rejects_invalid_dream_type() {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/schedule_dream")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"observer":"alice","dream_type":"lucid"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({
+            "detail": [{
+                "type": "enum",
+                "loc": ["body", "dream_type"],
+                "msg": "Input should be 'omni'",
+                "input": "lucid",
+                "ctx": {"expected": "'omni'"}
+            }]
+        })
+    );
+}
+
+#[tokio::test]
+async fn schedule_dream_returns_400_when_dreams_disabled() {
+    // Body validation (422) precedes the DREAM.ENABLED check, so a valid body
+    // is required to reach the 400 branch — which fires before any DB access.
+    let mut state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    state.dream_enabled = false;
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/schedule_dream")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"observer":"alice","dream_type":"omni"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Dreams are not enabled in the system configuration"})
+    );
+}
+
+#[tokio::test]
 async fn workspace_update_route_rejects_invalid_path_name() {
     let state = AppState::for_test_with_writes(AuthConfig {
         use_auth: false,

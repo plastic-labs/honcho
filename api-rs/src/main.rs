@@ -29,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?;
     let bind_address = config.bind_address;
     let embedding = config.embedding_config();
+    let dream_enabled = config.dream_enabled;
     let app = build_router(AppState::new(
         pool,
         config.auth,
@@ -38,6 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.embed_messages,
         config.embedding_max_tokens,
         embedding,
+        dream_enabled,
     ));
 
     tracing::info!("honcho-api-rs listening on {bind_address}");
