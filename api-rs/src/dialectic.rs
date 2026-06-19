@@ -779,6 +779,138 @@ impl<E: Embedder + Sync> ToolExecutor for DialecticToolExecutor<'_, E> {
     }
 }
 
+/// The dialectic agent's tool schemas (`DIALECTIC_TOOLS`), verbatim from Python's
+/// `TOOLS`, in Anthropic-native `{name, description, input_schema}` form — the
+/// provider request builders (`backends::{anthropic,openai}::build_request`)
+/// convert these to each backend's wire shape. `search_memory` is included for
+/// the LLM to call even though its handler (a `Representation`) is not yet ported.
+pub fn dialectic_tools() -> Vec<serde_json::Value> {
+    vec![
+        search_memory_tool(),
+        search_messages_tool(),
+        get_observation_context_tool(),
+        grep_messages_tool(),
+        get_messages_by_date_range_tool(),
+        search_messages_temporal_tool(),
+        get_reasoning_chain_tool(),
+    ]
+}
+
+/// The reduced toolset used at the `minimal` reasoning level
+/// (`DIALECTIC_TOOLS_MINIMAL`): just `search_memory` + `search_messages`.
+pub fn dialectic_tools_minimal() -> Vec<serde_json::Value> {
+    vec![search_memory_tool(), search_messages_tool()]
+}
+
+fn search_memory_tool() -> serde_json::Value {
+    serde_json::json!({
+        "name": "search_memory",
+        "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query text"},
+                "top_k": {"type": "integer", "description": "(Optional) number of results to return (default: 20, max: 40)", "default": 20}
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn search_messages_tool() -> serde_json::Value {
+    serde_json::json!({
+        "name": "search_messages",
+        "description": "Search for messages using semantic similarity and retrieve conversation snippets. Returns matching messages with surrounding context (2 messages before and after). Nearby matches within the same session are merged into a single snippet to avoid repetition.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query text to find relevant messages"},
+                "limit": {"type": "integer", "description": "Maximum number of matching messages to return (default: 10, max: 20)", "default": 10}
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn get_observation_context_tool() -> serde_json::Value {
+    serde_json::json!({
+        "name": "get_observation_context",
+        "description": "Retrieve messages for given message IDs along with surrounding context. Takes message IDs (from an observation's message_ids field) and retrieves those messages plus the messages immediately before and after each one to provide conversation context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "message_ids": {"type": "array", "items": {"type": "string"}, "description": "List of message IDs to retrieve (get these from observation.message_ids in search results)"}
+            },
+            "required": ["message_ids"]
+        }
+    })
+}
+
+fn grep_messages_tool() -> serde_json::Value {
+    serde_json::json!({
+        "name": "grep_messages",
+        "description": "Search for messages containing specific text (case-insensitive). Unlike semantic search, this finds EXACT text matches. Use for finding specific names, dates, phrases, or keywords mentioned in conversations. Returns messages with surrounding context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Text to search for (case-insensitive substring match)"},
+                "limit": {"type": "integer", "description": "Maximum messages to return (default: 10, max: 30)", "default": 10},
+                "context_window": {"type": "integer", "description": "Number of messages before/after each match to include (default: 2)", "default": 2}
+            },
+            "required": ["text"]
+        }
+    })
+}
+
+fn get_messages_by_date_range_tool() -> serde_json::Value {
+    serde_json::json!({
+        "name": "get_messages_by_date_range",
+        "description": "Get messages from a specific date range. Use this to find what was discussed during a particular time period, or to compare information before vs after a date. Essential for knowledge update questions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "after_date": {"type": "string", "description": "Start date (ISO format, e.g., '2024-01-15'). Returns messages after this date."},
+                "before_date": {"type": "string", "description": "End date (ISO format). Returns messages before this date."},
+                "limit": {"type": "integer", "description": "Maximum messages to return (default: 20, max: 50)", "default": 20},
+                "order": {"type": "string", "enum": ["asc", "desc"], "description": "Sort order: 'asc' for oldest first, 'desc' for newest first (default: desc)", "default": "desc"}
+            }
+        }
+    })
+}
+
+fn search_messages_temporal_tool() -> serde_json::Value {
+    serde_json::json!({
+        "name": "search_messages_temporal",
+        "description": "Semantic search for messages with optional date filtering. Combines the power of semantic search with time constraints. Use after_date to find recent mentions of a topic, or before_date to find what was said about something before a certain point. Best for knowledge update questions where you need to find the MOST RECENT discussion of a topic.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Semantic search query"},
+                "after_date": {"type": "string", "description": "Only return messages after this date (ISO format, e.g., '2024-01-15')"},
+                "before_date": {"type": "string", "description": "Only return messages before this date (ISO format)"},
+                "limit": {"type": "integer", "description": "Maximum messages to return (default: 10, max: 20)", "default": 10},
+                "context_window": {"type": "integer", "description": "Messages before/after each match (default: 2)", "default": 2}
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn get_reasoning_chain_tool() -> serde_json::Value {
+    serde_json::json!({
+        "name": "get_reasoning_chain",
+        "description": "Get the reasoning chain for an observation - traverse the tree to find premises (for deductive) or sources (for inductive), and/or find conclusions derived from this observation. Use this to understand how an observation was derived or what conclusions depend on it.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "observation_id": {"type": "string", "description": "The document ID of the observation to get the reasoning chain for"},
+                "direction": {"type": "string", "enum": ["premises", "conclusions", "both"], "description": "'premises' to get what this observation is based on, 'conclusions' to get what depends on it, 'both' for full context", "default": "both"}
+            },
+            "required": ["observation_id"]
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -943,6 +1075,42 @@ mod tests {
              --- Snippet 1 (session: s1, 1 match(es)) ---\n\
              2023-05-08 13:56:00 alice: look here now"
         );
+    }
+
+    #[test]
+    fn dialectic_tool_schemas_match_python() {
+        let tools = dialectic_tools();
+        let names: Vec<&str> = tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "search_memory",
+                "search_messages",
+                "get_observation_context",
+                "grep_messages",
+                "get_messages_by_date_range",
+                "search_messages_temporal",
+                "get_reasoning_chain",
+            ]
+        );
+        // Spot-check a schema's shape (Anthropic-native input_schema).
+        let grep = &tools[3];
+        assert_eq!(grep["input_schema"]["required"], json!(["text"]));
+        assert_eq!(grep["input_schema"]["properties"]["limit"]["default"], json!(10));
+        assert_eq!(
+            grep["input_schema"]["properties"]["context_window"]["default"],
+            json!(2)
+        );
+
+        let minimal = dialectic_tools_minimal();
+        let minimal_names: Vec<&str> = minimal
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(minimal_names, vec!["search_memory", "search_messages"]);
     }
 
     #[test]
