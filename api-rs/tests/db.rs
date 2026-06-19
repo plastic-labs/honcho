@@ -1633,3 +1633,73 @@ async fn get_messages_by_date_range_filters_orders_and_scopes() {
 
     test_db.teardown().await;
 }
+
+#[allow(clippy::too_many_arguments)]
+async fn seed_document_full(
+    pool: &PgPool,
+    id: &str,
+    content: &str,
+    times_derived: i32,
+    created_at: chrono::DateTime<Utc>,
+) {
+    sqlx::query(
+        "INSERT INTO documents \
+         (id, content, workspace_name, observer, observed, level, times_derived, created_at, sync_state) \
+         VALUES ($1, $2, 'ws', 'obs', 'obsd', 'explicit', $3, $4, 'synced')",
+    )
+    .bind(id)
+    .bind(content)
+    .bind(times_derived)
+    .bind(created_at)
+    .execute(pool)
+    .await
+    .expect("seed document full");
+}
+
+#[tokio::test]
+async fn query_documents_recent_and_most_derived_order_correctly() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    sqlx::query(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, 'ws', 'obs', 'obsd')",
+    )
+    .bind(doc_id(99))
+    .execute(&test_db.pool)
+    .await
+    .expect("collection");
+
+    let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let t2 = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+    let t3 = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap();
+    // (content, times_derived, created_at)
+    seed_document_full(&test_db.pool, &doc_id(1), "oldest_low", 1, t1).await;
+    seed_document_full(&test_db.pool, &doc_id(2), "middle_high", 5, t2).await;
+    seed_document_full(&test_db.pool, &doc_id(3), "newest_mid", 3, t3).await;
+
+    // Recent: newest created_at first.
+    let recent = db::query_documents_recent(&test_db.pool, "ws", "obs", "obsd", None, 10)
+        .await
+        .expect("recent");
+    let recent_contents: Vec<&str> = recent.iter().filter_map(|d| d["content"].as_str()).collect();
+    assert_eq!(recent_contents, vec!["newest_mid", "middle_high", "oldest_low"]);
+
+    // Most derived: highest times_derived first (5, 3, 1).
+    let derived = db::query_documents_most_derived(&test_db.pool, "ws", "obs", "obsd", 10)
+        .await
+        .expect("most derived");
+    let derived_contents: Vec<&str> = derived.iter().filter_map(|d| d["content"].as_str()).collect();
+    assert_eq!(derived_contents, vec!["middle_high", "newest_mid", "oldest_low"]);
+
+    test_db.teardown().await;
+}

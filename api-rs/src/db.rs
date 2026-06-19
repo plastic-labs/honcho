@@ -1707,6 +1707,75 @@ pub async fn insert_conclusions(
     Ok(created)
 }
 
+/// Most-recent conclusions for `(observer, observed)`, porting
+/// `crud.query_documents_recent`: live documents ordered by `created_at` desc,
+/// optionally narrowed to a session, limited. Returns conclusion JSON.
+pub async fn query_documents_recent(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    session_name: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Value>, sqlx::Error> {
+    let session_clause = if session_name.is_some() {
+        " AND session_name = $4"
+    } else {
+        ""
+    };
+    let limit_idx = if session_name.is_some() { 5 } else { 4 };
+    let sql = format!(
+        "SELECT id, content, observer, observed, session_name, created_at \
+         FROM documents \
+         WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+           AND deleted_at IS NULL{session_clause} \
+         ORDER BY created_at DESC \
+         LIMIT ${limit_idx}"
+    );
+    let mut query = sqlx::query_as::<_, ConclusionRow>(&sql)
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed);
+    if let Some(session) = session_name {
+        query = query.bind(session);
+    }
+    query = query.bind(limit);
+    Ok(query
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(conclusion_json)
+        .collect())
+}
+
+/// Most-reinforced conclusions for `(observer, observed)`, porting
+/// `crud.query_documents_most_derived`: live documents ordered by
+/// `times_derived` desc, then `created_at` desc, then `id` (stable tiebreak),
+/// limited. Returns conclusion JSON.
+pub async fn query_documents_most_derived(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    limit: i64,
+) -> Result<Vec<Value>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ConclusionRow>(
+        "SELECT id, content, observer, observed, session_name, created_at \
+         FROM documents \
+         WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+           AND deleted_at IS NULL \
+         ORDER BY times_derived DESC, created_at DESC, id \
+         LIMIT $4",
+    )
+    .bind(workspace_name)
+    .bind(observer)
+    .bind(observed)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(conclusion_json).collect())
+}
+
 /// Semantic search over conclusions (documents) by `(observer, observed)`,
 /// porting `crud._query_documents_pgvector`. Orders by pgvector cosine distance
 /// to the pre-computed `embedding`, optionally bounded by `max_distance`, with
