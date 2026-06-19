@@ -1912,6 +1912,108 @@ pub async fn get_observation_context(
     Ok(rows.iter().map(snippet_message_json).collect())
 }
 
+/// A reasoning-tree document as consumed by the dialectic `get_reasoning_chain`
+/// tool: just the fields the chain traversal needs (`id`, `content`, `level`,
+/// and the premise/source `source_ids`). `level` is `NOT NULL` in the schema
+/// (defaults to `'explicit'`); `source_ids` is a nullable JSONB array, flattened
+/// to a `Vec<String>` (absent/empty → empty).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReasoningDocument {
+    pub id: String,
+    pub content: String,
+    pub level: String,
+    pub source_ids: Vec<String>,
+}
+
+#[derive(Debug, FromRow)]
+struct ReasoningDocumentRow {
+    id: String,
+    content: String,
+    level: String,
+    source_ids: Option<Value>,
+}
+
+fn reasoning_document(row: ReasoningDocumentRow) -> ReasoningDocument {
+    let source_ids = row
+        .source_ids
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    ReasoningDocument {
+        id: row.id,
+        content: row.content,
+        level: row.level,
+        source_ids,
+    }
+}
+
+/// Port of `crud.get_documents_by_ids`: live documents (`deleted_at IS NULL`) in
+/// the workspace matching any of `document_ids`. May return fewer than requested
+/// (missing/deleted ids are dropped). Empty input → empty, no query. No
+/// ordering, matching Python's plain `IN` query.
+pub async fn get_documents_by_ids(
+    pool: &PgPool,
+    workspace_name: &str,
+    document_ids: &[String],
+) -> Result<Vec<ReasoningDocument>, sqlx::Error> {
+    if document_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: Vec<ReasoningDocumentRow> = sqlx::query_as(
+        "SELECT id, content, level, source_ids FROM documents \
+         WHERE workspace_name = $1 AND id = ANY($2) AND deleted_at IS NULL",
+    )
+    .bind(workspace_name)
+    .bind(document_ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(reasoning_document).collect())
+}
+
+/// Port of `crud.get_child_observations`: live documents whose `source_ids`
+/// JSONB array contains `parent_id` (`@>`, GIN-indexed), i.e. observations
+/// derived from this one (reasoning-tree traversal downward). Optionally
+/// filtered by observer/observed.
+pub async fn get_child_observations(
+    pool: &PgPool,
+    workspace_name: &str,
+    parent_id: &str,
+    observer: Option<&str>,
+    observed: Option<&str>,
+) -> Result<Vec<ReasoningDocument>, sqlx::Error> {
+    let mut sql = String::from(
+        "SELECT id, content, level, source_ids FROM documents \
+         WHERE workspace_name = $1 AND source_ids @> $2::jsonb AND deleted_at IS NULL",
+    );
+    let mut placeholder = 2;
+    if observer.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND observer = ${placeholder}"));
+    }
+    if observed.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND observed = ${placeholder}"));
+    }
+
+    let mut query = sqlx::query_as::<_, ReasoningDocumentRow>(&sql)
+        .bind(workspace_name)
+        .bind(json!([parent_id]));
+    if let Some(observer) = observer {
+        query = query.bind(observer);
+    }
+    if let Some(observed) = observed {
+        query = query.bind(observed);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows.into_iter().map(reasoning_document).collect())
+}
+
 /// A validated conclusion to create, plus its pre-computed embedding (computed
 /// in the handler, outside any DB session).
 #[derive(Debug, Clone)]

@@ -1954,3 +1954,93 @@ async fn query_documents_recent_and_most_derived_order_correctly() {
 
     test_db.teardown().await;
 }
+
+#[tokio::test]
+async fn reasoning_chain_documents_and_children() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    sqlx::query(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, 'ws', 'obs', 'obsd')",
+    )
+    .bind(doc_id(99))
+    .execute(&test_db.pool)
+    .await
+    .expect("collection");
+
+    // Two explicit premises (no source_ids) and a deductive child deriving from
+    // both. The child's source_ids JSONB array references the two premises.
+    for (id, content, level, sources) in [
+        (doc_id(1), "premise one", "explicit", None::<Value>),
+        (doc_id(2), "premise two", "explicit", None),
+        (
+            doc_id(3),
+            "derived conclusion",
+            "deductive",
+            Some(json!([doc_id(1), doc_id(2)])),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO documents \
+             (id, content, workspace_name, observer, observed, level, source_ids, sync_state) \
+             VALUES ($1, $2, 'ws', 'obs', 'obsd', $3, $4, 'synced')",
+        )
+        .bind(&id)
+        .bind(content)
+        .bind(level)
+        .bind(sources)
+        .execute(&test_db.pool)
+        .await
+        .expect("seed document");
+    }
+
+    // Empty ids -> empty, no query.
+    let empty = db::get_documents_by_ids(&test_db.pool, "ws", &[])
+        .await
+        .expect("empty ids");
+    assert!(empty.is_empty());
+
+    // The deductive doc carries level + both source ids.
+    let child = db::get_documents_by_ids(&test_db.pool, "ws", &[doc_id(3)])
+        .await
+        .expect("get child");
+    assert_eq!(child.len(), 1);
+    assert_eq!(child[0].content, "derived conclusion");
+    assert_eq!(child[0].level, "deductive");
+    let mut sources = child[0].source_ids.clone();
+    sources.sort();
+    assert_eq!(sources, vec![doc_id(1), doc_id(2)]);
+
+    // Explicit premise carries an empty source_ids (NULL JSONB).
+    let premise = db::get_documents_by_ids(&test_db.pool, "ws", &[doc_id(1)])
+        .await
+        .expect("get premise");
+    assert_eq!(premise[0].level, "explicit");
+    assert!(premise[0].source_ids.is_empty());
+
+    // get_child_observations: premise one's only child is the deductive doc.
+    let children =
+        db::get_child_observations(&test_db.pool, "ws", &doc_id(1), Some("obs"), Some("obsd"))
+            .await
+            .expect("children");
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].id, doc_id(3));
+
+    // A mismatched observer filters it out.
+    let none = db::get_child_observations(&test_db.pool, "ws", &doc_id(1), Some("ghost"), None)
+        .await
+        .expect("children mismatched observer");
+    assert!(none.is_empty());
+
+    test_db.teardown().await;
+}
