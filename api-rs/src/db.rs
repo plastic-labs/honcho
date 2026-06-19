@@ -1480,6 +1480,140 @@ pub async fn list_conclusions(
     Ok(page_response(items, total as u64, page))
 }
 
+/// A validated conclusion to create, plus its pre-computed embedding (computed
+/// in the handler, outside any DB session).
+#[derive(Debug, Clone)]
+pub struct NewConclusion {
+    pub content: String,
+    pub observer_id: String,
+    pub observed_id: String,
+    pub session_id: Option<String>,
+}
+
+/// Failure modes of `prepare_conclusions`, mapped to Python's statuses.
+#[derive(Debug)]
+pub enum ConclusionWriteError {
+    /// `get_session` raised — 404 `Session {name} not found in workspace {ws}`.
+    SessionNotFound(String),
+    /// `get_peer` raised — 404 `Peer {name} not found in workspace {ws}`.
+    PeerNotFound(String),
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for ConclusionWriteError {
+    fn from(error: sqlx::Error) -> Self {
+        ConclusionWriteError::Database(error)
+    }
+}
+
+/// Port of the pre-embedding half of `create_observations`: validate every
+/// referenced session and peer exists (else 404), then get-or-create the
+/// `(observer, observed)` collections. Runs before the embedding call so error
+/// precedence matches Python (a missing peer 404s before any embed 422).
+pub async fn prepare_conclusions(
+    pool: &PgPool,
+    workspace_name: &str,
+    conclusions: &[NewConclusion],
+) -> Result<(), ConclusionWriteError> {
+    // Distinct sessions / peers / collection pairs, first-seen order.
+    let mut sessions: Vec<&str> = Vec::new();
+    let mut peers: Vec<&str> = Vec::new();
+    let mut pairs: Vec<(&str, &str)> = Vec::new();
+    for conclusion in conclusions {
+        if let Some(session) = conclusion.session_id.as_deref()
+            && !sessions.contains(&session)
+        {
+            sessions.push(session);
+        }
+        for peer in [conclusion.observer_id.as_str(), conclusion.observed_id.as_str()] {
+            if !peers.contains(&peer) {
+                peers.push(peer);
+            }
+        }
+        let pair = (conclusion.observer_id.as_str(), conclusion.observed_id.as_str());
+        if !pairs.contains(&pair) {
+            pairs.push(pair);
+        }
+    }
+
+    for session in sessions {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE workspace_name = $1 AND name = $2)",
+        )
+        .bind(workspace_name)
+        .bind(session)
+        .fetch_one(pool)
+        .await?;
+        if !exists {
+            return Err(ConclusionWriteError::SessionNotFound(session.to_string()));
+        }
+    }
+
+    for peer in peers {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM peers WHERE workspace_name = $1 AND name = $2)",
+        )
+        .bind(workspace_name)
+        .bind(peer)
+        .fetch_one(pool)
+        .await?;
+        if !exists {
+            return Err(ConclusionWriteError::PeerNotFound(peer.to_string()));
+        }
+    }
+
+    for (observer, observed) in pairs {
+        sqlx::query(
+            "INSERT INTO collections (id, workspace_name, observer, observed) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (observer, observed, workspace_name) DO NOTHING",
+        )
+        .bind(generate_nanoid())
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed)
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Port of the insert half of `create_observations`: insert one `explicit`
+/// document per conclusion (with its pre-computed embedding, `sync_state` =
+/// `synced` since pgvector stores the vector inline), returning the created rows
+/// as conclusion JSON. `embeddings` is parallel to `conclusions`.
+pub async fn insert_conclusions(
+    pool: &PgPool,
+    workspace_name: &str,
+    conclusions: &[NewConclusion],
+    embeddings: &[Vec<f32>],
+) -> Result<Vec<Value>, sqlx::Error> {
+    let mut created = Vec::with_capacity(conclusions.len());
+    let mut transaction = pool.begin().await?;
+    for (conclusion, embedding) in conclusions.iter().zip(embeddings.iter()) {
+        let row = sqlx::query_as::<_, ConclusionRow>(
+            "INSERT INTO documents \
+             (id, workspace_name, observer, observed, content, level, times_derived, \
+              internal_metadata, session_name, embedding, sync_state) \
+             VALUES ($1, $2, $3, $4, $5, 'explicit', 1, '{}'::jsonb, $6, $7::vector, 'synced') \
+             RETURNING id, content, observer, observed, session_name, created_at",
+        )
+        .bind(generate_nanoid())
+        .bind(workspace_name)
+        .bind(&conclusion.observer_id)
+        .bind(&conclusion.observed_id)
+        .bind(&conclusion.content)
+        .bind(&conclusion.session_id)
+        .bind(crate::search::vector_literal(embedding))
+        .fetch_one(&mut *transaction)
+        .await?;
+        created.push(conclusion_json(row));
+    }
+    transaction.commit().await?;
+    Ok(created)
+}
+
 /// Semantic search over conclusions (documents) by `(observer, observed)`,
 /// porting `crud._query_documents_pgvector`. Orders by pgvector cosine distance
 /// to the pre-computed `embedding`, optionally bounded by `max_distance`, with

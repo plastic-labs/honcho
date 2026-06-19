@@ -1285,6 +1285,102 @@ fn no_auth_state() -> AppState {
     })
 }
 
+fn no_auth_writes_state() -> AppState {
+    AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    })
+}
+
+async fn post_create_conclusions(state: AppState, body: &str) -> axum::response::Response {
+    build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/conclusions")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn create_conclusions_route_is_disabled_by_default() {
+    let response =
+        post_create_conclusions(no_auth_state(), r#"{"conclusions": []}"#).await;
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Rust write routes are disabled"})
+    );
+}
+
+#[tokio::test]
+async fn create_conclusions_requires_conclusions_field() {
+    let response = post_create_conclusions(no_auth_writes_state(), "{}").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "missing",
+            "loc": ["body", "conclusions"],
+            "msg": "Field required",
+            "input": {}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn create_conclusions_rejects_empty_list() {
+    let response = post_create_conclusions(no_auth_writes_state(), r#"{"conclusions": []}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "too_short",
+            "loc": ["body", "conclusions"],
+            "msg": "List should have at least 1 item after validation, not 0",
+            "input": [],
+            "ctx": {"field_type": "List", "min_length": 1, "actual_length": 0}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn create_conclusions_reports_item_field_with_index_loc() {
+    let response = post_create_conclusions(
+        no_auth_writes_state(),
+        r#"{"conclusions": [{"observer_id": "a", "observed_id": "b"}]}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "missing",
+            "loc": ["body", "conclusions", 0, "content"],
+            "msg": "Field required",
+            "input": {"observer_id": "a", "observed_id": "b"}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn create_conclusions_honors_observations_alias_in_loc() {
+    let response =
+        post_create_conclusions(no_auth_writes_state(), r#"{"observations": [{}]}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "missing",
+            "loc": ["body", "observations", 0, "content"],
+            "msg": "Field required",
+            "input": {}
+        }]})
+    );
+}
+
 async fn get_context(query: &str) -> axum::response::Response {
     let uri = format!("/v3/workspaces/workspace-a/sessions/session-a/context{query}");
     build_router(no_auth_state())

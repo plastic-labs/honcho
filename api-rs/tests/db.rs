@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use chrono::{TimeZone, Utc};
 use honcho_api_rs::db;
-use honcho_api_rs::db::MessageInsert;
+use honcho_api_rs::db::{ConclusionWriteError, MessageInsert, NewConclusion};
 use honcho_api_rs::embedding;
 use honcho_api_rs::filters::{FilterClause, FilterTarget, build_filter_clause};
 use honcho_api_rs::llm::http::{Credentials, ReqwestHttp};
@@ -1218,7 +1218,7 @@ async fn search_with_live_openai_embedding_ranks_semantically() {
     let Some(test_db) = TestDb::setup().await else {
         return;
     };
-    let Ok(api_key) = std::env::var("OPENAI_TEST_TOKEN") else {
+    let Some(api_key) = openai_test_token() else {
         test_db.teardown().await;
         return;
     };
@@ -1278,6 +1278,14 @@ async fn search_with_live_openai_embedding_ranks_semantically() {
     test_db.teardown().await;
 }
 
+/// The live OpenAI key, treating an unset *or empty* `OPENAI_TEST_TOKEN` as
+/// "skip" so the gated tests don't false-fail with a blank key.
+fn openai_test_token() -> Option<String> {
+    std::env::var("OPENAI_TEST_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty())
+}
+
 /// A valid 21-char document id (nanoid charset) for seeding.
 fn doc_id(n: usize) -> String {
     format!("doc{n:018}")
@@ -1316,7 +1324,7 @@ async fn query_documents_with_live_openai_ranks_semantically() {
     let Some(test_db) = TestDb::setup().await else {
         return;
     };
-    let Ok(api_key) = std::env::var("OPENAI_TEST_TOKEN") else {
+    let Some(api_key) = openai_test_token() else {
         test_db.teardown().await;
         return;
     };
@@ -1394,6 +1402,104 @@ async fn query_documents_with_live_openai_ranks_semantically() {
         results.first().and_then(|d| d["content"].as_str()),
         Some(conclusions[0])
     );
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_conclusions_validates_inserts_and_marks_synced() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    let Some(api_key) = openai_test_token() else {
+        test_db.teardown().await;
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["observer_peer", "observed_peer"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+
+    let new = |content: &str| NewConclusion {
+        content: content.to_string(),
+        observer_id: "observer_peer".to_string(),
+        observed_id: "observed_peer".to_string(),
+        session_id: None,
+    };
+
+    // A missing peer is a 404 before any embedding.
+    let bad = vec![NewConclusion {
+        observer_id: "ghost_peer".to_string(),
+        ..new("x")
+    }];
+    assert!(matches!(
+        db::prepare_conclusions(&test_db.pool, "ws", &bad).await,
+        Err(ConclusionWriteError::PeerNotFound(name)) if name == "ghost_peer"
+    ));
+
+    let conclusions = vec![new("The user enjoys long-distance hiking on weekends")];
+    db::prepare_conclusions(&test_db.pool, "ws", &conclusions)
+        .await
+        .expect("prepare");
+
+    // The collection was get-or-created.
+    let collection_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM collections \
+         WHERE workspace_name = 'ws' AND observer = 'observer_peer' AND observed = 'observed_peer'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("count collections");
+    assert_eq!(collection_count, 1);
+
+    let http = ReqwestHttp::default();
+    let credentials = Credentials::new(api_key);
+    let mut embeddings = Vec::new();
+    for conclusion in &conclusions {
+        embeddings.push(
+            embedding::embed_openai(
+                &http,
+                &credentials,
+                "text-embedding-3-small",
+                &conclusion.content,
+                1536,
+                false,
+                8192,
+            )
+            .await
+            .expect("embed"),
+        );
+    }
+
+    let created = db::insert_conclusions(&test_db.pool, "ws", &conclusions, &embeddings)
+        .await
+        .expect("insert conclusions");
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0]["content"], json!("The user enjoys long-distance hiking on weekends"));
+    assert_eq!(created[0]["observer_id"], json!("observer_peer"));
+    assert_eq!(created[0]["observed_id"], json!("observed_peer"));
+
+    // The stored document is explicit, synced, and carries its embedding.
+    let id = created[0]["id"].as_str().expect("doc id");
+    let row = sqlx::query(
+        "SELECT level, sync_state, embedding IS NOT NULL AS has_embedding \
+         FROM documents WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("fetch document");
+    let level: String = row.get("level");
+    let sync_state: String = row.get("sync_state");
+    let has_embedding: bool = row.get("has_embedding");
+    assert_eq!(level, "explicit");
+    assert_eq!(sync_state, "synced");
+    assert!(has_embedding);
 
     test_db.teardown().await;
 }

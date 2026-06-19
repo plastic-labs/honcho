@@ -300,6 +300,10 @@ pub fn build_router(state: AppState) -> Router {
             post(list_messages),
         )
         .route(
+            "/v3/workspaces/{workspace_id}/conclusions",
+            post(create_conclusions),
+        )
+        .route(
             "/v3/workspaces/{workspace_id}/conclusions/list",
             post(list_conclusions),
         )
@@ -1520,6 +1524,268 @@ fn parse_bounded_int(value: &Value, field: &'static str, min: i64, max: i64) -> 
         ));
     }
     Ok(parsed)
+}
+
+async fn create_conclusions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Response, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        None,
+    )?;
+    ensure_writes_enabled(&state)?;
+
+    let conclusions = parse_conclusion_batch(body)?;
+
+    // Validate sessions/peers and get-or-create collections before embedding,
+    // matching Python's error precedence (a missing peer 404s before any embed).
+    match db::prepare_conclusions(state.pool()?, &workspace_id, &conclusions).await {
+        Ok(()) => {}
+        Err(db::ConclusionWriteError::SessionNotFound(name)) => {
+            return Err(ApiError::NotFound(format!(
+                "Session {name} not found in workspace {workspace_id}"
+            )));
+        }
+        Err(db::ConclusionWriteError::PeerNotFound(name)) => {
+            return Err(ApiError::NotFound(format!(
+                "Peer {name} not found in workspace {workspace_id}"
+            )));
+        }
+        Err(db::ConclusionWriteError::Database(error)) => return Err(ApiError::Database(error)),
+    }
+
+    // `simple_batch_embed` validates every per-input token count up front and
+    // raises on the first over-limit, so check all counts before any API call.
+    for (index, conclusion) in conclusions.iter().enumerate() {
+        let tokens = embedding::embedding_token_count(&conclusion.content);
+        if tokens > state.embedding.max_tokens {
+            return Err(ApiError::Validation(format!(
+                "Text at index {index} exceeds maximum token limit of {} tokens (got {tokens} tokens)",
+                state.embedding.max_tokens
+            )));
+        }
+    }
+
+    let api_key = state.embedding.api_key.as_ref().ok_or_else(|| {
+        ApiError::Embedding("no embedding API key is configured".to_string())
+    })?;
+    let credentials = Credentials::with_base_url(api_key.clone(), state.embedding.base_url.clone());
+    let http = ReqwestHttp::default();
+    let mut embeddings = Vec::with_capacity(conclusions.len());
+    for (index, conclusion) in conclusions.iter().enumerate() {
+        let vector = embedding::embed_openai(
+            &http,
+            &credentials,
+            &state.embedding.model,
+            &conclusion.content,
+            state.embedding.vector_dimensions,
+            state.embedding.send_dimensions,
+            state.embedding.max_tokens,
+        )
+        .await
+        .map_err(|error| match error {
+            // Unreachable in practice — token counts are pre-validated above —
+            // but kept faithful to the per-index message just in case.
+            EmbedError::TokenLimit { limit, got } => ApiError::Validation(format!(
+                "Text at index {index} exceeds maximum token limit of {limit} tokens (got {got} tokens)"
+            )),
+            other => ApiError::Embedding(other.to_string()),
+        })?;
+        embeddings.push(vector);
+    }
+
+    let created =
+        db::insert_conclusions(state.pool()?, &workspace_id, &conclusions, &embeddings).await?;
+    Ok((StatusCode::CREATED, Json(Value::Array(created))).into_response())
+}
+
+/// Port of `ConclusionBatchCreate` + `ConclusionCreate` validation. Accepts the
+/// `conclusions` or `observations` alias; reproduces Pydantic's list-length and
+/// per-item error shapes (with integer list-index `loc` parts). First error wins.
+fn parse_conclusion_batch(body: Value) -> Result<Vec<db::NewConclusion>, ApiError> {
+    let object = body.as_object();
+    // AliasChoices("conclusions", "observations"): prefer the field name; the
+    // `loc` reflects whichever key the caller supplied (missing → "conclusions").
+    let (key, raw) = match object.and_then(|map| map.get("conclusions")) {
+        Some(value) => ("conclusions", Some(value)),
+        None => match object.and_then(|map| map.get("observations")) {
+            Some(value) => ("observations", Some(value)),
+            None => ("conclusions", None),
+        },
+    };
+
+    let Some(raw) = raw else {
+        return Err(validation_error(
+            "missing",
+            &["conclusions"],
+            "Field required",
+            body.clone(),
+            None,
+        ));
+    };
+    let Some(items) = raw.as_array() else {
+        return Err(validation_error(
+            "list_type",
+            &[key],
+            "Input should be a valid list",
+            raw.clone(),
+            None,
+        ));
+    };
+
+    let mut parsed = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        parsed.push(parse_conclusion_item(key, index, item)?);
+    }
+
+    if parsed.is_empty() {
+        return Err(validation_error_parts(
+            "too_short",
+            &[Value::String(key.to_string())],
+            "List should have at least 1 item after validation, not 0",
+            raw.clone(),
+            Some(json!({ "field_type": "List", "min_length": 1, "actual_length": 0 })),
+        ));
+    }
+    if parsed.len() > 100 {
+        return Err(validation_error_parts(
+            "too_long",
+            &[Value::String(key.to_string())],
+            "List should have at most 100 items after validation, not 100",
+            raw.clone(),
+            Some(json!({ "field_type": "List", "max_length": 100, "actual_length": parsed.len() })),
+        ));
+    }
+
+    Ok(parsed)
+}
+
+fn parse_conclusion_item(
+    key: &str,
+    index: usize,
+    item: &Value,
+) -> Result<db::NewConclusion, ApiError> {
+    let item_loc = |field: &str| {
+        vec![
+            Value::String(key.to_string()),
+            Value::Number(index.into()),
+            Value::String(field.to_string()),
+        ]
+    };
+
+    let Some(object) = item.as_object() else {
+        return Err(validation_error_parts(
+            "model_type",
+            &[Value::String(key.to_string()), Value::Number(index.into())],
+            "Input should be a valid dictionary or instance of ConclusionCreate",
+            item.clone(),
+            Some(json!({ "class_name": "ConclusionCreate" })),
+        ));
+    };
+
+    let content = match object.get("content") {
+        Some(Value::String(value)) => {
+            if value.is_empty() {
+                return Err(validation_error_parts(
+                    "string_too_short",
+                    &item_loc("content"),
+                    "String should have at least 1 character",
+                    Value::String(value.clone()),
+                    Some(json!({ "min_length": 1 })),
+                ));
+            }
+            if value.chars().count() > 65535 {
+                return Err(validation_error_parts(
+                    "string_too_long",
+                    &item_loc("content"),
+                    "String should have at most 65535 characters",
+                    Value::String(value.clone()),
+                    Some(json!({ "max_length": 65535 })),
+                ));
+            }
+            value.clone()
+        }
+        Some(other) => {
+            return Err(validation_error_parts(
+                "string_type",
+                &item_loc("content"),
+                "Input should be a valid string",
+                other.clone(),
+                None,
+            ));
+        }
+        None => {
+            return Err(validation_error_parts(
+                "missing",
+                &item_loc("content"),
+                "Field required",
+                item.clone(),
+                None,
+            ));
+        }
+    };
+
+    let observer_id = require_conclusion_string(object, item, key, index, "observer_id")?;
+    let observed_id = require_conclusion_string(object, item, key, index, "observed_id")?;
+
+    let session_id = match object.get("session_id") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(other) => {
+            return Err(validation_error_parts(
+                "string_type",
+                &item_loc("session_id"),
+                "Input should be a valid string",
+                other.clone(),
+                None,
+            ));
+        }
+    };
+
+    Ok(db::NewConclusion {
+        content,
+        observer_id,
+        observed_id,
+        session_id,
+    })
+}
+
+fn require_conclusion_string(
+    object: &serde_json::Map<String, Value>,
+    item: &Value,
+    key: &str,
+    index: usize,
+    field: &str,
+) -> Result<String, ApiError> {
+    let loc = vec![
+        Value::String(key.to_string()),
+        Value::Number(index.into()),
+        Value::String(field.to_string()),
+    ];
+    match object.get(field) {
+        Some(Value::String(value)) => Ok(value.clone()),
+        Some(other) => Err(validation_error_parts(
+            "string_type",
+            &loc,
+            "Input should be a valid string",
+            other.clone(),
+            None,
+        )),
+        None => Err(validation_error_parts(
+            "missing",
+            &loc,
+            "Field required",
+            item.clone(),
+            None,
+        )),
+    }
 }
 
 async fn query_conclusions(
