@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod embedding;
 pub mod error;
+pub mod files;
 pub mod filters;
 pub mod llm;
 pub mod pagination;
