@@ -11,8 +11,9 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use sqlx::PgPool;
 
-use crate::db::MessageSnippet;
+use crate::db::{self, MessageSnippet, ReasoningDocument};
 
 /// `settings.LLM.MAX_TOOL_OUTPUT_CHARS` default.
 pub const MAX_TOOL_OUTPUT_CHARS: usize = 10_000;
@@ -285,6 +286,97 @@ pub fn format_message_list(messages: &[Value]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// `" - [id:X] (level): content"` — one premise/source/child line.
+fn reasoning_doc_line(doc: &ReasoningDocument) -> String {
+    format!(" - [id:{}] ({}): {}", doc.id, doc.level, doc.content)
+}
+
+/// Port of the `get_reasoning_chain` tool handler: fetch the observation, then
+/// (per `direction` — `"premises"`, `"conclusions"`, or `"both"`) render its
+/// premises/sources (for deductive/inductive levels with `source_ids`) and/or
+/// its derived conclusions as a markdown chain. Returns the handler's exact
+/// strings — including the `ERROR:`/not-found/`None`-case sentinels — so the
+/// tool result is byte-identical. The DB calls reuse the ported reasoning-tree
+/// primitives; only the tool-input extraction + ToolContext wrapping (the
+/// dispatch layer) sit above this.
+pub async fn format_reasoning_chain(
+    pool: &PgPool,
+    workspace_name: &str,
+    observation_id: &str,
+    direction: &str,
+    observer: Option<&str>,
+    observed: Option<&str>,
+) -> Result<String, sqlx::Error> {
+    if observation_id.is_empty() {
+        return Ok("ERROR: 'observation_id' is required".to_string());
+    }
+    if !matches!(direction, "premises" | "conclusions" | "both") {
+        return Ok(format!(
+            "ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
+        ));
+    }
+
+    let docs = db::get_documents_by_ids(pool, workspace_name, &[observation_id.to_string()]).await?;
+    let Some(doc) = docs.into_iter().next() else {
+        return Ok(format!("ERROR: Observation '{observation_id}' not found"));
+    };
+
+    let mut parts: Vec<String> =
+        vec![format!("**Observation [id:{}] ({}):**\n{}", doc.id, doc.level, doc.content)];
+
+    let want_premises = matches!(direction, "premises" | "both");
+    let want_conclusions = matches!(direction, "conclusions" | "both");
+
+    if want_premises {
+        // "deductive" -> Premises, "inductive" -> Sources; both fetch source_ids.
+        let label = match doc.level.as_str() {
+            "deductive" if !doc.source_ids.is_empty() => Some("Premises"),
+            "inductive" if !doc.source_ids.is_empty() => Some("Sources"),
+            _ => None,
+        };
+        match label {
+            Some(label) => {
+                let referenced = doc.source_ids.len();
+                let sources = db::get_documents_by_ids(pool, workspace_name, &doc.source_ids).await?;
+                if sources.is_empty() {
+                    parts.push(format!(
+                        "\n**{label}:** Referenced {referenced} {} IDs but none found in database",
+                        label.to_lowercase().trim_end_matches('s')
+                    ));
+                } else {
+                    let lines: Vec<String> = sources.iter().map(reasoning_doc_line).collect();
+                    parts.push(format!(
+                        "\n**{label} ({}):**\n{}",
+                        sources.len(),
+                        lines.join("\n")
+                    ));
+                }
+            }
+            None if doc.level == "explicit" => parts.push(
+                "\n**Premises/Sources:** N/A (explicit observations have no premises)".to_string(),
+            ),
+            None => parts.push("\n**Premises/Sources:** None recorded".to_string()),
+        }
+    }
+
+    if want_conclusions {
+        let children =
+            db::get_child_observations(pool, workspace_name, &doc.id, observer, observed).await?;
+        if children.is_empty() {
+            parts.push("\n**Derived Conclusions:** None found".to_string());
+        } else {
+            let lines: Vec<String> = children.iter().map(reasoning_doc_line).collect();
+            parts.push(format!(
+                "\n**Derived Conclusions ({}):**\n{}",
+                children.len(),
+                lines.join("\n")
+            ));
+        }
+    }
+
+    Ok(parts.join("\n"))
 }
 
 #[cfg(test)]

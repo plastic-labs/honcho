@@ -17,6 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{TimeZone, Utc};
 use honcho_api_rs::db;
 use honcho_api_rs::db::{ConclusionWriteError, MessageInsert, MessageSnippet, NewConclusion};
+use honcho_api_rs::dialectic;
 use honcho_api_rs::embedding;
 use honcho_api_rs::filters::{FilterClause, FilterTarget, build_filter_clause};
 use honcho_api_rs::llm::http::{Credentials, ReqwestHttp};
@@ -2041,6 +2042,111 @@ async fn reasoning_chain_documents_and_children() {
         .await
         .expect("children mismatched observer");
     assert!(none.is_empty());
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn format_reasoning_chain_renders_markdown() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    sqlx::query(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, 'ws', 'obs', 'obsd')",
+    )
+    .bind(doc_id(99))
+    .execute(&test_db.pool)
+    .await
+    .expect("collection");
+
+    for (id, content, level, sources) in [
+        (doc_id(1), "premise one", "explicit", None::<Value>),
+        (doc_id(2), "premise two", "explicit", None),
+        (
+            doc_id(3),
+            "the conclusion",
+            "deductive",
+            Some(json!([doc_id(1), doc_id(2)])),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO documents \
+             (id, content, workspace_name, observer, observed, level, source_ids, sync_state) \
+             VALUES ($1, $2, 'ws', 'obs', 'obsd', $3, $4, 'synced')",
+        )
+        .bind(&id)
+        .bind(content)
+        .bind(level)
+        .bind(sources)
+        .execute(&test_db.pool)
+        .await
+        .expect("seed document");
+    }
+
+    // Deductive doc, direction "both": header + Premises (2) + no children.
+    let chain = dialectic::format_reasoning_chain(
+        &test_db.pool,
+        "ws",
+        &doc_id(3),
+        "both",
+        Some("obs"),
+        Some("obsd"),
+    )
+    .await
+    .expect("reasoning chain deductive");
+    assert!(chain.starts_with(&format!(
+        "**Observation [id:{}] (deductive):**\nthe conclusion",
+        doc_id(3)
+    )));
+    assert!(chain.contains("\n**Premises (2):**\n"));
+    assert!(chain.contains(&format!(" - [id:{}] (explicit): premise one", doc_id(1))));
+    assert!(chain.contains(&format!(" - [id:{}] (explicit): premise two", doc_id(2))));
+    assert!(chain.ends_with("\n**Derived Conclusions:** None found"));
+
+    // Explicit premise: N/A premises, and one derived conclusion (the deductive).
+    let premise_chain = dialectic::format_reasoning_chain(
+        &test_db.pool,
+        "ws",
+        &doc_id(1),
+        "both",
+        Some("obs"),
+        Some("obsd"),
+    )
+    .await
+    .expect("reasoning chain explicit");
+    assert!(
+        premise_chain.contains("\n**Premises/Sources:** N/A (explicit observations have no premises)")
+    );
+    assert!(premise_chain.contains(&format!(
+        "\n**Derived Conclusions (1):**\n - [id:{}] (deductive): the conclusion",
+        doc_id(3)
+    )));
+
+    // Not found + invalid direction sentinels.
+    let missing =
+        dialectic::format_reasoning_chain(&test_db.pool, "ws", "nope", "both", None, None)
+            .await
+            .expect("missing");
+    assert_eq!(missing, "ERROR: Observation 'nope' not found");
+
+    let bad_dir =
+        dialectic::format_reasoning_chain(&test_db.pool, "ws", &doc_id(1), "sideways", None, None)
+            .await
+            .expect("bad direction");
+    assert_eq!(
+        bad_dir,
+        "ERROR: Invalid direction 'sideways'. Must be 'premises', 'conclusions', or 'both'"
+    );
 
     test_db.teardown().await;
 }
