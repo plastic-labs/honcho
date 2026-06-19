@@ -12,6 +12,8 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
+use crate::db::MessageSnippet;
+
 /// `settings.LLM.MAX_TOOL_OUTPUT_CHARS` default.
 pub const MAX_TOOL_OUTPUT_CHARS: usize = 10_000;
 /// `settings.LLM.MAX_MESSAGE_CONTENT_CHARS` default.
@@ -162,11 +164,154 @@ pub fn format_new_turn_with_timestamp(
     )
 }
 
+/// A string field from a message JSON `Value` (the shape produced by the
+/// data-layer `message`/`snippet` serializers), empty if absent.
+fn message_str<'a>(message: &'a Value, key: &str) -> &'a str {
+    message.get(key).and_then(Value::as_str).unwrap_or("")
+}
+
+/// The `created_at` of a message JSON `Value`, parsed back from its RFC3339
+/// serialization (lossless at the second precision the formatter renders).
+fn message_created_at(message: &Value) -> DateTime<Utc> {
+    message
+        .get("created_at")
+        .and_then(Value::as_str)
+        .and_then(|text| DateTime::parse_from_rfc3339(text).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|| DateTime::<Utc>::from_timestamp(0, 0).expect("epoch is valid"))
+}
+
+/// One timestamped turn line for `rendered` content (already truncated/extracted)
+/// of a message JSON `Value`.
+fn turn_line(message: &Value, rendered: String) -> String {
+    format_new_turn_with_timestamp(
+        &rendered,
+        message_created_at(message),
+        message_str(message, "peer_id"),
+    )
+}
+
+/// `"--- Snippet i (session: X, N match(es)) ---\n" + lines`, where each line is
+/// a timestamped turn produced by `render` over the snippet's context messages.
+fn format_snippet_block(
+    index: usize,
+    snippet: &MessageSnippet,
+    render: impl Fn(&Value) -> String,
+) -> String {
+    let lines: Vec<String> = snippet
+        .context
+        .iter()
+        .map(|message| turn_line(message, render(message)))
+        .collect();
+    let session = snippet
+        .context
+        .first()
+        .map(|message| message_str(message, "session_id"))
+        .unwrap_or("unknown");
+    format!(
+        "--- Snippet {index} (session: {session}, {} match(es)) ---\n{}",
+        snippet.matched.len(),
+        lines.join("\n")
+    )
+}
+
+fn total_matches(snippets: &[MessageSnippet]) -> usize {
+    snippets.iter().map(|snippet| snippet.matched.len()).sum()
+}
+
+/// Port of `_format_message_snippets` (the dialectic `search_messages` /
+/// `search_messages_temporal` result formatter): each context message is head-
+/// truncated via [`truncate_message_content`]. Returns the
+/// [`truncate_tool_output`]-clamped string (matching Python's
+/// `_truncate_tool_output(output)[0]`). `desc` is the trailing qualifier, e.g.
+/// `"for query 'foo'"`.
+pub fn format_message_snippets(snippets: &[MessageSnippet], desc: &str) -> String {
+    let blocks: Vec<String> = snippets
+        .iter()
+        .enumerate()
+        .map(|(i, snippet)| {
+            format_snippet_block(i + 1, snippet, |message| {
+                truncate_message_content(message_str(message, "content"), MAX_MESSAGE_CONTENT_CHARS)
+            })
+        })
+        .collect();
+    let output = format!(
+        "Found {} matching messages in {} conversation snippets {desc}:\n\n{}",
+        total_matches(snippets),
+        snippets.len(),
+        blocks.join("\n\n")
+    );
+    truncate_tool_output(&output, MAX_TOOL_OUTPUT_CHARS).0
+}
+
+/// Port of the `grep_messages` result formatter: each context message is shown
+/// via [`extract_pattern_snippet`] around `text` (not simple head truncation),
+/// and the header counts matches "containing 'text'". Returns the
+/// [`truncate_tool_output`] triple (matching `_maybe_truncated_result`).
+pub fn format_grep_result(text: &str, snippets: &[MessageSnippet]) -> (String, usize, bool) {
+    let blocks: Vec<String> = snippets
+        .iter()
+        .enumerate()
+        .map(|(i, snippet)| {
+            format_snippet_block(i + 1, snippet, |message| {
+                extract_pattern_snippet(
+                    message_str(message, "content"),
+                    text,
+                    MAX_MESSAGE_CONTENT_CHARS,
+                )
+            })
+        })
+        .collect();
+    let output = format!(
+        "Found {} messages containing '{text}' in {} conversation snippets:\n\n{}",
+        total_matches(snippets),
+        snippets.len(),
+        blocks.join("\n\n")
+    );
+    truncate_tool_output(&output, MAX_TOOL_OUTPUT_CHARS)
+}
+
+/// Port of the shared message-list join used by the `get_messages_by_date_range`
+/// and `get_observation_context` result formatters: one head-truncated,
+/// timestamped turn per message (newline-joined). Empty input → empty string.
+pub fn format_message_list(messages: &[Value]) -> String {
+    messages
+        .iter()
+        .map(|message| {
+            turn_line(
+                message,
+                truncate_message_content(message_str(message, "content"), MAX_MESSAGE_CONTENT_CHARS),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
     use serde_json::json;
+
+    fn msg(content: &str, peer: &str, session: &str, created_at: &str) -> Value {
+        json!({
+            "id": "m",
+            "content": content,
+            "peer_id": peer,
+            "session_id": session,
+            "metadata": {},
+            "created_at": created_at,
+            "workspace_id": "ws",
+            "token_count": 1
+        })
+    }
+
+    fn snippet(matched: usize, context: Vec<Value>) -> MessageSnippet {
+        MessageSnippet {
+            matched: (0..matched).map(|_| json!({})).collect(),
+            context,
+        }
+    }
 
     #[test]
     fn safe_int_coerces_like_python() {
@@ -265,5 +410,59 @@ mod tests {
             format_new_turn_with_timestamp("hello", time, "alice"),
             "2023-05-08 13:56:00 alice: hello"
         );
+    }
+
+    #[test]
+    fn format_message_snippets_golden() {
+        let snippets = vec![
+            snippet(
+                1,
+                vec![
+                    msg("hello there", "alice", "s1", "2023-05-08T13:56:00Z"),
+                    msg("general reply", "bob", "s1", "2023-05-08T13:57:00Z"),
+                ],
+            ),
+            snippet(2, vec![msg("later", "alice", "s2", "2023-05-08T14:00:00Z")]),
+        ];
+        let output = format_message_snippets(&snippets, "for query 'hi'");
+        assert_eq!(
+            output,
+            "Found 3 matching messages in 2 conversation snippets for query 'hi':\n\n\
+             --- Snippet 1 (session: s1, 1 match(es)) ---\n\
+             2023-05-08 13:56:00 alice: hello there\n\
+             2023-05-08 13:57:00 bob: general reply\n\n\
+             --- Snippet 2 (session: s2, 2 match(es)) ---\n\
+             2023-05-08 14:00:00 alice: later"
+        );
+    }
+
+    #[test]
+    fn format_grep_result_golden() {
+        let snippets = vec![snippet(
+            1,
+            vec![msg("look here now", "alice", "s1", "2023-05-08T13:56:00Z")],
+        )];
+        let (output, original, was) = format_grep_result("here", &snippets);
+        assert!(!was);
+        assert_eq!(original, output.chars().count());
+        assert_eq!(
+            output,
+            "Found 1 messages containing 'here' in 1 conversation snippets:\n\n\
+             --- Snippet 1 (session: s1, 1 match(es)) ---\n\
+             2023-05-08 13:56:00 alice: look here now"
+        );
+    }
+
+    #[test]
+    fn format_message_list_golden() {
+        let messages = vec![
+            msg("first", "alice", "s1", "2023-05-08T13:56:00Z"),
+            msg("second", "bob", "s1", "2023-05-08T13:57:00Z"),
+        ];
+        assert_eq!(
+            format_message_list(&messages),
+            "2023-05-08 13:56:00 alice: first\n2023-05-08 13:57:00 bob: second"
+        );
+        assert_eq!(format_message_list(&[]), "");
     }
 }
