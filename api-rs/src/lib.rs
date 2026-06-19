@@ -3,6 +3,7 @@ pub mod auth;
 pub mod cache;
 pub mod config;
 pub mod db;
+pub mod dialectic;
 pub mod embedding;
 pub mod error;
 pub mod files;
