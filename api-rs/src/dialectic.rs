@@ -608,6 +608,103 @@ pub async fn handle_get_reasoning_chain(
     .await
 }
 
+/// Port of the `search_messages` tool handler (semantic message search). Takes
+/// a **pre-computed** `query_embedding` — the embedding call is external and is
+/// the caller's responsibility (same boundary as the data layer). `query`
+/// required (else ERROR), `limit` capped at 20, context window fixed at 2.
+pub async fn handle_search_messages(
+    pool: &PgPool,
+    ctx: &ToolContext,
+    input: &Value,
+    query_embedding: &[f32],
+) -> Result<String, sqlx::Error> {
+    let query = input_str(input, "query").unwrap_or("");
+    if query.is_empty() {
+        return Ok("ERROR: 'query' parameter is required".to_string());
+    }
+    let limit = input_int(input, "limit", 10).min(20);
+
+    let snippets = db::search_messages_semantic(
+        pool,
+        &ctx.workspace_name,
+        ctx.session_name.as_deref(),
+        Some(&ctx.observer),
+        query_embedding,
+        None,
+        None,
+        limit,
+        2,
+    )
+    .await?;
+    if snippets.is_empty() {
+        return Ok(format!("No messages found for query '{query}'"));
+    }
+    Ok(format_message_snippets(&snippets, &format!("for query '{query}'")))
+}
+
+/// Port of the `search_messages_temporal` tool handler (semantic search + date
+/// window). Takes a pre-computed `query_embedding`. `query` required, `limit`
+/// capped at 10, `context_window` at 2; `after_date`/`before_date` parsed (ERROR
+/// on bad ISO). The result desc carries the date-filter suffix.
+pub async fn handle_search_messages_temporal(
+    pool: &PgPool,
+    ctx: &ToolContext,
+    input: &Value,
+    query_embedding: &[f32],
+) -> Result<String, sqlx::Error> {
+    let query = input_str(input, "query").unwrap_or("");
+    if query.is_empty() {
+        return Ok("ERROR: 'query' parameter is required".to_string());
+    }
+    let after_str = input_str(input, "after_date");
+    let before_str = input_str(input, "before_date");
+    let limit = input_int(input, "limit", 10).min(10);
+    let context_window = input_int(input, "context_window", 2).min(2);
+
+    let after = match parse_date(after_str, "after_date") {
+        Ok(value) => value,
+        Err(message) => return Ok(message),
+    };
+    let before = match parse_date(before_str, "before_date") {
+        Ok(value) => value,
+        Err(message) => return Ok(message),
+    };
+
+    let snippets = db::search_messages_semantic(
+        pool,
+        &ctx.workspace_name,
+        ctx.session_name.as_deref(),
+        Some(&ctx.observer),
+        query_embedding,
+        after,
+        before,
+        limit,
+        context_window,
+    )
+    .await?;
+
+    let mut date_filter: Vec<String> = Vec::new();
+    if let Some(after) = after_str.filter(|value| !value.is_empty()) {
+        date_filter.push(format!("after {after}"));
+    }
+    if let Some(before) = before_str.filter(|value| !value.is_empty()) {
+        date_filter.push(format!("before {before}"));
+    }
+    let filter_desc = if date_filter.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", date_filter.join(" and "))
+    };
+
+    if snippets.is_empty() {
+        return Ok(format!("No messages found for query '{query}'{filter_desc}"));
+    }
+    Ok(format_message_snippets(
+        &snippets,
+        &format!("for query '{query}'{filter_desc}"),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

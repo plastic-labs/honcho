@@ -1476,6 +1476,88 @@ async fn dialectic_read_tool_handlers_format_results() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn dialectic_search_tool_handlers_format_results() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "red apple"),
+            message("bob", "green pear"),
+            message("alice", "blue plum"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+    seed_embedding(&test_db.pool, &created[0].public_id, 0).await;
+    seed_embedding(&test_db.pool, &created[1].public_id, 1).await;
+    seed_embedding(&test_db.pool, &created[2].public_id, 2).await;
+
+    let ctx = dialectic::ToolContext {
+        workspace_name: "ws".to_string(),
+        observer: "alice".to_string(),
+        observed: "alice".to_string(),
+        session_name: Some("sess".to_string()),
+    };
+    let embedding = query_vector(&[(1, 1.0), (0, 0.1), (2, 0.1)]); // closest to dim 1
+
+    // query required.
+    let err = dialectic::handle_search_messages(&test_db.pool, &ctx, &json!({}), &embedding)
+        .await
+        .expect("search no query");
+    assert_eq!(err, "ERROR: 'query' parameter is required");
+
+    let search = dialectic::handle_search_messages(
+        &test_db.pool,
+        &ctx,
+        &json!({"query": "fruit"}),
+        &embedding,
+    )
+    .await
+    .expect("search messages");
+    // All three messages have embeddings -> all returned as matches, merged into
+    // one snippet (seqs 1..3, context_window 2).
+    assert!(search.starts_with("Found 3 matching messages in 1 conversation snippets for query 'fruit':"));
+    assert!(search.contains("green pear"));
+
+    // Temporal with a far-future after-date -> no results, with date suffix.
+    let temporal = dialectic::handle_search_messages_temporal(
+        &test_db.pool,
+        &ctx,
+        &json!({"query": "fruit", "after_date": "2999-01-01"}),
+        &embedding,
+    )
+    .await
+    .expect("search temporal");
+    assert_eq!(
+        temporal,
+        "No messages found for query 'fruit' (after 2999-01-01)"
+    );
+
+    // Bad ISO date -> ERROR sentinel.
+    let bad = dialectic::handle_search_messages_temporal(
+        &test_db.pool,
+        &ctx,
+        &json!({"query": "fruit", "before_date": "nope"}),
+        &embedding,
+    )
+    .await
+    .expect("bad temporal date");
+    assert_eq!(
+        bad,
+        "ERROR: Invalid before_date format 'nope'. Use ISO format (e.g., '2024-01-15')"
+    );
+
+    test_db.teardown().await;
+}
+
 /// A real (or arbitrary) 1536-d vector as a pgvector text literal `[v1,v2,...]`.
 fn vector_literal(values: &[f32]) -> String {
     let mut s = String::from("[");
