@@ -1503,3 +1503,133 @@ async fn create_conclusions_validates_inserts_and_marks_synced() {
 
     test_db.teardown().await;
 }
+
+fn message_at(peer: &str, content: &str, at: chrono::DateTime<Utc>) -> MessageInsert {
+    MessageInsert {
+        peer_name: peer.to_string(),
+        content: content.to_string(),
+        metadata: json!({}),
+        created_at: Some(at),
+        token_count: 1,
+    }
+}
+
+#[tokio::test]
+async fn get_messages_by_date_range_filters_orders_and_scopes() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let t2 = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+    let t3 = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap();
+
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "s1",
+        &[
+            message_at("alice", "jan", t1),
+            message_at("alice", "feb", t2),
+            message_at("alice", "mar", t3),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("messages s1");
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "s2",
+        &[message_at("bob", "bob-feb", t2)],
+        false,
+        8192,
+    )
+    .await
+    .expect("messages s2");
+
+    // after=t2, session s1, desc -> feb & mar, newest first.
+    let after = db::get_messages_by_date_range(
+        &test_db.pool,
+        "ws",
+        Some("s1"),
+        None,
+        Some(t2),
+        None,
+        20,
+        true,
+    )
+    .await
+    .expect("after range");
+    let contents: Vec<&str> = after.iter().filter_map(|m| m["content"].as_str()).collect();
+    assert_eq!(contents, vec!["mar", "feb"]);
+
+    // asc order flips it.
+    let asc = db::get_messages_by_date_range(
+        &test_db.pool,
+        "ws",
+        Some("s1"),
+        None,
+        Some(t2),
+        None,
+        20,
+        false,
+    )
+    .await
+    .expect("asc range");
+    let asc_contents: Vec<&str> = asc.iter().filter_map(|m| m["content"].as_str()).collect();
+    assert_eq!(asc_contents, vec!["feb", "mar"]);
+
+    // before=t1 -> only jan.
+    let before = db::get_messages_by_date_range(
+        &test_db.pool,
+        "ws",
+        Some("s1"),
+        None,
+        None,
+        Some(t1),
+        20,
+        true,
+    )
+    .await
+    .expect("before range");
+    let before_contents: Vec<&str> = before
+        .iter()
+        .filter_map(|m| m["content"].as_str())
+        .collect();
+    assert_eq!(before_contents, vec!["jan"]);
+
+    // observer "bob" (no session arg) is scoped to s2 only.
+    let bob = db::get_messages_by_date_range(
+        &test_db.pool,
+        "ws",
+        None,
+        Some("bob"),
+        None,
+        None,
+        20,
+        true,
+    )
+    .await
+    .expect("observer scope");
+    let bob_contents: Vec<&str> = bob.iter().filter_map(|m| m["content"].as_str()).collect();
+    assert_eq!(bob_contents, vec!["bob-feb"]);
+
+    // An observer with no memberships sees nothing.
+    let ghost = db::get_messages_by_date_range(
+        &test_db.pool,
+        "ws",
+        None,
+        Some("ghost"),
+        None,
+        None,
+        20,
+        true,
+    )
+    .await
+    .expect("ghost scope");
+    assert!(ghost.is_empty());
+
+    test_db.teardown().await;
+}

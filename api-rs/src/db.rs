@@ -1480,6 +1480,99 @@ pub async fn list_conclusions(
     Ok(page_response(items, total as u64, page))
 }
 
+/// Distinct session names where `peer_name` has any membership record, porting
+/// `crud.get_peer_session_names` (any record grants visibility, ignoring the
+/// joined/left window).
+async fn fetch_peer_session_names(
+    pool: &PgPool,
+    workspace_name: &str,
+    peer_name: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT session_name FROM session_peers \
+         WHERE workspace_name = $1 AND peer_name = $2",
+    )
+    .bind(workspace_name)
+    .bind(peer_name)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(name,)| name).collect())
+}
+
+/// Port of `crud.get_messages_by_date_range` (the dialectic
+/// `get_messages_by_date_range` tool's data layer). Returns messages in the
+/// workspace optionally scoped to a session — or, when `observer` is given
+/// without a session, to the sessions that peer belongs to (no memberships →
+/// empty) — bounded by an inclusive `[after, before]` `created_at` window,
+/// ordered by `created_at` (desc unless `order_desc` is false), limited.
+#[allow(clippy::too_many_arguments)]
+pub async fn get_messages_by_date_range(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: Option<&str>,
+    observer: Option<&str>,
+    after: Option<DateTime<Utc>>,
+    before: Option<DateTime<Utc>>,
+    limit: i64,
+    order_desc: bool,
+) -> Result<Vec<Value>, sqlx::Error> {
+    let allowed_sessions: Option<Vec<String>> = match (observer, session_name) {
+        (Some(observer), None) => {
+            let names = fetch_peer_session_names(pool, workspace_name, observer).await?;
+            if names.is_empty() {
+                return Ok(Vec::new());
+            }
+            Some(names)
+        }
+        _ => None,
+    };
+
+    let mut sql = String::from(
+        "SELECT public_id, content, peer_name, session_name, metadata, created_at, \
+         workspace_name, token_count FROM messages WHERE workspace_name = $1",
+    );
+    let mut placeholder = 1;
+    if session_name.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND session_name = ${placeholder}"));
+    } else if allowed_sessions.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND session_name = ANY(${placeholder})"));
+    }
+    if after.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND created_at >= ${placeholder}"));
+    }
+    if before.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND created_at <= ${placeholder}"));
+    }
+    sql.push_str(if order_desc {
+        " ORDER BY created_at DESC"
+    } else {
+        " ORDER BY created_at ASC"
+    });
+    placeholder += 1;
+    sql.push_str(&format!(" LIMIT ${placeholder}"));
+
+    let mut query = sqlx::query_as::<_, MessageRow>(&sql).bind(workspace_name);
+    if let Some(session) = session_name {
+        query = query.bind(session);
+    } else if let Some(names) = allowed_sessions.as_ref() {
+        query = query.bind(names);
+    }
+    if let Some(after) = after {
+        query = query.bind(after);
+    }
+    if let Some(before) = before {
+        query = query.bind(before);
+    }
+    query = query.bind(limit);
+
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows.into_iter().map(message_json).collect())
+}
+
 /// A validated conclusion to create, plus its pre-computed embedding (computed
 /// in the handler, outside any DB session).
 #[derive(Debug, Clone)]
