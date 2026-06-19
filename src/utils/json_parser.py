@@ -9,6 +9,22 @@ logger = logging.getLogger(__name__)
 # logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
+def _strip_thinking_wrappers(json_str: str) -> str:
+    """Strip <think>...</think> blocks and Markdown ```json fences."""
+    if not json_str:
+        return json_str
+
+    # Remove <think>...</think> blocks
+    json_str = re.sub(r"<think>.*?</think>", "", json_str, flags=re.DOTALL)
+
+    # Remove ```json ... ``` fences
+    fence = re.search(r"```(?:json)?\s*(.*?)\s*```", json_str, re.DOTALL)
+    if fence:
+        json_str = fence.group(1)
+
+    return json_str.strip()
+
+
 def comprehensive_json_repair(json_str: str) -> str:
     """Comprehensively repair malformed JSON with multiple strategies"""
 
@@ -354,10 +370,9 @@ def simple_bracket_repair(json_str: str) -> str:
 
 def validate_and_repair_json(json_str: str) -> str:
     """Main function with comprehensive repair strategies"""
-    json_str = json_str.strip()
-
-    # Try parsing with repair library
+    json_str = _strip_thinking_wrappers(json_str.strip())
     good_json = repair_json(json_str)
+
     if good_json:
         return good_json
 

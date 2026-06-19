@@ -76,6 +76,10 @@ EXAMPLES (using `alice` as the target peer id):
 - EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice lives in NYC"
 - EXPLICIT: "alice attended college" + general knowledge → "alice completed high school or equivalent"
 
+OUTPUT FORMAT:
+Always return a valid JSON object. Never wrap in markdown fences or <think> blocks.
+If nothing to extract, return: {"explicit": []}
+
 {custom_instructions_section}
 
 Target peer:
