@@ -1260,6 +1260,75 @@ async fn grep_messages_builds_and_merges_context_snippets() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn search_messages_semantic_ranks_and_windows() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // seqs 1..3; one-hot embeddings on distinct dimensions.
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "red"),
+            message("bob", "green"),
+            message("alice", "blue"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+    seed_embedding(&test_db.pool, &created[0].public_id, 0).await;
+    seed_embedding(&test_db.pool, &created[1].public_id, 1).await;
+    seed_embedding(&test_db.pool, &created[2].public_id, 2).await;
+
+    // Query closest to dim 1 -> the "green" message (seq 2) is the top match.
+    let embedding = query_vector(&[(1, 1.0), (0, 0.1), (2, 0.1)]);
+    let snippets = db::search_messages_semantic(
+        &test_db.pool,
+        "ws",
+        Some("sess"),
+        None,
+        &embedding,
+        None,
+        None,
+        1,
+        1,
+    )
+    .await
+    .expect("semantic search");
+
+    assert_eq!(snippets.len(), 1);
+    assert_eq!(snippets[0].matched.len(), 1);
+    assert_eq!(snippets[0].matched[0]["content"], json!("green"));
+    // context_window 1 around seq 2 -> seqs 1..=3 (all three messages).
+    assert_eq!(snippets[0].context.len(), 3);
+    assert_eq!(snippets[0].context[0]["content"], json!("red"));
+    assert_eq!(snippets[0].context[2]["content"], json!("blue"));
+
+    // A far-future after-date filters everything out.
+    let future = chrono::Utc::now() + chrono::Duration::days(3650);
+    let none = db::search_messages_semantic(
+        &test_db.pool,
+        "ws",
+        Some("sess"),
+        None,
+        &embedding,
+        Some(future),
+        None,
+        10,
+        1,
+    )
+    .await
+    .expect("semantic search after-date");
+    assert!(none.is_empty());
+
+    test_db.teardown().await;
+}
+
 /// A real (or arbitrary) 1536-d vector as a pgvector text literal `[v1,v2,...]`.
 fn vector_literal(values: &[f32]) -> String {
     let mut s = String::from("[");

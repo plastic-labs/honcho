@@ -1743,6 +1743,101 @@ async fn build_merged_snippets(
     Ok(snippets)
 }
 
+/// Port of `_search_messages_pgvector` + `_deduplicate_messages` (the data layer
+/// behind the dialectic `search_messages` / `search_messages_temporal` tools).
+/// Cosine-distance (`<=>`) match over `message_embeddings`, oversampling
+/// `limit * 2` (one message may have several chunks), deduped by `public_id` to
+/// `limit` preserving rank order, then grouped into merged context-window
+/// snippets. The workspace and session scope live on the embedding side
+/// (mirroring Python's `MessageEmbedding.*` predicates); the inclusive
+/// `[after, before]` `created_at` window applies to the messages. When
+/// `observer` is given without a session, scopes to that peer's sessions (no
+/// memberships → empty). Takes a pre-computed `query_embedding`, so the call is
+/// DB-only (the embed leg is the caller's concern, like `hybrid_search`).
+#[allow(clippy::too_many_arguments)]
+pub async fn search_messages_semantic(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: Option<&str>,
+    observer: Option<&str>,
+    query_embedding: &[f32],
+    after: Option<DateTime<Utc>>,
+    before: Option<DateTime<Utc>>,
+    limit: i64,
+    context_window: i64,
+) -> Result<Vec<MessageSnippet>, sqlx::Error> {
+    let allowed_sessions: Option<Vec<String>> = match (observer, session_name) {
+        (Some(observer), None) => {
+            let names = fetch_peer_session_names(pool, workspace_name, observer).await?;
+            if names.is_empty() {
+                return Ok(Vec::new());
+            }
+            Some(names)
+        }
+        _ => None,
+    };
+
+    let mut sql = String::from(
+        "SELECT m.public_id, m.content, m.peer_name, m.session_name, m.metadata, \
+         m.created_at, m.workspace_name, m.token_count, m.seq_in_session \
+         FROM messages m \
+         JOIN message_embeddings me ON m.public_id = me.message_id \
+         WHERE me.embedding IS NOT NULL AND me.workspace_name = $1",
+    );
+    let mut placeholder = 1;
+    if session_name.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND me.session_name = ${placeholder}"));
+    } else if allowed_sessions.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND me.session_name = ANY(${placeholder})"));
+    }
+    if after.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND m.created_at >= ${placeholder}"));
+    }
+    if before.is_some() {
+        placeholder += 1;
+        sql.push_str(&format!(" AND m.created_at <= ${placeholder}"));
+    }
+    let vec_idx = placeholder + 1;
+    let limit_idx = placeholder + 2;
+    sql.push_str(&format!(
+        " ORDER BY me.embedding <=> ${vec_idx}::vector LIMIT ${limit_idx}"
+    ));
+
+    let mut query = sqlx::query_as::<_, SnippetMessageRow>(&sql).bind(workspace_name);
+    if let Some(session) = session_name {
+        query = query.bind(session);
+    } else if let Some(names) = allowed_sessions.as_ref() {
+        query = query.bind(names);
+    }
+    if let Some(after) = after {
+        query = query.bind(after);
+    }
+    if let Some(before) = before {
+        query = query.bind(before);
+    }
+    query = query
+        .bind(crate::search::vector_literal(query_embedding))
+        .bind(limit * 2);
+    let rows = query.fetch_all(pool).await?;
+
+    // _deduplicate_messages: dedup by public_id preserving order, cap at limit.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut matched: Vec<SnippetMessageRow> = Vec::new();
+    for row in rows {
+        if seen.insert(row.public_id.clone()) {
+            matched.push(row);
+            if matched.len() as i64 >= limit {
+                break;
+            }
+        }
+    }
+
+    build_merged_snippets(pool, workspace_name, matched, context_window).await
+}
+
 /// A validated conclusion to create, plus its pre-computed embedding (computed
 /// in the handler, outside any DB session).
 #[derive(Debug, Clone)]
