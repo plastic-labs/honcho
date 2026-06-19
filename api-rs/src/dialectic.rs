@@ -9,11 +9,21 @@
 //! Char-cap defaults are hardcoded constants (Python reads env-overridable
 //! `settings.LLM.*`; same simplification as other ported defaults).
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::db::{self, MessageSnippet, ReasoningDocument};
+
+/// The dialectic-relevant subset of Python's `ToolContext` — the peer/session
+/// scope the read-only tool handlers thread into their data-layer calls.
+#[derive(Debug, Clone)]
+pub struct ToolContext {
+    pub workspace_name: String,
+    pub observer: String,
+    pub observed: String,
+    pub session_name: Option<String>,
+}
 
 /// `settings.LLM.MAX_TOOL_OUTPUT_CHARS` default.
 pub const MAX_TOOL_OUTPUT_CHARS: usize = 10_000;
@@ -379,6 +389,225 @@ pub async fn format_reasoning_chain(
     Ok(parts.join("\n"))
 }
 
+/// A string field of a tool-input JSON object, or `None` if absent/non-string.
+fn input_str<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
+    input.get(key).and_then(Value::as_str)
+}
+
+/// `_safe_int(tool_input.get(key), default)` — coerce a (possibly absent) field.
+fn input_int(input: &Value, key: &str, default: i64) -> i64 {
+    safe_int(input.get(key).unwrap_or(&Value::Null), default)
+}
+
+/// Python `repr` of a list of strings: `['a', 'b']` (single-quoted, `, `-joined;
+/// empty → `[]`). Used by the `get_observation_context` no-results message.
+/// Faithful for nanoid-style ids; embedded quotes/specials are not escaped
+/// (Python switches quoting then) — out of scope for message ids.
+fn python_str_list_repr(items: &[String]) -> String {
+    let inner = items
+        .iter()
+        .map(|item| format!("'{item}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{inner}]")
+}
+
+/// Port of `_parse_date`: empty/absent → `Ok(None)`; otherwise parse an ISO
+/// string (`Z`→`+00:00` first, like Python), returning the handler's exact
+/// `ERROR: Invalid {param} format '{s}'. Use ISO format (e.g., '2024-01-15')`
+/// on failure. Covers `datetime.fromisoformat`'s common shapes (date-only,
+/// datetime with/without offset, fractional seconds, space or `T` separator);
+/// naive values are read as UTC. Rare ISO forms (week/ordinal dates) are not
+/// reproduced — they don't arrive from the agent.
+fn parse_date(value: Option<&str>, param: &str) -> Result<Option<DateTime<Utc>>, String> {
+    let Some(text) = value.filter(|candidate| !candidate.is_empty()) else {
+        return Ok(None);
+    };
+    let normalized = text.replace('Z', "+00:00");
+    let invalid =
+        || format!("ERROR: Invalid {param} format '{text}'. Use ISO format (e.g., '2024-01-15')");
+
+    if let Ok(dt) = DateTime::parse_from_rfc3339(&normalized) {
+        return Ok(Some(dt.with_timezone(&Utc)));
+    }
+    for separator in ['T', ' '] {
+        for format in ["%Y-%m-%d%H:%M:%S%.f", "%Y-%m-%d%H:%M:%S"] {
+            let pattern = format.replacen("%Y-%m-%d", &format!("%Y-%m-%d{separator}"), 1);
+            if let Ok(naive) = NaiveDateTime::parse_from_str(&normalized, &pattern) {
+                return Ok(Some(Utc.from_utc_datetime(&naive)));
+            }
+        }
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(&normalized, "%Y-%m-%d") {
+        return Ok(Some(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight"))));
+    }
+    Err(invalid())
+}
+
+/// Port of the `grep_messages` tool handler: parse/cap input (`text` required;
+/// `limit` capped at 30, `context_window` at 2), run the data layer, and either
+/// the no-results sentinel or the formatted snippets.
+pub async fn handle_grep_messages(
+    pool: &PgPool,
+    ctx: &ToolContext,
+    input: &Value,
+) -> Result<String, sqlx::Error> {
+    let text = input_str(input, "text").unwrap_or("");
+    if text.is_empty() {
+        return Ok("ERROR: 'text' parameter is required".to_string());
+    }
+    let limit = input_int(input, "limit", 10).min(30);
+    let context_window = input_int(input, "context_window", 2).min(2);
+
+    let snippets = db::grep_messages(
+        pool,
+        &ctx.workspace_name,
+        ctx.session_name.as_deref(),
+        text,
+        limit,
+        context_window,
+        Some(&ctx.observer),
+    )
+    .await?;
+    if snippets.is_empty() {
+        return Ok(format!("No messages found containing '{text}'"));
+    }
+    Ok(format_grep_result(text, &snippets).0)
+}
+
+/// Port of the `get_messages_by_date_range` tool handler: parse `after_date` /
+/// `before_date` (ERROR string on bad ISO), `limit` (capped at 20), `order`
+/// (`asc`→oldest-first else newest-first), run the data layer, and assemble the
+/// "Found N messages (range, order):" output (or the no-results sentinel).
+pub async fn handle_get_messages_by_date_range(
+    pool: &PgPool,
+    ctx: &ToolContext,
+    input: &Value,
+) -> Result<String, sqlx::Error> {
+    let after_str = input_str(input, "after_date");
+    let before_str = input_str(input, "before_date");
+    let limit = input_int(input, "limit", 20).min(20);
+    let order = input_str(input, "order").unwrap_or("desc");
+
+    let after = match parse_date(after_str, "after_date") {
+        Ok(value) => value,
+        Err(message) => return Ok(message),
+    };
+    let before = match parse_date(before_str, "before_date") {
+        Ok(value) => value,
+        Err(message) => return Ok(message),
+    };
+
+    let messages = db::get_messages_by_date_range(
+        pool,
+        &ctx.workspace_name,
+        ctx.session_name.as_deref(),
+        Some(&ctx.observer),
+        after,
+        before,
+        limit,
+        order != "asc",
+    )
+    .await?;
+
+    // The range description uses the raw input strings' truthiness.
+    let mut range_parts: Vec<String> = Vec::new();
+    if let Some(after) = after_str.filter(|value| !value.is_empty()) {
+        range_parts.push(format!("after {after}"));
+    }
+    if let Some(before) = before_str.filter(|value| !value.is_empty()) {
+        range_parts.push(format!("before {before}"));
+    }
+
+    if messages.is_empty() {
+        let range_desc = if range_parts.is_empty() {
+            "specified range".to_string()
+        } else {
+            range_parts.join(" and ")
+        };
+        return Ok(format!("No messages found {range_desc}"));
+    }
+
+    let range_desc = if range_parts.is_empty() {
+        "all time".to_string()
+    } else {
+        range_parts.join(" and ")
+    };
+    let order_desc = if order == "asc" {
+        "oldest first"
+    } else {
+        "newest first"
+    };
+    let output = format!(
+        "Found {} messages ({range_desc}, {order_desc}):\n\n{}",
+        messages.len(),
+        format_message_list(&messages)
+    );
+    Ok(truncate_tool_output(&output, MAX_TOOL_OUTPUT_CHARS).0)
+}
+
+/// Port of the `get_observation_context` tool handler: pull the `message_ids`
+/// list, run the ±1-context data layer, and either the Python-repr no-results
+/// sentinel or the "Retrieved N messages with context:" output.
+pub async fn handle_get_observation_context(
+    pool: &PgPool,
+    ctx: &ToolContext,
+    input: &Value,
+) -> Result<String, sqlx::Error> {
+    let message_ids: Vec<String> = input
+        .get("message_ids")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let messages = db::get_observation_context(
+        pool,
+        &ctx.workspace_name,
+        ctx.session_name.as_deref(),
+        &message_ids,
+        Some(&ctx.observer),
+    )
+    .await?;
+    if messages.is_empty() {
+        return Ok(format!(
+            "No messages found for IDs {}",
+            python_str_list_repr(&message_ids)
+        ));
+    }
+    let output = format!(
+        "Retrieved {} messages with context:\n{}",
+        messages.len(),
+        format_message_list(&messages)
+    );
+    Ok(truncate_tool_output(&output, MAX_TOOL_OUTPUT_CHARS).0)
+}
+
+/// Port of the `get_reasoning_chain` tool handler input wrapping:
+/// extract `observation_id` / `direction` (default `"both"`) and delegate to
+/// [`format_reasoning_chain`] (which owns the ERROR/not-found sentinels).
+pub async fn handle_get_reasoning_chain(
+    pool: &PgPool,
+    ctx: &ToolContext,
+    input: &Value,
+) -> Result<String, sqlx::Error> {
+    let observation_id = input_str(input, "observation_id").unwrap_or("");
+    let direction = input_str(input, "direction").unwrap_or("both");
+    format_reasoning_chain(
+        pool,
+        &ctx.workspace_name,
+        observation_id,
+        direction,
+        Some(&ctx.observer),
+        Some(&ctx.observed),
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,6 +771,42 @@ mod tests {
             "Found 1 messages containing 'here' in 1 conversation snippets:\n\n\
              --- Snippet 1 (session: s1, 1 match(es)) ---\n\
              2023-05-08 13:56:00 alice: look here now"
+        );
+    }
+
+    #[test]
+    fn python_str_list_repr_matches_python() {
+        assert_eq!(python_str_list_repr(&[]), "[]");
+        assert_eq!(python_str_list_repr(&["a".to_string()]), "['a']");
+        assert_eq!(
+            python_str_list_repr(&["id1".to_string(), "id2".to_string()]),
+            "['id1', 'id2']"
+        );
+    }
+
+    #[test]
+    fn parse_date_handles_iso_shapes() {
+        assert_eq!(parse_date(None, "after_date"), Ok(None));
+        assert_eq!(parse_date(Some(""), "after_date"), Ok(None));
+        assert_eq!(
+            parse_date(Some("2024-01-15"), "after_date"),
+            Ok(Some(Utc.with_ymd_and_hms(2024, 1, 15, 0, 0, 0).unwrap()))
+        );
+        assert_eq!(
+            parse_date(Some("2024-01-15T10:30:00Z"), "after_date"),
+            Ok(Some(Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap()))
+        );
+        assert_eq!(
+            parse_date(Some("2024-01-15T10:30:00+00:00"), "after_date"),
+            Ok(Some(Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap()))
+        );
+        assert_eq!(
+            parse_date(Some("2024-01-15 10:30:00"), "after_date"),
+            Ok(Some(Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap()))
+        );
+        assert_eq!(
+            parse_date(Some("not-a-date"), "before_date"),
+            Err("ERROR: Invalid before_date format 'not-a-date'. Use ISO format (e.g., '2024-01-15')".to_string())
         );
     }
 

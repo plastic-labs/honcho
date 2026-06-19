@@ -1390,6 +1390,92 @@ async fn get_observation_context_expands_around_targets() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn dialectic_read_tool_handlers_format_results() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "the quarterly report is ready"),
+            message("bob", "thanks for the report"),
+            message("alice", "see you tomorrow"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+
+    let ctx = dialectic::ToolContext {
+        workspace_name: "ws".to_string(),
+        observer: "alice".to_string(),
+        observed: "alice".to_string(),
+        session_name: Some("sess".to_string()),
+    };
+
+    // grep: missing text -> ERROR; a match -> formatted snippet header.
+    let err = dialectic::handle_grep_messages(&test_db.pool, &ctx, &json!({}))
+        .await
+        .expect("grep no text");
+    assert_eq!(err, "ERROR: 'text' parameter is required");
+
+    let grep = dialectic::handle_grep_messages(
+        &test_db.pool,
+        &ctx,
+        &json!({"text": "report", "context_window": 0}),
+    )
+    .await
+    .expect("grep report");
+    // seq 1 & 2 both match and are adjacent (start <= prev_end + 1) -> one snippet.
+    assert!(grep.starts_with("Found 2 messages containing 'report' in 1 conversation snippets:"));
+
+    let grep_none = dialectic::handle_grep_messages(&test_db.pool, &ctx, &json!({"text": "zzz"}))
+        .await
+        .expect("grep none");
+    assert_eq!(grep_none, "No messages found containing 'zzz'");
+
+    // date_range: bad date -> ERROR; default -> "all time, newest first".
+    let bad = dialectic::handle_get_messages_by_date_range(
+        &test_db.pool,
+        &ctx,
+        &json!({"after_date": "nonsense"}),
+    )
+    .await
+    .expect("bad date");
+    assert_eq!(
+        bad,
+        "ERROR: Invalid after_date format 'nonsense'. Use ISO format (e.g., '2024-01-15')"
+    );
+
+    let range = dialectic::handle_get_messages_by_date_range(&test_db.pool, &ctx, &json!({}))
+        .await
+        .expect("date range");
+    assert!(range.starts_with("Found 3 messages (all time, newest first):"));
+
+    // observation_context: empty ids -> Python-repr sentinel; a real id -> output.
+    let empty = dialectic::handle_get_observation_context(&test_db.pool, &ctx, &json!({"message_ids": []}))
+        .await
+        .expect("obs empty");
+    assert_eq!(empty, "No messages found for IDs []");
+
+    let obs = dialectic::handle_get_observation_context(
+        &test_db.pool,
+        &ctx,
+        &json!({"message_ids": [created[1].public_id]}),
+    )
+    .await
+    .expect("obs context");
+    // seq 2 target, ±1 -> 3 messages with context.
+    assert!(obs.starts_with("Retrieved 3 messages with context:"));
+
+    test_db.teardown().await;
+}
+
 /// A real (or arbitrary) 1536-d vector as a pgvector text literal `[v1,v2,...]`.
 fn vector_literal(values: &[f32]) -> String {
     let mut s = String::from("[");
