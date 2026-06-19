@@ -1558,6 +1558,68 @@ async fn dialectic_search_tool_handlers_format_results() {
     test_db.teardown().await;
 }
 
+struct FixedEmbedder(Vec<f32>);
+impl dialectic::Embedder for FixedEmbedder {
+    async fn embed(&self, _query: &str) -> Result<Vec<f32>, String> {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn dialectic_tool_executor_dispatches_by_name() {
+    use honcho_api_rs::llm::tool_loop::ToolExecutor;
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "the report is here"),
+            message("bob", "ok thanks"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+    seed_embedding(&test_db.pool, &created[0].public_id, 0).await;
+    seed_embedding(&test_db.pool, &created[1].public_id, 1).await;
+
+    let executor = dialectic::DialecticToolExecutor {
+        pool: &test_db.pool,
+        ctx: dialectic::ToolContext {
+            workspace_name: "ws".to_string(),
+            observer: "alice".to_string(),
+            observed: "alice".to_string(),
+            session_name: Some("sess".to_string()),
+        },
+        embedder: FixedEmbedder(query_vector(&[(0, 1.0)])),
+    };
+
+    // DB-only tool dispatched to its handler.
+    let grep = executor
+        .execute("grep_messages", &json!({"text": "report"}))
+        .await
+        .expect("grep ok");
+    assert!(grep.starts_with("Found 1 messages containing 'report'"));
+
+    // Semantic tool: embedder seam supplies the vector.
+    let search = executor
+        .execute("search_messages", &json!({"query": "report"}))
+        .await
+        .expect("search ok");
+    assert!(search.starts_with("Found 2 matching messages"));
+
+    // Unknown tool -> Err (the loop folds this into an is_error result).
+    let unknown = executor.execute("create_observations", &json!({})).await;
+    assert!(unknown.is_err());
+
+    test_db.teardown().await;
+}
+
 /// A real (or arbitrary) 1536-d vector as a pgvector text literal `[v1,v2,...]`.
 fn vector_literal(values: &[f32]) -> String {
     let mut s = String::from("[");

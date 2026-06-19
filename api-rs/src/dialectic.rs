@@ -9,11 +9,14 @@
 //! Char-cap defaults are hardcoded constants (Python reads env-overridable
 //! `settings.LLM.*`; same simplification as other ported defaults).
 
+use std::future::Future;
+
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::db::{self, MessageSnippet, ReasoningDocument};
+use crate::llm::tool_loop::ToolExecutor;
 
 /// The dialectic-relevant subset of Python's `ToolContext` — the peer/session
 /// scope the read-only tool handlers thread into their data-layer calls.
@@ -703,6 +706,77 @@ pub async fn handle_search_messages_temporal(
         &snippets,
         &format!("for query '{query}'{filter_desc}"),
     ))
+}
+
+/// The query-embedding seam the dialectic tool executor needs for the
+/// semantic-search tools. Production wraps the OpenAI embedding client
+/// (`embedding::embed_openai`); tests use a fixed-vector mock. Mirrors how the
+/// LLM tool loop abstracts its completion/transport seams.
+pub trait Embedder {
+    fn embed(&self, query: &str) -> impl Future<Output = Result<Vec<f32>, String>> + Send;
+}
+
+/// Bridges the ported dialectic tool handlers to the generic
+/// [`crate::llm::tool_loop::execute_tool_loop`] via its [`ToolExecutor`] seam:
+/// dispatches a tool call by name to the matching handler, embedding the query
+/// first for the semantic-search tools. DB errors and embed failures map to
+/// `Err(String)` (the loop folds those into an `is_error` tool result, like
+/// Python's `except` branch); the handlers' own `ERROR:` strings are normal
+/// `Ok` results. Unhandled tools (writes / `search_memory` / dreamer tools)
+/// return an `Err`.
+pub struct DialecticToolExecutor<'a, E: Embedder> {
+    pub pool: &'a PgPool,
+    pub ctx: ToolContext,
+    pub embedder: E,
+}
+
+impl<E: Embedder + Sync> ToolExecutor for DialecticToolExecutor<'_, E> {
+    async fn execute(&self, name: &str, input: &Value) -> Result<String, String> {
+        let to_err = |error: sqlx::Error| error.to_string();
+        match name {
+            "grep_messages" => handle_grep_messages(self.pool, &self.ctx, input)
+                .await
+                .map_err(to_err),
+            "get_messages_by_date_range" => {
+                handle_get_messages_by_date_range(self.pool, &self.ctx, input)
+                    .await
+                    .map_err(to_err)
+            }
+            "get_observation_context" => {
+                handle_get_observation_context(self.pool, &self.ctx, input)
+                    .await
+                    .map_err(to_err)
+            }
+            "get_reasoning_chain" => handle_get_reasoning_chain(self.pool, &self.ctx, input)
+                .await
+                .map_err(to_err),
+            "search_messages" => {
+                // Embed only when the query is present; an empty query short-
+                // circuits to the handler's ERROR before the embedding is used.
+                let query = input_str(input, "query").unwrap_or("");
+                let embedding = if query.is_empty() {
+                    Vec::new()
+                } else {
+                    self.embedder.embed(query).await?
+                };
+                handle_search_messages(self.pool, &self.ctx, input, &embedding)
+                    .await
+                    .map_err(to_err)
+            }
+            "search_messages_temporal" => {
+                let query = input_str(input, "query").unwrap_or("");
+                let embedding = if query.is_empty() {
+                    Vec::new()
+                } else {
+                    self.embedder.embed(query).await?
+                };
+                handle_search_messages_temporal(self.pool, &self.ctx, input, &embedding)
+                    .await
+                    .map_err(to_err)
+            }
+            other => Err(format!("Unknown or unsupported dialectic tool: {other}")),
+        }
+    }
 }
 
 #[cfg(test)]
