@@ -13,12 +13,12 @@ NAMESPACE = "honcho"
 
 [embedding]
 VECTOR_DIMENSIONS = 1024
-# Ollama's mxbai tokenizer can count some Hermes/Honcho messages higher than
-# Honcho's cl100k estimate. Keep chunks comfortably below the provider context
-# and keep each provider request to one large chunk so batched input does not
-# blow Ollama's shared request context.
-MAX_INPUT_TOKENS = 768
-MAX_TOKENS_PER_REQUEST = 768
+# Ollama's mxbai tokenizer can count some Hermes/Honcho messages much higher than
+# Honcho's cl100k estimate. 768 still caused `input length exceeds context length`
+# on normal Hermes memory snapshots (~695 cl100k tokens), so keep chunks well below
+# the provider context and one large chunk per provider request.
+MAX_INPUT_TOKENS = 384
+MAX_TOKENS_PER_REQUEST = 384
 
 [db]
 CONNECTION_URI = "postgresql+psycopg://honcho:honcho@database:5432/honcho"
