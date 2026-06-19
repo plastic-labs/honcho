@@ -34,11 +34,9 @@ from .executor import honcho_llm_call_inner
 from .registry import history_adapter_for_provider
 from .runtime import (
     AttemptPlan,
-    _in_agent_run,  # pyright: ignore[reportPrivateUsage]  # intra-package
-    annotate_langfuse_step_io,
     current_attempt,
     effective_temperature,
-    langfuse_agent_step,
+    start_langfuse_agent_step,
 )
 from .types import (
     HonchoLLMCallResponse,
@@ -76,7 +74,8 @@ def _step_label(base: LLMTelemetryContext | None) -> str:
 
     No step number — Langfuse aggregates by name; the index rides on the
     ``iteration`` metadata. The " step" suffix distinguishes it from the bare
-    agent name, which names the enclosing run trace (see `langfuse_agent_run`).
+    agent name, which names the enclosing run trace (see
+    `start_langfuse_agent_run`).
     """
     return f"{(base.track_name if base else None) or 'Agent'} step"
 
@@ -224,13 +223,12 @@ async def stream_final_response(
     # value — telemetry can't tell the retry sequence apart.
     stream_attempt = 0
 
-    # Streamed chunks drain after `langfuse_agent_run` has exited, so the
-    # generation inside `_setup_stream` is its own trace and self-stamps the
-    # session via run_id. Reset `_in_agent_run` locally so this decoupling no
-    # longer depends on the run context's exit timing — if a caller ever
-    # drains the stream while the run span is still open (eager iteration,
-    # nested wrapping), the inner @observe still self-stamps correctly.
-    token = _in_agent_run.set(False)
+    # No ContextVar gymnastics around `_in_agent_run` here: the run handle
+    # is alive for the lifetime of the stream (owned by
+    # `StreamingResponseWithMetadata` and closed on drain), so this streamed
+    # generation correctly nests under the run span as the current OTel
+    # observation. The previous code had to flip `_in_agent_run` to escape
+    # the run; with imperative handles the run isn't going anywhere.
 
     async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
         nonlocal stream_attempt
@@ -266,21 +264,18 @@ async def stream_final_response(
             telemetry=telemetry,
         )
 
-    try:
-        if enable_retry:
-            wrapped = retry(
-                stop=stop_after_attempt(retry_attempts),
-                wait=wait_exponential(multiplier=1, min=4, max=10),
-                before_sleep=before_retry_callback,
-            )(_setup_stream)
-            stream = await wrapped()
-        else:
-            stream = await _setup_stream()
+    if enable_retry:
+        wrapped = retry(
+            stop=stop_after_attempt(retry_attempts),
+            wait=wait_exponential(multiplier=1, min=4, max=10),
+            before_sleep=before_retry_callback,
+        )(_setup_stream)
+        stream = await wrapped()
+    else:
+        stream = await _setup_stream()
 
-        async for chunk in stream:
-            yield chunk
-    finally:
-        _in_agent_run.reset(token)
+    async for chunk in stream:
+        yield chunk
 
 
 @_with_iteration_scope
@@ -306,6 +301,7 @@ async def execute_tool_loop(
     stream_final: bool = False,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    langfuse_run_handle: Any | None = None,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """Run the iterative tool calling loop for agentic LLM interactions.
 
@@ -351,10 +347,11 @@ async def execute_tool_loop(
     effective_tool_choice = tool_choice
 
     while iteration < max_tool_iterations:
-        with langfuse_agent_step(
+        step = start_langfuse_agent_step(
             _step_label(telemetry),
             _telemetry_for_iteration(telemetry, iteration + 1),
-        ):
+        )
+        try:
             # Reset attempt counter so each iteration starts with the primary provider.
             current_attempt.set(1)
             logger.debug(
@@ -369,10 +366,10 @@ async def execute_tool_loop(
                 )
 
             async def _call_with_messages(
-                effective_tool_choice: str
+                tool_choice_for_call: str
                 | dict[str, Any]
                 | None = effective_tool_choice,
-                conversation_messages: list[dict[str, Any]] = conversation_messages,
+                captured_messages: list[dict[str, Any]] = conversation_messages,
                 iteration_for_call: int = iteration + 1,
             ) -> HonchoLLMCallResponse[Any]:
                 plan = get_attempt_plan()
@@ -391,13 +388,14 @@ async def execute_tool_loop(
                     stream=False,
                     client_override=plan.client,
                     tools=tools,
-                    tool_choice=effective_tool_choice,
-                    messages=conversation_messages,
+                    tool_choice=tool_choice_for_call,
+                    messages=captured_messages,
                     selected_config=plan.selected_config,
                     plan=plan,
                     telemetry=_telemetry_for_iteration(telemetry, iteration_for_call),
                 )
 
+            call_func: Callable[[], Awaitable[HonchoLLMCallResponse[Any]]]
             if enable_retry:
                 call_func = retry(
                     stop=stop_after_attempt(retry_attempts),
@@ -405,7 +403,7 @@ async def execute_tool_loop(
                     before_sleep=before_retry_callback,
                 )(_call_with_messages)
             else:
-                call_func = _call_with_messages
+                call_func = _call_with_messages  # pyright: ignore[reportGeneralTypeIssues]
 
             response = await call_func()
 
@@ -421,12 +419,12 @@ async def execute_tool_loop(
 
             # Step span is current again (the generation closed); stamp this
             # turn's I/O so it isn't blank.
-            annotate_langfuse_step_io(
-                telemetry,
-                conversation_messages,
-                response.content,
-                response.tool_calls_made,
-            )
+            if step is not None:
+                step.annotate_io(
+                    conversation_messages,
+                    response.content,
+                    response.tool_calls_made,
+                )
 
             if not response.tool_calls_made:
                 logger.debug("No tool calls in response, finishing")
@@ -480,6 +478,7 @@ async def execute_tool_loop(
                         thinking_content=response.thinking_content,
                         iterations=iteration + 1,
                         hit_input_token_cap=hit_input_token_cap,
+                        langfuse_run_handle=langfuse_run_handle,
                     )
 
                 response.tool_calls_made = all_tool_calls
@@ -556,6 +555,9 @@ async def execute_tool_loop(
                     )
 
             append_tool_results(current_provider, tool_results, conversation_messages)
+        finally:
+            if step is not None:
+                step.end()
 
         # Between-turn bookkeeping lives outside the step span — the span
         # scopes the LLM call + its tools, not the iteration accounting.
@@ -635,6 +637,7 @@ async def execute_tool_loop(
             thinking_content=None,
             iterations=iteration + 1,
             hit_input_token_cap=hit_input_token_cap,
+            langfuse_run_handle=langfuse_run_handle,
         )
 
     current_attempt.set(1)
@@ -672,13 +675,18 @@ async def execute_tool_loop(
     else:
         final_call_func = _final_call
 
-    # Wrap in a step span like the in-loop iterations so the synthesis
-    # generation nests under the run root instead of dangling at the trace.
-    with langfuse_agent_step(
+    # Step span around the synthesis call — same shape as in-loop iterations
+    # so the generation nests under the run root instead of dangling at the
+    # trace. Imperative pair with a try/finally for the .end().
+    synthesis_step = start_langfuse_agent_step(
         _step_label(telemetry),
         _telemetry_for_iteration(telemetry, synthesis_iteration),
-    ):
+    )
+    try:
         final_response = await final_call_func()
+    finally:
+        if synthesis_step is not None:
+            synthesis_step.end()
 
     # emit the synthesis-call iteration event BEFORE merging cumulative
     # totals onto final_response below — otherwise the event's per-iteration

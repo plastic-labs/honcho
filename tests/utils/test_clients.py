@@ -959,15 +959,18 @@ class TestMainLLMCallFunction:
             assert captured["metadata"]["namespace"] == settings.NAMESPACE
             assert captured["metadata"]["provider"] == "anthropic"
             assert captured["metadata"]["model"] == "claude-4-sonnet"
-            # ...and the generation is named per agent for by-name aggregation.
-            mock_langfuse_client.update_current_generation.assert_called_once_with(
-                name="Dialectic Agent LLM call"
-            )
+            # ...and the generation is named + carries per-call model/metadata.
+            mock_langfuse_client.update_current_generation.assert_called_once()
+            gen_kwargs = mock_langfuse_client.update_current_generation.call_args.kwargs
+            assert gen_kwargs["name"] == "Dialectic Agent LLM call"
+            assert gen_kwargs["model"] == "claude-4-sonnet"
+            assert gen_kwargs["metadata"]["provider"] == "anthropic"
 
     async def test_no_telemetry_still_stamps_trace_without_name(self):
         """Without telemetry, propagate_attributes still fires with namespace
-        metadata, but the trace stays unnamed and the generation is not
-        renamed — track_name lives exclusively on telemetry now."""
+        metadata, but the trace stays unnamed — track_name lives exclusively
+        on telemetry now. The per-call generation still gets model/metadata
+        stamped (the multi-turn-regression fix means we always stamp these)."""
 
         mock_llm_client = AsyncMock(spec=AsyncAnthropic)
         mock_response = Mock()
@@ -1005,7 +1008,12 @@ class TestMainLLMCallFunction:
             assert captured["trace_name"] is None
             assert captured["metadata"]["namespace"] == settings.NAMESPACE
             assert captured["metadata"]["provider"] == "anthropic"
-            mock_langfuse_client.update_current_generation.assert_not_called()
+            # Generation gets model + metadata even without a track_name — only
+            # the name kwarg stays None.
+            mock_langfuse_client.update_current_generation.assert_called_once()
+            gen_kwargs = mock_langfuse_client.update_current_generation.call_args.kwargs
+            assert gen_kwargs["name"] is None
+            assert gen_kwargs["model"] == "claude-4-sonnet"
 
 
 class TestEdgeCases:

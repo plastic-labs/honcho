@@ -26,12 +26,11 @@ from src.telemetry.reasoning_traces import log_reasoning_trace
 from .executor import honcho_llm_call_inner
 from .runtime import (
     AttemptPlan,
-    annotate_langfuse_run_io,
     current_attempt,
     effective_temperature,
-    langfuse_agent_run,
     plan_attempt,
     resolve_runtime_model_config,
+    start_langfuse_agent_run,
 )
 from .tool_loop import execute_tool_loop
 from .types import (
@@ -175,9 +174,6 @@ async def honcho_llm_call(
                              without `stream_final_only=True`.
     """
     runtime_model_config = resolve_runtime_model_config(model_config)
-
-    # `track_name` for Langfuse trace/step naming lives exclusively on
-    # `telemetry.track_name` — set it there at the call site.
 
     # Caller kwargs left at None are resolved downstream by
     # effective_config_for_call against whichever ModelConfig wins the
@@ -423,12 +419,19 @@ async def honcho_llm_call(
             )
         return result
 
-    # One run-level trace wrapping the whole run; the step/LLM/tool spans nest
-    # under it (it's the current observation in this task). No-op for single
-    # calls / when disabled.
+    # One run-level Langfuse trace wraps the whole run; step/LLM/tool spans
+    # nest under it (the run handle keeps `start_as_current_observation` open
+    # via ExitStack, so the run span stays current OTel-wise even though we
+    # never use a `with` block here). The handle is passed into
+    # `execute_tool_loop` so streaming results own it from construction and
+    # close the span after drain — that's how the streamed text shows up as
+    # the trace's output instead of blank. Non-streaming results: we end in
+    # the `finally`.
     run_label = (telemetry.track_name if telemetry else None) or "Agent"
-    with langfuse_agent_run(run_label, telemetry) as run_span:
-        annotate_langfuse_run_io(run_span, input=messages)
+    run_handle = start_langfuse_agent_run(run_label, telemetry)
+    if run_handle is not None:
+        run_handle.update(input=messages)
+    try:
         # execute_tool_loop raises ValidationException on out-of-range
         # max_tool_iterations; fail-fast is cheaper than silent clamping here.
         result = await execute_tool_loop(
@@ -452,11 +455,16 @@ async def honcho_llm_call(
             stream_final=stream_final_only,
             iteration_callback=iteration_callback,
             telemetry=telemetry,
+            langfuse_run_handle=run_handle,
         )
-        # Stamp run output; stream_final has no content yet (drains later in the
-        # caller, where that generation self-stamps).
-        if isinstance(result, HonchoLLMCallResponse):
-            annotate_langfuse_run_io(run_span, output=result.content)
+    except BaseException:
+        if run_handle is not None:
+            run_handle.end()
+        raise
+    # Streaming wrapper owns the handle and closes it after drain;
+    # non-streaming paths close it here with the final content as output.
+    if run_handle is not None and not isinstance(result, StreamingResponseWithMetadata):
+        run_handle.end(output=result.content)
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(
             task_type=trace_name,
