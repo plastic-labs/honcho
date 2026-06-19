@@ -1329,6 +1329,66 @@ async fn search_messages_semantic_ranks_and_windows() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn get_observation_context_expands_around_targets() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // seqs 1..5.
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message("alice", "one"),
+            message("bob", "two"),
+            message("alice", "three"),
+            message("bob", "four"),
+            message("alice", "five"),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+
+    // Empty ids -> empty, no query.
+    let empty = db::get_observation_context(&test_db.pool, "ws", Some("sess"), &[], None)
+        .await
+        .expect("empty ids");
+    assert!(empty.is_empty());
+
+    // Single target at seq 3 -> seqs 2..=4 in ascending order.
+    let single = db::get_observation_context(
+        &test_db.pool,
+        "ws",
+        Some("sess"),
+        &[created[2].public_id.clone()],
+        None,
+    )
+    .await
+    .expect("single target");
+    let contents: Vec<&str> = single.iter().filter_map(|m| m["content"].as_str()).collect();
+    assert_eq!(contents, vec!["two", "three", "four"]);
+
+    // Two targets at seq 1 and seq 5 -> the two ±1 windows {1,2} and {4,5}
+    // (seq 0 and 6 don't exist), still globally ordered ascending.
+    let two = db::get_observation_context(
+        &test_db.pool,
+        "ws",
+        Some("sess"),
+        &[created[0].public_id.clone(), created[4].public_id.clone()],
+        None,
+    )
+    .await
+    .expect("two targets");
+    let contents: Vec<&str> = two.iter().filter_map(|m| m["content"].as_str()).collect();
+    assert_eq!(contents, vec!["one", "two", "four", "five"]);
+
+    test_db.teardown().await;
+}
+
 /// A real (or arbitrary) 1536-d vector as a pgvector text literal `[v1,v2,...]`.
 fn vector_literal(values: &[f32]) -> String {
     let mut s = String::from("[");

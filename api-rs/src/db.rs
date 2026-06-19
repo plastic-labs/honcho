@@ -1838,6 +1838,80 @@ pub async fn search_messages_semantic(
     build_merged_snippets(pool, workspace_name, matched, context_window).await
 }
 
+/// Port of `agent_tools.get_observation_context` (the dialectic data layer that
+/// expands an observation's `message_ids` into surrounding conversation
+/// context). Collects the target messages' `seq_in_session` values, then returns
+/// every message whose sequence is within ±1 of any target, ordered ascending.
+/// Optional session scope, or observer-session scoping when no session is given
+/// (no memberships → empty). Empty `message_ids` → empty, no query.
+///
+/// Faithful quirk: the ±1 match is purely arithmetic on `seq_in_session` and is
+/// *not* correlated to the target's session, so under observer/allowed-session
+/// scope (multiple sessions) a candidate can match a target sequence from a
+/// different session — exactly as the Python EXISTS-over-CTE does.
+pub async fn get_observation_context(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: Option<&str>,
+    message_ids: &[String],
+    observer: Option<&str>,
+) -> Result<Vec<Value>, sqlx::Error> {
+    if message_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let allowed_sessions: Option<Vec<String>> = match (observer, session_name) {
+        (Some(observer), None) => {
+            let names = fetch_peer_session_names(pool, workspace_name, observer).await?;
+            if names.is_empty() {
+                return Ok(Vec::new());
+            }
+            Some(names)
+        }
+        _ => None,
+    };
+
+    // $1 = workspace (referenced in the CTE and the outer query), $2 = ids,
+    // $3 = session scope when present (referenced in both clauses). Reusing one
+    // placeholder across both keeps the bind list to three.
+    let (cte_session_clause, outer_session_clause) = if session_name.is_some() {
+        (" AND session_name = $3", " AND m.session_name = $3")
+    } else if allowed_sessions.is_some() {
+        (
+            " AND session_name = ANY($3)",
+            " AND m.session_name = ANY($3)",
+        )
+    } else {
+        ("", "")
+    };
+
+    let sql = format!(
+        "WITH target_seqs AS (\
+           SELECT seq_in_session FROM messages \
+           WHERE workspace_name = $1 AND public_id = ANY($2){cte_session_clause}\
+         ) \
+         SELECT m.public_id, m.content, m.peer_name, m.session_name, m.metadata, \
+         m.created_at, m.workspace_name, m.token_count, m.seq_in_session \
+         FROM messages m \
+         WHERE m.workspace_name = $1 \
+         AND EXISTS (SELECT 1 FROM target_seqs t \
+                     WHERE (t.seq_in_session - m.seq_in_session) BETWEEN -1 AND 1)\
+         {outer_session_clause} \
+         ORDER BY m.seq_in_session ASC"
+    );
+
+    let mut query = sqlx::query_as::<_, SnippetMessageRow>(&sql)
+        .bind(workspace_name)
+        .bind(message_ids);
+    if let Some(session) = session_name {
+        query = query.bind(session);
+    } else if let Some(names) = allowed_sessions.as_ref() {
+        query = query.bind(names);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows.iter().map(snippet_message_json).collect())
+}
+
 /// A validated conclusion to create, plus its pre-computed embedding (computed
 /// in the handler, outside any DB session).
 #[derive(Debug, Clone)]
