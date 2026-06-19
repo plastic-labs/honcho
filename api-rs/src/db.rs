@@ -1480,6 +1480,68 @@ pub async fn list_conclusions(
     Ok(page_response(items, total as u64, page))
 }
 
+/// Semantic search over conclusions (documents) by `(observer, observed)`,
+/// porting `crud._query_documents_pgvector`. Orders by pgvector cosine distance
+/// to the pre-computed `embedding`, optionally bounded by `max_distance`, with
+/// the request's `filter` (a `FilterTarget::Conclusion` clause) threaded in.
+/// Returns conclusion JSON in the same shape as the list endpoint.
+#[allow(clippy::too_many_arguments)]
+pub async fn query_documents_pgvector(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    embedding: &[f32],
+    filter: &FilterClause,
+    max_distance: Option<f64>,
+    top_k: i64,
+) -> Result<Vec<Value>, sqlx::Error> {
+    // filter.sql hardcodes $1..$k for its own bindings, so those bind first and
+    // the fixed params follow at $(k+1)+.
+    let base = filter.bindings.len();
+    let ws_idx = base + 1;
+    let observer_idx = base + 2;
+    let observed_idx = base + 3;
+    let vec_idx = base + 4;
+    let (distance_clause, limit_idx) = match max_distance {
+        Some(_) => (
+            format!(" AND embedding <=> ${vec_idx}::vector <= ${}", base + 5),
+            base + 6,
+        ),
+        None => (String::new(), base + 5),
+    };
+
+    let sql = format!(
+        "SELECT id, content, observer, observed, session_name, created_at \
+         FROM documents \
+         WHERE workspace_name = ${ws_idx} AND observer = ${observer_idx} \
+           AND observed = ${observed_idx} \
+           AND embedding IS NOT NULL AND deleted_at IS NULL{distance_clause}{} \
+         ORDER BY embedding <=> ${vec_idx}::vector \
+         LIMIT ${limit_idx}",
+        filter.sql
+    );
+
+    let mut query = bind_values_as(sqlx::query_as::<_, ConclusionRow>(&sql), &filter.bindings);
+    query = query
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed)
+        .bind(crate::search::vector_literal(embedding));
+    if let Some(distance) = max_distance {
+        query = query.bind(distance);
+    }
+    query = query.bind(top_k);
+
+    let items = query
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(conclusion_json)
+        .collect();
+    Ok(items)
+}
+
 pub async fn get_message(
     pool: &PgPool,
     workspace_name: &str,

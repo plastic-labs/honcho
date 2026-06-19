@@ -1305,6 +1305,76 @@ async fn post_search(body: &str) -> axum::response::Response {
         .unwrap()
 }
 
+async fn post_conclusion_query(body: &str) -> axum::response::Response {
+    build_router(no_auth_state())
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/conclusions/query")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn conclusion_query_requires_query_field() {
+    let response = post_conclusion_query("{}").await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "missing",
+            "loc": ["body", "query"],
+            "msg": "Field required",
+            "input": {}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn conclusion_query_rejects_top_k_above_maximum() {
+    let response = post_conclusion_query(r#"{"query": "q", "top_k": 101}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "less_than_equal",
+            "loc": ["body", "top_k"],
+            "msg": "Input should be less than or equal to 100",
+            "input": 101,
+            "ctx": {"le": 100}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn conclusion_query_rejects_distance_above_one() {
+    let response = post_conclusion_query(r#"{"query": "q", "distance": 2.0}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": [{
+            "type": "less_than_equal",
+            "loc": ["body", "distance"],
+            "msg": "Input should be less than or equal to 1",
+            "input": 2.0,
+            "ctx": {"le": 1.0}
+        }]})
+    );
+}
+
+#[tokio::test]
+async fn conclusion_query_requires_observer_and_observed() {
+    // Valid schema, but no observer/observed in filters -> ValidationException.
+    let response = post_conclusion_query(r#"{"query": "q"}"#).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "observer and observed must be specified for semantic search"})
+    );
+}
+
 #[tokio::test]
 async fn search_requires_query_with_fastapi_shape() {
     let response = post_search("{}").await;

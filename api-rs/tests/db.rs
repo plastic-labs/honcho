@@ -1277,3 +1277,123 @@ async fn search_with_live_openai_embedding_ranks_semantically() {
 
     test_db.teardown().await;
 }
+
+/// A valid 21-char document id (nanoid charset) for seeding.
+fn doc_id(n: usize) -> String {
+    format!("doc{n:018}")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn seed_document(
+    pool: &PgPool,
+    id: &str,
+    observer: &str,
+    observed: &str,
+    content: &str,
+    vector: &[f32],
+) {
+    sqlx::query(
+        "INSERT INTO documents \
+         (id, content, embedding, workspace_name, observer, observed, level, sync_state) \
+         VALUES ($1, $2, $3::vector, 'ws', $4, $5, 'explicit', 'synced')",
+    )
+    .bind(id)
+    .bind(content)
+    .bind(vector_literal(vector))
+    .bind(observer)
+    .bind(observed)
+    .execute(pool)
+    .await
+    .expect("seed document");
+}
+
+/// End-to-end semantic conclusion query against live OpenAI embeddings. Gated on
+/// `TEST_DATABASE_URL` + `OPENAI_TEST_TOKEN`. Seeds two conclusions for an
+/// (observer, observed) pair and asserts the semantically relevant one tops the
+/// cosine-ordered result.
+#[tokio::test]
+async fn query_documents_with_live_openai_ranks_semantically() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    let Ok(api_key) = std::env::var("OPENAI_TEST_TOKEN") else {
+        test_db.teardown().await;
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["observer_peer", "observed_peer"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    // documents FK the (observer, observed, workspace_name) collection.
+    sqlx::query(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, 'ws', 'observer_peer', 'observed_peer')",
+    )
+    .bind(doc_id(99))
+    .execute(&test_db.pool)
+    .await
+    .expect("seed collection");
+
+    let http = ReqwestHttp::default();
+    let credentials = Credentials::new(api_key);
+    let model = "text-embedding-3-small";
+
+    let conclusions = [
+        "The user loves eating apples, mangoes and other tropical fruit",
+        "The user is worried about interest rates and the stock market",
+    ];
+    for (i, content) in conclusions.iter().enumerate() {
+        let vector =
+            embedding::embed_openai(&http, &credentials, model, content, 1536, false, 8192)
+                .await
+                .expect("embed document");
+        seed_document(
+            &test_db.pool,
+            &doc_id(i + 1),
+            "observer_peer",
+            "observed_peer",
+            content,
+            &vector,
+        )
+        .await;
+    }
+
+    let query_embedding =
+        embedding::embed_openai(&http, &credentials, model, "fruit", 1536, false, 8192)
+            .await
+            .expect("embed query");
+
+    let filter_value = json!({
+        "workspace_id": "ws",
+        "observer_id": "observer_peer",
+        "observed_id": "observed_peer"
+    });
+    let filter = build_filter_clause(FilterTarget::Conclusion, Some(&filter_value))
+        .expect("valid conclusion filter");
+
+    let results = db::query_documents_pgvector(
+        &test_db.pool,
+        "ws",
+        "observer_peer",
+        "observed_peer",
+        &query_embedding,
+        &filter,
+        None,
+        10,
+    )
+    .await
+    .expect("query documents");
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(
+        results.first().and_then(|d| d["content"].as_str()),
+        Some(conclusions[0])
+    );
+
+    test_db.teardown().await;
+}

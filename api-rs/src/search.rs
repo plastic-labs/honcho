@@ -96,7 +96,7 @@ pub fn query_has_special_chars(query: &str) -> bool {
 
 /// Render a query embedding as a pgvector text literal (`[v1,v2,...]`) for the
 /// `::vector` cast in the cosine-distance ORDER BY.
-fn vector_literal(embedding: &[f32]) -> String {
+pub(crate) fn vector_literal(embedding: &[f32]) -> String {
     let mut out = String::from("[");
     for (i, value) in embedding.iter().enumerate() {
         if i > 0 {

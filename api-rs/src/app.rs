@@ -304,6 +304,10 @@ pub fn build_router(state: AppState) -> Router {
             post(list_conclusions),
         )
         .route(
+            "/v3/workspaces/{workspace_id}/conclusions/query",
+            post(query_conclusions),
+        )
+        .route(
             "/v3/workspaces/{workspace_id}/conclusions/{conclusion_id}",
             axum::routing::delete(delete_conclusion),
         )
@@ -1443,10 +1447,15 @@ fn parse_search_options(body: Value) -> Result<SearchOptions, ApiError> {
     })
 }
 
-/// Coerce + bound-check the `limit` field like Pydantic's `int = Field(ge=1,
-/// le=100)` in lax (JSON-body) mode.
 fn parse_search_limit(value: &Value) -> Result<i64, ApiError> {
-    let limit = match value {
+    parse_bounded_int(value, "limit", 1, 100)
+}
+
+/// Coerce + bound-check an integer field like Pydantic's `int = Field(ge=min,
+/// le=max)` in lax (JSON-body) mode, emitting `int_parsing`/`int_from_float`/
+/// `int_type`/`greater_than_equal`/`less_than_equal` with the field's `loc`.
+fn parse_bounded_int(value: &Value, field: &'static str, min: i64, max: i64) -> Result<i64, ApiError> {
+    let parsed = match value {
         Value::Number(number) => {
             if let Some(integer) = number.as_i64() {
                 integer
@@ -1456,7 +1465,7 @@ fn parse_search_limit(value: &Value) -> Result<i64, ApiError> {
                 } else {
                     return Err(validation_error(
                         "int_from_float",
-                        &["limit"],
+                        &[field],
                         "Input should be a valid integer, got a number with a fractional part",
                         value.clone(),
                         None,
@@ -1465,7 +1474,7 @@ fn parse_search_limit(value: &Value) -> Result<i64, ApiError> {
             } else {
                 return Err(validation_error(
                     "int_parsing",
-                    &["limit"],
+                    &[field],
                     "Input should be a valid integer, unable to parse string as an integer",
                     value.clone(),
                     None,
@@ -1475,7 +1484,7 @@ fn parse_search_limit(value: &Value) -> Result<i64, ApiError> {
         Value::String(text) => text.trim().parse::<i64>().map_err(|_| {
             validation_error(
                 "int_parsing",
-                &["limit"],
+                &[field],
                 "Input should be a valid integer, unable to parse string as an integer",
                 value.clone(),
                 None,
@@ -1484,7 +1493,7 @@ fn parse_search_limit(value: &Value) -> Result<i64, ApiError> {
         other => {
             return Err(validation_error(
                 "int_type",
-                &["limit"],
+                &[field],
                 "Input should be a valid integer",
                 other.clone(),
                 None,
@@ -1492,25 +1501,229 @@ fn parse_search_limit(value: &Value) -> Result<i64, ApiError> {
         }
     };
 
-    if limit < 1 {
+    if parsed < min {
         return Err(validation_error(
             "greater_than_equal",
-            &["limit"],
-            "Input should be greater than or equal to 1",
-            json!(limit),
-            Some(json!({ "ge": 1 })),
+            &[field],
+            &format!("Input should be greater than or equal to {min}"),
+            json!(parsed),
+            Some(json!({ "ge": min })),
         ));
     }
-    if limit > 100 {
+    if parsed > max {
         return Err(validation_error(
             "less_than_equal",
-            &["limit"],
-            "Input should be less than or equal to 100",
-            json!(limit),
-            Some(json!({ "le": 100 })),
+            &[field],
+            &format!("Input should be less than or equal to {max}"),
+            json!(parsed),
+            Some(json!({ "le": max })),
         ));
     }
-    Ok(limit)
+    Ok(parsed)
+}
+
+async fn query_conclusions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        None,
+    )?;
+
+    let query = parse_conclusion_query(body)?;
+
+    // observer/observed come from the filters dict (`x or x_id`), matching the
+    // route; both must be truthy or it's a 422 ValidationException.
+    let (observer, observed) = match query.filters.as_ref().and_then(Value::as_object) {
+        Some(map) => (
+            truthy_string(map, "observer").or_else(|| truthy_string(map, "observer_id")),
+            truthy_string(map, "observed").or_else(|| truthy_string(map, "observed_id")),
+        ),
+        None => (None, None),
+    };
+    let (Some(observer), Some(observed)) = (observer, observed) else {
+        return Err(ApiError::Validation(
+            "observer and observed must be specified for semantic search".to_string(),
+        ));
+    };
+
+    // The conclusions query always embeds (it is not gated on EMBED_MESSAGES).
+    let api_key = state.embedding.api_key.as_ref().ok_or_else(|| {
+        ApiError::Embedding("no embedding API key is configured".to_string())
+    })?;
+    let credentials = Credentials::with_base_url(api_key.clone(), state.embedding.base_url.clone());
+    let http = ReqwestHttp::default();
+    let embedding_vec = match embedding::embed_openai(
+        &http,
+        &credentials,
+        &state.embedding.model,
+        &query.query,
+        state.embedding.vector_dimensions,
+        state.embedding.send_dimensions,
+        state.embedding.max_tokens,
+    )
+    .await
+    {
+        Ok(vector) => vector,
+        Err(EmbedError::TokenLimit { .. } | EmbedError::DimensionMismatch { .. }) => {
+            return Err(ApiError::Validation(format!(
+                "Query exceeds maximum token limit of {}.",
+                state.embedding.max_tokens
+            )));
+        }
+        Err(other) => return Err(ApiError::Embedding(other.to_string())),
+    };
+
+    let filter = build_filter_clause(FilterTarget::Conclusion, query.filters.as_ref())?;
+    let results = db::query_documents_pgvector(
+        state.pool()?,
+        &workspace_id,
+        &observer,
+        &observed,
+        &embedding_vec,
+        &filter,
+        query.distance,
+        query.top_k,
+    )
+    .await?;
+    Ok(Json(Value::Array(results)))
+}
+
+struct ConclusionQuery {
+    query: String,
+    top_k: i64,
+    distance: Option<f64>,
+    filters: Option<Value>,
+}
+
+/// Port of `ConclusionQuery` validation: `query` (required string), `top_k`
+/// (int, default 10, 1..=100), `distance` (optional float, 0.0..=1.0), `filters`
+/// (optional dict). First error wins (query → top_k → distance → filters).
+fn parse_conclusion_query(body: Value) -> Result<ConclusionQuery, ApiError> {
+    let object = body.as_object();
+
+    let query = match object.and_then(|map| map.get("query")) {
+        Some(Value::String(value)) => value.clone(),
+        Some(other) => {
+            return Err(validation_error(
+                "string_type",
+                &["query"],
+                "Input should be a valid string",
+                other.clone(),
+                None,
+            ));
+        }
+        None => {
+            return Err(validation_error(
+                "missing",
+                &["query"],
+                "Field required",
+                body.clone(),
+                None,
+            ));
+        }
+    };
+
+    let top_k = match object.and_then(|map| map.get("top_k")) {
+        None | Some(Value::Null) => 10,
+        Some(value) => parse_bounded_int(value, "top_k", 1, 100)?,
+    };
+
+    let distance = match object.and_then(|map| map.get("distance")) {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(parse_distance(value)?),
+    };
+
+    let filters = match object.and_then(|map| map.get("filters")) {
+        None | Some(Value::Null) => None,
+        Some(value @ Value::Object(_)) => Some(value.clone()),
+        Some(other) => {
+            return Err(validation_error(
+                "dict_type",
+                &["filters"],
+                "Input should be a valid dictionary",
+                other.clone(),
+                None,
+            ));
+        }
+    };
+
+    Ok(ConclusionQuery {
+        query,
+        top_k,
+        distance,
+        filters,
+    })
+}
+
+/// Coerce + bound-check the optional `distance` field like Pydantic's `float =
+/// Field(ge=0.0, le=1.0)`.
+fn parse_distance(value: &Value) -> Result<f64, ApiError> {
+    let parsed = match value {
+        Value::Number(number) => number.as_f64().ok_or_else(|| {
+            validation_error(
+                "float_parsing",
+                &["distance"],
+                "Input should be a valid number, unable to parse string as a number",
+                value.clone(),
+                None,
+            )
+        })?,
+        Value::String(text) => text.trim().parse::<f64>().map_err(|_| {
+            validation_error(
+                "float_parsing",
+                &["distance"],
+                "Input should be a valid number, unable to parse string as a number",
+                value.clone(),
+                None,
+            )
+        })?,
+        other => {
+            return Err(validation_error(
+                "float_type",
+                &["distance"],
+                "Input should be a valid number",
+                other.clone(),
+                None,
+            ));
+        }
+    };
+
+    if parsed < 0.0 {
+        return Err(validation_error(
+            "greater_than_equal",
+            &["distance"],
+            "Input should be greater than or equal to 0",
+            value.clone(),
+            Some(json!({ "ge": 0.0 })),
+        ));
+    }
+    if parsed > 1.0 {
+        return Err(validation_error(
+            "less_than_equal",
+            &["distance"],
+            "Input should be less than or equal to 1",
+            value.clone(),
+            Some(json!({ "le": 1.0 })),
+        ));
+    }
+    Ok(parsed)
+}
+
+/// Return the value at `key` only when it is a non-empty string (Python's
+/// truthiness for the `observer or observer_id` chain).
+fn truthy_string(map: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    match map.get(key) {
+        Some(Value::String(value)) if !value.is_empty() => Some(value.clone()),
+        _ => None,
+    }
 }
 
 async fn list_messages(
