@@ -78,10 +78,10 @@ def get_openai_client() -> AsyncOpenAI:
     initialize_oauth() has been called to populate _oauth_manager.
     """
     if settings.LLM.OPENAI_AUTH_MODE == "oauth" and _oauth_manager is not None:
-        return OAuthOpenAI(
-            token_manager=_oauth_manager,
-            base_url=settings.LLM.OPENAI_BASE_URL,
-        )
+        # OAuth tokens are scoped to api.openai.com; ignore LLM_OPENAI_BASE_URL
+        # so proxy URLs (OpenRouter etc.) don't bleed into the OAuth client.
+        # Per-feature configs that need a proxy should set their own base_url override.
+        return OAuthOpenAI(token_manager=_oauth_manager)
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
@@ -157,10 +157,8 @@ async def initialize_oauth() -> OAuthTokenManager | None:
     await manager.refresh()
     _oauth_manager = manager
 
-    CLIENTS["openai"] = OAuthOpenAI(
-        token_manager=manager,
-        base_url=settings.LLM.OPENAI_BASE_URL,
-    )
+    # No base_url: OAuth tokens are for api.openai.com only.
+    CLIENTS["openai"] = OAuthOpenAI(token_manager=manager)
     # Clear the lru_cache so get_openai_client() returns the OAuth variant.
     get_openai_client.cache_clear()
 
