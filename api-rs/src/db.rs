@@ -9,7 +9,9 @@ use std::io;
 
 use crate::filters::FilterClause;
 use crate::pagination::{Pagination, page_response};
-use crate::producer::{PeerConfigEntry, QueueRecord};
+use crate::producer::{
+    PeerConfigEntry, QueueRecord, ResolvedConfiguration, resolve_batch_configuration_prefix,
+};
 use crate::queue_status::{QueueStatusCounts, build_queue_status};
 
 const NANOID_ALPHABET: &[u8] = b"_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -2837,6 +2839,235 @@ pub async fn get_next_queue_item(
     .fetch_optional(pool)
     .await?;
     Ok(row.as_ref().map(QueueItem::from_row))
+}
+
+/// A conversation message row forming the representation-batch context window
+/// (`models.Message` columns the deriver batch processor reads).
+#[derive(Debug, Clone)]
+pub struct BatchMessage {
+    pub id: i64,
+    pub public_id: String,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+    pub peer_name: String,
+    pub token_count: i32,
+    pub session_name: String,
+    pub workspace_name: String,
+}
+
+/// Result of [`get_queue_item_batch`], mirroring Python `QueueBatchResult`. The
+/// cap flags feed the deriver's `RepresentationCompletedEvent` telemetry.
+#[derive(Debug, Clone, Default)]
+pub struct QueueBatchResult {
+    pub messages_context: Vec<BatchMessage>,
+    pub items_to_process: Vec<QueueItem>,
+    pub configuration: Option<ResolvedConfiguration>,
+    pub hit_batch_token_cap: bool,
+    pub was_flush_enabled: bool,
+    pub batch_max_tokens: i64,
+}
+
+/// Failure modes of [`get_queue_item_batch`].
+#[derive(Debug)]
+pub enum QueueBatchError {
+    Database(sqlx::Error),
+    /// A queue item carried a malformed `configuration` payload (the Python
+    /// `ResolvedConfiguration.model_validate` would raise).
+    Config(String),
+}
+
+impl From<sqlx::Error> for QueueBatchError {
+    fn from(error: sqlx::Error) -> Self {
+        QueueBatchError::Database(error)
+    }
+}
+
+/// Port of `QueueManager.get_queue_item_batch`: assemble a representation work
+/// unit's context window and the queue items to process within it.
+///
+/// After verifying ownership, a single windowed query finds the earliest
+/// unprocessed message for the work unit, optionally prepends the immediately
+/// preceding message when it is from a different peer (conversational context),
+/// then walks forward accumulating `token_count` until `batch_max_tokens` is
+/// exceeded — always including at least the first unprocessed message. The CTE's
+/// `bool_or(cumulative > cap) OVER ()` reports whether the cap excluded anything
+/// in one round-trip. The returned batch is then trimmed to the leading
+/// homogeneous-`configuration` run (`resolve_batch_configuration_prefix`), the
+/// context window is clipped to the last surviving queued message, and
+/// `hit_batch_token_cap` is set only when the cap (not the config filter) bounded
+/// the batch.
+pub async fn get_queue_item_batch(
+    pool: &PgPool,
+    work_unit_key: &str,
+    aqs_id: &str,
+    batch_max_tokens: i64,
+    flush_enabled: bool,
+) -> Result<QueueBatchResult, QueueBatchError> {
+    // Parsed key gives session_name / workspace_name / observed for the query.
+    let parsed = crate::producer::parse_work_unit_key(work_unit_key)
+        .map_err(|error| QueueBatchError::Config(error.to_string()))?;
+    let session_name = parsed.session_name.unwrap_or_default();
+    let workspace_name = parsed.workspace_name.unwrap_or_default();
+    let observed = parsed.observed.unwrap_or_default();
+
+    let empty = || QueueBatchResult {
+        was_flush_enabled: flush_enabled,
+        batch_max_tokens,
+        ..QueueBatchResult::default()
+    };
+
+    // Step 1: confirm this worker still owns the work unit.
+    let owned: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM active_queue_sessions WHERE work_unit_key = $1 AND id = $2)",
+    )
+    .bind(work_unit_key)
+    .bind(aqs_id)
+    .fetch_one(pool)
+    .await?;
+    if !owned {
+        return Ok(empty());
+    }
+
+    // Step 2: the windowed batch query. $1 session, $2 workspace, $3 key,
+    // $4 observed, $5 batch_max_tokens.
+    let rows = sqlx::query(
+        "WITH inner_cte AS ( \
+             SELECT m.id AS message_id, m.token_count AS token_count, m.peer_name AS peer_name, \
+                    SUM(m.token_count) OVER (ORDER BY m.id) AS cumulative_token_count \
+             FROM messages m \
+             WHERE m.session_name = $1 AND m.workspace_name = $2 AND m.id >= COALESCE( \
+                 (SELECT mp.id FROM messages mp \
+                  WHERE mp.id = (SELECT MAX(m2.id) FROM messages m2 \
+                                 WHERE m2.session_name = $1 AND m2.workspace_name = $2 \
+                                   AND m2.id < (SELECT MIN(m3.id) FROM messages m3 \
+                                                JOIN queue q3 ON q3.message_id = m3.id \
+                                                WHERE NOT q3.processed AND m3.session_name = $1 \
+                                                  AND m3.workspace_name = $2 AND q3.work_unit_key = $3)) \
+                    AND mp.peer_name <> $4), \
+                 (SELECT MIN(m4.id) FROM messages m4 \
+                  JOIN queue q4 ON q4.message_id = m4.id \
+                  WHERE NOT q4.processed AND m4.session_name = $1 \
+                    AND m4.workspace_name = $2 AND q4.work_unit_key = $3) \
+             ) \
+         ), \
+         cte AS ( \
+             SELECT message_id, token_count, peer_name, cumulative_token_count, \
+                    bool_or(cumulative_token_count > $5) OVER () AS cap_exceeded \
+             FROM inner_cte \
+         ) \
+         SELECT m.id, m.public_id, m.content, m.created_at, m.peer_name, m.token_count, \
+                m.session_name, m.workspace_name, \
+                q.id AS qid, q.work_unit_key AS qwuk, q.payload AS qpayload, \
+                q.session_id AS qsession_id, q.task_type AS qtask_type, \
+                q.workspace_name AS qworkspace_name, q.message_id AS qmessage_id, \
+                q.processed AS qprocessed, q.error AS qerror, q.created_at AS qcreated_at, \
+                cte.cap_exceeded AS cap_exceeded \
+         FROM cte \
+         JOIN messages m ON m.id = cte.message_id \
+         LEFT JOIN queue q ON q.work_unit_key = $3 AND NOT q.processed AND q.message_id = m.id \
+         WHERE cte.cumulative_token_count <= $5 OR cte.message_id = ( \
+             SELECT MIN(m5.id) FROM messages m5 \
+             JOIN queue q5 ON q5.message_id = m5.id \
+             WHERE NOT q5.processed AND m5.session_name = $1 \
+               AND m5.workspace_name = $2 AND q5.work_unit_key = $3) \
+         ORDER BY m.id, q.id",
+    )
+    .bind(&session_name)
+    .bind(&workspace_name)
+    .bind(work_unit_key)
+    .bind(&observed)
+    .bind(batch_max_tokens)
+    .fetch_all(pool)
+    .await?;
+
+    if rows.is_empty() {
+        return Ok(empty());
+    }
+
+    // cap_exceeded is window-aggregated (identical on every row); read once.
+    let cap_exceeded_from_query = if batch_max_tokens > 0 {
+        rows[0]
+            .try_get::<Option<bool>, _>("cap_exceeded")
+            .ok()
+            .flatten()
+            .unwrap_or(false)
+    } else {
+        false
+    };
+
+    let mut messages_context: Vec<BatchMessage> = Vec::new();
+    let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    let mut items_to_process: Vec<QueueItem> = Vec::new();
+    for row in &rows {
+        let message_id: i64 = row.get("id");
+        if seen.insert(message_id) {
+            messages_context.push(BatchMessage {
+                id: message_id,
+                public_id: row.get("public_id"),
+                content: row.get("content"),
+                created_at: row.get("created_at"),
+                peer_name: row.get("peer_name"),
+                token_count: row.get("token_count"),
+                session_name: row.get("session_name"),
+                workspace_name: row.get("workspace_name"),
+            });
+        }
+        if let Ok(Some(qid)) = row.try_get::<Option<i64>, _>("qid") {
+            items_to_process.push(QueueItem {
+                id: qid,
+                work_unit_key: row.get("qwuk"),
+                payload: row.get("qpayload"),
+                session_id: row.get("qsession_id"),
+                task_type: row.get("qtask_type"),
+                workspace_name: row.get("qworkspace_name"),
+                message_id: row.get("qmessage_id"),
+                processed: row.get("qprocessed"),
+                error: row.get("qerror"),
+                created_at: row.get("qcreated_at"),
+            });
+        }
+    }
+
+    // The queue-item boundary (not the context tail) drives cap detection.
+    let last_queued_id_before: Option<i64> =
+        items_to_process.iter().filter_map(|q| q.message_id).max();
+
+    // Trim to the leading homogeneous-configuration run.
+    let (prefix_len, resolved_config) =
+        resolve_batch_configuration_prefix(items_to_process.iter().map(|q| &q.payload))
+            .map_err(QueueBatchError::Config)?;
+    items_to_process.truncate(prefix_len);
+
+    if !items_to_process.is_empty() {
+        if let Some(max_queue_item_message_id) =
+            items_to_process.iter().filter_map(|q| q.message_id).max()
+        {
+            messages_context.retain(|m| m.id <= max_queue_item_message_id);
+        }
+    }
+
+    let last_queued_id_after: Option<i64> =
+        items_to_process.iter().filter_map(|q| q.message_id).max();
+
+    // The cap was binding on the returned batch only when the config filter did
+    // not move the queue-item boundary and the CTE saw a message past the cap.
+    let hit_batch_token_cap = if batch_max_tokens > 0
+        && last_queued_id_before.is_some()
+        && last_queued_id_before == last_queued_id_after
+    {
+        cap_exceeded_from_query
+    } else {
+        false
+    };
+
+    Ok(QueueBatchResult {
+        messages_context,
+        items_to_process,
+        configuration: resolved_config,
+        hit_batch_token_cap,
+        was_flush_enabled: flush_enabled,
+        batch_max_tokens,
+    })
 }
 
 /// Port of `QueueManager.claim_work_units`: insert one `active_queue_sessions`

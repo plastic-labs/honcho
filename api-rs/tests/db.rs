@@ -2990,3 +2990,226 @@ async fn get_next_queue_item_orders_and_checks_ownership() {
 
     test_db.teardown().await;
 }
+
+// --- get_queue_item_batch (representation context window) ---
+
+async fn insert_queue_row_payload(
+    pool: &PgPool,
+    work_unit_key: &str,
+    message_id: i64,
+    payload: Value,
+) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO queue (work_unit_key, payload, task_type, workspace_name, message_id, processed) \
+         VALUES ($1, $2, 'representation', 'ws', $3, false) RETURNING id",
+    )
+    .bind(work_unit_key)
+    .bind(payload)
+    .bind(message_id)
+    .fetch_one(pool)
+    .await
+    .expect("insert queue row payload")
+}
+
+/// Create one message from `peer` with the given token count, returning its id.
+async fn seed_one(pool: &PgPool, peer: &str, content: &str, tokens: i32) -> i64 {
+    db::create_messages(
+        pool,
+        "ws",
+        "sess",
+        &[message_with_tokens(peer, content, tokens)],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed message")[0]
+        .id
+}
+
+async fn claim_one(pool: &PgPool, key: &str) -> String {
+    db::claim_work_units(pool, &[key.to_string()])
+        .await
+        .expect("claim")
+        .get(key)
+        .expect("owned")
+        .clone()
+}
+
+#[tokio::test]
+async fn batch_collects_messages_and_items_under_cap() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    let key = "representation:ws:sess:bob";
+
+    let m1 = seed_one(&test_db.pool, "bob", "m1", 3).await;
+    let m2 = seed_one(&test_db.pool, "bob", "m2", 4).await;
+    insert_queue_row_payload(&test_db.pool, key, m1, json!({})).await;
+    insert_queue_row_payload(&test_db.pool, key, m2, json!({})).await;
+    let aqs = claim_one(&test_db.pool, key).await;
+
+    let result = db::get_queue_item_batch(&test_db.pool, key, &aqs, 100, false)
+        .await
+        .expect("batch");
+    let ctx_ids: Vec<i64> = result.messages_context.iter().map(|m| m.id).collect();
+    assert_eq!(ctx_ids, vec![m1, m2]);
+    assert_eq!(result.items_to_process.len(), 2);
+    assert!(!result.hit_batch_token_cap);
+    assert_eq!(result.batch_max_tokens, 100);
+    assert!(result.configuration.is_none());
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn batch_clamps_at_token_cap_and_flags_it() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    let key = "representation:ws:sess:bob";
+
+    let m1 = seed_one(&test_db.pool, "bob", "m1", 5).await;
+    let m2 = seed_one(&test_db.pool, "bob", "m2", 10).await;
+    let m3 = seed_one(&test_db.pool, "bob", "m3", 10).await;
+    insert_queue_row_payload(&test_db.pool, key, m1, json!({})).await;
+    insert_queue_row_payload(&test_db.pool, key, m2, json!({})).await;
+    insert_queue_row_payload(&test_db.pool, key, m3, json!({})).await;
+    let aqs = claim_one(&test_db.pool, key).await;
+
+    // cap 12: m1 (cum 5) fits; m2 (cum 15) exceeds and is excluded; only m1 stays
+    // (always-include-first keeps it). The CTE still flags the cap as exceeded.
+    let result = db::get_queue_item_batch(&test_db.pool, key, &aqs, 12, false)
+        .await
+        .expect("batch");
+    let ctx_ids: Vec<i64> = result.messages_context.iter().map(|m| m.id).collect();
+    assert_eq!(ctx_ids, vec![m1]);
+    assert_eq!(result.items_to_process.len(), 1);
+    assert!(result.hit_batch_token_cap);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn batch_prepends_preceding_message_from_other_peer() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    let key = "representation:ws:sess:bob";
+
+    // alice's question precedes bob's reply; only bob's message is queued.
+    let q1 = seed_one(&test_db.pool, "alice", "question", 2).await;
+    let m1 = seed_one(&test_db.pool, "bob", "answer", 3).await;
+    insert_queue_row_payload(&test_db.pool, key, m1, json!({})).await;
+    let aqs = claim_one(&test_db.pool, key).await;
+
+    let result = db::get_queue_item_batch(&test_db.pool, key, &aqs, 100, false)
+        .await
+        .expect("batch");
+    let ctx_ids: Vec<i64> = result.messages_context.iter().map(|m| m.id).collect();
+    // Preceding alice message is included as context; only bob's item is queued.
+    assert_eq!(ctx_ids, vec![q1, m1]);
+    assert_eq!(result.items_to_process.len(), 1);
+    assert_eq!(result.items_to_process[0].message_id, Some(m1));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn batch_excludes_preceding_message_from_same_peer() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    let key = "representation:ws:sess:bob";
+
+    let _m0 = seed_one(&test_db.pool, "bob", "earlier", 2).await;
+    let m1 = seed_one(&test_db.pool, "bob", "queued", 3).await;
+    insert_queue_row_payload(&test_db.pool, key, m1, json!({})).await;
+    let aqs = claim_one(&test_db.pool, key).await;
+
+    let result = db::get_queue_item_batch(&test_db.pool, key, &aqs, 100, false)
+        .await
+        .expect("batch");
+    let ctx_ids: Vec<i64> = result.messages_context.iter().map(|m| m.id).collect();
+    // Same-peer preceding message is NOT prepended as context.
+    assert_eq!(ctx_ids, vec![m1]);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn batch_trims_to_homogeneous_configuration_prefix() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    let key = "representation:ws:sess:bob";
+
+    // Two different configurations: the second breaks the homogeneous prefix.
+    let config_a = json!({
+        "reasoning": {"enabled": true},
+        "peer_card": {"use": true, "create": true},
+        "summary": {"enabled": true, "messages_per_short_summary": 20, "messages_per_long_summary": 60},
+        "dream": {"enabled": true},
+    });
+    let config_b = json!({
+        "reasoning": {"enabled": false},
+        "peer_card": {"use": true, "create": true},
+        "summary": {"enabled": true, "messages_per_short_summary": 20, "messages_per_long_summary": 60},
+        "dream": {"enabled": true},
+    });
+
+    let m1 = seed_one(&test_db.pool, "bob", "m1", 1).await;
+    let m2 = seed_one(&test_db.pool, "bob", "m2", 1).await;
+    insert_queue_row_payload(&test_db.pool, key, m1, json!({"configuration": config_a})).await;
+    insert_queue_row_payload(&test_db.pool, key, m2, json!({"configuration": config_b})).await;
+    let aqs = claim_one(&test_db.pool, key).await;
+
+    let result = db::get_queue_item_batch(&test_db.pool, key, &aqs, 100, false)
+        .await
+        .expect("batch");
+    // Only the first item survives; context clipped to its message.
+    assert_eq!(result.items_to_process.len(), 1);
+    assert_eq!(result.items_to_process[0].message_id, Some(m1));
+    let ctx_ids: Vec<i64> = result.messages_context.iter().map(|m| m.id).collect();
+    assert_eq!(ctx_ids, vec![m1]);
+    assert!(result.configuration.is_some());
+    assert!(result.configuration.unwrap().reasoning_enabled);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn batch_returns_empty_when_ownership_lost() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    let key = "representation:ws:sess:bob";
+    let m1 = seed_one(&test_db.pool, "bob", "m1", 1).await;
+    insert_queue_row_payload(&test_db.pool, key, m1, json!({})).await;
+
+    let result = db::get_queue_item_batch(&test_db.pool, key, "not-owner", 100, false)
+        .await
+        .expect("batch");
+    assert!(result.messages_context.is_empty());
+    assert!(result.items_to_process.is_empty());
+    assert_eq!(result.batch_max_tokens, 100);
+
+    test_db.teardown().await;
+}
