@@ -3,6 +3,7 @@ pub mod auth;
 pub mod cache;
 pub mod config;
 pub mod db;
+pub mod deriver;
 pub mod dialectic;
 pub mod dialectic_agent;
 pub mod dialectic_config;
