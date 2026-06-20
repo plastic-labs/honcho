@@ -3213,3 +3213,47 @@ async fn batch_returns_empty_when_ownership_lost() {
 
     test_db.teardown().await;
 }
+
+#[tokio::test]
+async fn get_or_create_collection_creates_then_reuses() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["alice", "bob"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+
+    let first = db::get_or_create_collection(&test_db.pool, "ws", "alice", "bob")
+        .await
+        .expect("create collection");
+    assert_eq!(first.observer, "alice");
+    assert_eq!(first.observed, "bob");
+    assert_eq!(first.workspace_name, "ws");
+    assert_eq!(first.id.len(), 21);
+    assert_eq!(first.metadata, json!({}));
+
+    // Same key returns the same row (no duplicate created).
+    let second = db::get_or_create_collection(&test_db.pool, "ws", "alice", "bob")
+        .await
+        .expect("reuse collection");
+    assert_eq!(second.id, first.id);
+
+    // A different (observer, observed) pair makes a distinct collection.
+    let other = db::get_or_create_collection(&test_db.pool, "ws", "bob", "alice")
+        .await
+        .expect("other collection");
+    assert_ne!(other.id, first.id);
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM collections WHERE workspace_name = 'ws'")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("count");
+    assert_eq!(count, 2);
+
+    test_db.teardown().await;
+}

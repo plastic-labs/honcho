@@ -2841,6 +2841,78 @@ pub async fn get_next_queue_item(
     Ok(row.as_ref().map(QueueItem::from_row))
 }
 
+/// A `collections` row keyed by `(observer, observed, workspace_name)`.
+#[derive(Debug, Clone)]
+pub struct Collection {
+    pub id: String,
+    pub workspace_name: String,
+    pub observer: String,
+    pub observed: String,
+    pub metadata: Value,
+    pub internal_metadata: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Collection {
+    fn from_row(row: &PgRow) -> Self {
+        Self {
+            id: row.get("id"),
+            workspace_name: row.get("workspace_name"),
+            observer: row.get("observer"),
+            observed: row.get("observed"),
+            metadata: row.get("metadata"),
+            internal_metadata: row.get("internal_metadata"),
+            created_at: row.get("created_at"),
+        }
+    }
+}
+
+/// Port of `crud.get_or_create_collection`: return the `(observer, observed,
+/// workspace)` collection, creating it (with a fresh nanoid id) if absent.
+/// Implemented as an `INSERT ... ON CONFLICT DO NOTHING RETURNING` followed by a
+/// `SELECT` on conflict — concurrency-safe via the
+/// `uq_collections_observer_observed_workspace_name` constraint, matching the
+/// Python get-then-create-with-retry semantics. (The Python best-effort cache
+/// write is omitted; the Rust read path does not cache collections.)
+pub async fn get_or_create_collection(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+) -> Result<Collection, sqlx::Error> {
+    const COLUMNS: &str =
+        "id, workspace_name, observer, observed, metadata, internal_metadata, created_at";
+
+    let insert_sql = format!(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, $2, $3, $4) \
+         ON CONFLICT (observer, observed, workspace_name) DO NOTHING \
+         RETURNING {COLUMNS}"
+    );
+    let inserted = sqlx::query(&insert_sql)
+        .bind(generate_nanoid())
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed)
+        .fetch_optional(pool)
+        .await?;
+    if let Some(row) = inserted {
+        return Ok(Collection::from_row(&row));
+    }
+
+    let select_sql = format!(
+        "SELECT {COLUMNS} FROM collections \
+         WHERE observer = $1 AND observed = $2 AND workspace_name = $3"
+    );
+    let row = sqlx::query(&select_sql)
+        .bind(observer)
+        .bind(observed)
+        .bind(workspace_name)
+        .fetch_one(pool)
+        .await?;
+    Ok(Collection::from_row(&row))
+}
+
 /// A conversation message row forming the representation-batch context window
 /// (`models.Message` columns the deriver batch processor reads).
 #[derive(Debug, Clone)]
