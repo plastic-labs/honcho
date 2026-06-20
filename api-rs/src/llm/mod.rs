@@ -15,6 +15,7 @@ pub mod http;
 pub mod request_builder;
 pub mod runtime;
 pub mod tool_loop;
+pub mod types;
 
 use serde_json::{Map, Value};
 
