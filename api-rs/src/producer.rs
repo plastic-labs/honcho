@@ -41,6 +41,8 @@ pub enum ProducerError {
     MissingReconcilerType,
     #[error("invalid task type: {0}")]
     InvalidTaskType(String),
+    #[error("invalid work_unit_key format: {0}")]
+    InvalidWorkUnitKey(String),
 }
 
 /// The resolved per-message configuration. Field set mirrors Python's
@@ -471,6 +473,109 @@ pub fn construct_work_unit_key(
                 return Err(ProducerError::MissingReconcilerType);
             };
             Ok(format!("reconciler:{reconciler_type}"))
+        }
+        other => Err(ProducerError::InvalidTaskType(other.to_string())),
+    }
+}
+
+/// Parsed components of a `work_unit_key`, mirroring Python `ParsedWorkUnit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedWorkUnit {
+    pub task_type: String,
+    pub workspace_name: Option<String>,
+    pub session_name: Option<String>,
+    pub observer: Option<String>,
+    pub observed: Option<String>,
+    pub dream_type: Option<String>,
+}
+
+/// Parse a `work_unit_key` back into its components, mirroring
+/// `parse_work_unit_key`. The colon-split is positional and per-task-type, with
+/// strict segment-count checks (an unexpected count is an error, matching the
+/// Python `ValueError`). `representation` accepts both the 4-segment current
+/// form and the 5-segment legacy form (which carries an `observer`).
+pub fn parse_work_unit_key(work_unit_key: &str) -> Result<ParsedWorkUnit, ProducerError> {
+    let parts: Vec<&str> = work_unit_key.split(':').collect();
+    let task_type = parts[0];
+
+    let invalid = || ProducerError::InvalidWorkUnitKey(work_unit_key.to_string());
+    let owned = |value: &str| Some(value.to_string());
+
+    let base = |task_type: &str| ParsedWorkUnit {
+        task_type: task_type.to_string(),
+        workspace_name: None,
+        session_name: None,
+        observer: None,
+        observed: None,
+        dream_type: None,
+    };
+
+    match task_type {
+        "representation" => match parts.len() {
+            // New format: representation:{workspace}:{session}:{observed}
+            4 => Ok(ParsedWorkUnit {
+                workspace_name: owned(parts[1]),
+                session_name: owned(parts[2]),
+                observed: owned(parts[3]),
+                ..base(task_type)
+            }),
+            // Legacy: representation:{workspace}:{session}:{observer}:{observed}
+            5 => Ok(ParsedWorkUnit {
+                workspace_name: owned(parts[1]),
+                session_name: owned(parts[2]),
+                observer: owned(parts[3]),
+                observed: owned(parts[4]),
+                ..base(task_type)
+            }),
+            _ => Err(invalid()),
+        },
+        "summary" => {
+            if parts.len() != 5 {
+                return Err(invalid());
+            }
+            Ok(ParsedWorkUnit {
+                workspace_name: owned(parts[1]),
+                session_name: owned(parts[2]),
+                observer: owned(parts[3]),
+                observed: owned(parts[4]),
+                ..base(task_type)
+            })
+        }
+        "dream" => {
+            if parts.len() != 5 {
+                return Err(invalid());
+            }
+            Ok(ParsedWorkUnit {
+                workspace_name: owned(parts[2]),
+                observer: owned(parts[3]),
+                observed: owned(parts[4]),
+                dream_type: owned(parts[1]),
+                ..base(task_type)
+            })
+        }
+        "webhook" => {
+            if parts.len() != 2 {
+                return Err(invalid());
+            }
+            Ok(ParsedWorkUnit {
+                workspace_name: owned(parts[1]),
+                ..base(task_type)
+            })
+        }
+        "deletion" => {
+            if parts.len() != 4 {
+                return Err(invalid());
+            }
+            Ok(ParsedWorkUnit {
+                workspace_name: owned(parts[1]),
+                ..base(task_type)
+            })
+        }
+        "reconciler" => {
+            if parts.len() != 2 {
+                return Err(invalid());
+            }
+            Ok(base(task_type))
         }
         other => Err(ProducerError::InvalidTaskType(other.to_string())),
     }
@@ -921,12 +1026,92 @@ mod tests {
 
     // --- ResolvedConfiguration::from_payload_value / batch-config prefix ---
 
+    // --- parse_work_unit_key ---
+
+    #[test]
+    fn parse_representation_new_format() {
+        let parsed = parse_work_unit_key("representation:ws1:sess1:bob").unwrap();
+        assert_eq!(
+            parsed,
+            ParsedWorkUnit {
+                task_type: "representation".into(),
+                workspace_name: Some("ws1".into()),
+                session_name: Some("sess1".into()),
+                observer: None,
+                observed: Some("bob".into()),
+                dream_type: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_representation_legacy_format() {
+        let parsed = parse_work_unit_key("representation:ws1:sess1:alice:bob").unwrap();
+        assert_eq!(parsed.observer, Some("alice".into()));
+        assert_eq!(parsed.observed, Some("bob".into()));
+    }
+
+    #[test]
+    fn parse_summary_dream_webhook_deletion_reconciler() {
+        let summary = parse_work_unit_key("summary:ws1:sess1:alice:bob").unwrap();
+        assert_eq!(summary.session_name, Some("sess1".into()));
+        assert_eq!(summary.observer, Some("alice".into()));
+
+        let dream = parse_work_unit_key("dream:consolidate:ws1:alice:bob").unwrap();
+        assert_eq!(dream.dream_type, Some("consolidate".into()));
+        assert_eq!(dream.workspace_name, Some("ws1".into()));
+        assert_eq!(dream.observer, Some("alice".into()));
+        assert_eq!(dream.observed, Some("bob".into()));
+        assert_eq!(dream.session_name, None);
+
+        let webhook = parse_work_unit_key("webhook:ws1").unwrap();
+        assert_eq!(webhook.workspace_name, Some("ws1".into()));
+
+        let deletion = parse_work_unit_key("deletion:ws1:peer:p1").unwrap();
+        assert_eq!(deletion.workspace_name, Some("ws1".into()));
+        assert_eq!(deletion.session_name, None);
+
+        let reconciler = parse_work_unit_key("reconciler:sync_vectors").unwrap();
+        assert_eq!(reconciler.task_type, "reconciler");
+        assert_eq!(reconciler.workspace_name, None);
+    }
+
+    #[test]
+    fn parse_rejects_bad_segment_counts_and_types() {
+        assert!(parse_work_unit_key("representation:ws1:sess1").is_err());
+        assert!(parse_work_unit_key("summary:ws1:sess1:bob").is_err());
+        assert!(parse_work_unit_key("dream:ws1:bob").is_err());
+        assert!(parse_work_unit_key("webhook:ws1:extra").is_err());
+        assert!(parse_work_unit_key("deletion:ws1:peer").is_err());
+        assert!(parse_work_unit_key("reconciler").is_err());
+        assert!(parse_work_unit_key("bogus:ws1").is_err());
+    }
+
+    #[test]
+    fn construct_then_parse_round_trips() {
+        let rep = json!({"task_type": "representation", "session_name": "s", "observed": "bob"});
+        let key = construct_work_unit_key("ws1", &rep).unwrap();
+        let parsed = parse_work_unit_key(&key).unwrap();
+        assert_eq!(parsed.task_type, "representation");
+        assert_eq!(parsed.workspace_name.as_deref(), Some("ws1"));
+        assert_eq!(parsed.session_name.as_deref(), Some("s"));
+        assert_eq!(parsed.observed.as_deref(), Some("bob"));
+
+        let dream = json!({"task_type": "dream", "dream_type": "consolidate", "observer": "a", "observed": "b"});
+        let key = construct_work_unit_key("ws1", &dream).unwrap();
+        let parsed = parse_work_unit_key(&key).unwrap();
+        assert_eq!(parsed.dream_type.as_deref(), Some("consolidate"));
+        assert_eq!(parsed.workspace_name.as_deref(), Some("ws1"));
+    }
+
     #[test]
     fn from_payload_value_round_trips() {
-        let mut config = ResolvedConfiguration::default();
-        config.reasoning_custom_instructions = Some("be terse".to_string());
-        config.peer_card_use = false;
-        config.messages_per_short_summary = 7;
+        let config = ResolvedConfiguration {
+            reasoning_custom_instructions: Some("be terse".to_string()),
+            peer_card_use: false,
+            messages_per_short_summary: 7,
+            ..ResolvedConfiguration::default()
+        };
         let payload = config.to_payload_value();
         assert_eq!(
             ResolvedConfiguration::from_payload_value(&payload).unwrap(),
@@ -1002,7 +1187,7 @@ mod tests {
 
     #[test]
     fn batch_prefix_empty_is_zero_none() {
-        let payloads: Vec<Value> = vec![];
+        let payloads: [Value; 0] = [];
         assert_eq!(
             resolve_batch_configuration_prefix(payloads.iter()).unwrap(),
             (0, None)
@@ -1011,7 +1196,7 @@ mod tests {
 
     #[test]
     fn batch_prefix_all_none_config() {
-        let payloads = vec![
+        let payloads = [
             payload_with_config(None),
             payload_with_config(None),
             payload_with_config(None),
@@ -1025,7 +1210,7 @@ mod tests {
     #[test]
     fn batch_prefix_homogeneous() {
         let config = ResolvedConfiguration::default();
-        let payloads = vec![
+        let payloads = [
             payload_with_config(Some(&config)),
             payload_with_config(Some(&config)),
         ];
@@ -1037,9 +1222,11 @@ mod tests {
     #[test]
     fn batch_prefix_breaks_on_config_change() {
         let config_a = ResolvedConfiguration::default();
-        let mut config_b = ResolvedConfiguration::default();
-        config_b.summary_enabled = false;
-        let payloads = vec![
+        let config_b = ResolvedConfiguration {
+            summary_enabled: false,
+            ..ResolvedConfiguration::default()
+        };
+        let payloads = [
             payload_with_config(Some(&config_a)),
             payload_with_config(Some(&config_a)),
             payload_with_config(Some(&config_b)),
@@ -1053,7 +1240,7 @@ mod tests {
     #[test]
     fn batch_prefix_none_then_some_breaks() {
         let config = ResolvedConfiguration::default();
-        let payloads = vec![
+        let payloads = [
             payload_with_config(None),
             payload_with_config(Some(&config)),
         ];
