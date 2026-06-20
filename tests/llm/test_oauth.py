@@ -168,12 +168,16 @@ def test_oauth_openai_auth_headers_reflects_current_token() -> None:
 
     openai_client = OAuthOpenAI(token_manager=manager, base_url="http://localhost/v1")
 
+    # auth_headers — openai < 2.x path
     assert openai_client.auth_headers == {"Authorization": "Bearer initial-token"}
+    # _bearer_auth — openai >= 2.x path
+    assert openai_client._bearer_auth == {"Authorization": "Bearer initial-token"}  # pyright: ignore[reportPrivateUsage]
 
-    # Simulate a token refresh.
+    # Simulate a token refresh — both properties must reflect the new token.
     manager._access_token = "refreshed-token"  # pyright: ignore[reportPrivateUsage]
 
     assert openai_client.auth_headers == {"Authorization": "Bearer refreshed-token"}
+    assert openai_client._bearer_auth == {"Authorization": "Bearer refreshed-token"}  # pyright: ignore[reportPrivateUsage]
 
 
 def test_oauth_openai_does_not_require_api_key_env_var() -> None:
