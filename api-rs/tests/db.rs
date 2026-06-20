@@ -3257,3 +3257,193 @@ async fn get_or_create_collection_creates_then_reuses() {
 
     test_db.teardown().await;
 }
+
+// --- create_documents + dedup (representation write path) ---
+
+async fn setup_collection_fixtures(pool: &PgPool) {
+    db::get_or_create_workspace(pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["alice", "bob"] {
+        db::get_or_create_peer(pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::get_or_create_collection(pool, "ws", "alice", "bob")
+        .await
+        .expect("collection");
+}
+
+fn doc_to_create(content: &str, dim: usize) -> db::DocumentToCreate {
+    db::DocumentToCreate {
+        content: content.to_string(),
+        session_name: None,
+        level: "explicit".to_string(),
+        internal_metadata: json!({}),
+        embedding: query_vector(&[(dim, 1.0)]),
+        times_derived: 1,
+        source_ids: None,
+    }
+}
+
+#[tokio::test]
+async fn create_documents_inserts_and_marks_synced() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    setup_collection_fixtures(&test_db.pool).await;
+
+    let count = db::create_documents(
+        &test_db.pool,
+        vec![doc_to_create("first", 5), doc_to_create("second", 6)],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    )
+    .await
+    .expect("create documents");
+    assert_eq!(count, 2);
+
+    let synced: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM documents WHERE observer = 'alice' AND observed = 'bob' \
+         AND sync_state = 'synced' AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("count synced");
+    assert_eq!(synced, 2);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_documents_dedup_keeps_more_informative_new_doc() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    setup_collection_fixtures(&test_db.pool).await;
+
+    // Existing short observation.
+    db::create_documents(&test_db.pool, vec![doc_to_create("cat", 5)], "ws", "alice", "bob", false)
+        .await
+        .expect("seed existing");
+
+    // New doc with the SAME embedding (distance 0 -> duplicate) but more tokens.
+    let count = db::create_documents(
+        &test_db.pool,
+        vec![doc_to_create("the orange cat sleeps on the warm windowsill", 5)],
+        "ws",
+        "alice",
+        "bob",
+        true,
+    )
+    .await
+    .expect("dedup create");
+    assert_eq!(count, 1);
+
+    // Existing is soft-deleted; exactly one live doc remains, the longer one,
+    // with times_derived carried forward to 2.
+    let live: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT content, times_derived FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL",
+    )
+    .fetch_all(&test_db.pool)
+    .await
+    .expect("live docs");
+    assert_eq!(live.len(), 1);
+    assert_eq!(live[0].0, "the orange cat sleeps on the warm windowsill");
+    assert_eq!(live[0].1, 2);
+
+    let deleted: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM documents WHERE observer = 'alice' AND observed = 'bob' \
+         AND deleted_at IS NOT NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("count deleted");
+    assert_eq!(deleted, 1);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_documents_dedup_rejects_less_informative_new_doc() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    setup_collection_fixtures(&test_db.pool).await;
+
+    db::create_documents(
+        &test_db.pool,
+        vec![doc_to_create("the orange cat sleeps on the warm windowsill", 5)],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    )
+    .await
+    .expect("seed existing");
+
+    // New shorter doc, same embedding -> existing wins, new rejected.
+    let count = db::create_documents(
+        &test_db.pool,
+        vec![doc_to_create("cat", 5)],
+        "ws",
+        "alice",
+        "bob",
+        true,
+    )
+    .await
+    .expect("dedup create");
+    assert_eq!(count, 0);
+
+    // Existing survives with times_derived incremented to 2.
+    let row: (i64, i32) = sqlx::query_as(
+        "SELECT COUNT(*), MAX(times_derived) FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("existing");
+    assert_eq!(row.0, 1);
+    assert_eq!(row.1, 2);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_documents_dedup_keeps_dissimilar_doc() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    setup_collection_fixtures(&test_db.pool).await;
+
+    db::create_documents(&test_db.pool, vec![doc_to_create("cat", 5)], "ws", "alice", "bob", false)
+        .await
+        .expect("seed existing");
+
+    // Orthogonal embedding (distance 1 > 0.05) -> not a duplicate, kept.
+    let count = db::create_documents(
+        &test_db.pool,
+        vec![doc_to_create("dog", 6)],
+        "ws",
+        "alice",
+        "bob",
+        true,
+    )
+    .await
+    .expect("dedup create");
+    assert_eq!(count, 1);
+
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM documents WHERE observer = 'alice' AND observed = 'bob' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("count live");
+    assert_eq!(live, 2);
+
+    test_db.teardown().await;
+}

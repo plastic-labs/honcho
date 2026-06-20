@@ -2913,6 +2913,189 @@ pub async fn get_or_create_collection(
     Ok(Collection::from_row(&row))
 }
 
+/// An observation document to persist, mirroring the fields of
+/// `schemas.DocumentCreate` the deriver populates. `embedding` is computed by
+/// the caller (`save_representation`); `internal_metadata` is the already-built
+/// metadata object (message_ids / premises / message_created_at).
+#[derive(Debug, Clone)]
+pub struct DocumentToCreate {
+    pub content: String,
+    pub session_name: Option<String>,
+    pub level: String,
+    pub internal_metadata: Value,
+    pub embedding: Vec<f32>,
+    pub times_derived: i32,
+    pub source_ids: Option<Value>,
+}
+
+/// cl100k_base token-id set, matching the deriver dedup's
+/// `set(embedding_client.encoding.encode(text))` (the embedding model
+/// text-embedding-3-small resolves to cl100k_base, distinct from the o200k
+/// encoding `tokens::estimate_tokens` uses). Uses ordinary encoding so it
+/// mirrors Python's default `encode` for non-special content.
+fn cl100k_token_set(text: &str) -> std::collections::HashSet<u32> {
+    use std::sync::OnceLock;
+    static ENCODER: OnceLock<tiktoken_rs::CoreBPE> = OnceLock::new();
+    let encoder =
+        ENCODER.get_or_init(|| tiktoken_rs::cl100k_base().expect("load cl100k_base tokenizer"));
+    encoder.encode_ordinary(text).into_iter().collect()
+}
+
+struct DuplicateCandidate {
+    id: String,
+    content: String,
+    times_derived: i32,
+}
+
+/// The nearest non-deleted document within `max_distance` cosine distance of
+/// `embedding` for `(observer, observed)` — `query_documents(..., top_k=1)` as
+/// used by `is_rejected_duplicate`. Runs on the caller's transaction so it sees
+/// in-flight soft-deletes.
+async fn find_duplicate_candidate(
+    conn: &mut sqlx::PgConnection,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    embedding: &[f32],
+    max_distance: f64,
+) -> Result<Option<DuplicateCandidate>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, content, times_derived FROM documents \
+         WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+           AND embedding IS NOT NULL AND deleted_at IS NULL \
+           AND embedding <=> $4::vector <= $5 \
+         ORDER BY embedding <=> $4::vector LIMIT 1",
+    )
+    .bind(workspace_name)
+    .bind(observer)
+    .bind(observed)
+    .bind(crate::search::vector_literal(embedding))
+    .bind(max_distance)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(|row| DuplicateCandidate {
+        id: row.get("id"),
+        content: row.get("content"),
+        times_derived: row.get("times_derived"),
+    }))
+}
+
+/// Port of `is_rejected_duplicate`: cosine-similarity dedup (>= 0.95, i.e.
+/// distance <= 0.05) with token-set retention scoring. When a near-duplicate
+/// exists, the more-informative document wins: ties and a superior new doc
+/// soft-delete the existing one (carrying its reinforcement count forward into
+/// `doc.times_derived`) and the new doc is kept (`false`); otherwise the
+/// existing doc's `times_derived` is atomically incremented and the new doc is
+/// rejected (`true`). Score = token count + 10 * tokens-unique-to-that-doc.
+async fn is_rejected_duplicate(
+    conn: &mut sqlx::PgConnection,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    doc: &mut DocumentToCreate,
+) -> Result<bool, sqlx::Error> {
+    let Some(existing) =
+        find_duplicate_candidate(conn, workspace_name, observer, observed, &doc.embedding, 0.05)
+            .await?
+    else {
+        return Ok(false);
+    };
+
+    let tokens_new = cl100k_token_set(&doc.content);
+    let tokens_existing = cl100k_token_set(&existing.content);
+    let unique_new = tokens_new.difference(&tokens_existing).count() as i64;
+    let unique_existing = tokens_existing.difference(&tokens_new).count() as i64;
+    let score_new = tokens_new.len() as i64 + unique_new * 10;
+    let score_existing = tokens_existing.len() as i64 + unique_existing * 10;
+
+    if score_new >= score_existing {
+        // Keep the new doc; soft-delete the existing and carry its reinforcement
+        // count forward (max so a higher new count is preserved).
+        doc.times_derived = doc.times_derived.max(existing.times_derived + 1);
+        sqlx::query("UPDATE documents SET deleted_at = now() WHERE id = $1")
+            .bind(&existing.id)
+            .execute(&mut *conn)
+            .await?;
+        Ok(false)
+    } else {
+        // Existing wins; record the reinforcement atomically and reject the new.
+        sqlx::query("UPDATE documents SET times_derived = times_derived + 1 WHERE id = $1")
+            .bind(&existing.id)
+            .execute(&mut *conn)
+            .await?;
+        Ok(true)
+    }
+}
+
+/// Port of `crud.create_documents` for the default pgvector path (no external
+/// vector store): optionally dedup each document, bulk-insert the survivors with
+/// their embeddings, and mark them `synced` immediately (the
+/// `external_vector_store is None` branch). Returns the number of documents
+/// actually inserted. Dedup writes and inserts share one transaction, matching
+/// the Python session. External-vector-store modes are not ported.
+pub async fn create_documents(
+    pool: &PgPool,
+    documents: Vec<DocumentToCreate>,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    deduplicate: bool,
+) -> Result<usize, sqlx::Error> {
+    let mut transaction = pool.begin().await?;
+    let mut inserted_ids: Vec<String> = Vec::new();
+
+    for mut doc in documents {
+        if deduplicate
+            && is_rejected_duplicate(
+                &mut transaction,
+                workspace_name,
+                observer,
+                observed,
+                &mut doc,
+            )
+            .await?
+        {
+            continue;
+        }
+
+        let id = generate_nanoid();
+        sqlx::query(
+            "INSERT INTO documents \
+             (id, workspace_name, observer, observed, content, level, times_derived, \
+              internal_metadata, session_name, embedding, source_ids, sync_state) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector, $11, 'pending')",
+        )
+        .bind(&id)
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed)
+        .bind(&doc.content)
+        .bind(&doc.level)
+        .bind(doc.times_derived)
+        .bind(&doc.internal_metadata)
+        .bind(&doc.session_name)
+        .bind(crate::search::vector_literal(&doc.embedding))
+        .bind(&doc.source_ids)
+        .execute(&mut *transaction)
+        .await?;
+        inserted_ids.push(id);
+    }
+
+    // pgvector mode: no external store, so mark the freshly-inserted docs synced.
+    if !inserted_ids.is_empty() {
+        sqlx::query(
+            "UPDATE documents SET sync_state = 'synced', last_sync_at = now(), sync_attempts = 0 \
+             WHERE id = ANY($1)",
+        )
+        .bind(&inserted_ids)
+        .execute(&mut *transaction)
+        .await?;
+    }
+
+    transaction.commit().await?;
+    Ok(inserted_ids.len())
+}
+
 /// A conversation message row forming the representation-batch context window
 /// (`models.Message` columns the deriver batch processor reads).
 #[derive(Debug, Clone)]
