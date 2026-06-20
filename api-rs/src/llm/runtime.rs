@@ -38,6 +38,61 @@ pub fn effective_temperature(temperature: Option<f64>, attempt: u32) -> Option<f
     }
 }
 
+/// Per-attempt plan, porting `runtime.py::AttemptPlan` minus its `client` field
+/// (the HTTP-based Rust port resolves credentials per call rather than holding a
+/// provider SDK client). Carries everything one backend call needs without
+/// re-resolving config mid-attempt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttemptPlan {
+    pub provider: Provider,
+    pub model: String,
+    pub thinking_budget_tokens: Option<i64>,
+    pub reasoning_effort: Option<String>,
+    pub selected_config: ModelConfig,
+    pub attempt: u32,
+    pub retry_attempts: u32,
+    pub is_fallback: bool,
+}
+
+/// Build the [`AttemptPlan`] for `attempt`, porting `plan_attempt`. The selected
+/// config is the primary on every attempt except the final one, which swaps to
+/// the fallback (if any). Reasoning params come from the caller while on the
+/// primary config and from the fallback config otherwise, so a cross-transport
+/// fallback uses provider-appropriate params.
+pub fn plan_attempt(
+    runtime_model_config: &ModelConfig,
+    attempt: u32,
+    retry_attempts: u32,
+    call_thinking_budget_tokens: Option<i64>,
+    call_reasoning_effort: Option<&str>,
+) -> AttemptPlan {
+    let selected = select_model_config_for_attempt(runtime_model_config, attempt, retry_attempts);
+    let is_fallback = is_fallback_attempt(runtime_model_config, attempt, retry_attempts);
+
+    let (thinking_budget_tokens, reasoning_effort) = if is_fallback {
+        (
+            selected.thinking_budget_tokens,
+            selected.thinking_effort.clone(),
+        )
+    } else {
+        (
+            call_thinking_budget_tokens,
+            call_reasoning_effort.map(str::to_string),
+        )
+    };
+
+    AttemptPlan {
+        provider: selected.transport,
+        model: selected.model.clone(),
+        thinking_budget_tokens,
+        reasoning_effort,
+        selected_config: selected,
+        attempt,
+        retry_attempts,
+        is_fallback,
+    }
+}
+
 /// Build the `ModelConfig` passed to the request builder, porting
 /// `effective_config_for_call`. Per-call values (temperature, stop sequences,
 /// thinking budget/effort) win when set; otherwise the `selected_config`'s
@@ -183,6 +238,44 @@ mod tests {
         assert_eq!(overridden.thinking_effort.as_deref(), Some("max"));
         assert_eq!(overridden.stop_sequences, Some(vec!["CALL".to_string()]));
         assert_eq!(overridden.max_output_tokens, None);
+    }
+
+    #[test]
+    fn plan_attempt_primary_uses_caller_reasoning_params() {
+        let config = config_with_fallback();
+        let plan = plan_attempt(&config, 1, 3, Some(1000), Some("high"));
+        assert_eq!(plan.provider, Provider::Anthropic);
+        assert_eq!(plan.model, "primary-model");
+        assert_eq!(plan.thinking_budget_tokens, Some(1000));
+        assert_eq!(plan.reasoning_effort.as_deref(), Some("high"));
+        assert!(!plan.is_fallback);
+        assert_eq!(plan.selected_config.model, "primary-model");
+    }
+
+    #[test]
+    fn plan_attempt_fallback_uses_fallback_config_reasoning_params() {
+        let mut primary = ModelConfig::new("primary-model", Provider::Anthropic);
+        let mut fallback = ModelConfig::new("backup-model", Provider::Openai);
+        fallback.thinking_budget_tokens = Some(512);
+        fallback.thinking_effort = Some("low".to_string());
+        primary.fallback = Some(Box::new(fallback));
+
+        // Final attempt -> fallback config's own reasoning params win over caller's.
+        let plan = plan_attempt(&primary, 3, 3, Some(1000), Some("high"));
+        assert_eq!(plan.provider, Provider::Openai);
+        assert_eq!(plan.model, "backup-model");
+        assert_eq!(plan.thinking_budget_tokens, Some(512));
+        assert_eq!(plan.reasoning_effort.as_deref(), Some("low"));
+        assert!(plan.is_fallback);
+    }
+
+    #[test]
+    fn plan_attempt_no_fallback_stays_primary() {
+        let config = ModelConfig::new("only-model", Provider::Gemini);
+        let plan = plan_attempt(&config, 3, 3, None, None);
+        assert_eq!(plan.model, "only-model");
+        assert!(!plan.is_fallback);
+        assert_eq!(plan.thinking_budget_tokens, None);
     }
 
     #[test]
