@@ -669,6 +669,14 @@ class LLMSettings(HonchoSettings):
     OPENAI_BASE_URL: str | None = None
     GEMINI_BASE_URL: str | None = None
 
+    # OpenAI OAuth settings (device code flow / refresh token).
+    # Set OPENAI_AUTH_MODE=oauth and supply OPENAI_REFRESH_TOKEN to use OAuth
+    # instead of a static API key.  Run `scripts/honcho_oauth_setup.py` to
+    # obtain a refresh token interactively.
+    OPENAI_AUTH_MODE: Literal["api_key", "oauth"] = "api_key"
+    OPENAI_REFRESH_TOKEN: str | None = None
+    OPENAI_CLIENT_ID: str = "app_EMoamEEZ73f0CkXaXp7hrann"
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
