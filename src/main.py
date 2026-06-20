@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -22,6 +23,7 @@ from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.db import engine, register_db_query_instrumentation, request_context
 from src.exceptions import HonchoException
+from src.llm.registry import initialize_oauth
 from src.routers import (
     conclusions,
     keys,
@@ -149,9 +151,18 @@ async def lifespan(_: FastAPI):
             "Error initializing cache in api process; proceeding without cache: %s", e
         )
 
+    # Initialize OAuth token manager if configured; start background refresh.
+    oauth_manager = await initialize_oauth()
+    oauth_refresh_task: asyncio.Task[None] | None = None
+    if oauth_manager is not None:
+        oauth_refresh_task = asyncio.create_task(oauth_manager.run_refresh_loop())
+
     try:
         yield
     finally:
+        if oauth_refresh_task is not None:
+            oauth_refresh_task.cancel()
+
         # Import here to avoid circular import at module load time
         from src.vector_store import close_external_vector_store
 

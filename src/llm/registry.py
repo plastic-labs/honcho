@@ -30,6 +30,7 @@ from .history_adapters import (
     HistoryAdapter,
     OpenAIHistoryAdapter,
 )
+from .oauth import OAuthOpenAI, OAuthTokenManager
 from .types import ProviderClient
 
 # Client-level ``default_headers`` applied to OpenAI-compatible clients, keyed by
@@ -54,6 +55,11 @@ def _default_headers_for(base_url: str | None) -> dict[str, str]:
     return {}
 
 
+# Singleton OAuth manager — set by initialize_oauth() in the app lifespan.
+# None when OPENAI_AUTH_MODE=api_key (the default).
+_oauth_manager: OAuthTokenManager | None = None
+
+
 @lru_cache(maxsize=1)
 def get_anthropic_client() -> AsyncAnthropic:
     """Default Anthropic client built from settings.LLM.ANTHROPIC_API_KEY."""
@@ -66,7 +72,16 @@ def get_anthropic_client() -> AsyncAnthropic:
 
 @lru_cache(maxsize=1)
 def get_openai_client() -> AsyncOpenAI:
-    """Default OpenAI client built from settings.LLM.OPENAI_API_KEY."""
+    """Default OpenAI client built from settings.LLM.OPENAI_API_KEY.
+
+    Returns an OAuthOpenAI instance when OPENAI_AUTH_MODE=oauth and
+    initialize_oauth() has been called to populate _oauth_manager.
+    """
+    if settings.LLM.OPENAI_AUTH_MODE == "oauth" and _oauth_manager is not None:
+        return OAuthOpenAI(
+            token_manager=_oauth_manager,
+            base_url=settings.LLM.OPENAI_BASE_URL,
+        )
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
@@ -115,6 +130,41 @@ def get_gemini_override_client(
     """Gemini client for a specific (base_url, api_key) pair. Cached by key."""
     http_options = genai_types.HttpOptions(base_url=base_url) if base_url else None
     return genai.Client(api_key=api_key, http_options=http_options)
+
+
+async def initialize_oauth() -> OAuthTokenManager | None:
+    """Set up the OAuth token manager and wire it into CLIENTS.
+
+    Call once during application startup (lifespan / deriver main).  Returns
+    the manager so the caller can start the background refresh loop.  No-ops
+    and returns None when OPENAI_AUTH_MODE != "oauth".
+    """
+    global _oauth_manager
+
+    if settings.LLM.OPENAI_AUTH_MODE != "oauth":
+        return None
+
+    if not settings.LLM.OPENAI_REFRESH_TOKEN:
+        raise ValueError(
+            "LLM_OPENAI_REFRESH_TOKEN must be set when LLM_OPENAI_AUTH_MODE=oauth. "
+            "Run `python scripts/honcho_oauth_setup.py` to obtain one."
+        )
+
+    manager = OAuthTokenManager(
+        refresh_token=settings.LLM.OPENAI_REFRESH_TOKEN,
+        client_id=settings.LLM.OPENAI_CLIENT_ID,
+    )
+    await manager.refresh()
+    _oauth_manager = manager
+
+    CLIENTS["openai"] = OAuthOpenAI(
+        token_manager=manager,
+        base_url=settings.LLM.OPENAI_BASE_URL,
+    )
+    # Clear the lru_cache so get_openai_client() returns the OAuth variant.
+    get_openai_client.cache_clear()
+
+    return manager
 
 
 # Module-level default-client registry, populated at import time. Tests patch
@@ -214,6 +264,8 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
 
 __all__ = [
     "CLIENTS",
+    "OAuthOpenAI",
+    "OAuthTokenManager",
     "backend_for_provider",
     "client_for_model_config",
     "get_anthropic_client",
@@ -224,4 +276,5 @@ __all__ = [
     "get_openai_client",
     "get_openai_override_client",
     "history_adapter_for_provider",
+    "initialize_oauth",
 ]
