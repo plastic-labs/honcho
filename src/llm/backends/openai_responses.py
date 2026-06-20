@@ -28,6 +28,30 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _enforce_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Recursively add additionalProperties: false to all object types.
+
+    The Responses API strict mode requires this on every object in the schema;
+    Pydantic's model_json_schema() does not include it by default.
+    """
+    schema = dict(schema)
+    if schema.get("type") == "object":
+        schema["additionalProperties"] = False
+        if "properties" in schema:
+            schema["properties"] = {
+                k: _enforce_strict_schema(v)
+                for k, v in schema["properties"].items()
+            }
+    if "$defs" in schema:
+        schema["$defs"] = {
+            k: _enforce_strict_schema(v)
+            for k, v in schema["$defs"].items()
+        }
+    if "items" in schema:
+        schema["items"] = _enforce_strict_schema(schema["items"])
+    return schema
+
+
 def _content_to_str(content: Any) -> str:
     if content is None:
         return ""
@@ -335,7 +359,9 @@ class OpenAIResponsesBackend:
                     "format": {
                         "type": "json_schema",
                         "name": response_format.__name__,
-                        "schema": response_format.model_json_schema(),
+                        "schema": _enforce_strict_schema(
+                            response_format.model_json_schema()
+                        ),
                         "strict": True,
                     }
                 }
