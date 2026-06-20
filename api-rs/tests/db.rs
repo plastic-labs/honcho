@@ -2936,3 +2936,57 @@ async fn cleanup_stale_work_units_removes_only_old_rows() {
 
     test_db.teardown().await;
 }
+
+#[tokio::test]
+async fn get_next_queue_item_orders_and_checks_ownership() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    let key = "summary:ws:sess:a:bob";
+    let first = insert_queue_row(&test_db.pool, key, "summary", None).await;
+    let second = insert_queue_row(&test_db.pool, key, "summary", None).await;
+
+    let claimed = db::claim_work_units(&test_db.pool, &[key.to_string()])
+        .await
+        .expect("claim");
+    let aqs_id = claimed.get(key).expect("owned").clone();
+
+    // Earliest unprocessed item first.
+    let item = db::get_next_queue_item(&test_db.pool, key, &aqs_id)
+        .await
+        .expect("get next")
+        .expect("an item");
+    assert_eq!(item.id, first);
+    assert_eq!(item.task_type, "summary");
+
+    // After processing the first, the next item surfaces.
+    db::mark_queue_items_as_processed(&test_db.pool, &[first], key)
+        .await
+        .expect("mark processed");
+    let item = db::get_next_queue_item(&test_db.pool, key, &aqs_id)
+        .await
+        .expect("get next 2")
+        .expect("second item");
+    assert_eq!(item.id, second);
+
+    // A wrong aqs_id (ownership lost) returns nothing.
+    let none = db::get_next_queue_item(&test_db.pool, key, "not-the-owner")
+        .await
+        .expect("get next wrong owner");
+    assert!(none.is_none());
+
+    // Drained work unit returns None.
+    db::mark_queue_items_as_processed(&test_db.pool, &[second], key)
+        .await
+        .expect("mark processed 2");
+    let drained = db::get_next_queue_item(&test_db.pool, key, &aqs_id)
+        .await
+        .expect("get next drained");
+    assert!(drained.is_none());
+
+    test_db.teardown().await;
+}

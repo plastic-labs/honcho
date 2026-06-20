@@ -2781,6 +2781,64 @@ pub async fn insert_queue_records(
     Ok(())
 }
 
+/// A `queue` row, mirroring the `models.QueueItem` columns the worker reads.
+#[derive(Debug, Clone)]
+pub struct QueueItem {
+    pub id: i64,
+    pub work_unit_key: String,
+    pub payload: Value,
+    pub session_id: Option<String>,
+    pub task_type: String,
+    pub workspace_name: Option<String>,
+    pub message_id: Option<i64>,
+    pub processed: bool,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl QueueItem {
+    fn from_row(row: &PgRow) -> Self {
+        Self {
+            id: row.get("id"),
+            work_unit_key: row.get("work_unit_key"),
+            payload: row.get("payload"),
+            session_id: row.get("session_id"),
+            task_type: row.get("task_type"),
+            workspace_name: row.get("workspace_name"),
+            message_id: row.get("message_id"),
+            processed: row.get("processed"),
+            error: row.get("error"),
+            created_at: row.get("created_at"),
+        }
+    }
+}
+
+/// Port of `QueueManager.get_next_queue_item`: the earliest unprocessed queue
+/// item for a work unit still owned by this worker (verified by joining
+/// `active_queue_sessions` on the key and matching `aqs_id`). Returns `None` when
+/// the work unit is drained or ownership was lost. Representation work units use
+/// [`get_queue_item_batch`] instead (the Python guard raising for them is an
+/// internal invariant the caller already upholds).
+pub async fn get_next_queue_item(
+    pool: &PgPool,
+    work_unit_key: &str,
+    aqs_id: &str,
+) -> Result<Option<QueueItem>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT q.id, q.work_unit_key, q.payload, q.session_id, q.task_type, \
+                q.workspace_name, q.message_id, q.processed, q.error, q.created_at \
+         FROM queue q \
+         JOIN active_queue_sessions aqs ON q.work_unit_key = aqs.work_unit_key \
+         WHERE q.work_unit_key = $1 AND NOT q.processed AND aqs.id = $2 \
+         ORDER BY q.id LIMIT 1",
+    )
+    .bind(work_unit_key)
+    .bind(aqs_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.as_ref().map(QueueItem::from_row))
+}
+
 /// Port of `QueueManager.claim_work_units`: insert one `active_queue_sessions`
 /// row per work-unit key (each with a freshly generated nanoid id) using
 /// `ON CONFLICT DO NOTHING`, returning the `work_unit_key -> aqs_id` map for the
