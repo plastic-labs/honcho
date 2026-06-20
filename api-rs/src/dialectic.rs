@@ -783,6 +783,74 @@ pub async fn handle_search_memory(
     ))
 }
 
+/// Format the two prefetched representations into the observations block the
+/// dialectic injects into the user message, porting the formatting tail of
+/// `DialecticAgent._prefetch_relevant_observations`. Explicit observations render
+/// without ids (lowest reasoning level); derived observations render *with* ids so
+/// the agent can follow up via `get_reasoning_chain`. Returns `None` when both are
+/// empty (no prefetch block is added).
+pub fn format_prefetched_observations(
+    explicit: &crate::representation::Representation,
+    derived: &crate::representation::Representation,
+) -> Option<String> {
+    if explicit.is_empty() && derived.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if !explicit.is_empty() {
+        parts.push(explicit.format_as_markdown(false));
+    }
+    if !derived.is_empty() {
+        parts.push(derived.format_as_markdown(true));
+    }
+    Some(parts.join("\n"))
+}
+
+/// Prefetch semantically relevant observations for `query`, porting
+/// `DialecticAgent._prefetch_relevant_observations`. Runs two level-scoped
+/// searches (explicit; derived = deductive/inductive/contradiction) over the
+/// pre-computed `query_embedding` so the agent gets immediate context without a
+/// tool call. `prefetch_limit` is the per-search cap (Python: 10 at the `minimal`
+/// reasoning level, 25 otherwise). Returns the formatted block, or `None` when no
+/// observations are found.
+pub async fn prefetch_observations(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    query_embedding: &[f32],
+    prefetch_limit: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    let explicit_docs = db::query_documents_by_levels(
+        pool,
+        workspace_name,
+        observer,
+        observed,
+        query_embedding,
+        &["explicit".to_string()],
+        prefetch_limit,
+    )
+    .await?;
+    let derived_docs = db::query_documents_by_levels(
+        pool,
+        workspace_name,
+        observer,
+        observed,
+        query_embedding,
+        &[
+            "deductive".to_string(),
+            "inductive".to_string(),
+            "contradiction".to_string(),
+        ],
+        prefetch_limit,
+    )
+    .await?;
+
+    let explicit = crate::representation::Representation::from_documents(&explicit_docs);
+    let derived = crate::representation::Representation::from_documents(&derived_docs);
+    Ok(format_prefetched_observations(&explicit, &derived))
+}
+
 /// The query-embedding seam the dialectic tool executor needs for the
 /// semantic-search tools. Production wraps the OpenAI embedding client
 /// (`embedding::embed_openai`); tests use a fixed-vector mock. Mirrors how the
@@ -1286,6 +1354,36 @@ mod tests {
             ),
             fixtures["directional_both_cards"]
         );
+    }
+
+    #[test]
+    fn format_prefetched_observations_empty_is_none() {
+        use crate::representation::Representation;
+        let empty = Representation::default();
+        assert_eq!(format_prefetched_observations(&empty, &empty), None);
+    }
+
+    #[test]
+    fn format_prefetched_observations_joins_present_sections() {
+        use crate::representation::{ExplicitObservation, Representation};
+        let explicit = Representation {
+            explicit: vec![ExplicitObservation {
+                id: "e1".to_string(),
+                created_at: DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+                message_ids: vec![],
+                session_name: None,
+                content: "a fact".to_string(),
+            }],
+            ..Representation::default()
+        };
+        let derived = Representation::default();
+        // Only explicit present -> just the explicit section, no leading/trailing join newline.
+        let formatted = format_prefetched_observations(&explicit, &derived).unwrap();
+        assert!(formatted.starts_with("## Explicit Observations"));
+        assert!(formatted.contains("a fact"));
+        assert!(!formatted.contains("## Deductive"));
     }
 
     #[test]
