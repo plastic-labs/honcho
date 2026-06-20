@@ -34,6 +34,28 @@ fn id_prefix(id: &str, include_ids: bool) -> String {
     }
 }
 
+/// `"    - {item}"` per item, joined by newlines (the 4-space bullet indent used
+/// by the observation `__str__`/`str_with_id` renderers — distinct from the
+/// 3-space indent `format_as_markdown` uses).
+fn indented_bullets(items: &[String]) -> String {
+    items
+        .iter()
+        .map(|item| format!("    - {item}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The leading-newline bullet block for inductive/contradiction sources: empty
+/// when there are no sources, else `"\n"` + the indented bullets (porting the
+/// `sources_text` construction shared by those observations).
+fn leading_bullets(items: &[String]) -> String {
+    if items.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", indented_bullets(items))
+    }
+}
+
 /// A present, non-null value at `key` in a JSONB metadata object. Mirrors
 /// Python's `dict.get(key)` returning `None` for a missing key — except we also
 /// fold an explicit JSON `null` to `None`, since the call sites that matter
@@ -209,6 +231,19 @@ impl fmt::Display for ExplicitObservation {
     }
 }
 
+impl ExplicitObservation {
+    /// Port of `ExplicitObservation.str_with_id`: the `__str__` rendering with an
+    /// `[id:...]` prefix when this observation has an id.
+    pub fn str_with_id(&self) -> String {
+        format!(
+            "{}[{}] {}",
+            id_prefix(&self.id, true),
+            strip_timestamp(&self.created_at),
+            self.content
+        )
+    }
+}
+
 /// A deductive observation: a conclusion that must hold given its premises.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeductiveObservation {
@@ -219,6 +254,34 @@ pub struct DeductiveObservation {
     pub source_ids: Vec<String>,
     pub premises: Vec<String>,
     pub conclusion: String,
+}
+
+impl fmt::Display for DeductiveObservation {
+    /// Port of `DeductiveObservation.__str__`: the conclusion line followed by a
+    /// newline and the 4-space-indented premises (an empty premise list still
+    /// leaves the trailing newline, matching the Python f-string).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{}] {}\n{}",
+            strip_timestamp(&self.created_at),
+            self.conclusion,
+            indented_bullets(&self.premises)
+        )
+    }
+}
+
+impl DeductiveObservation {
+    /// Port of `DeductiveObservation.str_with_id`.
+    pub fn str_with_id(&self) -> String {
+        format!(
+            "{}[{}] {}\n{}",
+            id_prefix(&self.id, true),
+            strip_timestamp(&self.created_at),
+            self.conclusion,
+            indented_bullets(&self.premises)
+        )
+    }
 }
 
 /// An inductive observation: a pattern/generalization inferred over many
@@ -236,6 +299,35 @@ pub struct InductiveObservation {
     pub confidence: String,
 }
 
+impl fmt::Display for InductiveObservation {
+    /// Port of `InductiveObservation.__str__`:
+    /// `"[{timestamp}] [{confidence}] {conclusion}{sources}"`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{}] [{}] {}{}",
+            strip_timestamp(&self.created_at),
+            self.confidence,
+            self.conclusion,
+            leading_bullets(&self.sources)
+        )
+    }
+}
+
+impl InductiveObservation {
+    /// Port of `InductiveObservation.str_with_id`.
+    pub fn str_with_id(&self) -> String {
+        format!(
+            "{}[{}] [{}] {}{}",
+            id_prefix(&self.id, true),
+            strip_timestamp(&self.created_at),
+            self.confidence,
+            self.conclusion,
+            leading_bullets(&self.sources)
+        )
+    }
+}
+
 /// A contradiction observation: conflicting statements the peer has made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContradictionObservation {
@@ -246,6 +338,33 @@ pub struct ContradictionObservation {
     pub source_ids: Vec<String>,
     pub sources: Vec<String>,
     pub content: String,
+}
+
+impl fmt::Display for ContradictionObservation {
+    /// Port of `ContradictionObservation.__str__`:
+    /// `"[{timestamp}] CONTRADICTION: {content}{sources}"`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{}] CONTRADICTION: {}{}",
+            strip_timestamp(&self.created_at),
+            self.content,
+            leading_bullets(&self.sources)
+        )
+    }
+}
+
+impl ContradictionObservation {
+    /// Port of `ContradictionObservation.str_with_id`.
+    pub fn str_with_id(&self) -> String {
+        format!(
+            "{}[{}] CONTRADICTION: {}{}",
+            id_prefix(&self.id, true),
+            strip_timestamp(&self.created_at),
+            self.content,
+            leading_bullets(&self.sources)
+        )
+    }
 }
 
 /// A traversable map of observations across the four reasoning levels.
@@ -407,6 +526,54 @@ impl Representation {
 
         parts.join("\n")
     }
+
+    /// Port of `Representation.str_with_ids`: the same four `EXPLICIT:`/
+    /// `DEDUCTIVE:`/`INDUCTIVE:`/`CONTRADICTION:` numbered sections as the
+    /// `Display`/`__str__` rendering, but with `[id:...]` prefixes so agents can
+    /// reference observations for `get_reasoning_chain` / deletion.
+    pub fn str_with_ids(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        parts.extend(numbered_section("EXPLICIT:\n", &self.explicit, |o| o.str_with_id()));
+        parts.extend(numbered_section("DEDUCTIVE:\n", &self.deductive, |o| {
+            o.str_with_id()
+        }));
+        parts.extend(numbered_section("INDUCTIVE:\n", &self.inductive, |o| {
+            o.str_with_id()
+        }));
+        parts.extend(numbered_section("CONTRADICTION:\n", &self.contradiction, |o| {
+            o.str_with_id()
+        }));
+        parts.join("\n")
+    }
+}
+
+/// One `HEADER:\n` block followed by `"{i}. {rendered}"` per item (1-indexed)
+/// and a trailing empty string, mirroring the `parts.append` sequence shared by
+/// `Representation.__str__` and `str_with_ids`.
+fn numbered_section<T>(header: &str, items: &[T], render: impl Fn(&T) -> String) -> Vec<String> {
+    let mut parts = vec![header.to_string()];
+    for (index, item) in items.iter().enumerate() {
+        parts.push(format!("{}. {}", index + 1, render(item)));
+    }
+    parts.push(String::new());
+    parts
+}
+
+impl fmt::Display for Representation {
+    /// Port of `Representation.__str__`: all four numbered sections are always
+    /// emitted (unlike `format_as_markdown`, which skips empty levels).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts: Vec<String> = Vec::new();
+        parts.extend(numbered_section("EXPLICIT:\n", &self.explicit, ToString::to_string));
+        parts.extend(numbered_section("DEDUCTIVE:\n", &self.deductive, ToString::to_string));
+        parts.extend(numbered_section("INDUCTIVE:\n", &self.inductive, ToString::to_string));
+        parts.extend(numbered_section(
+            "CONTRADICTION:\n",
+            &self.contradiction,
+            ToString::to_string,
+        ));
+        write!(f, "{}", parts.join("\n"))
+    }
 }
 
 #[cfg(test)]
@@ -427,6 +594,143 @@ mod tests {
             session_name: None,
             content: content.to_string(),
         }
+    }
+
+    #[test]
+    fn observation_display_and_str_with_id() {
+        let e = ExplicitObservation {
+            id: "abc".to_string(),
+            ..explicit("fact one", "2025-01-01T12:00:00Z")
+        };
+        assert_eq!(e.to_string(), "[2025-01-01 12:00:00] fact one");
+        assert_eq!(e.str_with_id(), "[id:abc] [2025-01-01 12:00:00] fact one");
+
+        let d = DeductiveObservation {
+            id: "ghi".to_string(),
+            created_at: ts("2025-01-01T12:01:00Z"),
+            message_ids: vec![],
+            session_name: None,
+            source_ids: vec![],
+            premises: vec!["p1".to_string(), "p2".to_string()],
+            conclusion: "concl".to_string(),
+        };
+        assert_eq!(d.to_string(), "[2025-01-01 12:01:00] concl\n    - p1\n    - p2");
+        assert_eq!(
+            d.str_with_id(),
+            "[id:ghi] [2025-01-01 12:01:00] concl\n    - p1\n    - p2"
+        );
+
+        // Empty premises still leave the trailing newline (Python f-string).
+        let d_empty = DeductiveObservation {
+            premises: vec![],
+            ..d.clone()
+        };
+        assert_eq!(d_empty.to_string(), "[2025-01-01 12:01:00] concl\n");
+
+        let i = InductiveObservation {
+            id: "jkl".to_string(),
+            created_at: ts("2025-01-01T12:05:00Z"),
+            message_ids: vec![],
+            session_name: None,
+            source_ids: vec![],
+            sources: vec!["s1".to_string()],
+            pattern_type: "behavior".to_string(),
+            conclusion: "pattern".to_string(),
+            confidence: "high".to_string(),
+        };
+        assert_eq!(i.to_string(), "[2025-01-01 12:05:00] [high] pattern\n    - s1");
+        assert_eq!(
+            i.str_with_id(),
+            "[id:jkl] [2025-01-01 12:05:00] [high] pattern\n    - s1"
+        );
+        // No sources -> no trailing block.
+        let i_empty = InductiveObservation {
+            sources: vec![],
+            ..i.clone()
+        };
+        assert_eq!(i_empty.to_string(), "[2025-01-01 12:05:00] [high] pattern");
+
+        let c = ContradictionObservation {
+            id: "xyz".to_string(),
+            created_at: ts("2025-01-01T12:06:00Z"),
+            message_ids: vec![],
+            session_name: None,
+            source_ids: vec![],
+            sources: vec!["c1".to_string(), "c2".to_string()],
+            content: "conflict".to_string(),
+        };
+        assert_eq!(
+            c.to_string(),
+            "[2025-01-01 12:06:00] CONTRADICTION: conflict\n    - c1\n    - c2"
+        );
+        assert_eq!(
+            c.str_with_id(),
+            "[id:xyz] [2025-01-01 12:06:00] CONTRADICTION: conflict\n    - c1\n    - c2"
+        );
+    }
+
+    #[test]
+    fn representation_display_empty_emits_all_headers() {
+        assert_eq!(
+            Representation::default().to_string(),
+            "EXPLICIT:\n\n\nDEDUCTIVE:\n\n\nINDUCTIVE:\n\n\nCONTRADICTION:\n\n"
+        );
+    }
+
+    #[test]
+    fn representation_display_and_str_with_ids() {
+        let rep = Representation {
+            explicit: vec![ExplicitObservation {
+                id: "abc".to_string(),
+                ..explicit("fact one", "2025-01-01T12:00:00Z")
+            }],
+            deductive: vec![DeductiveObservation {
+                id: "ghi".to_string(),
+                created_at: ts("2025-01-01T12:01:00Z"),
+                message_ids: vec![],
+                session_name: None,
+                source_ids: vec![],
+                premises: vec!["p1".to_string(), "p2".to_string()],
+                conclusion: "concl".to_string(),
+            }],
+            inductive: vec![InductiveObservation {
+                id: "jkl".to_string(),
+                created_at: ts("2025-01-01T12:05:00Z"),
+                message_ids: vec![],
+                session_name: None,
+                source_ids: vec![],
+                sources: vec!["s1".to_string()],
+                pattern_type: "behavior".to_string(),
+                conclusion: "pattern".to_string(),
+                confidence: "high".to_string(),
+            }],
+            contradiction: vec![ContradictionObservation {
+                id: "xyz".to_string(),
+                created_at: ts("2025-01-01T12:06:00Z"),
+                message_ids: vec![],
+                session_name: None,
+                source_ids: vec![],
+                sources: vec!["c1".to_string(), "c2".to_string()],
+                content: "conflict".to_string(),
+            }],
+        };
+
+        assert_eq!(
+            rep.to_string(),
+            "EXPLICIT:\n\n1. [2025-01-01 12:00:00] fact one\n\n\
+             DEDUCTIVE:\n\n1. [2025-01-01 12:01:00] concl\n    - p1\n    - p2\n\n\
+             INDUCTIVE:\n\n1. [2025-01-01 12:05:00] [high] pattern\n    - s1\n\n\
+             CONTRADICTION:\n\n1. [2025-01-01 12:06:00] CONTRADICTION: conflict\n    - c1\n    - c2\n"
+        );
+
+        // str_with_ids matches __str__ but with [id:...] prefixes on every item.
+        assert_eq!(
+            rep.str_with_ids(),
+            "EXPLICIT:\n\n1. [id:abc] [2025-01-01 12:00:00] fact one\n\n\
+             DEDUCTIVE:\n\n1. [id:ghi] [2025-01-01 12:01:00] concl\n    - p1\n    - p2\n\n\
+             INDUCTIVE:\n\n1. [id:jkl] [2025-01-01 12:05:00] [high] pattern\n    - s1\n\n\
+             CONTRADICTION:\n\n1. [id:xyz] [2025-01-01 12:06:00] CONTRADICTION: conflict\n    - c1\n    - c2\n"
+        );
     }
 
     #[test]
