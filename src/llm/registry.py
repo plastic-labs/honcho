@@ -23,6 +23,7 @@ from .backend import ProviderBackend
 from .backends.anthropic import AnthropicBackend
 from .backends.gemini import GeminiBackend
 from .backends.openai import OpenAIBackend
+from .backends.openai_responses import OpenAIResponsesBackend
 from .credentials import default_transport_api_key
 from .history_adapters import (
     AnthropicHistoryAdapter,
@@ -56,12 +57,11 @@ def get_openai_client() -> AsyncOpenAI:
     initialize_oauth() has been called to populate _oauth_manager.
     """
     if settings.LLM.OPENAI_AUTH_MODE == "oauth" and _oauth_manager is not None:
-        # OAuth tokens are scoped to api.openai.com.  Pass the URL explicitly so
-        # the SDK does not read OPENAI_BASE_URL from the environment (which may
-        # point to a proxy like OpenRouter).
+        # Pass base_url explicitly so the SDK does not read OPENAI_BASE_URL from
+        # the environment (which may point to a proxy like OpenRouter).
         return OAuthOpenAI(
             token_manager=_oauth_manager,
-            base_url="https://api.openai.com/v1",
+            base_url=settings.LLM.OPENAI_OAUTH_BASE_URL,
         )
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
@@ -136,7 +136,7 @@ async def initialize_oauth() -> OAuthTokenManager | None:
     # Explicit base_url overrides OPENAI_BASE_URL env var (which may point to a proxy).
     CLIENTS["openai"] = OAuthOpenAI(
         token_manager=manager,
-        base_url="https://api.openai.com/v1",
+        base_url=settings.LLM.OPENAI_OAUTH_BASE_URL,
     )
     # Clear the lru_cache so get_openai_client() returns the OAuth variant.
     get_openai_client.cache_clear()
@@ -210,6 +210,16 @@ def backend_for_provider(
     if provider == "anthropic":
         return AnthropicBackend(client)
     if provider == "openai":
+        # OAuthOpenAI pointing at chatgpt.com/backend-api/codex uses the
+        # Responses API (/responses), which is not Cloudflare-blocked, instead
+        # of /chat/completions, which is.
+        if isinstance(client, OAuthOpenAI) and "chatgpt.com/backend-api" in str(
+            client.base_url
+        ):
+            return OpenAIResponsesBackend(
+                token_manager=client._token_manager,  # pyright: ignore[reportPrivateUsage]
+                base_url=str(client.base_url),
+            )
         return OpenAIBackend(client)
     if provider == "gemini":
         return GeminiBackend(client)

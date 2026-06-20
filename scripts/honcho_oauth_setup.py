@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""OAuth setup for Honcho using the OpenAI Codex CLI.
+"""OAuth setup for Honcho using the OpenAI ChatGPT Plus device code flow.
 
-The Codex CLI handles the browser-based OAuth flow correctly (including
-Cloudflare challenges on auth.openai.com).  This script delegates
-authentication to it, then reads the resulting refresh token and prints
-the .env snippet to add.
+Opens a browser-based login at auth.openai.com/codex/device, polls for
+authorization, exchanges the code for tokens, and prints the .env snippet
+to add.
 
-Requirements:
-    Install the Codex CLI via snap:     sudo snap install codex
-    Or via npm:                         npm install -g @openai/codex
+Requirements: Python 3.11+ with httpx (already a Honcho dependency).
 
 Usage:
     uv run python scripts/honcho_oauth_setup.py
@@ -16,144 +13,150 @@ Usage:
 
 from __future__ import annotations
 
-import json
-import os
-import shutil
-import subprocess
 import sys
-from pathlib import Path
+import time
+import webbrowser
+
+import httpx
+
+_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+_DEVICE_CODE_URL = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+_POLL_URL = "https://auth.openai.com/api/accounts/deviceauth/token"
+_TOKEN_URL = "https://auth.openai.com/oauth/token"
+_REDIRECT_URI = "https://auth.openai.com/deviceauth/callback"
+_AUTH_PAGE = "https://auth.openai.com/codex/device"
+_MAX_POLL_SECONDS = 900  # 15 minutes
 
 
-# Locations where the Codex CLI stores its auth file, in preference order.
-# The snap revision directory (e.g. ~/snap/codex/34/) is discovered at runtime.
-_AUTH_FILE_CANDIDATES: list[Path] = [
-    Path.home() / ".codex" / "auth.json",
-]
-
-
-def _find_snap_auth_file() -> Path | None:
-    """Return the auth.json from the active snap revision, if present."""
-    snap_base = Path.home() / "snap" / "codex"
-    if not snap_base.exists():
-        return None
-    # Each revision is a numeric subdirectory; pick the highest (newest).
-    revisions = sorted(
-        (d for d in snap_base.iterdir() if d.name.isdigit()),
-        key=lambda d: int(d.name),
-        reverse=True,
+def _request_device_code(client: httpx.Client) -> tuple[str, str, int]:
+    """Return (device_auth_id, user_code, poll_interval_seconds)."""
+    resp = client.post(_DEVICE_CODE_URL, json={"client_id": _CLIENT_ID})
+    resp.raise_for_status()
+    data = resp.json()
+    return (
+        data["device_auth_id"],
+        data["user_code"],
+        max(int(data.get("interval", 5)), 3),
     )
-    for rev in revisions:
-        candidate = rev / "auth.json"
-        if candidate.exists():
-            return candidate
-    return None
 
 
-def _find_auth_file() -> Path | None:
-    snap = _find_snap_auth_file()
-    if snap:
-        return snap
-    for candidate in _AUTH_FILE_CANDIDATES:
-        if candidate.exists():
-            return candidate
-    return None
+def _poll_for_auth_code(
+    client: httpx.Client,
+    device_auth_id: str,
+    user_code: str,
+    interval: int,
+) -> tuple[str, str]:
+    """Poll until the user completes login.
 
-
-def _read_refresh_token(auth_file: Path) -> str:
-    data = json.loads(auth_file.read_text())
-    token: str = data.get("tokens", {}).get("refresh_token", "")
-    if not token:
-        print(f"No refresh_token found in {auth_file}")
-        print("File contents:", json.dumps(data, indent=2)[:500])
-        sys.exit(1)
-    return token
-
-
-def _codex_is_installed() -> bool:
-    return shutil.which("codex") is not None
-
-
-def _codex_login_status() -> bool:
-    """Return True if Codex reports being logged in."""
-    result = subprocess.run(
-        ["codex", "login", "status"],
-        capture_output=True,
-        text=True,
+    Returns (authorization_code, code_verifier) provided by the server.
+    """
+    deadline = time.time() + _MAX_POLL_SECONDS
+    dots = 0
+    while time.time() < deadline:
+        time.sleep(interval)
+        resp = client.post(
+            _POLL_URL,
+            json={"device_auth_id": device_auth_id, "user_code": user_code},
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data["authorization_code"], data["code_verifier"]
+        # 403/404 means still pending — keep waiting
+        dots = (dots + 1) % 4
+        print(f"\rWaiting for browser login{'.' * dots}   ", end="", flush=True)
+    raise TimeoutError(
+        f"No login detected after {_MAX_POLL_SECONDS // 60} minutes. "
+        "Please run the script again."
     )
-    return result.returncode == 0
 
 
-def _run_codex_device_auth() -> None:
-    """Invoke `codex login --device-auth` interactively (inherits stdin/stdout)."""
-    print("Running: codex login --device-auth")
-    print()
-    result = subprocess.run(["codex", "login", "--device-auth"])
-    if result.returncode != 0:
-        print("\ncodex login failed. Please run it manually and try again.")
-        sys.exit(1)
+def _exchange_code(
+    client: httpx.Client,
+    authorization_code: str,
+    code_verifier: str,
+) -> str:
+    """Exchange authorization_code for a refresh token."""
+    resp = client.post(
+        _TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "code": authorization_code,
+            "redirect_uri": _REDIRECT_URI,
+            "client_id": _CLIENT_ID,
+            "code_verifier": code_verifier,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    refresh_token: str = data["refresh_token"]
+    return refresh_token
 
 
 def main() -> None:
     print()
     print("=" * 60)
-    print("  Honcho OAuth Setup (via OpenAI Codex CLI)")
+    print("  Honcho OAuth Setup (ChatGPT Plus / Codex)")
     print("=" * 60)
     print()
 
-    # 1. Ensure Codex CLI is available.
-    if not _codex_is_installed():
-        print("The Codex CLI is not installed.")
-        print()
-        print("Install it with one of:")
-        print("  sudo snap install codex          # Ubuntu / Snap")
-        print("  npm install -g @openai/codex     # Node.js")
-        print()
-        print("Then re-run this script.")
-        sys.exit(1)
+    with httpx.Client(timeout=30.0) as client:
+        # Step 1: request a device code
+        try:
+            device_auth_id, user_code, interval = _request_device_code(client)
+        except httpx.HTTPStatusError as exc:
+            print(f"Failed to request device code: {exc}")
+            sys.exit(1)
 
-    # 2. Authenticate if needed.
-    auth_file = _find_auth_file()
-    if auth_file is None or not _codex_login_status():
-        print("You are not logged in to the Codex CLI.")
-        print("Starting device authentication — follow the prompts below.")
+        # Step 2: direct the user to the login page
+        print(f"Open this URL in your browser to log in with your ChatGPT Plus account:")
         print()
-        _run_codex_device_auth()
+        print(f"  {_AUTH_PAGE}")
         print()
-        auth_file = _find_auth_file()
+        print(f"When prompted, enter this code:  {user_code}")
+        print()
 
-    if auth_file is None:
-        print("Could not locate Codex auth file after login.")
-        print("Expected locations:")
-        print("  ~/.codex/auth.json")
-        print("  ~/snap/codex/<revision>/auth.json")
-        sys.exit(1)
+        opened = webbrowser.open(_AUTH_PAGE)
+        if opened:
+            print("(Browser opened automatically.)")
+        print()
 
-    # 3. Read the refresh token.
-    refresh_token = _read_refresh_token(auth_file)
+        # Step 3: poll for completion
+        try:
+            authorization_code, code_verifier = _poll_for_auth_code(
+                client, device_auth_id, user_code, interval
+            )
+        except (TimeoutError, httpx.HTTPStatusError, KeyError) as exc:
+            print(f"\nError waiting for login: {exc}")
+            sys.exit(1)
 
-    print(f"Found credentials: {auth_file}")
-    print()
+        print("\r" + " " * 50 + "\r", end="")  # clear waiting line
+        print("Login detected! Exchanging code for tokens...")
+        print()
+
+        # Step 4: exchange for refresh token
+        try:
+            refresh_token = _exchange_code(client, authorization_code, code_verifier)
+        except httpx.HTTPStatusError as exc:
+            print(f"Token exchange failed: {exc}\n{exc.response.text[:500]}")
+            sys.exit(1)
+
     print("=" * 60)
     print("  Authentication successful!")
     print("=" * 60)
     print()
     print("Add these lines to your .env file, then rebuild/restart Honcho:")
     print()
-    print("  # Remove or comment out LLM_OPENAI_API_KEY and LLM_OPENAI_BASE_URL")
-    print("  # (or keep them for OpenRouter fallback — see note below)")
     print("  LLM_OPENAI_AUTH_MODE=oauth")
     print(f"  LLM_OPENAI_REFRESH_TOKEN={refresh_token}")
     print()
-    print("NOTE: The OAuth token authenticates against api.openai.com (not")
-    print("OpenRouter).  If your model configs use OpenRouter-specific models")
-    print("(google/gemini-*, deepseek/*, etc.) via OVERRIDES__BASE_URL, those")
-    print("overrides continue to use their own base URL.  They will need an")
-    print("explicit API key (set OVERRIDES__API_KEY_ENV to an env var that")
-    print("holds your OpenRouter key) if you remove LLM_OPENAI_API_KEY.")
+    print("The OAuth client targets https://chatgpt.com/backend-api/codex")
+    print("(OpenAI Responses API, included with ChatGPT Plus — no API credits needed).")
     print()
-    print("For a fully OAuth-only setup, switch those models to OpenAI-native")
-    print("equivalents (gpt-4.1-mini, o3-mini, etc.) and remove the OpenRouter")
-    print("base URL overrides.")
+    print("NOTE: Model configs with an explicit OVERRIDES__BASE_URL still use")
+    print("that provider directly and need their own API key. To route a feature")
+    print("through ChatGPT Plus, remove its OVERRIDES__BASE_URL override and set")
+    print("its MODEL to a supported model (e.g. gpt-5.4-mini, gpt-4.1-mini).")
 
 
 if __name__ == "__main__":
