@@ -2186,6 +2186,101 @@ async fn query_documents_recent_and_most_derived_order_correctly() {
     test_db.teardown().await;
 }
 
+/// `query_documents_full` returns the full document shape (level, source_ids,
+/// internal_metadata) and `Representation::from_documents` reconstructs the
+/// observations from it. Uses deterministic one-hot embeddings (no OpenAI), so
+/// it runs whenever `TEST_DATABASE_URL` is set.
+#[tokio::test]
+async fn query_documents_full_feeds_from_documents() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    sqlx::query(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, 'ws', 'obs', 'obsd')",
+    )
+    .bind(doc_id(99))
+    .execute(&test_db.pool)
+    .await
+    .expect("collection");
+
+    // An explicit doc (one-hot at dim 5) with metadata-sourced created_at, and a
+    // deductive doc (one-hot at dim 10) whose source_ids column overrides the
+    // metadata premise_ids.
+    sqlx::query(
+        "INSERT INTO documents \
+         (id, content, embedding, workspace_name, observer, observed, level, internal_metadata, sync_state) \
+         VALUES ($1, $2, $3::vector, 'ws', 'obs', 'obsd', 'explicit', $4, 'synced')",
+    )
+    .bind(doc_id(1))
+    .bind("the user has a dog")
+    .bind(one_hot_literal(5))
+    .bind(json!({"message_ids": [[2, 2], 1], "message_created_at": "2025-01-01T09:00:00Z"}))
+    .execute(&test_db.pool)
+    .await
+    .expect("seed explicit");
+
+    sqlx::query(
+        "INSERT INTO documents \
+         (id, content, embedding, workspace_name, observer, observed, level, source_ids, internal_metadata, sync_state) \
+         VALUES ($1, $2, $3::vector, 'ws', 'obs', 'obsd', 'deductive', $4, $5, 'synced')",
+    )
+    .bind(doc_id(2))
+    .bind("the dog is old")
+    .bind(one_hot_literal(10))
+    .bind(json!([doc_id(1)]))
+    .bind(json!({"premises": ["the user has a dog"], "premise_ids": ["ignored"]}))
+    .execute(&test_db.pool)
+    .await
+    .expect("seed deductive");
+
+    let filter = build_filter_clause(FilterTarget::Conclusion, None).expect("empty filter");
+    let documents = db::query_documents_full(
+        &test_db.pool,
+        "ws",
+        "obs",
+        "obsd",
+        &query_vector(&[(5, 1.0)]),
+        &filter,
+        None,
+        10,
+    )
+    .await
+    .expect("query documents full");
+
+    assert_eq!(documents.len(), 2);
+    // Cosine-ordered: the explicit doc (one-hot at the query's dim) ranks first.
+    assert_eq!(documents[0].level, "explicit");
+
+    let rep = honcho_api_rs::representation::Representation::from_documents(&documents);
+    assert_eq!(rep.explicit.len(), 1);
+    assert_eq!(rep.deductive.len(), 1);
+
+    // Explicit: message_ids flattened+sorted, created_at from metadata.
+    let e = &rep.explicit[0];
+    assert_eq!(e.message_ids, vec![1, 2]);
+    assert_eq!(
+        e.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        "2025-01-01 09:00:00"
+    );
+
+    // Deductive: source_ids column wins over metadata premise_ids.
+    let d = &rep.deductive[0];
+    assert_eq!(d.source_ids, vec![doc_id(1)]);
+    assert_eq!(d.premises, vec!["the user has a dog".to_string()]);
+
+    test_db.teardown().await;
+}
+
 #[tokio::test]
 async fn reasoning_chain_documents_and_children() {
     let Some(test_db) = TestDb::setup().await else {

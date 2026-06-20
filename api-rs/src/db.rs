@@ -111,6 +111,45 @@ struct ConclusionRow {
     created_at: DateTime<Utc>,
 }
 
+/// The full document shape consumed by [`crate::representation::Representation::from_documents`].
+/// `source_ids` is nullable JSONB (an array of ids or `NULL`); `internal_metadata`
+/// is the non-null JSONB metadata object.
+#[derive(Debug, FromRow)]
+struct DocumentRow {
+    id: String,
+    content: String,
+    level: String,
+    created_at: DateTime<Utc>,
+    session_name: Option<String>,
+    source_ids: Option<Value>,
+    internal_metadata: Value,
+}
+
+/// Convert a [`DocumentRow`] into a [`crate::representation::Document`], decoding
+/// the `source_ids` JSONB array into a string vec (NULL / non-array → empty).
+fn document_from_row(row: DocumentRow) -> crate::representation::Document {
+    let source_ids = row
+        .source_ids
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|value| value.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    crate::representation::Document {
+        id: row.id,
+        content: row.content,
+        level: row.level,
+        created_at: row.created_at,
+        session_name: row.session_name,
+        source_ids,
+        internal_metadata: row.internal_metadata,
+    }
+}
+
 #[derive(Debug, FromRow)]
 struct WebhookEndpointRow {
     id: String,
@@ -2277,6 +2316,70 @@ pub async fn query_documents_pgvector(
         .map(conclusion_json)
         .collect();
     Ok(items)
+}
+
+/// Semantic search returning full document rows for
+/// [`crate::representation::Representation::from_documents`], porting
+/// `crud._query_documents_pgvector`. Identical ordering, filter, and
+/// `max_distance` handling to [`query_documents_pgvector`], but selects the
+/// columns `from_documents` reads (`level`, `source_ids`, `internal_metadata`)
+/// instead of the trimmed conclusion JSON. This is the data layer the dialectic
+/// `search_memory` tool (and the prefetch path) builds its `Representation` from.
+#[allow(clippy::too_many_arguments)]
+pub async fn query_documents_full(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    embedding: &[f32],
+    filter: &FilterClause,
+    max_distance: Option<f64>,
+    top_k: i64,
+) -> Result<Vec<crate::representation::Document>, sqlx::Error> {
+    // filter.sql hardcodes $1..$k for its own bindings, so those bind first and
+    // the fixed params follow at $(k+1)+.
+    let base = filter.bindings.len();
+    let ws_idx = base + 1;
+    let observer_idx = base + 2;
+    let observed_idx = base + 3;
+    let vec_idx = base + 4;
+    let (distance_clause, limit_idx) = match max_distance {
+        Some(_) => (
+            format!(" AND embedding <=> ${vec_idx}::vector <= ${}", base + 5),
+            base + 6,
+        ),
+        None => (String::new(), base + 5),
+    };
+
+    let sql = format!(
+        "SELECT id, content, level, created_at, session_name, source_ids, internal_metadata \
+         FROM documents \
+         WHERE workspace_name = ${ws_idx} AND observer = ${observer_idx} \
+           AND observed = ${observed_idx} \
+           AND embedding IS NOT NULL AND deleted_at IS NULL{distance_clause}{} \
+         ORDER BY embedding <=> ${vec_idx}::vector \
+         LIMIT ${limit_idx}",
+        filter.sql
+    );
+
+    let mut query = bind_values_as(sqlx::query_as::<_, DocumentRow>(&sql), &filter.bindings);
+    query = query
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed)
+        .bind(crate::search::vector_literal(embedding));
+    if let Some(distance) = max_distance {
+        query = query.bind(distance);
+    }
+    query = query.bind(top_k);
+
+    let documents = query
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(document_from_row)
+        .collect();
+    Ok(documents)
 }
 
 pub async fn get_message(
