@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""OAuth setup for Honcho using PKCE authorization code flow (RFC 7636).
+"""OAuth setup for Honcho using the OpenAI Codex CLI.
 
-The script:
-  1. Generates a PKCE challenge locally (no network call needed)
-  2. Prints the OpenAI authorization URL for you to open in a browser
-  3. Starts a local HTTP server on localhost to catch the redirect
-  4. Exchanges the authorization code for an access + refresh token
-  5. Prints the .env lines to add, then exits
+The Codex CLI handles the browser-based OAuth flow correctly (including
+Cloudflare challenges on auth.openai.com).  This script delegates
+authentication to it, then reads the resulting refresh token and prints
+the .env snippet to add.
+
+Requirements:
+    Install the Codex CLI via snap:     sudo snap install codex
+    Or via npm:                         npm install -g @openai/codex
 
 Usage:
     uv run python scripts/honcho_oauth_setup.py
@@ -14,175 +16,122 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
-import base64
-import hashlib
-import http.server
+import json
 import os
-import secrets
+import shutil
+import subprocess
 import sys
-import threading
-import urllib.parse
-
-import httpx
-
-_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-_AUTH_URL = "https://auth.openai.com/authorize"
-_TOKEN_URL = "https://auth.openai.com/oauth/token"
-_SCOPES = "openid profile email offline_access"
-_AUDIENCE = "https://api.openai.com/v1"
-_REDIRECT_PORT = 54321
-_REDIRECT_URI = f"http://localhost:{_REDIRECT_PORT}/callback"
+from pathlib import Path
 
 
-def _pkce_pair() -> tuple[str, str]:
-    verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    ).rstrip(b"=").decode()
-    return verifier, challenge
+# Locations where the Codex CLI stores its auth file, in preference order.
+# The snap revision directory (e.g. ~/snap/codex/34/) is discovered at runtime.
+_AUTH_FILE_CANDIDATES: list[Path] = [
+    Path.home() / ".codex" / "auth.json",
+]
 
 
-def _build_auth_url(state: str, code_challenge: str) -> str:
-    return _AUTH_URL + "?" + urllib.parse.urlencode({
-        "response_type": "code",
-        "client_id": _CLIENT_ID,
-        "redirect_uri": _REDIRECT_URI,
-        "scope": _SCOPES,
-        "audience": _AUDIENCE,
-        "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-    })
+def _find_snap_auth_file() -> Path | None:
+    """Return the auth.json from the active snap revision, if present."""
+    snap_base = Path.home() / "snap" / "codex"
+    if not snap_base.exists():
+        return None
+    # Each revision is a numeric subdirectory; pick the highest (newest).
+    revisions = sorted(
+        (d for d in snap_base.iterdir() if d.name.isdigit()),
+        key=lambda d: int(d.name),
+        reverse=True,
+    )
+    for rev in revisions:
+        candidate = rev / "auth.json"
+        if candidate.exists():
+            return candidate
+    return None
 
 
-# Shared result written by the HTTP handler, read by the async main loop.
-_auth_result: dict[str, str] = {}
-_auth_event = threading.Event()
+def _find_auth_file() -> Path | None:
+    snap = _find_snap_auth_file()
+    if snap:
+        return snap
+    for candidate in _AUTH_FILE_CANDIDATES:
+        if candidate.exists():
+            return candidate
+    return None
 
 
-class _CallbackHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        parsed = urllib.parse.urlparse(self.path)
-        params = dict(urllib.parse.parse_qsl(parsed.query))
-
-        if "code" in params:
-            _auth_result["code"] = params["code"]
-            _auth_result["state"] = params.get("state", "")
-            html = (
-                b"<html><body style='font-family:sans-serif;padding:2rem'>"
-                b"<h2>&#x2705; Authentication successful</h2>"
-                b"<p>You can close this tab and return to the terminal.</p>"
-                b"</body></html>"
-            )
-        else:
-            error = params.get("error", "unknown_error")
-            desc = params.get("error_description", "")
-            _auth_result["error"] = error
-            _auth_result["error_description"] = desc
-            html = (
-                f"<html><body style='font-family:sans-serif;padding:2rem'>"
-                f"<h2>&#x274C; Authentication failed</h2>"
-                f"<p>{error}: {desc}</p>"
-                f"</body></html>"
-            ).encode()
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        self.wfile.write(html)
-        _auth_event.set()
-
-    def log_message(self, *_args: object) -> None:
-        pass  # suppress request logs
+def _read_refresh_token(auth_file: Path) -> str:
+    data = json.loads(auth_file.read_text())
+    token: str = data.get("tokens", {}).get("refresh_token", "")
+    if not token:
+        print(f"No refresh_token found in {auth_file}")
+        print("File contents:", json.dumps(data, indent=2)[:500])
+        sys.exit(1)
+    return token
 
 
-async def main() -> None:
-    code_verifier, code_challenge = _pkce_pair()
-    state = secrets.token_urlsafe(16)
-    auth_url = _build_auth_url(state, code_challenge)
+def _codex_is_installed() -> bool:
+    return shutil.which("codex") is not None
 
-    # Start the local redirect server before printing the URL so the port is
-    # ready by the time the browser follows the redirect.
-    try:
-        server = http.server.HTTPServer(("localhost", _REDIRECT_PORT), _CallbackHandler)
-    except OSError as exc:
-        print(f"Could not bind to localhost:{_REDIRECT_PORT}: {exc}")
-        print("Is another process using that port? Kill it and try again.")
+
+def _codex_login_status() -> bool:
+    """Return True if Codex reports being logged in."""
+    result = subprocess.run(
+        ["codex", "login", "status"],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _run_codex_device_auth() -> None:
+    """Invoke `codex login --device-auth` interactively (inherits stdin/stdout)."""
+    print("Running: codex login --device-auth")
+    print()
+    result = subprocess.run(["codex", "login", "--device-auth"])
+    if result.returncode != 0:
+        print("\ncodex login failed. Please run it manually and try again.")
         sys.exit(1)
 
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
 
+def main() -> None:
     print()
     print("=" * 60)
-    print("  Honcho OAuth Setup")
+    print("  Honcho OAuth Setup (via OpenAI Codex CLI)")
     print("=" * 60)
     print()
-    print("Open this URL in your browser to log in with your ChatGPT")
-    print("Plus / OpenAI Codex account:")
-    print()
-    print(f"  {auth_url}")
-    print()
-    print("After you log in the browser will redirect to localhost and")
-    print("this script will finish automatically.")
-    print()
-    print("Waiting for browser redirect", end="", flush=True)
 
-    # Poll until the callback handler fires, printing dots to show activity.
-    while not _auth_event.wait(timeout=1.0):
-        print(".", end="", flush=True)
-
-    server.shutdown()
-    print()
-
-    if "error" in _auth_result:
+    # 1. Ensure Codex CLI is available.
+    if not _codex_is_installed():
+        print("The Codex CLI is not installed.")
         print()
-        print(f"Authentication failed: {_auth_result['error']}")
-        desc = _auth_result.get("error_description")
-        if desc:
-            print(f"  {desc}")
+        print("Install it with one of:")
+        print("  sudo snap install codex          # Ubuntu / Snap")
+        print("  npm install -g @openai/codex     # Node.js")
+        print()
+        print("Then re-run this script.")
         sys.exit(1)
 
-    if _auth_result.get("state") != state:
+    # 2. Authenticate if needed.
+    auth_file = _find_auth_file()
+    if auth_file is None or not _codex_login_status():
+        print("You are not logged in to the Codex CLI.")
+        print("Starting device authentication — follow the prompts below.")
         print()
-        print("State mismatch — possible CSRF. Aborting.")
+        _run_codex_device_auth()
+        print()
+        auth_file = _find_auth_file()
+
+    if auth_file is None:
+        print("Could not locate Codex auth file after login.")
+        print("Expected locations:")
+        print("  ~/.codex/auth.json")
+        print("  ~/snap/codex/<revision>/auth.json")
         sys.exit(1)
 
-    auth_code = _auth_result["code"]
-    print("Code received. Exchanging for tokens...", end="", flush=True)
+    # 3. Read the refresh token.
+    refresh_token = _read_refresh_token(auth_file)
 
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            _TOKEN_URL,
-            data={
-                "grant_type": "authorization_code",
-                "client_id": _CLIENT_ID,
-                "code": auth_code,
-                "redirect_uri": _REDIRECT_URI,
-                "code_verifier": code_verifier,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=30.0,
-        )
-
-    if resp.status_code != 200:
-        print()
-        print(f"Token exchange failed ({resp.status_code}):")
-        print(resp.text[:500])
-        sys.exit(1)
-
-    data = resp.json()
-    refresh_token: str = data.get("refresh_token", "")
-
-    if not refresh_token:
-        print()
-        print("Token exchange succeeded but no refresh_token was returned.")
-        print("The 'offline_access' scope may not be enabled for this client.")
-        print(f"Response keys: {list(data.keys())}")
-        sys.exit(1)
-
-    print(" done.")
+    print(f"Found credentials: {auth_file}")
     print()
     print("=" * 60)
     print("  Authentication successful!")
@@ -190,11 +139,22 @@ async def main() -> None:
     print()
     print("Add these lines to your .env file, then rebuild/restart Honcho:")
     print()
+    print("  # Remove or comment out LLM_OPENAI_API_KEY and LLM_OPENAI_BASE_URL")
+    print("  # (or keep them for OpenRouter fallback — see note below)")
     print("  LLM_OPENAI_AUTH_MODE=oauth")
     print(f"  LLM_OPENAI_REFRESH_TOKEN={refresh_token}")
     print()
-    print("You can remove LLM_OPENAI_API_KEY once you've confirmed OAuth works.")
+    print("NOTE: The OAuth token authenticates against api.openai.com (not")
+    print("OpenRouter).  If your model configs use OpenRouter-specific models")
+    print("(google/gemini-*, deepseek/*, etc.) via OVERRIDES__BASE_URL, those")
+    print("overrides continue to use their own base URL.  They will need an")
+    print("explicit API key (set OVERRIDES__API_KEY_ENV to an env var that")
+    print("holds your OpenRouter key) if you remove LLM_OPENAI_API_KEY.")
+    print()
+    print("For a fully OAuth-only setup, switch those models to OpenAI-native")
+    print("equivalents (gpt-4.1-mini, o3-mini, etc.) and remove the OpenRouter")
+    print("base URL overrides.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
