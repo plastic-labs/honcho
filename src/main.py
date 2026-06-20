@@ -162,6 +162,10 @@ async def lifespan(_: FastAPI):
     finally:
         if oauth_refresh_task is not None:
             oauth_refresh_task.cancel()
+            try:
+                await oauth_refresh_task
+            except asyncio.CancelledError:
+                pass
 
         # Import here to avoid circular import at module load time
         from src.vector_store import close_external_vector_store

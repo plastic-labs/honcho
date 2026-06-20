@@ -109,7 +109,7 @@ def main() -> None:
             sys.exit(1)
 
         # Step 2: direct the user to the login page
-        print(f"Open this URL in your browser to log in with your ChatGPT Plus account:")
+        print("Open this URL in your browser to log in with your ChatGPT Plus account:")
         print()
         print(f"  {_AUTH_PAGE}")
         print()

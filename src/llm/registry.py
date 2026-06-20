@@ -78,7 +78,12 @@ def get_openai_client() -> AsyncOpenAI:
     Returns an OAuthOpenAI instance when OPENAI_AUTH_MODE=oauth and
     initialize_oauth() has been called to populate _oauth_manager.
     """
-    if settings.LLM.OPENAI_AUTH_MODE == "oauth" and _oauth_manager is not None:
+    if settings.LLM.OPENAI_AUTH_MODE == "oauth":
+        if _oauth_manager is None:
+            raise RuntimeError(
+                "OAuth mode is enabled but initialize_oauth() has not been called. "
+                "Ensure the application lifespan has started before making LLM calls."
+            )
         # Pass base_url explicitly so the SDK does not read OPENAI_BASE_URL from
         # the environment (which may point to a proxy like OpenRouter).
         return OAuthOpenAI(
