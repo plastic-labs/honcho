@@ -10,11 +10,12 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Path, Query
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import db, models
-from src.dependencies import require_auth
+from src import models
+from src.dependencies import db
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +25,16 @@ router = APIRouter()
 @router.delete(
     "/{workspace_id}/queue",
     status_code=200,
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id"))
-    ],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def purge_stranded_work_units(
     workspace_id: str = Path(...),
-    session_id: str | None = Query(None, description="Optional: purge only for specific session"),
-    status: Literal["all", "unprocessed"] = Query("unprocessed", description="Which items to purge"),
+    session_id: str | None = Query(
+        None, description="Optional: purge only for specific session"
+    ),
+    status: Literal["all", "unprocessed"] = Query(
+        "unprocessed", description="Which items to purge"
+    ),
     db: AsyncSession = db,
 ):
     """
@@ -55,13 +58,13 @@ async def purge_stranded_work_units(
             conditions.append(models.QueueItem.session_id == session_id)
 
         if status == "unprocessed":
-            conditions.append(models.QueueItem.processed == False)
+            conditions.append(~models.QueueItem.processed)
 
-        # Count items to be purged
-        count_query = select(models.QueueItem).where(*conditions)
-        result = await db.execute(count_query)
-        items_to_purge = result.scalars().all()
-        count = len(items_to_purge)
+        # Count items to be purged using SQL COUNT (avoid loading ORM rows)
+        count_query = (
+            select(func.count()).select_from(models.QueueItem).where(*conditions)
+        )
+        count = (await db.execute(count_query)).scalar() or 0
 
         if count == 0:
             return {
