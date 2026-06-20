@@ -669,6 +669,19 @@ class LLMSettings(HonchoSettings):
     OPENAI_BASE_URL: str | None = None
     GEMINI_BASE_URL: str | None = None
 
+    # OpenAI OAuth settings (device code flow / refresh token).
+    # Set OPENAI_AUTH_MODE=oauth and supply OPENAI_REFRESH_TOKEN to use OAuth
+    # instead of a static API key.  Run `scripts/honcho_oauth_setup.py` to
+    # obtain a refresh token interactively.
+    OPENAI_AUTH_MODE: Literal["api_key", "oauth"] = "api_key"
+    OPENAI_REFRESH_TOKEN: str | None = None
+    OPENAI_CLIENT_ID: str = "app_EMoamEEZ73f0CkXaXp7hrann"
+    # Base URL used when OPENAI_AUTH_MODE=oauth.  Defaults to the ChatGPT/Codex
+    # Responses API backend (included with ChatGPT Plus, no billing credits needed).
+    # The Responses API endpoint (/responses) on this host is not Cloudflare-protected
+    # and accepts standard OAuth bearer tokens from the Codex device code flow.
+    OPENAI_OAUTH_BASE_URL: str = "https://chatgpt.com/backend-api/codex"
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 

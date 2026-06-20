@@ -7,6 +7,7 @@ from prometheus_client import start_http_server
 
 from src.config import settings
 from src.db import engine, register_db_query_instrumentation
+from src.llm.registry import initialize_oauth
 from src.startup import validate_embedding_schema
 from src.telemetry import (
     initialize_telemetry_async,
@@ -66,13 +67,27 @@ async def run_deriver():
     # Initialize async telemetry (CloudEvents emitter)
     await initialize_telemetry_async()
 
+    oauth_refresh_task: asyncio.Task[None] | None = None
+
     try:
         # Fail fast if the embedding schema does not match settings — same
         # gate the API runs in its lifespan. Inside the try block so the
         # telemetry buffer is still flushed if validation raises.
         await validate_embedding_schema(engine)
+
+        # Initialize OAuth token manager if configured; start background refresh.
+        oauth_manager = await initialize_oauth()
+        if oauth_manager is not None:
+            oauth_refresh_task = asyncio.create_task(oauth_manager.run_refresh_loop())
+
         await main()
     finally:
+        if oauth_refresh_task is not None:
+            oauth_refresh_task.cancel()
+            try:
+                await oauth_refresh_task
+            except asyncio.CancelledError:
+                pass
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
 

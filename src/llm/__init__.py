@@ -11,6 +11,7 @@ from .api import honcho_llm_call
 from .backend import CompletionResult, ProviderBackend, StreamChunk, ToolCallResult
 from .credentials import default_transport_api_key, resolve_credentials
 from .executor import honcho_llm_call_inner
+from .oauth import OAuthOpenAI, OAuthTokenManager
 from .registry import (
     CLIENTS,
     backend_for_provider,
@@ -23,6 +24,7 @@ from .registry import (
     get_openai_client,
     get_openai_override_client,
     history_adapter_for_provider,
+    initialize_oauth,
 )
 from .types import (
     HonchoLLMCallResponse,
@@ -42,6 +44,8 @@ __all__ = [
     "HonchoLLMCallStreamChunk",
     "IterationCallback",
     "IterationData",
+    "OAuthOpenAI",
+    "OAuthTokenManager",
     "ProviderBackend",
     "ProviderClient",
     "ReasoningEffortType",
@@ -62,5 +66,6 @@ __all__ = [
     "history_adapter_for_provider",
     "honcho_llm_call",
     "honcho_llm_call_inner",
+    "initialize_oauth",
     "resolve_credentials",
 ]
