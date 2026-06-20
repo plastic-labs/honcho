@@ -33,6 +33,11 @@ pub struct ModelConfig {
     pub presence_penalty: Option<f64>,
     pub seed: Option<i64>,
     pub thinking_budget_tokens: Option<i64>,
+    /// The reasoning-effort knob (`thinking_effort` in Python — one of
+    /// `none`/`minimal`/`low`/`medium`/`high`/`xhigh`/`max`, or unset). Modeled
+    /// as a plain string, matching the backend request builders which thread it
+    /// through to the provider param verbatim.
+    pub thinking_effort: Option<String>,
     pub max_output_tokens: Option<i64>,
     pub stop_sequences: Option<Vec<String>>,
     /// Free-form provider passthrough merged last into `extra_params`.
@@ -55,6 +60,7 @@ impl ModelConfig {
             presence_penalty: None,
             seed: None,
             thinking_budget_tokens: None,
+            thinking_effort: None,
             max_output_tokens: None,
             stop_sequences: None,
             provider_params: Map::new(),

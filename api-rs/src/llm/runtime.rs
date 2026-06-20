@@ -5,7 +5,7 @@
 //! The parts of `plan_attempt` that resolve a live provider client / backend
 //! stay with the SDK layer.
 
-use super::ModelConfig;
+use super::{ModelConfig, Provider};
 
 /// Whether `attempt` is the fallback attempt: the final retry, when a fallback
 /// config exists. Mirrors the branch condition in `select_model_config_for_attempt`.
@@ -36,6 +36,49 @@ pub fn effective_temperature(temperature: Option<f64>, attempt: u32) -> Option<f
     } else {
         temperature
     }
+}
+
+/// Build the `ModelConfig` passed to the request builder, porting
+/// `effective_config_for_call`. Per-call values (temperature, stop sequences,
+/// thinking budget/effort) win when set; otherwise the `selected_config`'s
+/// values are kept. `max_output_tokens` is always forced to `None` so the
+/// per-call `max_tokens` kwarg is authoritative. With no `selected_config`
+/// (test-only callers passing provider+model directly) a minimal config is
+/// synthesized carrying just the per-call values.
+#[allow(clippy::too_many_arguments)]
+pub fn effective_config_for_call(
+    selected_config: Option<&ModelConfig>,
+    provider: Provider,
+    model: &str,
+    temperature: Option<f64>,
+    stop_seqs: Option<&[String]>,
+    thinking_budget_tokens: Option<i64>,
+    reasoning_effort: Option<&str>,
+) -> ModelConfig {
+    let Some(selected) = selected_config else {
+        let mut config = ModelConfig::new(model, provider);
+        config.temperature = temperature;
+        config.stop_sequences = stop_seqs.map(<[String]>::to_vec);
+        config.thinking_budget_tokens = thinking_budget_tokens;
+        config.thinking_effort = reasoning_effort.map(str::to_string);
+        return config;
+    };
+
+    let mut config = selected.clone();
+    config.max_output_tokens = None;
+    if temperature.is_some() {
+        config.temperature = temperature;
+    }
+    if let Some(stop_seqs) = stop_seqs {
+        config.stop_sequences = Some(stop_seqs.to_vec());
+    }
+    if thinking_budget_tokens.is_some() {
+        config.thinking_budget_tokens = thinking_budget_tokens;
+    }
+    if let Some(reasoning_effort) = reasoning_effort {
+        config.thinking_effort = Some(reasoning_effort.to_string());
+    }
+    config
 }
 
 #[cfg(test)]
@@ -77,6 +120,69 @@ mod tests {
         let selected = select_model_config_for_attempt(&config, 3, 3);
         assert_eq!(selected.model, "only-model");
         assert!(!is_fallback_attempt(&config, 3, 3));
+    }
+
+    #[test]
+    fn effective_config_synthesizes_when_no_selected() {
+        let stop = vec!["STOP".to_string()];
+        let config = effective_config_for_call(
+            None,
+            Provider::Openai,
+            "gpt-x",
+            Some(0.3),
+            Some(&stop),
+            Some(512),
+            Some("high"),
+        );
+        assert_eq!(config.model, "gpt-x");
+        assert_eq!(config.transport, Provider::Openai);
+        assert_eq!(config.temperature, Some(0.3));
+        assert_eq!(config.stop_sequences, Some(stop));
+        assert_eq!(config.thinking_budget_tokens, Some(512));
+        assert_eq!(config.thinking_effort.as_deref(), Some("high"));
+        assert_eq!(config.max_output_tokens, None);
+    }
+
+    #[test]
+    fn effective_config_overrides_only_set_values_and_forces_max_tokens_none() {
+        let mut selected = ModelConfig::new("base-model", Provider::Anthropic);
+        selected.temperature = Some(0.9);
+        selected.thinking_budget_tokens = Some(2048);
+        selected.thinking_effort = Some("low".to_string());
+        selected.stop_sequences = Some(vec!["BASE".to_string()]);
+        selected.max_output_tokens = Some(4096);
+
+        // All per-call values None -> selected values preserved, max_tokens forced None.
+        let kept = effective_config_for_call(
+            Some(&selected),
+            Provider::Anthropic,
+            "base-model",
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(kept.temperature, Some(0.9));
+        assert_eq!(kept.thinking_budget_tokens, Some(2048));
+        assert_eq!(kept.thinking_effort.as_deref(), Some("low"));
+        assert_eq!(kept.stop_sequences, Some(vec!["BASE".to_string()]));
+        assert_eq!(kept.max_output_tokens, None);
+
+        // Per-call values present -> they win.
+        let overridden = effective_config_for_call(
+            Some(&selected),
+            Provider::Anthropic,
+            "base-model",
+            Some(0.1),
+            Some(&["CALL".to_string()]),
+            Some(128),
+            Some("max"),
+        );
+        assert_eq!(overridden.temperature, Some(0.1));
+        assert_eq!(overridden.thinking_budget_tokens, Some(128));
+        assert_eq!(overridden.thinking_effort.as_deref(), Some("max"));
+        assert_eq!(overridden.stop_sequences, Some(vec!["CALL".to_string()]));
+        assert_eq!(overridden.max_output_tokens, None);
     }
 
     #[test]
