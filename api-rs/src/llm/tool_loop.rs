@@ -67,13 +67,16 @@ pub fn append_tool_results(
 pub trait ToolLoopCaller {
     fn provider(&self) -> Provider;
     /// One completion over `messages` with `tools` available (empty `tools`
-    /// means a tool-free call, as the synthesis/final call uses).
+    /// means a tool-free call, as the synthesis/final call uses). Returns `Err`
+    /// when the call fails after the caller's own retry/fallback is exhausted —
+    /// the loop surfaces it as [`ToolLoopError::Caller`] (Python raises out of
+    /// the tool loop on retry exhaustion).
     fn complete(
         &self,
         messages: &[Value],
         tools: &[Value],
         tool_choice: Option<&Value>,
-    ) -> impl Future<Output = CompletionResult> + Send;
+    ) -> impl Future<Output = Result<CompletionResult, String>> + Send;
 }
 
 /// Executes one tool by name, returning the stringified result or an error
@@ -119,6 +122,8 @@ pub struct ToolLoopResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolLoopError {
     InvalidIterations(usize),
+    /// The completion call failed after the caller exhausted its retry/fallback.
+    Caller(String),
 }
 
 impl std::fmt::Display for ToolLoopError {
@@ -128,6 +133,7 @@ impl std::fmt::Display for ToolLoopError {
                 f,
                 "max_tool_iterations must be in [{MIN_TOOL_ITERATIONS}, {MAX_TOOL_ITERATIONS}]; got {got}"
             ),
+            ToolLoopError::Caller(message) => write!(f, "completion call failed: {message}"),
         }
     }
 }
@@ -188,7 +194,8 @@ pub async fn execute_tool_loop<C: ToolLoopCaller, E: ToolExecutor>(
 
         let response = caller
             .complete(&conversation, tools, effective_tool_choice.as_ref())
-            .await;
+            .await
+            .map_err(ToolLoopError::Caller)?;
 
         total_input_tokens += response.input_tokens;
         total_output_tokens += response.output_tokens;
@@ -289,7 +296,10 @@ pub async fn execute_tool_loop<C: ToolLoopCaller, E: ToolExecutor>(
         conversation = truncate_messages_to_fit(&conversation, cap, true);
     }
 
-    let final_response = caller.complete(&conversation, &[], None).await;
+    let final_response = caller
+        .complete(&conversation, &[], None)
+        .await
+        .map_err(ToolLoopError::Caller)?;
 
     Ok(ToolLoopResponse {
         content: final_response.content,
@@ -407,17 +417,36 @@ mod tests {
             messages: &[Value],
             tools: &[Value],
             tool_choice: Option<&Value>,
-        ) -> CompletionResult {
+        ) -> Result<CompletionResult, String> {
             self.calls.lock().unwrap().push(Call {
                 messages: messages.to_vec(),
                 tools: tools.to_vec(),
                 tool_choice: tool_choice.cloned(),
             });
-            self.responses
+            Ok(self
+                .responses
                 .lock()
                 .unwrap()
                 .pop_front()
-                .expect("ScriptedCaller ran out of scripted responses")
+                .expect("ScriptedCaller ran out of scripted responses"))
+        }
+    }
+
+    /// A caller whose completion always fails, to exercise error propagation.
+    struct FailingCaller;
+
+    impl ToolLoopCaller for FailingCaller {
+        fn provider(&self) -> Provider {
+            Provider::Anthropic
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[Value],
+            _tools: &[Value],
+            _tool_choice: Option<&Value>,
+        ) -> Result<CompletionResult, String> {
+            Err("provider unavailable".to_string())
         }
     }
 
@@ -461,6 +490,23 @@ mod tests {
 
     fn echo() -> EchoExecutor {
         EchoExecutor { fail: None }
+    }
+
+    #[tokio::test]
+    async fn caller_failure_surfaces_as_tool_loop_error() {
+        let error = execute_tool_loop(
+            &FailingCaller,
+            &echo(),
+            "hi",
+            None,
+            &[json!({"name": "t"})],
+            None,
+            5,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, ToolLoopError::Caller("provider unavailable".to_string()));
     }
 
     #[tokio::test]
