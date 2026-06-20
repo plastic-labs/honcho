@@ -329,20 +329,31 @@ class OpenAIResponsesBackend:
             body["reasoning"] = {"effort": thinking_effort}
         if response_format is not None:
             if isinstance(response_format, type):
+                # Responses API: name/schema/strict are flat inside text.format,
+                # unlike Chat Completions which nests them under "json_schema".
                 body["text"] = {
                     "format": {
                         "type": "json_schema",
-                        "json_schema": {
-                            "name": response_format.__name__,
-                            "schema": response_format.model_json_schema(),
-                            "strict": True,
-                        },
+                        "name": response_format.__name__,
+                        "schema": response_format.model_json_schema(),
+                        "strict": True,
                     }
                 }
             elif isinstance(response_format, dict):
                 fmt_type = response_format.get("type")
-                if fmt_type in ("json_object", "json_schema"):
-                    body["text"] = {"format": response_format}
+                if fmt_type == "json_object":
+                    body["text"] = {"format": {"type": "json_object"}}
+                elif fmt_type == "json_schema":
+                    # Unwrap Chat Completions nesting if present
+                    nested = response_format.get("json_schema", response_format)
+                    body["text"] = {
+                        "format": {
+                            "type": "json_schema",
+                            "name": nested.get("name", "schema"),
+                            "schema": nested.get("schema", nested),
+                            "strict": nested.get("strict", True),
+                        }
+                    }
         return body
 
     async def _iter_events(
