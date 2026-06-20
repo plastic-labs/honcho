@@ -10,6 +10,7 @@
 
 pub mod backends;
 pub mod conversation;
+pub mod credentials;
 pub mod executor;
 pub mod history_adapters;
 pub mod http;
@@ -27,6 +28,12 @@ use serde_json::{Map, Value};
 pub struct ModelConfig {
     pub model: String,
     pub transport: Provider,
+    /// Per-config API key override; `None` falls back to the global per-transport
+    /// key during credential resolution (`credentials::resolve_credentials`).
+    pub api_key: Option<String>,
+    /// Per-config base-URL override (e.g. an OpenRouter relay); `None` uses the
+    /// backend's default endpoint.
+    pub base_url: Option<String>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
     pub top_k: Option<i64>,
@@ -54,6 +61,8 @@ impl ModelConfig {
         Self {
             model: model.into(),
             transport,
+            api_key: None,
+            base_url: None,
             temperature: None,
             top_p: None,
             top_k: None,
