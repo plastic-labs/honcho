@@ -17,4 +17,5 @@ pub mod producer;
 pub mod queue_status;
 pub mod representation;
 pub mod search;
+pub mod text;
 pub mod tokens;

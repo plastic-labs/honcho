@@ -5,6 +5,7 @@
 //! consumer/processing pipeline follow as separate units.
 
 pub mod poll;
+pub mod prompts;
 pub mod settings;
 
 pub use poll::PollScheduler;
