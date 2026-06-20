@@ -330,8 +330,10 @@ class QueueManager:
     async def get_and_claim_work_units(self) -> dict[str, str]:
         """
         Get available work units that aren't being processed.
-        For representation tasks, only returns work units with accumulated tokens
-        >= REPRESENTATION_BATCH_MAX_TOKENS (forced batching), unless FLUSH_ENABLED is True.
+        For representation tasks, only returns work units whose accumulated
+        tokens reach REPRESENTATION_BATCH_MAX_TOKENS or whose oldest pending
+        item exceeds REPRESENTATION_BATCH_MAX_AGE_SECONDS, unless
+        FLUSH_ENABLED is True.
         Returns a dict mapping work_unit_key to aqs_id.
         """
         limit: int = max(0, self.workers - self.get_total_owned_work_units())
@@ -346,6 +348,7 @@ class QueueManager:
                 select(
                     models.QueueItem.work_unit_key,
                     func.sum(models.Message.token_count).label("total_tokens"),
+                    func.min(models.QueueItem.created_at).label("oldest_created_at"),
                 )
                 .join(
                     models.Message,
@@ -358,15 +361,21 @@ class QueueManager:
             )
 
             work_units_subq = (
-                select(models.QueueItem.work_unit_key)
+                select(
+                    models.QueueItem.work_unit_key,
+                    func.min(models.QueueItem.created_at).label("oldest_created_at"),
+                )
                 .where(~models.QueueItem.processed)
                 .group_by(models.QueueItem.work_unit_key)
                 .subquery()
             )
 
             query = (
-                select(work_units_subq.c.work_unit_key)
-                .limit(limit)
+                select(
+                    work_units_subq.c.work_unit_key,
+                    token_stats_subq.c.total_tokens,
+                    token_stats_subq.c.oldest_created_at,
+                )
                 .outerjoin(
                     token_stats_subq,
                     work_units_subq.c.work_unit_key == token_stats_subq.c.work_unit_key,
@@ -379,22 +388,53 @@ class QueueManager:
                     )
                     .exists()
                 )
+                .order_by(
+                    work_units_subq.c.oldest_created_at.asc(),
+                    work_units_subq.c.work_unit_key.asc(),
+                )
+                .limit(limit)
             )
 
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
             if not settings.DERIVER.FLUSH_ENABLED and batch_max_tokens > 0:
+                max_age_seconds = settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS
+                threshold_clause = (
+                    func.coalesce(token_stats_subq.c.total_tokens, 0)
+                    >= batch_max_tokens
+                )
+                if max_age_seconds > 0:
+                    threshold_clause = or_(
+                        threshold_clause,
+                        token_stats_subq.c.oldest_created_at
+                        <= func.now() - timedelta(seconds=max_age_seconds),
+                    )
                 query = query.where(
                     or_(
                         ~work_units_subq.c.work_unit_key.startswith(
                             representation_prefix
                         ),
-                        func.coalesce(token_stats_subq.c.total_tokens, 0)
-                        >= batch_max_tokens,
+                        threshold_clause,
                     )
                 )
 
             result = await db.execute(query)
-            available_units = result.scalars().all()
+            available_rows = result.all()
+            available_units: list[str] = []
+            for work_unit_key, total_tokens, oldest_created_at in available_rows:
+                available_units.append(work_unit_key)
+                if (
+                    not settings.DERIVER.FLUSH_ENABLED
+                    and settings.DERIVER.REPRESENTATION_BATCH_MAX_AGE_SECONDS > 0
+                    and work_unit_key.startswith(representation_prefix)
+                    and int(total_tokens or 0) < batch_max_tokens
+                ):
+                    logger.info(
+                        "age-flushing work unit %s (tokens=%s < %s, oldest=%s)",
+                        work_unit_key,
+                        total_tokens or 0,
+                        batch_max_tokens,
+                        oldest_created_at,
+                    )
             if not available_units:
                 await db.commit()
                 return {}

@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
 
@@ -17,6 +18,71 @@ from src.utils.work_unit import construct_work_unit_key
 @pytest.mark.asyncio
 class TestQueueProcessing:
     """Test suite for queue processing functionality"""
+
+    async def _add_representation_work_unit(
+        self,
+        *,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        token_counts: list[int],
+        created_ats: list[datetime] | None = None,
+    ) -> tuple[str, list[models.QueueItem]]:
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+
+        messages: list[models.Message] = []
+        for index, token_count in enumerate(token_counts):
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Message {index}",
+                token_count=token_count,
+                seq_in_session=index + 1,
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+        for message in messages:
+            await db_session.refresh(message)
+
+        work_unit_key = ""
+        queue_items: list[models.QueueItem] = []
+        for index, message in enumerate(messages):
+            payload = create_queue_payload(
+                message=message,
+                task_type="representation",
+                observed=peer.name,
+                observer=peer.name,
+            )
+            work_unit_key = work_unit_key or construct_work_unit_key(
+                session.workspace_name, payload
+            )
+
+            queue_item_kwargs: dict[str, Any] = {}
+            if created_ats:
+                queue_item_kwargs["created_at"] = created_ats[index]
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
+                **queue_item_kwargs,
+            )
+            db_session.add(queue_item)
+            queue_items.append(queue_item)
+
+        await db_session.commit()
+        for queue_item in queue_items:
+            await db_session.refresh(queue_item)
+
+        return work_unit_key, queue_items
 
     async def test_get_and_claim_work_units(
         self,
@@ -1412,6 +1478,167 @@ class TestQueueProcessing:
         # Now the work unit should be claimable (tokens exceed threshold)
         claimed2 = await qm.get_and_claim_work_units()
         assert rep_work_unit_key in claimed2
+
+    @pytest.mark.asyncio
+    async def test_age_flush_waits_for_fresh_sub_threshold_items(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
+        monkeypatch.setattr(
+            settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 1800
+        )
+
+        work_unit_key, _queue_items = await self._add_representation_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+            create_queue_payload=create_queue_payload,
+            token_counts=[100, 100, 100],
+        )
+
+        claimed = await QueueManager().get_and_claim_work_units()
+
+        assert work_unit_key not in claimed
+
+    @pytest.mark.asyncio
+    async def test_age_flush_claims_old_sub_threshold_items_and_fetches_tail(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
+        monkeypatch.setattr(
+            settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 1800
+        )
+        old_timestamp = datetime.now(timezone.utc) - timedelta(hours=2)
+
+        work_unit_key, queue_items = await self._add_representation_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+            create_queue_payload=create_queue_payload,
+            token_counts=[100, 100, 100],
+            created_ats=[old_timestamp, old_timestamp, old_timestamp],
+        )
+
+        qm = QueueManager()
+        claimed = await qm.get_and_claim_work_units()
+
+        assert work_unit_key in claimed
+        batch = await qm.get_queue_item_batch(
+            task_type="representation",
+            work_unit_key=work_unit_key,
+            aqs_id=claimed[work_unit_key],
+        )
+        assert [item.id for item in batch.items_to_process] == [
+            item.id for item in queue_items
+        ]
+
+    @pytest.mark.asyncio
+    async def test_age_flush_zero_preserves_legacy_wait_for_old_items(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
+        monkeypatch.setattr(settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 0)
+        old_timestamp = datetime.now(timezone.utc) - timedelta(hours=2)
+
+        work_unit_key, _queue_items = await self._add_representation_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+            create_queue_payload=create_queue_payload,
+            token_counts=[100, 100],
+            created_ats=[old_timestamp, old_timestamp],
+        )
+
+        claimed = await QueueManager().get_and_claim_work_units()
+
+        assert work_unit_key not in claimed
+
+    @pytest.mark.asyncio
+    async def test_flush_enabled_bypasses_age_and_token_thresholds(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", True)
+        monkeypatch.setattr(
+            settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 1800
+        )
+
+        work_unit_key, _queue_items = await self._add_representation_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+            create_queue_payload=create_queue_payload,
+            token_counts=[100, 100],
+        )
+
+        claimed = await QueueManager().get_and_claim_work_units()
+
+        assert work_unit_key in claimed
+
+    @pytest.mark.asyncio
+    async def test_age_flush_uses_oldest_unprocessed_item(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
+        monkeypatch.setattr(
+            settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 1800
+        )
+        now = datetime.now(timezone.utc)
+
+        work_unit_key, _queue_items = await self._add_representation_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+            create_queue_payload=create_queue_payload,
+            token_counts=[100, 100],
+            created_ats=[now - timedelta(hours=2), now],
+        )
+
+        claimed = await QueueManager().get_and_claim_work_units()
+
+        assert work_unit_key in claimed
+
+    @pytest.mark.asyncio
+    async def test_age_flush_ignores_old_processed_items(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings.DERIVER, "FLUSH_ENABLED", False)
+        monkeypatch.setattr(
+            settings.DERIVER, "REPRESENTATION_BATCH_MAX_AGE_SECONDS", 1800
+        )
+        now = datetime.now(timezone.utc)
+
+        work_unit_key, queue_items = await self._add_representation_work_unit(
+            db_session=db_session,
+            sample_session_with_peers=sample_session_with_peers,
+            create_queue_payload=create_queue_payload,
+            token_counts=[100, 100],
+            created_ats=[now - timedelta(hours=2), now],
+        )
+        queue_items[0].processed = True
+        await db_session.commit()
+
+        claimed = await QueueManager().get_and_claim_work_units()
+
+        assert work_unit_key not in claimed
 
     @pytest.mark.asyncio
     async def test_forced_batching_single_large_message(

@@ -814,6 +814,11 @@ class DeriverSettings(HonchoSettings):
         int,
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
+    # Sub-threshold work units become eligible once their oldest unprocessed
+    # item exceeds this age. 0 disables age-based flushing.
+    REPRESENTATION_BATCH_MAX_AGE_SECONDS: Annotated[int, Field(default=1800, ge=0)] = (
+        1800
+    )
 
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
