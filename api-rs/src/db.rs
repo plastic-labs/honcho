@@ -2420,6 +2420,37 @@ pub async fn query_documents_by_levels(
     Ok(documents)
 }
 
+/// The most-recent session messages whose running token sum (newest-first) stays
+/// within `token_limit`, returned chronologically (ascending id). Ports the
+/// `token_limit` + `reverse=False` path of `crud.get_messages` (via its
+/// `_apply_token_limit` window function), which the dialectic uses to seed
+/// session history into the system prompt. Returns message JSON.
+pub async fn get_session_messages_within_token_limit(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    token_limit: i64,
+) -> Result<Vec<Value>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, MessageRow>(
+        "SELECT m.public_id, m.content, m.peer_name, m.session_name, m.metadata, \
+                m.created_at, m.workspace_name, m.token_count \
+         FROM messages m \
+         JOIN ( \
+             SELECT id, SUM(token_count) OVER (ORDER BY id DESC) AS running_token_sum \
+             FROM messages \
+             WHERE workspace_name = $1 AND session_name = $2 \
+         ) t ON m.id = t.id \
+         WHERE t.running_token_sum <= $3 \
+         ORDER BY m.id ASC",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .bind(token_limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(message_json).collect())
+}
+
 pub async fn get_message(
     pool: &PgPool,
     workspace_name: &str,

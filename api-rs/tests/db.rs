@@ -2283,6 +2283,50 @@ async fn query_documents_full_feeds_from_documents() {
 
 /// `query_documents_by_levels` restricts results to the requested reasoning
 /// levels (the dialectic prefetch path). Deterministic one-hot embeddings.
+/// `get_session_messages_within_token_limit` returns the most-recent messages
+/// within the token budget (each seeded message has token_count=1) in
+/// chronological order.
+#[tokio::test]
+async fn session_messages_respect_token_limit_and_order() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let t2 = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+    let t3 = Utc.with_ymd_and_hms(2026, 3, 1, 0, 0, 0).unwrap();
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "s1",
+        &[
+            message_at("alice", "jan", t1),
+            message_at("alice", "feb", t2),
+            message_at("alice", "mar", t3),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("messages");
+
+    // token_limit=2 -> the 2 most recent, chronological.
+    let recent = db::get_session_messages_within_token_limit(&test_db.pool, "ws", "s1", 2)
+        .await
+        .expect("token limit 2");
+    let contents: Vec<&str> = recent.iter().filter_map(|m| m["content"].as_str()).collect();
+    assert_eq!(contents, vec!["feb", "mar"]);
+
+    // High limit -> all, chronological.
+    let all = db::get_session_messages_within_token_limit(&test_db.pool, "ws", "s1", 100)
+        .await
+        .expect("token limit 100");
+    let all_contents: Vec<&str> = all.iter().filter_map(|m| m["content"].as_str()).collect();
+    assert_eq!(all_contents, vec!["jan", "feb", "mar"]);
+
+    test_db.teardown().await;
+}
+
 #[tokio::test]
 async fn query_documents_by_levels_filters_by_level() {
     let Some(test_db) = TestDb::setup().await else {
