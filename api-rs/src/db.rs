@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sqlx::postgres::{PgArguments, PgRow};
 use sqlx::query::{Query, QueryAs};
 use sqlx::{FromRow, PgPool, Postgres, Row};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 use crate::filters::FilterClause;
@@ -2779,6 +2779,212 @@ pub async fn insert_queue_records(
     }
     transaction.commit().await?;
     Ok(())
+}
+
+/// Port of `QueueManager.claim_work_units`: insert one `active_queue_sessions`
+/// row per work-unit key (each with a freshly generated nanoid id) using
+/// `ON CONFLICT DO NOTHING`, returning the `work_unit_key -> aqs_id` map for the
+/// rows actually claimed (a key already owned by another worker conflicts on the
+/// `work_unit_key` unique constraint and is skipped). Callers pass a deduped key
+/// list, so there are no intra-statement duplicates. The executor may be a pool
+/// or an in-flight transaction.
+pub async fn claim_work_units<'e, E>(
+    executor: E,
+    work_unit_keys: &[String],
+) -> Result<HashMap<String, String>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    if work_unit_keys.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let ids: Vec<String> = work_unit_keys.iter().map(|_| generate_nanoid()).collect();
+    let mut sql = String::from("INSERT INTO active_queue_sessions (id, work_unit_key) VALUES ");
+    for index in 0..work_unit_keys.len() {
+        if index > 0 {
+            sql.push(',');
+        }
+        let base = index * 2;
+        sql.push_str(&format!("(${}, ${})", base + 1, base + 2));
+    }
+    sql.push_str(" ON CONFLICT DO NOTHING RETURNING work_unit_key, id");
+
+    let mut query = sqlx::query(&sql);
+    for (id, key) in ids.iter().zip(work_unit_keys) {
+        query = query.bind(id).bind(key);
+    }
+    let rows = query.fetch_all(executor).await?;
+
+    let mut claimed = HashMap::with_capacity(rows.len());
+    for row in rows {
+        let key: String = row.get("work_unit_key");
+        let id: String = row.get("id");
+        claimed.insert(key, id);
+    }
+    Ok(claimed)
+}
+
+/// Port of `QueueManager.get_and_claim_work_units`: find unprocessed work-unit
+/// keys not currently owned (no `active_queue_sessions` row), optionally
+/// requiring representation batches to have reached the cumulative-token
+/// threshold, then claim up to `workers - owned_count` of them in one
+/// transaction. `representation:` keys must meet `batch_max_tokens` (summed over
+/// their unprocessed messages) unless flushing is enabled or the cap is 0; other
+/// task types are always eligible. Returns the `work_unit_key -> aqs_id` map.
+pub async fn get_and_claim_work_units(
+    pool: &PgPool,
+    workers: i64,
+    owned_count: i64,
+    batch_max_tokens: i64,
+    flush_enabled: bool,
+) -> Result<HashMap<String, String>, sqlx::Error> {
+    let limit = (workers - owned_count).max(0);
+    if limit == 0 {
+        return Ok(HashMap::new());
+    }
+
+    let apply_threshold = !flush_enabled && batch_max_tokens > 0;
+
+    // No ORDER BY — matches the Python query, whose LIMIT caps the count without
+    // a defined ordering. The threshold filter and the cap parameter are bound
+    // positionally ($1 = limit, $2 = batch_max_tokens).
+    let mut sql = String::from(
+        "SELECT wu.work_unit_key \
+         FROM (SELECT work_unit_key FROM queue WHERE NOT processed GROUP BY work_unit_key) wu \
+         LEFT JOIN ( \
+             SELECT q.work_unit_key, SUM(m.token_count) AS total_tokens \
+             FROM queue q JOIN messages m ON q.message_id = m.id \
+             WHERE NOT q.processed AND q.work_unit_key LIKE 'representation:%' \
+             GROUP BY q.work_unit_key \
+         ) ts ON wu.work_unit_key = ts.work_unit_key \
+         WHERE NOT EXISTS ( \
+             SELECT 1 FROM active_queue_sessions aqs \
+             WHERE aqs.work_unit_key = wu.work_unit_key \
+         )",
+    );
+    if apply_threshold {
+        sql.push_str(
+            " AND (wu.work_unit_key NOT LIKE 'representation:%' \
+             OR COALESCE(ts.total_tokens, 0) >= $2)",
+        );
+    }
+    sql.push_str(" LIMIT $1");
+
+    let mut transaction = pool.begin().await?;
+
+    let mut query = sqlx::query_scalar::<_, String>(&sql).bind(limit);
+    if apply_threshold {
+        query = query.bind(batch_max_tokens);
+    }
+    let available: Vec<String> = query.fetch_all(&mut *transaction).await?;
+    if available.is_empty() {
+        transaction.commit().await?;
+        return Ok(HashMap::new());
+    }
+
+    let claimed = claim_work_units(&mut *transaction, &available).await?;
+    transaction.commit().await?;
+    Ok(claimed)
+}
+
+/// Port of `QueueManager.mark_queue_items_as_processed`: flag the given queue
+/// items processed and bump the owning `active_queue_sessions.last_updated`,
+/// in one transaction. The `work_unit_key` guard mirrors the Python `where`.
+pub async fn mark_queue_items_as_processed(
+    pool: &PgPool,
+    item_ids: &[i64],
+    work_unit_key: &str,
+) -> Result<(), sqlx::Error> {
+    if item_ids.is_empty() {
+        return Ok(());
+    }
+    let mut transaction = pool.begin().await?;
+    sqlx::query("UPDATE queue SET processed = true WHERE id = ANY($1) AND work_unit_key = $2")
+        .bind(item_ids)
+        .bind(work_unit_key)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("UPDATE active_queue_sessions SET last_updated = now() WHERE work_unit_key = $1")
+        .bind(work_unit_key)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+/// Port of `QueueManager.mark_queue_item_as_errored`: mark a single queue item
+/// processed with its error text (truncated to the TEXT-limit 65535 chars, by
+/// code point as in Python) and bump `last_updated`, in one transaction.
+pub async fn mark_queue_item_as_errored(
+    pool: &PgPool,
+    item_id: i64,
+    work_unit_key: &str,
+    error: &str,
+) -> Result<(), sqlx::Error> {
+    let truncated: String = error.chars().take(65535).collect();
+    let mut transaction = pool.begin().await?;
+    sqlx::query("UPDATE queue SET processed = true, error = $3 WHERE id = $1 AND work_unit_key = $2")
+        .bind(item_id)
+        .bind(work_unit_key)
+        .bind(&truncated)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("UPDATE active_queue_sessions SET last_updated = now() WHERE work_unit_key = $1")
+        .bind(work_unit_key)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+/// Port of `QueueManager._cleanup_work_unit`: delete the `active_queue_sessions`
+/// row matched by both id and key, returning whether a row was removed (the
+/// Python `rowcount > 0` used to gate the `queue.empty` webhook).
+pub async fn cleanup_work_unit(
+    pool: &PgPool,
+    aqs_id: &str,
+    work_unit_key: &str,
+) -> Result<bool, sqlx::Error> {
+    let result =
+        sqlx::query("DELETE FROM active_queue_sessions WHERE id = $1 AND work_unit_key = $2")
+            .bind(aqs_id)
+            .bind(work_unit_key)
+            .execute(pool)
+            .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Port of `QueueManager.cleanup_stale_work_units`: within one transaction,
+/// lock stale `active_queue_sessions` rows (`last_updated` older than
+/// `stale_timeout_minutes`) with `FOR UPDATE SKIP LOCKED` so concurrent cleaners
+/// on other instances don't collide, then delete exactly the rows locked.
+/// Returns the number of rows removed. The cutoff is computed from the
+/// process clock (`Utc::now()`), matching Python's `datetime.now(utc)`.
+pub async fn cleanup_stale_work_units(
+    pool: &PgPool,
+    stale_timeout_minutes: i64,
+) -> Result<u64, sqlx::Error> {
+    let cutoff = Utc::now() - chrono::Duration::minutes(stale_timeout_minutes);
+    let mut transaction = pool.begin().await?;
+    let stale_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM active_queue_sessions \
+         WHERE last_updated < $1 ORDER BY last_updated FOR UPDATE SKIP LOCKED",
+    )
+    .bind(cutoff)
+    .fetch_all(&mut *transaction)
+    .await?;
+
+    let mut deleted = 0u64;
+    if !stale_ids.is_empty() {
+        let result = sqlx::query("DELETE FROM active_queue_sessions WHERE id = ANY($1)")
+            .bind(&stale_ids)
+            .execute(&mut *transaction)
+            .await?;
+        deleted = result.rows_affected();
+    }
+    transaction.commit().await?;
+    Ok(deleted)
 }
 
 /// Port of `enqueue_dream` (the `schedule_dream` route's manual path): enqueue

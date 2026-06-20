@@ -2682,3 +2682,257 @@ async fn format_reasoning_chain_renders_markdown() {
 
     test_db.teardown().await;
 }
+
+// --- deriver queue claim + lifecycle (QueueManager DB ops) ---
+
+/// Insert a raw `queue` row, returning its bigint id.
+async fn insert_queue_row(
+    pool: &PgPool,
+    work_unit_key: &str,
+    task_type: &str,
+    message_id: Option<i64>,
+) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO queue (work_unit_key, payload, task_type, workspace_name, message_id, processed) \
+         VALUES ($1, '{}'::jsonb, $2, 'ws', $3, false) RETURNING id",
+    )
+    .bind(work_unit_key)
+    .bind(task_type)
+    .bind(message_id)
+    .fetch_one(pool)
+    .await
+    .expect("insert queue row")
+}
+
+fn message_with_tokens(peer: &str, content: &str, token_count: i32) -> MessageInsert {
+    MessageInsert {
+        peer_name: peer.to_string(),
+        content: content.to_string(),
+        metadata: json!({}),
+        created_at: None,
+        token_count,
+    }
+}
+
+#[tokio::test]
+async fn claim_work_units_inserts_and_dedups() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let keys = vec![
+        "representation:ws:sess:a".to_string(),
+        "representation:ws:sess:b".to_string(),
+    ];
+    let claimed = db::claim_work_units(&test_db.pool, &keys)
+        .await
+        .expect("claim");
+    assert_eq!(claimed.len(), 2);
+    assert!(claimed.contains_key("representation:ws:sess:a"));
+    assert!(claimed.contains_key("representation:ws:sess:b"));
+    // Each aqs id is a 21-char nanoid.
+    assert!(claimed.values().all(|id| id.len() == 21));
+
+    // Re-claiming the same keys conflicts on the work_unit_key unique constraint
+    // and returns nothing new.
+    let again = db::claim_work_units(&test_db.pool, &keys)
+        .await
+        .expect("claim again");
+    assert!(again.is_empty());
+
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM active_queue_sessions")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("count aqs");
+    assert_eq!(total, 2);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn get_and_claim_respects_ownership_threshold_and_flush() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // Seed messages with known token counts (auto-creates ws/sess/peers).
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message_with_tokens("bob", "small", 5),
+            message_with_tokens("bob", "big", 20),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+    let small_id = created[0].id;
+    let big_id = created[1].id;
+
+    // R_small: representation work unit under the 10-token cap (excluded).
+    insert_queue_row(&test_db.pool, "representation:ws:sess:small", "representation", Some(small_id)).await;
+    // R_big: representation work unit over the cap (eligible).
+    insert_queue_row(&test_db.pool, "representation:ws:sess:big", "representation", Some(big_id)).await;
+    // A summary work unit: non-representation, always eligible.
+    insert_queue_row(&test_db.pool, "summary:ws:sess:a:bob", "summary", None).await;
+    // An already-owned work unit: excluded by the NOT EXISTS guard.
+    insert_queue_row(&test_db.pool, "representation:ws:sess:owned", "representation", Some(big_id)).await;
+    db::claim_work_units(&test_db.pool, &["representation:ws:sess:owned".to_string()])
+        .await
+        .expect("pre-claim owned");
+
+    // Threshold active (flush off, cap 10): big + summary eligible, small excluded.
+    let claimed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, false)
+        .await
+        .expect("claim with threshold");
+    let mut keys: Vec<String> = claimed.keys().cloned().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec![
+            "representation:ws:sess:big".to_string(),
+            "summary:ws:sess:a:bob".to_string(),
+        ]
+    );
+
+    // Clean the freshly-claimed rows so the next call can re-evaluate them.
+    for id in claimed.values() {
+        sqlx::query("DELETE FROM active_queue_sessions WHERE id = $1")
+            .bind(id)
+            .execute(&test_db.pool)
+            .await
+            .expect("delete claimed");
+    }
+
+    // Flush enabled: the small representation unit is now eligible too.
+    let flushed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, true)
+        .await
+        .expect("claim with flush");
+    assert!(flushed.contains_key("representation:ws:sess:small"));
+    assert!(flushed.contains_key("representation:ws:sess:big"));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn get_and_claim_limit_zero_returns_empty() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    insert_queue_row(&test_db.pool, "summary:ws:sess:a:bob", "summary", None).await;
+    // owned_count == workers -> no capacity.
+    let claimed = db::get_and_claim_work_units(&test_db.pool, 2, 2, 0, false)
+        .await
+        .expect("claim");
+    assert!(claimed.is_empty());
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn mark_processed_errored_and_cleanup_work_unit() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    let key = "summary:ws:sess:a:bob";
+    let id1 = insert_queue_row(&test_db.pool, key, "summary", None).await;
+    let id2 = insert_queue_row(&test_db.pool, key, "summary", None).await;
+
+    // Own the work unit with an intentionally old last_updated.
+    let old = Utc.with_ymd_and_hms(2000, 1, 1, 0, 0, 0).unwrap();
+    sqlx::query("INSERT INTO active_queue_sessions (id, work_unit_key, last_updated) VALUES ($1, $2, $3)")
+        .bind("aqs-1")
+        .bind(key)
+        .bind(old)
+        .execute(&test_db.pool)
+        .await
+        .expect("insert aqs");
+
+    db::mark_queue_items_as_processed(&test_db.pool, &[id1, id2], key)
+        .await
+        .expect("mark processed");
+    let processed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE work_unit_key = $1 AND processed")
+            .bind(key)
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("count processed");
+    assert_eq!(processed, 2);
+    let bumped: bool = sqlx::query_scalar(
+        "SELECT last_updated > $2 FROM active_queue_sessions WHERE work_unit_key = $1",
+    )
+    .bind(key)
+    .bind(old)
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("check last_updated");
+    assert!(bumped, "last_updated should be bumped to now()");
+
+    // Errored item: a third row gets marked processed with error text.
+    let id3 = insert_queue_row(&test_db.pool, key, "summary", None).await;
+    db::mark_queue_item_as_errored(&test_db.pool, id3, key, "boom")
+        .await
+        .expect("mark errored");
+    let error: Option<String> = sqlx::query_scalar("SELECT error FROM queue WHERE id = $1")
+        .bind(id3)
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("get error");
+    assert_eq!(error.as_deref(), Some("boom"));
+
+    // Cleanup removes the aqs row once, then reports nothing to remove.
+    assert!(db::cleanup_work_unit(&test_db.pool, "aqs-1", key)
+        .await
+        .expect("cleanup"));
+    assert!(!db::cleanup_work_unit(&test_db.pool, "aqs-1", key)
+        .await
+        .expect("cleanup again"));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn cleanup_stale_work_units_removes_only_old_rows() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let old = Utc::now() - chrono::Duration::minutes(30);
+    let fresh = Utc::now();
+    sqlx::query("INSERT INTO active_queue_sessions (id, work_unit_key, last_updated) VALUES ($1, $2, $3)")
+        .bind("stale-1")
+        .bind("summary:ws:sess:a:old")
+        .bind(old)
+        .execute(&test_db.pool)
+        .await
+        .expect("insert stale");
+    sqlx::query("INSERT INTO active_queue_sessions (id, work_unit_key, last_updated) VALUES ($1, $2, $3)")
+        .bind("fresh-1")
+        .bind("summary:ws:sess:a:new")
+        .bind(fresh)
+        .execute(&test_db.pool)
+        .await
+        .expect("insert fresh");
+
+    // 5-minute staleness window: the 30-minute-old row is removed, fresh kept.
+    let deleted = db::cleanup_stale_work_units(&test_db.pool, 5)
+        .await
+        .expect("cleanup stale");
+    assert_eq!(deleted, 1);
+    let remaining: Vec<String> = sqlx::query_scalar("SELECT id FROM active_queue_sessions")
+        .fetch_all(&test_db.pool)
+        .await
+        .expect("remaining");
+    assert_eq!(remaining, vec!["fresh-1".to_string()]);
+
+    test_db.teardown().await;
+}
