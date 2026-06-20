@@ -10,6 +10,7 @@
 
 pub mod backends;
 pub mod conversation;
+pub mod executor;
 pub mod history_adapters;
 pub mod http;
 pub mod request_builder;
