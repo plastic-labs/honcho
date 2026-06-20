@@ -4,6 +4,7 @@ pub mod cache;
 pub mod config;
 pub mod db;
 pub mod dialectic;
+pub mod dialectic_agent;
 pub mod dialectic_config;
 pub mod embedding;
 pub mod error;

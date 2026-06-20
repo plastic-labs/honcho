@@ -2283,6 +2283,92 @@ async fn query_documents_full_feeds_from_documents() {
 
 /// `query_documents_by_levels` restricts results to the requested reasoning
 /// levels (the dialectic prefetch path). Deterministic one-hot embeddings.
+/// A fixed-vector embedder for the dialectic agent test (no network).
+struct StubEmbedder;
+impl honcho_api_rs::dialectic::Embedder for StubEmbedder {
+    async fn embed(&self, _query: &str) -> Result<Vec<f32>, String> {
+        Ok(vec![0.0_f32; 1536])
+    }
+}
+
+/// An LlmHttp stub returning a fixed OpenAI completion (no tool calls), so the
+/// dialectic tool loop returns on the first call.
+struct StubLlmHttp;
+impl honcho_api_rs::llm::http::LlmHttp for StubLlmHttp {
+    async fn post_json(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+        _body: &Value,
+    ) -> Result<Value, honcho_api_rs::llm::http::LlmHttpError> {
+        Ok(json!({
+            "choices": [{"message": {"content": "the synthesized answer"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2}
+        }))
+    }
+}
+
+/// End-to-end DialecticAgent::answer over a live DB: empty memory (prefetch
+/// finds nothing), a seeded session for history, and a stubbed LLM that returns
+/// a direct answer with no tool calls.
+#[tokio::test]
+async fn dialectic_agent_answer_end_to_end() {
+    use honcho_api_rs::dialectic_config::{DialecticSettings, ReasoningLevel};
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["alice", "bob"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "s1",
+        &[message_at("alice", "hi bob", Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap())],
+        false,
+        8192,
+    )
+    .await
+    .expect("messages");
+
+    let settings = DialecticSettings::default();
+    let keys = TransportApiKeys {
+        anthropic: None,
+        openai: Some("sk-test".to_string()),
+        gemini: None,
+    };
+
+    let answer = honcho_api_rs::dialectic_agent::answer(
+        &test_db.pool,
+        &StubLlmHttp,
+        keys,
+        StubEmbedder,
+        &settings,
+        "ws",
+        Some("s1"),
+        "alice",
+        "bob",
+        None,
+        None,
+        "what does bob like?",
+        ReasoningLevel::Low,
+    )
+    .await
+    .expect("dialectic answer");
+
+    assert_eq!(answer, "the synthesized answer");
+
+    test_db.teardown().await;
+}
+
 /// `get_session_messages_within_token_limit` returns the most-recent messages
 /// within the token budget (each seeded message has token_count=1) in
 /// chronological order.
