@@ -859,6 +859,35 @@ pub trait Embedder {
     fn embed(&self, query: &str) -> impl Future<Output = Result<Vec<f32>, String>> + Send;
 }
 
+/// The production [`Embedder`]: wraps [`crate::embedding::embed_openai`] with the
+/// configured model/dimensions/credentials. Embedding errors (token-limit,
+/// transport) map to `Err(String)` so the tool loop folds them into an
+/// `is_error` result rather than aborting the whole call.
+pub struct OpenAiEmbedder<'a, H: crate::llm::http::LlmHttp> {
+    pub http: &'a H,
+    pub credentials: crate::llm::http::Credentials,
+    pub model: String,
+    pub vector_dimensions: usize,
+    pub send_dimensions: bool,
+    pub max_tokens: usize,
+}
+
+impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OpenAiEmbedder<'_, H> {
+    async fn embed(&self, query: &str) -> Result<Vec<f32>, String> {
+        crate::embedding::embed_openai(
+            self.http,
+            &self.credentials,
+            &self.model,
+            query,
+            self.vector_dimensions,
+            self.send_dimensions,
+            self.max_tokens,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+}
+
 /// Bridges the ported dialectic tool handlers to the generic
 /// [`crate::llm::tool_loop::execute_tool_loop`] via its [`ToolExecutor`] seam:
 /// dispatches a tool call by name to the matching handler, embedding the query
@@ -1354,6 +1383,23 @@ mod tests {
             ),
             fixtures["directional_both_cards"]
         );
+    }
+
+    #[tokio::test]
+    async fn openai_embedder_returns_vector() {
+        use crate::llm::http::Credentials;
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(serde_json::json!({"data": [{"embedding": [1.0, 2.0]}]}));
+        let embedder = OpenAiEmbedder {
+            http: &http,
+            credentials: Credentials::new("sk-e"),
+            model: "text-embedding-3-small".to_string(),
+            vector_dimensions: 2,
+            send_dimensions: true,
+            max_tokens: 8192,
+        };
+        assert_eq!(embedder.embed("hello").await.unwrap(), vec![1.0_f32, 2.0]);
     }
 
     #[test]
