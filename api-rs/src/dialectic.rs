@@ -866,6 +866,42 @@ pub fn agent_system_prompt(
     format!("{intro}\n{perspective_section}\n{peer_card_explanation}\n{SYSTEM_PROMPT_BODY}")
 }
 
+/// Port of the session-history block built in
+/// `DialecticAgent._initialize_session_history`. `formatted_messages` are the
+/// already-rendered turn lines (each from [`format_new_turn_with_timestamp`]),
+/// joined with newlines into a `<session_history>` section that the caller
+/// appends to the system prompt. Returns `None` for an empty list, mirroring the
+/// Python early-return that skips the append entirely when no messages are found.
+pub fn session_history_section(formatted_messages: &[String]) -> Option<String> {
+    if formatted_messages.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "\n\n## SESSION HISTORY\n\n\
+         The following is the recent conversation history from this session. \
+         Use this as immediate context when answering the query.\n\n\
+         <session_history>\n{}\n</session_history>",
+        formatted_messages.join("\n")
+    ))
+}
+
+/// Port of the user-message construction in `DialecticAgent._prepare_query`.
+/// When `prefetched_observations` is present and non-empty (Python's truthiness
+/// test treats both `None` and `""` as falsy), the query is wrapped with the
+/// prefetched-observations preamble; otherwise it is the bare `Query: {query}`.
+pub fn build_user_content(query: &str, prefetched_observations: Option<&str>) -> String {
+    match prefetched_observations {
+        Some(observations) if !observations.is_empty() => format!(
+            "Query: {query}\n\n\
+             ## Relevant Observations (prefetched)\n\
+             The following observations were found to be semantically relevant to your query. \
+             Use these as primary context. You may still use tools to find additional information if needed.\n\n\
+             {observations}"
+        ),
+        _ => format!("Query: {query}"),
+    }
+}
+
 fn search_memory_tool() -> serde_json::Value {
     serde_json::json!({
         "name": "search_memory",
@@ -1167,6 +1203,51 @@ mod tests {
                 Some(&["IDENTITY: Bob".to_string()])
             ),
             fixtures["directional_both_cards"]
+        );
+    }
+
+    #[test]
+    fn session_history_section_empty_is_none() {
+        assert_eq!(session_history_section(&[]), None);
+    }
+
+    #[test]
+    fn session_history_section_matches_python() {
+        let messages = vec![
+            "2023-05-08 13:56:00 alice: hi".to_string(),
+            "2023-05-08 13:57:00 bob: hello".to_string(),
+        ];
+        assert_eq!(
+            session_history_section(&messages).unwrap(),
+            "\n\n## SESSION HISTORY\n\n\
+             The following is the recent conversation history from this session. \
+             Use this as immediate context when answering the query.\n\n\
+             <session_history>\n\
+             2023-05-08 13:56:00 alice: hi\n\
+             2023-05-08 13:57:00 bob: hello\n\
+             </session_history>"
+        );
+    }
+
+    #[test]
+    fn build_user_content_without_observations() {
+        assert_eq!(build_user_content("who is bob?", None), "Query: who is bob?");
+        // Empty string is falsy in Python, so it also yields the bare query.
+        assert_eq!(
+            build_user_content("who is bob?", Some("")),
+            "Query: who is bob?"
+        );
+    }
+
+    #[test]
+    fn build_user_content_with_observations() {
+        assert_eq!(
+            build_user_content("who is bob?", Some("- bob likes tea")),
+            "Query: who is bob?\n\n\
+             ## Relevant Observations (prefetched)\n\
+             The following observations were found to be semantically relevant to your query. \
+             Use these as primary context. You may still use tools to find additional information if needed.\n\n\
+             - bob likes tea"
         );
     }
 
