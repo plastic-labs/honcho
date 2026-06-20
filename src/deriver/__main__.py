@@ -84,6 +84,10 @@ async def run_deriver():
     finally:
         if oauth_refresh_task is not None:
             oauth_refresh_task.cancel()
+            try:
+                await oauth_refresh_task
+            except asyncio.CancelledError:
+                pass
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
 

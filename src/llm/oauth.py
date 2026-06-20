@@ -65,7 +65,12 @@ class OAuthTokenManager:
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
 
-        self._access_token = data["access_token"]
+        try:
+            self._access_token = data["access_token"]
+        except (KeyError, TypeError) as exc:
+            raise ValueError(
+                f"OAuth token response missing 'access_token': {data}"
+            ) from exc
         if "refresh_token" in data:
             self._refresh_token = data["refresh_token"]
         expires_in: int = data.get("expires_in", 600)
