@@ -96,8 +96,10 @@ class OAuthTokenManager:
 class OAuthOpenAI(AsyncOpenAI):
     """AsyncOpenAI variant that reads its bearer token from an OAuthTokenManager.
 
-    The ``auth_headers`` property is evaluated per-request, so a single cached
-    instance automatically picks up refreshed tokens without cache invalidation.
+    Both ``_bearer_auth`` (openai >= 2.x) and ``auth_headers`` (openai < 2.x)
+    are overridden so the correct hook is called regardless of SDK version.
+    The properties are evaluated per-request, so a single cached instance
+    automatically picks up refreshed tokens without cache invalidation.
     """
 
     def __init__(self, token_manager: OAuthTokenManager, **kwargs: Any) -> None:
@@ -107,5 +109,9 @@ class OAuthOpenAI(AsyncOpenAI):
         self._token_manager = token_manager
 
     @property
-    def auth_headers(self) -> dict[str, str]:  # type: ignore[override]
+    def _bearer_auth(self) -> dict[str, str]:  # openai >= 2.x
+        return {"Authorization": f"Bearer {self._token_manager.access_token}"}
+
+    @property
+    def auth_headers(self) -> dict[str, str]:  # type: ignore[override]  # openai < 2.x
         return {"Authorization": f"Bearer {self._token_manager.access_token}"}
