@@ -24,6 +24,74 @@ fn strip_timestamp(timestamp: &DateTime<Utc>) -> String {
     timestamp.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
+/// Port of `format_datetime_utc`: ISO 8601 with a `Z` suffix and second-level
+/// precision (sub-second always dropped). The input is already UTC, so this is
+/// `dt` rendered as `YYYY-MM-DDTHH:MM:SSZ`.
+pub fn format_datetime_utc(dt: DateTime<Utc>) -> String {
+    dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// One observation ready to persist (`_save_representation_internal`'s per-doc
+/// shaping). `premises` is `Some` only for deductive observations (carried into
+/// the document metadata); explicit observations leave it `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveObservation {
+    pub level: String,
+    pub content: String,
+    pub premises: Option<Vec<String>>,
+}
+
+/// Port of the per-document construction in `_save_representation_internal`:
+/// zip each [`SaveObservation`] (from [`Representation::observations_for_save`])
+/// with its embedding into a [`crate::db::DocumentToCreate`]. The shared
+/// `message_ids` / `session_name` / `message_created_at` are stamped into each
+/// document's `internal_metadata` (mirroring `DocumentMetadata` with
+/// `exclude_none`: `premises` is present only for deductive observations).
+/// `times_derived` starts at 1; `source_ids` is unset on this (deriver) path.
+///
+/// `observations` and `embeddings` must be equal length and aligned; extra
+/// elements of either are ignored (the Python `zip(..., strict=True)` guarantees
+/// equal length upstream).
+pub fn build_documents_to_create(
+    observations: &[SaveObservation],
+    embeddings: &[Vec<f32>],
+    message_ids: &[i64],
+    session_name: &str,
+    message_created_at: DateTime<Utc>,
+) -> Vec<crate::db::DocumentToCreate> {
+    let created_at = format_datetime_utc(message_created_at);
+    observations
+        .iter()
+        .zip(embeddings.iter())
+        .map(|(obs, embedding)| {
+            let mut metadata = serde_json::Map::new();
+            metadata.insert(
+                "message_ids".to_string(),
+                Value::Array(message_ids.iter().map(|&id| Value::from(id)).collect()),
+            );
+            metadata.insert(
+                "message_created_at".to_string(),
+                Value::String(created_at.clone()),
+            );
+            if let Some(premises) = &obs.premises {
+                metadata.insert(
+                    "premises".to_string(),
+                    Value::Array(premises.iter().map(|p| Value::String(p.clone())).collect()),
+                );
+            }
+            crate::db::DocumentToCreate {
+                content: obs.content.clone(),
+                session_name: Some(session_name.to_string()),
+                level: obs.level.clone(),
+                internal_metadata: Value::Object(metadata),
+                embedding: embedding.clone(),
+                times_derived: 1,
+                source_ids: None,
+            }
+        })
+        .collect()
+}
+
 /// `"[id:{id}] "` when `include_ids` is set and the observation has an id, else
 /// empty — the prefix used by `format_as_markdown` for derived observations.
 fn id_prefix(id: &str, include_ids: bool) -> String {
@@ -512,6 +580,38 @@ impl Representation {
             inductive: Vec::new(),
             contradiction: Vec::new(),
         }
+    }
+
+    /// Port of the ordering/filtering at the top of `save_representation` +
+    /// `_normalized_observation`: the observations to persist, **deductive first
+    /// then explicit**, each with its text stripped and any whose text is empty
+    /// after stripping dropped. Embeddings are computed over this exact ordered
+    /// list, so callers must keep it aligned with [`build_documents_to_create`].
+    pub fn observations_for_save(&self) -> Vec<SaveObservation> {
+        let mut out: Vec<SaveObservation> = Vec::new();
+        for deductive in &self.deductive {
+            let content = deductive.conclusion.trim();
+            if content.is_empty() {
+                continue;
+            }
+            out.push(SaveObservation {
+                level: "deductive".to_string(),
+                content: content.to_string(),
+                premises: Some(deductive.premises.clone()),
+            });
+        }
+        for explicit in &self.explicit {
+            let content = explicit.content.trim();
+            if content.is_empty() {
+                continue;
+            }
+            out.push(SaveObservation {
+                level: "explicit".to_string(),
+                content: content.to_string(),
+                premises: None,
+            });
+        }
+        out
     }
 
     /// Port of `Representation.format_as_markdown`. Each non-empty level becomes
@@ -1116,6 +1216,99 @@ mod tests {
         assert_eq!(first.created_at, created);
         assert_eq!(first.message_ids, vec![10, 20]);
         assert_eq!(first.session_name.as_deref(), Some("sess1"));
+    }
+
+    // --- observations_for_save / build_documents_to_create ---
+
+    fn deductive(conclusion: &str, premises: &[&str]) -> DeductiveObservation {
+        DeductiveObservation {
+            id: String::new(),
+            created_at: ts("2025-01-01T00:00:00Z"),
+            message_ids: vec![],
+            session_name: None,
+            source_ids: vec![],
+            premises: premises.iter().map(|p| p.to_string()).collect(),
+            conclusion: conclusion.to_string(),
+        }
+    }
+
+    #[test]
+    fn observations_for_save_orders_deductive_first_and_strips() {
+        let rep = Representation {
+            explicit: vec![
+                explicit("  exp one  ", "2025-01-01T00:00:00Z"),
+                explicit("   ", "2025-01-01T00:00:00Z"), // blank -> dropped
+            ],
+            deductive: vec![deductive("ded one", &["p1", "p2"])],
+            ..Representation::default()
+        };
+        let saved = rep.observations_for_save();
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0].level, "deductive");
+        assert_eq!(saved[0].content, "ded one");
+        assert_eq!(saved[0].premises, Some(vec!["p1".to_string(), "p2".to_string()]));
+        assert_eq!(saved[1].level, "explicit");
+        assert_eq!(saved[1].content, "exp one"); // stripped
+        assert_eq!(saved[1].premises, None);
+    }
+
+    #[test]
+    fn format_datetime_utc_second_precision_with_z() {
+        let dt = DateTime::parse_from_rfc3339("2023-01-01T12:00:00.500Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(format_datetime_utc(dt), "2023-01-01T12:00:00Z");
+    }
+
+    #[test]
+    fn build_documents_to_create_stamps_metadata_and_levels() {
+        let observations = vec![
+            SaveObservation {
+                level: "deductive".to_string(),
+                content: "ded".to_string(),
+                premises: Some(vec!["p1".to_string()]),
+            },
+            SaveObservation {
+                level: "explicit".to_string(),
+                content: "exp".to_string(),
+                premises: None,
+            },
+        ];
+        let embeddings = vec![vec![0.1_f32, 0.2], vec![0.3_f32, 0.4]];
+        let docs = build_documents_to_create(
+            &observations,
+            &embeddings,
+            &[10, 20],
+            "sess1",
+            ts("2025-03-04T12:00:00Z"),
+        );
+        assert_eq!(docs.len(), 2);
+
+        let ded = &docs[0];
+        assert_eq!(ded.level, "deductive");
+        assert_eq!(ded.content, "ded");
+        assert_eq!(ded.session_name.as_deref(), Some("sess1"));
+        assert_eq!(ded.times_derived, 1);
+        assert_eq!(ded.source_ids, None);
+        assert_eq!(ded.embedding, vec![0.1_f32, 0.2]);
+        assert_eq!(
+            ded.internal_metadata,
+            json!({
+                "message_ids": [10, 20],
+                "message_created_at": "2025-03-04T12:00:00Z",
+                "premises": ["p1"],
+            })
+        );
+
+        // Explicit: premises omitted (exclude_none).
+        let exp = &docs[1];
+        assert_eq!(
+            exp.internal_metadata,
+            json!({
+                "message_ids": [10, 20],
+                "message_created_at": "2025-03-04T12:00:00Z",
+            })
+        );
     }
 
     #[test]
