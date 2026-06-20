@@ -97,6 +97,128 @@ impl ResolvedConfiguration {
             "dream": {"enabled": self.dream_enabled},
         })
     }
+
+    /// Parse a stored configuration object back into a `ResolvedConfiguration`,
+    /// mirroring `ResolvedConfiguration.model_validate`. All sub-fields are
+    /// required (as in the Python model); `reasoning.custom_instructions` is the
+    /// only optional field. Applies the v3.0.0 `deriver` -> `reasoning`
+    /// migration (`migrate_deriver_to_reasoning`) and ignores extra keys.
+    ///
+    /// The Python model also re-runs `_validate_custom_instructions_budget`,
+    /// but that validator only raises or returns the value unchanged — it never
+    /// transforms it — so it is a no-op for already-validated stored payloads
+    /// and is not re-applied here.
+    pub fn from_payload_value(raw: &Value) -> Result<Self, String> {
+        let object = raw
+            .as_object()
+            .ok_or_else(|| "configuration must be an object".to_string())?;
+
+        // migrate_deriver_to_reasoning: `deriver` was renamed to `reasoning`;
+        // honor the legacy key only when `reasoning` is absent.
+        let reasoning_src = if object.contains_key("deriver") && !object.contains_key("reasoning") {
+            object.get("deriver")
+        } else {
+            object.get("reasoning")
+        };
+        let reasoning = reasoning_src
+            .and_then(Value::as_object)
+            .ok_or_else(|| "configuration.reasoning is required".to_string())?;
+        let reasoning_enabled = reasoning
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "configuration.reasoning.enabled is required".to_string())?;
+        let reasoning_custom_instructions = match reasoning.get("custom_instructions") {
+            Some(Value::String(value)) => Some(value.clone()),
+            None | Some(Value::Null) => None,
+            Some(_) => {
+                return Err("configuration.reasoning.custom_instructions must be a string".into());
+            }
+        };
+
+        let peer_card = object
+            .get("peer_card")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "configuration.peer_card is required".to_string())?;
+        let peer_card_use = peer_card
+            .get("use")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "configuration.peer_card.use is required".to_string())?;
+        let peer_card_create = peer_card
+            .get("create")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "configuration.peer_card.create is required".to_string())?;
+
+        let summary = object
+            .get("summary")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "configuration.summary is required".to_string())?;
+        let summary_enabled = summary
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "configuration.summary.enabled is required".to_string())?;
+        let messages_per_short_summary = summary
+            .get("messages_per_short_summary")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "configuration.summary.messages_per_short_summary is required".to_string())?;
+        let messages_per_long_summary = summary
+            .get("messages_per_long_summary")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "configuration.summary.messages_per_long_summary is required".to_string())?;
+
+        let dream = object
+            .get("dream")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "configuration.dream is required".to_string())?;
+        let dream_enabled = dream
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "configuration.dream.enabled is required".to_string())?;
+
+        Ok(Self {
+            reasoning_enabled,
+            reasoning_custom_instructions,
+            peer_card_use,
+            peer_card_create,
+            summary_enabled,
+            messages_per_short_summary,
+            messages_per_long_summary,
+            dream_enabled,
+        })
+    }
+}
+
+/// Keep only the initial homogeneous-configuration prefix of a representation
+/// batch, mirroring `QueueManager._resolve_batch_configuration`.
+///
+/// `payloads` are the queue items' payload objects, in queue order. Returns the
+/// number of leading items that share the first item's `configuration` (a
+/// missing or `null` key resolves to `None`, matching `dict.get`), plus that
+/// resolved configuration. An empty batch yields `(0, None)`. A malformed
+/// configuration surfaces as `Err`, just as `model_validate` would raise.
+pub fn resolve_batch_configuration_prefix<'a>(
+    payloads: impl IntoIterator<Item = &'a Value>,
+) -> Result<(usize, Option<ResolvedConfiguration>), String> {
+    let parse = |payload: &Value| -> Result<Option<ResolvedConfiguration>, String> {
+        match payload.get("configuration") {
+            None | Some(Value::Null) => Ok(None),
+            Some(raw) => Ok(Some(ResolvedConfiguration::from_payload_value(raw)?)),
+        }
+    };
+
+    let mut iter = payloads.into_iter();
+    let Some(first) = iter.next() else {
+        return Ok((0, None));
+    };
+    let resolved = parse(first)?;
+
+    let mut count = 1; // the first item is always part of the prefix
+    for payload in iter {
+        if parse(payload)? != resolved {
+            break;
+        }
+        count += 1;
+    }
+    Ok((count, resolved))
 }
 
 /// Resolve configuration with Python's hierarchy: defaults → workspace → session
@@ -795,5 +917,148 @@ mod tests {
             generate_queue_records(&message("ghost", 5), &peers, "sess_internal", &conf).unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].payload["observers"], json!(["ghost"]));
+    }
+
+    // --- ResolvedConfiguration::from_payload_value / batch-config prefix ---
+
+    #[test]
+    fn from_payload_value_round_trips() {
+        let mut config = ResolvedConfiguration::default();
+        config.reasoning_custom_instructions = Some("be terse".to_string());
+        config.peer_card_use = false;
+        config.messages_per_short_summary = 7;
+        let payload = config.to_payload_value();
+        assert_eq!(
+            ResolvedConfiguration::from_payload_value(&payload).unwrap(),
+            config
+        );
+    }
+
+    #[test]
+    fn from_payload_value_default_round_trips_without_custom_instructions() {
+        let config = ResolvedConfiguration::default();
+        let payload = config.to_payload_value();
+        // custom_instructions omitted by exclude_none; parsing yields None.
+        let parsed = ResolvedConfiguration::from_payload_value(&payload).unwrap();
+        assert_eq!(parsed, config);
+        assert_eq!(parsed.reasoning_custom_instructions, None);
+    }
+
+    #[test]
+    fn from_payload_value_applies_deriver_migration() {
+        // Legacy payload using `deriver` instead of `reasoning`.
+        let payload = json!({
+            "deriver": {"enabled": false},
+            "peer_card": {"use": true, "create": true},
+            "summary": {"enabled": true, "messages_per_short_summary": 20, "messages_per_long_summary": 60},
+            "dream": {"enabled": true},
+        });
+        let parsed = ResolvedConfiguration::from_payload_value(&payload).unwrap();
+        assert!(!parsed.reasoning_enabled);
+    }
+
+    #[test]
+    fn from_payload_value_prefers_reasoning_over_legacy_deriver() {
+        let payload = json!({
+            "reasoning": {"enabled": true},
+            "deriver": {"enabled": false},
+            "peer_card": {"use": true, "create": true},
+            "summary": {"enabled": true, "messages_per_short_summary": 20, "messages_per_long_summary": 60},
+            "dream": {"enabled": true},
+        });
+        let parsed = ResolvedConfiguration::from_payload_value(&payload).unwrap();
+        assert!(parsed.reasoning_enabled);
+    }
+
+    #[test]
+    fn from_payload_value_errors_on_missing_required_field() {
+        let payload = json!({
+            "reasoning": {"enabled": true},
+            "peer_card": {"use": true, "create": true},
+            "summary": {"enabled": true, "messages_per_short_summary": 20, "messages_per_long_summary": 60},
+            // dream missing
+        });
+        assert!(ResolvedConfiguration::from_payload_value(&payload).is_err());
+    }
+
+    #[test]
+    fn from_payload_value_ignores_extra_keys() {
+        let payload = json!({
+            "reasoning": {"enabled": true, "unknown": 1},
+            "peer_card": {"use": true, "create": true},
+            "summary": {"enabled": true, "messages_per_short_summary": 20, "messages_per_long_summary": 60},
+            "dream": {"enabled": true},
+            "extra_top_level": "ignored",
+        });
+        assert!(ResolvedConfiguration::from_payload_value(&payload).is_ok());
+    }
+
+    fn payload_with_config(config: Option<&ResolvedConfiguration>) -> Value {
+        match config {
+            Some(c) => json!({"configuration": c.to_payload_value()}),
+            None => json!({"observers": ["a"]}), // no configuration key
+        }
+    }
+
+    #[test]
+    fn batch_prefix_empty_is_zero_none() {
+        let payloads: Vec<Value> = vec![];
+        assert_eq!(
+            resolve_batch_configuration_prefix(payloads.iter()).unwrap(),
+            (0, None)
+        );
+    }
+
+    #[test]
+    fn batch_prefix_all_none_config() {
+        let payloads = vec![
+            payload_with_config(None),
+            payload_with_config(None),
+            payload_with_config(None),
+        ];
+        assert_eq!(
+            resolve_batch_configuration_prefix(payloads.iter()).unwrap(),
+            (3, None)
+        );
+    }
+
+    #[test]
+    fn batch_prefix_homogeneous() {
+        let config = ResolvedConfiguration::default();
+        let payloads = vec![
+            payload_with_config(Some(&config)),
+            payload_with_config(Some(&config)),
+        ];
+        let (count, resolved) = resolve_batch_configuration_prefix(payloads.iter()).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(resolved, Some(config));
+    }
+
+    #[test]
+    fn batch_prefix_breaks_on_config_change() {
+        let config_a = ResolvedConfiguration::default();
+        let mut config_b = ResolvedConfiguration::default();
+        config_b.summary_enabled = false;
+        let payloads = vec![
+            payload_with_config(Some(&config_a)),
+            payload_with_config(Some(&config_a)),
+            payload_with_config(Some(&config_b)),
+            payload_with_config(Some(&config_a)),
+        ];
+        let (count, resolved) = resolve_batch_configuration_prefix(payloads.iter()).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(resolved, Some(config_a));
+    }
+
+    #[test]
+    fn batch_prefix_none_then_some_breaks() {
+        let config = ResolvedConfiguration::default();
+        let payloads = vec![
+            payload_with_config(None),
+            payload_with_config(Some(&config)),
+        ];
+        let (count, resolved) = resolve_batch_configuration_prefix(payloads.iter()).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(resolved, None);
     }
 }
