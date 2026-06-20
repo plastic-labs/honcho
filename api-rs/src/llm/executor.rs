@@ -9,12 +9,17 @@
 //! byte-identically. [`execute_completion`] returns
 //! [`ExecutorError::UnsupportedProvider`] for Gemini until that send path lands.
 
+use std::sync::Mutex;
+use std::time::Duration;
+
 use serde_json::{Map, Value, json};
 
 use super::backends::{anthropic, openai};
+use super::credentials::{TransportApiKeys, resolve_credentials};
 use super::http::{Credentials, LlmHttp, LlmHttpError};
 use super::request_builder::{build_config_extra_params, effective_max_tokens};
-use super::runtime::effective_config_for_call;
+use super::runtime::{effective_config_for_call, effective_temperature, plan_attempt};
+use super::tool_loop::ToolLoopCaller;
 use super::types::{HonchoLLMCallResponse, completion_result_to_response};
 use super::{CompletionResult, ModelConfig, Provider};
 
@@ -172,11 +177,183 @@ pub async fn honcho_llm_call_inner<H: LlmHttp>(
     Ok(completion_result_to_response(&result))
 }
 
+/// Exponential-backoff retry policy, porting tenacity's
+/// `wait_exponential(multiplier=1, min=4, max=10)` + `stop_after_attempt`. The
+/// durations are fields so tests can zero them out (no real sleeping).
+#[derive(Debug, Clone)]
+pub struct RetryPolicy {
+    pub attempts: u32,
+    pub backoff_min: Duration,
+    pub backoff_max: Duration,
+}
+
+impl Default for RetryPolicy {
+    /// The production default: 3 attempts, 4s→10s exponential backoff.
+    fn default() -> Self {
+        Self {
+            attempts: 3,
+            backoff_min: Duration::from_secs(4),
+            backoff_max: Duration::from_secs(10),
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// Sleep duration before re-attempting after `failed_attempt` (1-indexed):
+    /// `clamp(min * 2^(failed_attempt-1), .., max)`, mirroring tenacity's
+    /// exponential schedule.
+    fn backoff_for(&self, failed_attempt: u32) -> Duration {
+        let scaled = self
+            .backoff_min
+            .saturating_mul(1u32 << (failed_attempt.saturating_sub(1)).min(16));
+        scaled.min(self.backoff_max)
+    }
+}
+
+/// The provider-backed [`ToolLoopCaller`], porting the retry + fallback
+/// orchestration of `api.py::honcho_llm_call` (the tool path that threads
+/// `get_attempt_plan` into the loop). Each [`ToolLoopCaller::complete`] runs its
+/// own attempt budget: per attempt it plans the config ([`plan_attempt`] — the
+/// final attempt swaps to the fallback), resolves credentials, builds the
+/// effective config, and dispatches via [`execute_completion`]. On exhaustion the
+/// last error is returned as the caller error the tool loop surfaces.
+///
+/// Deviation from Python: the attempt budget resets per `complete()` call here,
+/// rather than persisting across tool-loop iterations via a ContextVar (a quirk
+/// of the Python implementation, not intended behavior).
+pub struct HonchoCaller<'a, H: LlmHttp> {
+    pub http: &'a H,
+    pub keys: TransportApiKeys,
+    pub runtime_config: ModelConfig,
+    pub max_tokens: i64,
+    pub retry: RetryPolicy,
+    pub temperature: Option<f64>,
+    pub stop_seqs: Option<Vec<String>>,
+    pub thinking_budget_tokens: Option<i64>,
+    pub reasoning_effort: Option<String>,
+    pub json_mode: bool,
+    pub verbosity: Option<String>,
+    /// The provider of the most recently dispatched attempt, for `provider()`
+    /// (the tool loop reads it to shape the next assistant turn). Starts at the
+    /// runtime config's transport before the first call.
+    last_provider: Mutex<Provider>,
+}
+
+impl<'a, H: LlmHttp> HonchoCaller<'a, H> {
+    /// Construct a caller for `runtime_config`, defaulting the per-call knobs to
+    /// unset and the retry policy to [`RetryPolicy::default`].
+    pub fn new(
+        http: &'a H,
+        keys: TransportApiKeys,
+        runtime_config: ModelConfig,
+        max_tokens: i64,
+    ) -> Self {
+        let transport = runtime_config.transport;
+        Self {
+            http,
+            keys,
+            runtime_config,
+            max_tokens,
+            retry: RetryPolicy::default(),
+            temperature: None,
+            stop_seqs: None,
+            thinking_budget_tokens: None,
+            reasoning_effort: None,
+            json_mode: false,
+            verbosity: None,
+            last_provider: Mutex::new(transport),
+        }
+    }
+}
+
+impl<H: LlmHttp + Sync> ToolLoopCaller for HonchoCaller<'_, H> {
+    fn provider(&self) -> Provider {
+        *self.last_provider.lock().unwrap()
+    }
+
+    async fn complete(
+        &self,
+        messages: &[Value],
+        tools: &[Value],
+        tool_choice: Option<&Value>,
+    ) -> Result<CompletionResult, String> {
+        let tools_opt = if tools.is_empty() { None } else { Some(tools) };
+        let mut last_error: Option<String> = None;
+
+        for attempt in 1..=self.retry.attempts {
+            let plan = plan_attempt(
+                &self.runtime_config,
+                attempt,
+                self.retry.attempts,
+                self.thinking_budget_tokens,
+                self.reasoning_effort.as_deref(),
+            );
+            *self.last_provider.lock().unwrap() = plan.provider;
+
+            let credentials = resolve_credentials(&plan.selected_config, &self.keys);
+            let temperature = effective_temperature(self.temperature, attempt);
+            let effective_config = effective_config_for_call(
+                Some(&plan.selected_config),
+                plan.provider,
+                &plan.model,
+                temperature,
+                self.stop_seqs.as_deref(),
+                plan.thinking_budget_tokens,
+                plan.reasoning_effort.as_deref(),
+            );
+
+            let mut call_extras = Map::new();
+            call_extras.insert("json_mode".to_string(), json!(self.json_mode));
+            call_extras.insert(
+                "verbosity".to_string(),
+                self.verbosity
+                    .as_deref()
+                    .map_or(Value::Null, |value| json!(value)),
+            );
+
+            match execute_completion(
+                self.http,
+                &credentials,
+                &effective_config,
+                messages,
+                self.max_tokens,
+                tools_opt,
+                tool_choice,
+                None,
+                Some(&call_extras),
+            )
+            .await
+            {
+                Ok(result) => return Ok(result),
+                Err(error) => {
+                    last_error = Some(error.to_string());
+                    if attempt < self.retry.attempts {
+                        let backoff = self.retry.backoff_for(attempt);
+                        if !backoff.is_zero() {
+                            tokio::time::sleep(backoff).await;
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| "completion failed with no attempts".to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::llm::http::mock::MockHttp;
     use serde_json::json;
+
+    fn no_backoff() -> RetryPolicy {
+        RetryPolicy {
+            attempts: 2,
+            backoff_min: Duration::ZERO,
+            backoff_max: Duration::ZERO,
+        }
+    }
 
     fn ok_http() -> MockHttp {
         MockHttp::ok(json!({
@@ -332,5 +509,82 @@ mod tests {
         .await
         .expect("completion");
         assert_eq!(http.last_body()["stop_sequences"], json!(["CALL"]));
+    }
+
+    fn caller_keys() -> TransportApiKeys {
+        TransportApiKeys {
+            anthropic: Some("a-key".to_string()),
+            openai: Some("o-key".to_string()),
+            gemini: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn caller_succeeds_and_reports_provider() {
+        let http = ok_http();
+        let config = ModelConfig::new("claude-x", Provider::Anthropic);
+        let mut caller = HonchoCaller::new(&http, caller_keys(), config, 1024);
+        caller.retry = no_backoff();
+
+        let result = caller
+            .complete(&messages(), &[json!({"name": "t"})], None)
+            .await
+            .expect("completion");
+        assert_eq!(result.content, json!("hi"));
+        assert_eq!(caller.provider(), Provider::Anthropic);
+        // The config api_key was resolved from the global anthropic key.
+        assert!(
+            http.last_headers()
+                .iter()
+                .any(|(name, value)| name == "x-api-key" && value == "a-key")
+        );
+    }
+
+    #[tokio::test]
+    async fn caller_propagates_error_after_exhausting_attempts() {
+        let http = MockHttp::err(LlmHttpError::Status {
+            status: 500,
+            body: "boom".to_string(),
+        });
+        let config = ModelConfig::new("claude-x", Provider::Anthropic);
+        let mut caller = HonchoCaller::new(&http, caller_keys(), config, 1024);
+        caller.retry = no_backoff();
+
+        let error = caller
+            .complete(&messages(), &[], None)
+            .await
+            .expect_err("all attempts fail");
+        assert!(error.contains("500"));
+    }
+
+    #[tokio::test]
+    async fn caller_uses_fallback_on_final_attempt() {
+        // Anthropic primary with an OpenAI fallback; every call errs, so after the
+        // 2-attempt budget the LAST dispatch (captured by the mock) is the
+        // fallback provider's endpoint.
+        let http = MockHttp::err(LlmHttpError::Status {
+            status: 500,
+            body: "boom".to_string(),
+        });
+        let mut config = ModelConfig::new("claude-x", Provider::Anthropic);
+        config.fallback = Some(Box::new(ModelConfig::new("gpt-x", Provider::Openai)));
+        let mut caller = HonchoCaller::new(&http, caller_keys(), config, 1024);
+        caller.retry = no_backoff();
+
+        let _ = caller.complete(&messages(), &[], None).await;
+        assert!(http.last_url().ends_with("/chat/completions"));
+        assert_eq!(caller.provider(), Provider::Openai);
+    }
+
+    #[test]
+    fn backoff_grows_then_caps() {
+        let policy = RetryPolicy {
+            attempts: 5,
+            backoff_min: Duration::from_secs(4),
+            backoff_max: Duration::from_secs(10),
+        };
+        assert_eq!(policy.backoff_for(1), Duration::from_secs(4));
+        assert_eq!(policy.backoff_for(2), Duration::from_secs(8));
+        assert_eq!(policy.backoff_for(3), Duration::from_secs(10)); // 16 capped to 10
     }
 }
