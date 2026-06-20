@@ -9,11 +9,13 @@
 //! byte-identically. [`execute_completion`] returns
 //! [`ExecutorError::UnsupportedProvider`] for Gemini until that send path lands.
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::backends::{anthropic, openai};
 use super::http::{Credentials, LlmHttp, LlmHttpError};
 use super::request_builder::{build_config_extra_params, effective_max_tokens};
+use super::runtime::effective_config_for_call;
+use super::types::{HonchoLLMCallResponse, completion_result_to_response};
 use super::{CompletionResult, ModelConfig, Provider};
 
 /// An error from [`execute_completion`].
@@ -109,6 +111,67 @@ pub async fn execute_completion<H: LlmHttp>(
     }
 }
 
+/// One backend call returning the public response, porting the non-stream path
+/// of `executor.py::honcho_llm_call_inner`: resolve the effective config
+/// ([`effective_config_for_call`]), thread the per-call `json_mode`/`verbosity`
+/// toggles through `extra_params`, run [`execute_completion`], and map the
+/// backend result with [`completion_result_to_response`]. Retry, fallback, and
+/// the tool loop sit *above* this (the `api.py::honcho_llm_call` layer).
+///
+/// `stop_seqs` is folded into the effective config here, so `execute_completion`
+/// is invoked with no separate `stop` (it reads `config.stop_sequences`).
+#[allow(clippy::too_many_arguments)]
+pub async fn honcho_llm_call_inner<H: LlmHttp>(
+    http: &H,
+    credentials: &Credentials,
+    provider: Provider,
+    model: &str,
+    messages: &[Value],
+    max_tokens: i64,
+    selected_config: Option<&ModelConfig>,
+    temperature: Option<f64>,
+    stop_seqs: Option<&[String]>,
+    thinking_budget_tokens: Option<i64>,
+    reasoning_effort: Option<&str>,
+    tools: Option<&[Value]>,
+    tool_choice: Option<&Value>,
+    json_mode: bool,
+    verbosity: Option<&str>,
+) -> Result<HonchoLLMCallResponse, ExecutorError> {
+    let effective_config = effective_config_for_call(
+        selected_config,
+        provider,
+        model,
+        temperature,
+        stop_seqs,
+        thinking_budget_tokens,
+        reasoning_effort,
+    );
+
+    // Per-call transport toggles, not ModelConfig knobs (Python always sets both
+    // keys, verbosity as null when unset).
+    let mut call_extras = Map::new();
+    call_extras.insert("json_mode".to_string(), json!(json_mode));
+    call_extras.insert(
+        "verbosity".to_string(),
+        verbosity.map_or(Value::Null, |value| json!(value)),
+    );
+
+    let result = execute_completion(
+        http,
+        credentials,
+        &effective_config,
+        messages,
+        max_tokens,
+        tools,
+        tool_choice,
+        None,
+        Some(&call_extras),
+    )
+    .await?;
+    Ok(completion_result_to_response(&result))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +250,65 @@ mod tests {
         .expect("completion");
         assert_eq!(http.last_body()["max_tokens"], json!(256));
         assert_eq!(http.last_body()["top_p"], json!(0.9));
+    }
+
+    #[tokio::test]
+    async fn inner_call_maps_backend_result_to_response() {
+        let http = ok_http();
+        let creds = Credentials::new("key");
+        let response = honcho_llm_call_inner(
+            &http,
+            &creds,
+            Provider::Anthropic,
+            "claude-x",
+            &messages(),
+            1024,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("inner call");
+        assert_eq!(response.content, json!("hi"));
+        assert_eq!(response.input_tokens, 1);
+        assert_eq!(response.output_tokens, 2);
+        assert_eq!(response.finish_reasons, vec!["end_turn".to_string()]);
+        assert!(http.last_url().ends_with("/v1/messages"));
+    }
+
+    #[tokio::test]
+    async fn inner_call_folds_stop_seqs_and_reasoning_effort() {
+        let http = ok_http();
+        let creds = Credentials::new("key");
+        let stop = vec!["DONE".to_string()];
+        honcho_llm_call_inner(
+            &http,
+            &creds,
+            Provider::Openai,
+            "gpt-x",
+            &messages(),
+            1024,
+            None,
+            None,
+            Some(&stop),
+            None,
+            Some("high"),
+            None,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("inner call");
+        let body = http.last_body();
+        assert_eq!(body["stop"], json!(["DONE"]));
+        assert_eq!(body["reasoning_effort"], json!("high"));
     }
 
     #[tokio::test]
