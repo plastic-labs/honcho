@@ -42,6 +42,9 @@ def _enforce_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
                 k: _enforce_strict_schema(v)
                 for k, v in schema["properties"].items()
             }
+            # Strict mode requires every property key to appear in required.
+            # Optional fields use anyOf [..., null] so they can still be null.
+            schema["required"] = list(schema["properties"].keys())
     if "$defs" in schema:
         schema["$defs"] = {
             k: _enforce_strict_schema(v)
