@@ -40,6 +40,23 @@ pub struct AppConfig {
     /// Whether dream scheduling is enabled (`DREAM_ENABLED`, Python
     /// `settings.DREAM.ENABLED`, default true). `schedule_dream` 400s when off.
     pub dream_enabled: bool,
+    /// Per-transport LLM API keys (`LLM_{ANTHROPIC,OPENAI,GEMINI}_API_KEY`),
+    /// used by the dialectic completion calls. `None` for an unconfigured
+    /// transport (its calls then fail auth).
+    pub llm_anthropic_api_key: Option<String>,
+    pub llm_openai_api_key: Option<String>,
+    pub llm_gemini_api_key: Option<String>,
+}
+
+impl AppConfig {
+    /// The per-transport LLM keys for the dialectic credential resolver.
+    pub fn llm_keys(&self) -> crate::llm::credentials::TransportApiKeys {
+        crate::llm::credentials::TransportApiKeys {
+            anthropic: self.llm_anthropic_api_key.clone(),
+            openai: self.llm_openai_api_key.clone(),
+            gemini: self.llm_gemini_api_key.clone(),
+        }
+    }
 }
 
 /// The resolved embedding configuration the synchronous search-query embedding
@@ -211,6 +228,16 @@ impl AppConfig {
             .map(String::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
+        let read_key = |key: &str| {
+            values
+                .get(key)
+                .map(String::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+        };
+        let llm_anthropic_api_key = read_key("LLM_ANTHROPIC_API_KEY");
+        let llm_openai_api_key = read_key("LLM_OPENAI_API_KEY");
+        let llm_gemini_api_key = read_key("LLM_GEMINI_API_KEY");
         let dream_enabled = values
             .get("DREAM_ENABLED")
             .map(String::as_str)
@@ -250,6 +277,9 @@ impl AppConfig {
             embedding_api_key,
             embedding_base_url,
             dream_enabled,
+            llm_anthropic_api_key,
+            llm_openai_api_key,
+            llm_gemini_api_key,
         })
     }
 }

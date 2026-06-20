@@ -46,6 +46,10 @@ pub enum ApiError {
     /// (only token-limit / dimension `ValueError`s become 422 validation errors).
     #[error("{0}")]
     Embedding(String),
+    /// A dialectic completion failure (the agentic tool loop's LLM call failed
+    /// after retries). Surfaces as a 500.
+    #[error("{0}")]
+    Llm(String),
 }
 
 impl IntoResponse for ApiError {
@@ -59,9 +63,11 @@ impl IntoResponse for ApiError {
             Self::Filter(_) | Self::Validation(_) | Self::RequestValidation(_) => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
-            Self::MissingPool | Self::Database(_) | Self::Producer(_) | Self::Embedding(_) => {
-                StatusCode::INTERNAL_SERVER_ERROR
-            }
+            Self::MissingPool
+            | Self::Database(_)
+            | Self::Producer(_)
+            | Self::Embedding(_)
+            | Self::Llm(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Disabled | Self::WriteDisabled => StatusCode::METHOD_NOT_ALLOWED,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
         };

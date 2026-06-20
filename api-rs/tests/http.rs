@@ -1395,6 +1395,36 @@ fn no_auth_state() -> AppState {
     })
 }
 
+#[tokio::test]
+async fn chat_rejects_streaming_with_501() {
+    let response = build_router(no_auth_state())
+        .oneshot(
+            Request::post("/v3/workspaces/ws/peers/alice/chat")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"query": "hi", "stream": true}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+}
+
+#[tokio::test]
+async fn chat_rejects_empty_query_with_422() {
+    let response = build_router(no_auth_state())
+        .oneshot(
+            Request::post("/v3/workspaces/ws/peers/alice/chat")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"query": "   "}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
 fn no_auth_writes_state() -> AppState {
     AppState::for_test_with_writes(AuthConfig {
         use_auth: false,

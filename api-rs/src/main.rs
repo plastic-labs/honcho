@@ -30,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bind_address = config.bind_address;
     let embedding = config.embedding_config();
     let dream_enabled = config.dream_enabled;
+    let llm_keys = config.llm_keys();
     let app = build_router(AppState::new(
         pool,
         config.auth,
@@ -40,6 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         config.embedding_max_tokens,
         embedding,
         dream_enabled,
+        honcho_api_rs::dialectic_config::DialecticSettings::default(),
+        llm_keys,
     ));
 
     tracing::info!("honcho-api-rs listening on {bind_address}");

@@ -33,6 +33,10 @@ pub struct AppState {
     pub embedding_max_tokens: usize,
     pub embedding: EmbeddingConfig,
     pub dream_enabled: bool,
+    /// Dialectic reasoning-level config (model + token budgets per level).
+    pub dialectic: crate::dialectic_config::DialecticSettings,
+    /// Per-transport LLM API keys for the dialectic completion calls.
+    pub llm_keys: crate::llm::credentials::TransportApiKeys,
 }
 
 fn default_test_embedding_config() -> EmbeddingConfig {
@@ -58,6 +62,8 @@ impl AppState {
         embedding_max_tokens: usize,
         embedding: EmbeddingConfig,
         dream_enabled: bool,
+        dialectic: crate::dialectic_config::DialecticSettings,
+        llm_keys: crate::llm::credentials::TransportApiKeys,
     ) -> Self {
         Self {
             pool: Some(pool),
@@ -69,6 +75,8 @@ impl AppState {
             embedding_max_tokens,
             embedding,
             dream_enabled,
+            dialectic,
+            llm_keys,
         }
     }
 
@@ -83,6 +91,8 @@ impl AppState {
             embedding_max_tokens: 8192,
             embedding: default_test_embedding_config(),
             dream_enabled: true,
+            dialectic: crate::dialectic_config::DialecticSettings::default(),
+            llm_keys: crate::llm::credentials::TransportApiKeys::default(),
         }
     }
 
@@ -97,6 +107,8 @@ impl AppState {
             embedding_max_tokens: 8192,
             embedding: default_test_embedding_config(),
             dream_enabled: true,
+            dialectic: crate::dialectic_config::DialecticSettings::default(),
+            llm_keys: crate::llm::credentials::TransportApiKeys::default(),
         }
     }
 
@@ -240,6 +252,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v3/workspaces/{workspace_id}/peers/{peer_id}/card",
             get(get_peer_card).put(set_peer_card),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/peers/{peer_id}/chat",
+            post(chat),
         )
         .route(
             "/v3/workspaces/{workspace_id}/sessions/list",
@@ -1013,6 +1029,106 @@ async fn get_peer_card(
         )
             .into_response()),
     }
+}
+
+/// Request body for the dialectic chat endpoint, porting `schemas.DialecticOptions`.
+#[derive(serde::Deserialize)]
+struct DialecticBody {
+    query: String,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    reasoning_level: Option<String>,
+    #[serde(default)]
+    stream: bool,
+}
+
+/// `POST /v3/workspaces/{workspace_id}/peers/{peer_id}/chat` — the dialectic
+/// agent endpoint, porting `routers/peers.py::chat` (non-streaming). The querying
+/// peer is `peer_id` (observer); the subject is `target` (observed), defaulting to
+/// the observer for the omniscient/global perspective. Returns
+/// `DialecticResponse{content}` (null when the answer is empty).
+///
+/// Not yet ported: SSE streaming (`stream: true` → 501), peer-card injection
+/// (cards are passed as `None`), and the get-or-create-peer write the Python
+/// endpoint performs first (the read-only sidecar assumes the peer exists).
+async fn chat(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, peer_id)): Path<(String, String)>,
+    Json(body): Json<DialecticBody>,
+) -> Result<Response, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        Some(&peer_id),
+        None,
+    )?;
+
+    if body.stream {
+        return Err(ApiError::NotImplemented(
+            "Streaming dialectic chat is not yet supported in the Rust sidecar".to_string(),
+        ));
+    }
+    if body.query.trim().is_empty() {
+        return Err(ApiError::Validation("query is required".to_string()));
+    }
+
+    let level = body
+        .reasoning_level
+        .as_deref()
+        .and_then(crate::dialectic_config::ReasoningLevel::parse)
+        .unwrap_or(crate::dialectic_config::ReasoningLevel::Low);
+    let observed = body.target.clone().unwrap_or_else(|| peer_id.clone());
+    let pool = state.pool()?;
+
+    // One HTTP client for both the embedding (prefetch + search tools) and the
+    // completion calls. A missing embedding key just makes prefetch degrade to
+    // no-prefetch (the embed call errors and is swallowed).
+    let http = ReqwestHttp::default();
+    let embedder = crate::dialectic::OpenAiEmbedder {
+        http: &http,
+        credentials: Credentials::with_base_url(
+            state.embedding.api_key.clone().unwrap_or_default(),
+            state.embedding.base_url.clone(),
+        ),
+        model: state.embedding.model.clone(),
+        vector_dimensions: state.embedding.vector_dimensions,
+        send_dimensions: state.embedding.send_dimensions,
+        max_tokens: state.embedding.max_tokens,
+    };
+
+    let answer = crate::dialectic_agent::answer(
+        pool,
+        &http,
+        state.llm_keys.clone(),
+        embedder,
+        &state.dialectic,
+        &workspace_id,
+        body.session_id.as_deref(),
+        &peer_id,
+        &observed,
+        None,
+        None,
+        &body.query,
+        level,
+    )
+    .await
+    .map_err(|error| match error {
+        crate::dialectic_agent::DialecticError::Db(err) => ApiError::Database(err),
+        crate::dialectic_agent::DialecticError::ToolLoop(err) => ApiError::Llm(err.to_string()),
+    })?;
+
+    let content = if answer.is_empty() {
+        Value::Null
+    } else {
+        Value::String(answer)
+    };
+    Ok(Json(json!({ "content": content })).into_response())
 }
 
 async fn set_peer_card(
