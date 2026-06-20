@@ -2281,6 +2281,83 @@ async fn query_documents_full_feeds_from_documents() {
     test_db.teardown().await;
 }
 
+/// `query_documents_by_levels` restricts results to the requested reasoning
+/// levels (the dialectic prefetch path). Deterministic one-hot embeddings.
+#[tokio::test]
+async fn query_documents_by_levels_filters_by_level() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    sqlx::query(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, 'ws', 'obs', 'obsd')",
+    )
+    .bind(doc_id(99))
+    .execute(&test_db.pool)
+    .await
+    .expect("collection");
+
+    for (id, content, level) in [
+        (doc_id(1), "explicit fact", "explicit"),
+        (doc_id(2), "deductive conclusion", "deductive"),
+        (doc_id(3), "inductive pattern", "inductive"),
+    ] {
+        sqlx::query(
+            "INSERT INTO documents \
+             (id, content, embedding, workspace_name, observer, observed, level, sync_state) \
+             VALUES ($1, $2, $3::vector, 'ws', 'obs', 'obsd', $4, 'synced')",
+        )
+        .bind(&id)
+        .bind(content)
+        .bind(one_hot_literal(5))
+        .bind(level)
+        .execute(&test_db.pool)
+        .await
+        .expect("seed document");
+    }
+
+    // Only explicit.
+    let explicit = db::query_documents_by_levels(
+        &test_db.pool,
+        "ws",
+        "obs",
+        "obsd",
+        &query_vector(&[(5, 1.0)]),
+        &["explicit".to_string()],
+        10,
+    )
+    .await
+    .expect("explicit query");
+    assert_eq!(explicit.len(), 1);
+    assert_eq!(explicit[0].level, "explicit");
+
+    // Derived levels (deductive + inductive).
+    let derived = db::query_documents_by_levels(
+        &test_db.pool,
+        "ws",
+        "obs",
+        "obsd",
+        &query_vector(&[(5, 1.0)]),
+        &["deductive".to_string(), "inductive".to_string()],
+        10,
+    )
+    .await
+    .expect("derived query");
+    assert_eq!(derived.len(), 2);
+    assert!(derived.iter().all(|d| d.level != "explicit"));
+
+    test_db.teardown().await;
+}
+
 #[tokio::test]
 async fn reasoning_chain_documents_and_children() {
     let Some(test_db) = TestDb::setup().await else {

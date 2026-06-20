@@ -2382,6 +2382,44 @@ pub async fn query_documents_full(
     Ok(documents)
 }
 
+/// Semantic document search restricted to the given reasoning `levels`, for the
+/// dialectic prefetch path (Python `search_memory` with
+/// `filters={"level": {"in": levels}}`). The Conclusion `FilterTarget` does not
+/// map the `level` column, so this binds a Postgres `text[]` for the `ANY` test
+/// directly rather than going through the generic filter builder. Returns the
+/// full document shape ordered by pgvector cosine distance.
+pub async fn query_documents_by_levels(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    embedding: &[f32],
+    levels: &[String],
+    top_k: i64,
+) -> Result<Vec<crate::representation::Document>, sqlx::Error> {
+    let documents = sqlx::query_as::<_, DocumentRow>(
+        "SELECT id, content, level, created_at, session_name, source_ids, internal_metadata \
+         FROM documents \
+         WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+           AND embedding IS NOT NULL AND deleted_at IS NULL \
+           AND level = ANY($4) \
+         ORDER BY embedding <=> $5::vector \
+         LIMIT $6",
+    )
+    .bind(workspace_name)
+    .bind(observer)
+    .bind(observed)
+    .bind(levels)
+    .bind(crate::search::vector_literal(embedding))
+    .bind(top_k)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(document_from_row)
+    .collect();
+    Ok(documents)
+}
+
 pub async fn get_message(
     pool: &PgPool,
     workspace_name: &str,
