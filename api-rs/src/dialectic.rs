@@ -857,6 +857,14 @@ pub async fn prefetch_observations(
 /// LLM tool loop abstracts its completion/transport seams.
 pub trait Embedder {
     fn embed(&self, query: &str) -> impl Future<Output = Result<Vec<f32>, String>> + Send;
+
+    /// Batch-embed `texts`, returning vectors in input order. The production
+    /// [`OpenAiEmbedder`] issues one batched request matching
+    /// `simple_batch_embed`; test mocks typically map [`Embedder::embed`].
+    fn batch_embed(
+        &self,
+        texts: &[String],
+    ) -> impl Future<Output = Result<Vec<Vec<f32>>, String>> + Send;
 }
 
 /// The production [`Embedder`]: wraps [`crate::embedding::embed_openai`] with the
@@ -879,6 +887,20 @@ impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OpenAiEmbedder<'_, H> {
             &self.credentials,
             &self.model,
             query,
+            self.vector_dimensions,
+            self.send_dimensions,
+            self.max_tokens,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        crate::embedding::embed_openai_batch(
+            self.http,
+            &self.credentials,
+            &self.model,
+            texts,
             self.vector_dimensions,
             self.send_dimensions,
             self.max_tokens,

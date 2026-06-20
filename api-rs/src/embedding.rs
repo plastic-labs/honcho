@@ -223,6 +223,119 @@ pub async fn embed_openai<H: LlmHttp>(
     parse_openai_embedding_response(&response, vector_dimensions)
 }
 
+/// Build the OpenAI `/embeddings` request body for a batch of inputs (the
+/// `input` field is the full list, embedded in one request).
+pub fn build_openai_embedding_request_batch(
+    model: &str,
+    inputs: &[String],
+    dimensions: Option<usize>,
+) -> Value {
+    let mut body = serde_json::Map::new();
+    body.insert("model".to_string(), json!(model));
+    body.insert(
+        "input".to_string(),
+        Value::Array(inputs.iter().map(|s| Value::String(s.clone())).collect()),
+    );
+    if let Some(dimensions) = dimensions {
+        body.insert("dimensions".to_string(), json!(dimensions));
+    }
+    Value::Object(body)
+}
+
+/// Parse a batch embedding response, reassembling vectors into input order by
+/// each item's `index` (the OpenAI API may return them out of order). Validates
+/// the count and per-vector dimensionality.
+pub fn parse_openai_embedding_response_batch(
+    response: &Value,
+    expected_count: usize,
+    vector_dimensions: usize,
+) -> Result<Vec<Vec<f32>>, EmbedError> {
+    let data = response
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or(EmbedError::NoEmbedding)?;
+    if data.len() != expected_count {
+        return Err(EmbedError::NoEmbedding);
+    }
+    let mut out: Vec<Option<Vec<f32>>> = vec![None; expected_count];
+    for item in data {
+        let index = item
+            .get("index")
+            .and_then(Value::as_u64)
+            .ok_or(EmbedError::NoEmbedding)? as usize;
+        if index >= expected_count {
+            return Err(EmbedError::NoEmbedding);
+        }
+        let values = item
+            .get("embedding")
+            .and_then(Value::as_array)
+            .ok_or(EmbedError::NoEmbedding)?;
+        let embedding: Vec<f32> = values
+            .iter()
+            .filter_map(|value| value.as_f64().map(|f| f as f32))
+            .collect();
+        if embedding.len() != vector_dimensions {
+            return Err(EmbedError::DimensionMismatch {
+                expected: vector_dimensions,
+                got: embedding.len(),
+            });
+        }
+        out[index] = Some(embedding);
+    }
+    out.into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(EmbedError::NoEmbedding)
+}
+
+/// Batch-embed `texts` in a single OpenAI request, mirroring
+/// `embedding_client.simple_batch_embed`: validate each input's cl100k token
+/// count against `max_embedding_tokens` up front (erroring on the first
+/// violation, as Python raises `ValueError`), then embed and return vectors in
+/// input order. An empty input yields an empty result.
+///
+/// Deviation: Python sub-batches across multiple requests to respect a
+/// per-request token cap; this sends all inputs in one request. That is faithful
+/// for the deriver/dreamer batch sizes (bounded well under the OpenAI
+/// per-request limit); the per-input cap — the only correctness-relevant
+/// validation — is preserved.
+pub async fn embed_openai_batch<H: LlmHttp>(
+    http: &H,
+    credentials: &Credentials,
+    model: &str,
+    texts: &[String],
+    vector_dimensions: usize,
+    send_dimensions: bool,
+    max_embedding_tokens: usize,
+) -> Result<Vec<Vec<f32>>, EmbedError> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+    for text in texts {
+        let token_count = embedding_token_count(text);
+        if token_count > max_embedding_tokens {
+            return Err(EmbedError::TokenLimit {
+                limit: max_embedding_tokens,
+                got: token_count,
+            });
+        }
+    }
+    let dimensions = send_dimensions.then_some(vector_dimensions);
+    let body = build_openai_embedding_request_batch(model, texts, dimensions);
+    let url = format!(
+        "{}/embeddings",
+        credentials.effective_base_url(OPENAI_DEFAULT_BASE_URL)
+    );
+    let headers = [(
+        "Authorization".to_string(),
+        format!("Bearer {}", credentials.api_key),
+    )];
+    let response = http
+        .post_json(&url, &headers, &body)
+        .await
+        .map_err(EmbedError::Http)?;
+    parse_openai_embedding_response_batch(&response, texts.len(), vector_dimensions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +413,41 @@ mod tests {
             build_openai_embedding_request("text-embedding-3-small", "hi", None),
             json!({"model": "text-embedding-3-small", "input": ["hi"]})
         );
+    }
+
+    #[test]
+    fn batch_request_includes_all_inputs() {
+        let inputs = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(
+            build_openai_embedding_request_batch("text-embedding-3-small", &inputs, Some(1536)),
+            json!({"model": "text-embedding-3-small", "input": ["a", "b"], "dimensions": 1536})
+        );
+    }
+
+    #[test]
+    fn batch_parse_reorders_by_index() {
+        // Returned out of order; reassembled into input order.
+        let response = json!({"data": [
+            {"embedding": [0.3, 0.4], "index": 1},
+            {"embedding": [0.1, 0.2], "index": 0},
+        ]});
+        assert_eq!(
+            parse_openai_embedding_response_batch(&response, 2, 2).unwrap(),
+            vec![vec![0.1_f32, 0.2], vec![0.3_f32, 0.4]]
+        );
+    }
+
+    #[test]
+    fn batch_parse_rejects_count_and_dimension_mismatch() {
+        let response = json!({"data": [{"embedding": [0.1, 0.2], "index": 0}]});
+        assert!(matches!(
+            parse_openai_embedding_response_batch(&response, 2, 2),
+            Err(EmbedError::NoEmbedding)
+        ));
+        assert!(matches!(
+            parse_openai_embedding_response_batch(&response, 1, 3),
+            Err(EmbedError::DimensionMismatch { expected: 3, got: 2 })
+        ));
     }
 
     #[test]

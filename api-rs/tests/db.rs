@@ -1563,6 +1563,9 @@ impl dialectic::Embedder for FixedEmbedder {
     async fn embed(&self, _query: &str) -> Result<Vec<f32>, String> {
         Ok(self.0.clone())
     }
+    async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        Ok(texts.iter().map(|_| self.0.clone()).collect())
+    }
 }
 
 #[tokio::test]
@@ -2288,6 +2291,9 @@ struct StubEmbedder;
 impl honcho_api_rs::dialectic::Embedder for StubEmbedder {
     async fn embed(&self, _query: &str) -> Result<Vec<f32>, String> {
         Ok(vec![0.0_f32; 1536])
+    }
+    async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        Ok(texts.iter().map(|_| vec![0.0_f32; 1536]).collect())
     }
 }
 
@@ -3444,6 +3450,139 @@ async fn create_documents_dedup_keeps_dissimilar_doc() {
     .await
     .expect("count live");
     assert_eq!(live, 2);
+
+    test_db.teardown().await;
+}
+
+// --- save_representation orchestrator ---
+
+struct IndexedEmbedder;
+impl honcho_api_rs::dialectic::Embedder for IndexedEmbedder {
+    async fn embed(&self, _query: &str) -> Result<Vec<f32>, String> {
+        Ok(query_vector(&[(0, 1.0)]))
+    }
+    async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        // Distinct one-hot per input so dedup doesn't collapse them.
+        Ok(texts
+            .iter()
+            .enumerate()
+            .map(|(i, _)| query_vector(&[(i, 1.0)]))
+            .collect())
+    }
+}
+
+#[tokio::test]
+async fn save_representation_writes_documents() {
+    use honcho_api_rs::representation::{ExplicitObservation, Representation};
+    use honcho_api_rs::representation_manager::save_representation;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    // create_messages auto-creates workspace+session+peer bob; add peer alice.
+    db::create_messages(&test_db.pool, "ws", "sess", &[message("bob", "hi")], false, 8192)
+        .await
+        .expect("seed session");
+    db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("peer alice");
+
+    let created = Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0).unwrap();
+    let rep = Representation {
+        explicit: vec![
+            ExplicitObservation {
+                id: String::new(),
+                created_at: created,
+                message_ids: vec![1],
+                session_name: Some("sess".to_string()),
+                content: "bob likes coffee".to_string(),
+            },
+            ExplicitObservation {
+                id: String::new(),
+                created_at: created,
+                message_ids: vec![1],
+                session_name: Some("sess".to_string()),
+                content: "bob lives in Berlin".to_string(),
+            },
+        ],
+        ..Representation::default()
+    };
+
+    let count = save_representation(
+        &test_db.pool,
+        &IndexedEmbedder,
+        "ws",
+        "alice",
+        "bob",
+        &rep,
+        &[1],
+        "sess",
+        created,
+        true,
+    )
+    .await
+    .expect("save representation");
+    assert_eq!(count, 2);
+
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT content, level, sync_state FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL ORDER BY content",
+    )
+    .fetch_all(&test_db.pool)
+    .await
+    .expect("docs");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, "bob likes coffee");
+    assert_eq!(rows[0].1, "explicit");
+    assert_eq!(rows[0].2, "synced");
+
+    // The collection was created.
+    let collections: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM collections WHERE observer = 'alice' AND observed = 'bob'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("collection count");
+    assert_eq!(collections, 1);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn save_representation_empty_writes_nothing() {
+    use honcho_api_rs::representation::Representation;
+    use honcho_api_rs::representation_manager::save_representation;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    let created = Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0).unwrap();
+    let count = save_representation(
+        &test_db.pool,
+        &IndexedEmbedder,
+        "ws",
+        "alice",
+        "bob",
+        &Representation::default(),
+        &[1],
+        "sess",
+        created,
+        true,
+    )
+    .await
+    .expect("save empty");
+    assert_eq!(count, 0);
+
+    // No collection created (we returned before any DB work).
+    let collections: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM collections")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("collection count");
+    assert_eq!(collections, 0);
 
     test_db.teardown().await;
 }
