@@ -802,6 +802,70 @@ pub fn dialectic_tools_minimal() -> Vec<serde_json::Value> {
     vec![search_memory_tool(), search_messages_tool()]
 }
 
+/// The fully-static body of the dialectic system prompt (from
+/// `## AVAILABLE TOOLS` onward), extracted verbatim from
+/// `dialectic/prompts.py::agent_system_prompt`. Kept as an included file rather
+/// than an inline literal to avoid transcription drift in ~150 lines of prompt.
+const SYSTEM_PROMPT_BODY: &str = include_str!("dialectic_prompt_body.txt");
+
+/// Port of `dialectic/prompts.py::agent_system_prompt`. Builds the templated
+/// prefix (directional vs global perspective by `observer == observed`, the
+/// observer/observed peer-card sections, and the peer-card explanation gate)
+/// and appends the static body. Byte-identical to the Python f-string, including
+/// its blank-line spacing. Note the empty-list-vs-`None` distinction: the
+/// peer-card *explanation* is gated on `card is not None` (an empty list still
+/// enables it) while each card *section* is gated on the list being non-empty.
+pub fn agent_system_prompt(
+    observer: &str,
+    observed: &str,
+    observer_peer_card: Option<&[String]>,
+    observed_peer_card: Option<&[String]>,
+) -> String {
+    let peer_cards_enabled = observer_peer_card.is_some() || observed_peer_card.is_some();
+    fn non_empty(card: Option<&[String]>) -> Option<&[String]> {
+        card.filter(|items| !items.is_empty())
+    }
+
+    let perspective_section = if observer != observed {
+        let observer_card_section = match non_empty(observer_peer_card) {
+            Some(card) => format!(
+                "\nKnown biographical information about {observer} (the one asking):\n<observer_peer_card>\n{}\n</observer_peer_card>\n",
+                card.join("\n")
+            ),
+            None => String::new(),
+        };
+        let observed_card_section = match non_empty(observed_peer_card) {
+            Some(card) => format!(
+                "\nKnown biographical information about {observed} (the subject):\n<observed_peer_card>\n{}\n</observed_peer_card>\n",
+                card.join("\n")
+            ),
+            None => String::new(),
+        };
+        format!(
+            "\nYou are answering queries from the perspective of {observer}'s understanding of {observed}.\nThis is a directional query - {observer} wants to know about {observed}.\n\n{observer_card_section}\n{observed_card_section}\n"
+        )
+    } else {
+        let peer_card_section = match non_empty(observer_peer_card) {
+            Some(card) => format!(
+                "\nKnown biographical information about {observed}:\n<peer_card>\n{}\n</peer_card>\n",
+                card.join("\n")
+            ),
+            None => String::new(),
+        };
+        format!("\nYou are answering queries about '{observed}'.\n\n{peer_card_section}\n")
+    };
+
+    let peer_card_explanation = if peer_cards_enabled {
+        "\nPeer cards are **constructed summaries** - they are synthesized from the same observations stored in memory. This means:\n- Information in a peer card originates from observations you can also find via `search_memory`\n- The peer card is a convenience summary, not a separate source of truth\n"
+    } else {
+        ""
+    };
+
+    let intro = "\nYou are a helpful and concise context synthesis agent that answers questions about users by gathering relevant information from a memory system.\n\nAlways give users the answer *they expect* based on the message history -- the goal is to help recall and *reason through* insights that the memory system has already gathered. You have many tools for gathering context. Search wisely.\n";
+
+    format!("{intro}\n{perspective_section}\n{peer_card_explanation}\n{SYSTEM_PROMPT_BODY}")
+}
+
 fn search_memory_tool() -> serde_json::Value {
     serde_json::json!({
         "name": "search_memory",
@@ -1074,6 +1138,35 @@ mod tests {
             "Found 1 messages containing 'here' in 1 conversation snippets:\n\n\
              --- Snippet 1 (session: s1, 1 match(es)) ---\n\
              2023-05-08 13:56:00 alice: look here now"
+        );
+    }
+
+    #[test]
+    fn agent_system_prompt_matches_python_fixtures() {
+        let fixtures: std::collections::HashMap<String, String> =
+            serde_json::from_str(include_str!("../tests/fixtures/dialectic_prompts.json")).unwrap();
+
+        assert_eq!(
+            agent_system_prompt("alice", "alice", None, None),
+            fixtures["global_no_cards"]
+        );
+        assert_eq!(
+            agent_system_prompt(
+                "alice",
+                "alice",
+                Some(&["IDENTITY: Alice".to_string(), "ATTRIBUTE: likes tea".to_string()]),
+                None
+            ),
+            fixtures["global_with_card"]
+        );
+        assert_eq!(
+            agent_system_prompt(
+                "alice",
+                "bob",
+                Some(&["IDENTITY: Alice".to_string()]),
+                Some(&["IDENTITY: Bob".to_string()])
+            ),
+            fixtures["directional_both_cards"]
         );
     }
 
