@@ -708,6 +708,81 @@ pub async fn handle_search_messages_temporal(
     ))
 }
 
+/// Port of the `search_memory` tool handler. Takes a **pre-computed**
+/// `query_embedding` (the embedding call is the caller's responsibility, like
+/// the sibling semantic-search handlers). `top_k` defaults to 20, capped at 40.
+///
+/// The resulting `Representation` is rendered with its `Display` impl: the
+/// dialectic agent runs with `include_observation_ids = false`, so the
+/// `str_with_ids` variant is not used here. On empty memory it falls back to a
+/// message search (the Python `agent_type == "dialectic"` branch — the only
+/// agent this read-only sidecar hosts), since an empty representation means the
+/// workspace/peer is early in its lifecycle and a message hit is more useful
+/// than a bare "nothing found".
+pub async fn handle_search_memory(
+    pool: &PgPool,
+    ctx: &ToolContext,
+    input: &Value,
+    query_embedding: &[f32],
+) -> Result<String, sqlx::Error> {
+    let query = input_str(input, "query").unwrap_or("");
+    let top_k = input_int(input, "top_k", 20).min(40);
+
+    // search_memory passes no level filter (all reasoning levels) and no
+    // distance bound — an empty clause leaves the query's fixed WHERE intact.
+    let filter = crate::filters::FilterClause {
+        sql: String::new(),
+        bindings: Vec::new(),
+    };
+    let documents = db::query_documents_full(
+        pool,
+        &ctx.workspace_name,
+        &ctx.observer,
+        &ctx.observed,
+        query_embedding,
+        &filter,
+        None,
+        top_k,
+    )
+    .await?;
+    let representation = crate::representation::Representation::from_documents(&documents);
+    let total = representation.count();
+
+    if total == 0 {
+        // Empty-memory fallback: re-use the same embedding for a message search
+        // (limit re-derived from the raw top_k, capped at 20; context window 0).
+        let limit = input_int(input, "top_k", 20).min(20);
+        let snippets = db::search_messages_semantic(
+            pool,
+            &ctx.workspace_name,
+            ctx.session_name.as_deref(),
+            Some(&ctx.observer),
+            query_embedding,
+            None,
+            None,
+            limit,
+            0,
+        )
+        .await?;
+        if !snippets.is_empty() {
+            let message_output =
+                format_message_snippets(&snippets, &format!("for query '{query}'"));
+            return Ok(format!(
+                "No observations yet. Message search results:\n\n{message_output}"
+            ));
+        }
+        return Ok(format!(
+            "No observations found for query '{query}', and no messages found in history. \
+             Try a different phrasing or use grep_messages for exact text."
+        ));
+    }
+
+    let mem_str = representation.to_string();
+    Ok(format!(
+        "Found {total} observations for query '{query}':\n\n{mem_str}"
+    ))
+}
+
 /// The query-embedding seam the dialectic tool executor needs for the
 /// semantic-search tools. Production wraps the OpenAI embedding client
 /// (`embedding::embed_openai`); tests use a fixed-vector mock. Mirrors how the
@@ -722,8 +797,7 @@ pub trait Embedder {
 /// first for the semantic-search tools. DB errors and embed failures map to
 /// `Err(String)` (the loop folds those into an `is_error` tool result, like
 /// Python's `except` branch); the handlers' own `ERROR:` strings are normal
-/// `Ok` results. Unhandled tools (writes / `search_memory` / dreamer tools)
-/// return an `Err`.
+/// `Ok` results. Unhandled tools (writes / dreamer tools) return an `Err`.
 pub struct DialecticToolExecutor<'a, E: Embedder> {
     pub pool: &'a PgPool,
     pub ctx: ToolContext,
@@ -750,6 +824,15 @@ impl<E: Embedder + Sync> ToolExecutor for DialecticToolExecutor<'_, E> {
             "get_reasoning_chain" => handle_get_reasoning_chain(self.pool, &self.ctx, input)
                 .await
                 .map_err(to_err),
+            "search_memory" => {
+                // search_memory always embeds (the query drives both the vector
+                // memory search and the empty-memory message fallback).
+                let query = input_str(input, "query").unwrap_or("");
+                let embedding = self.embedder.embed(query).await?;
+                handle_search_memory(self.pool, &self.ctx, input, &embedding)
+                    .await
+                    .map_err(to_err)
+            }
             "search_messages" => {
                 // Embed only when the query is present; an empty query short-
                 // circuits to the handler's ERROR before the embedding is used.
@@ -782,8 +865,7 @@ impl<E: Embedder + Sync> ToolExecutor for DialecticToolExecutor<'_, E> {
 /// The dialectic agent's tool schemas (`DIALECTIC_TOOLS`), verbatim from Python's
 /// `TOOLS`, in Anthropic-native `{name, description, input_schema}` form — the
 /// provider request builders (`backends::{anthropic,openai}::build_request`)
-/// convert these to each backend's wire shape. `search_memory` is included for
-/// the LLM to call even though its handler (a `Representation`) is not yet ported.
+/// convert these to each backend's wire shape.
 pub fn dialectic_tools() -> Vec<serde_json::Value> {
     vec![
         search_memory_tool(),
