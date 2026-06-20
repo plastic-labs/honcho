@@ -367,6 +367,41 @@ impl ContradictionObservation {
     }
 }
 
+/// The LLM structured-output shape (`PromptRepresentation`). The minimal
+/// deriver only asks for `explicit`; each entry is an `ExplicitObservationBase`
+/// (`{"content": "..."}`). Stored here as the bare content strings since that is
+/// all [`Representation::from_prompt_representation`] consumes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PromptRepresentation {
+    pub explicit: Vec<String>,
+}
+
+impl PromptRepresentation {
+    /// Parse the LLM's JSON object, mirroring the pydantic model: a missing or
+    /// `null` `explicit` resolves to an empty list (`default_factory` +
+    /// `convert_none_to_empty_list`), and each element must be an object with a
+    /// string `content` (the required `ExplicitObservationBase` field) — a
+    /// missing/non-string `content` or a non-list `explicit` is a validation
+    /// error, just as `model_validate` would raise. Extra keys are ignored.
+    pub fn from_value(value: &Value) -> Result<Self, String> {
+        let explicit = match value.get("explicit") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(items)) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    let content = item.get("content").and_then(Value::as_str).ok_or_else(
+                        || "explicit observation requires a string `content`".to_string(),
+                    )?;
+                    out.push(content.to_string());
+                }
+                out
+            }
+            Some(_) => return Err("`explicit` must be a list".to_string()),
+        };
+        Ok(Self { explicit })
+    }
+}
+
 /// A traversable map of observations across the four reasoning levels.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Representation {
@@ -448,6 +483,35 @@ impl Representation {
             + self.deductive.len()
             + self.inductive.len()
             + self.contradiction.len()
+    }
+
+    /// Port of `Representation.from_prompt_representation`: lift the LLM's
+    /// explicit content strings into `ExplicitObservation`s, stamping each with
+    /// the shared `created_at`, `message_ids`, and `session_name` and an empty
+    /// id (the `ObservationMetadata.id` default). Deductive/inductive/
+    /// contradiction levels stay empty — the minimal deriver only emits explicit.
+    pub fn from_prompt_representation(
+        prompt: &PromptRepresentation,
+        message_ids: &[i64],
+        session_name: &str,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            explicit: prompt
+                .explicit
+                .iter()
+                .map(|content| ExplicitObservation {
+                    id: String::new(),
+                    created_at,
+                    message_ids: message_ids.to_vec(),
+                    session_name: Some(session_name.to_string()),
+                    content: content.clone(),
+                })
+                .collect(),
+            deductive: Vec::new(),
+            inductive: Vec::new(),
+            contradiction: Vec::new(),
+        }
     }
 
     /// Port of `Representation.format_as_markdown`. Each non-empty level becomes
@@ -579,6 +643,7 @@ impl fmt::Display for Representation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn ts(rfc3339: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(rfc3339)
@@ -863,7 +928,6 @@ mod tests {
 
     #[test]
     fn flatten_message_ids_handles_flat_nested_and_dupes() {
-        use serde_json::json;
         assert_eq!(flatten_message_ids(Some(&json!([3, 1, 2]))), vec![1, 2, 3]);
         assert_eq!(flatten_message_ids(Some(&json!([[1, 2], [3, 4]]))), vec![1, 2, 3, 4]);
         assert_eq!(flatten_message_ids(Some(&json!([[105, 105]]))), vec![105]);
@@ -992,5 +1056,76 @@ mod tests {
         assert!(md.contains("   - source 5"));
         assert!(!md.contains("   - source 6"));
         assert!(md.contains("   - ... and 2 more"));
+    }
+
+    // --- PromptRepresentation / from_prompt_representation ---
+
+    #[test]
+    fn prompt_representation_parses_explicit_objects() {
+        let value = json!({
+            "explicit": [{"content": "a is 25"}, {"content": "a has a dog"}],
+        });
+        let parsed = PromptRepresentation::from_value(&value).unwrap();
+        assert_eq!(parsed.explicit, vec!["a is 25", "a has a dog"]);
+    }
+
+    #[test]
+    fn prompt_representation_null_or_missing_explicit_is_empty() {
+        assert_eq!(
+            PromptRepresentation::from_value(&json!({"explicit": Value::Null})).unwrap(),
+            PromptRepresentation::default()
+        );
+        assert_eq!(
+            PromptRepresentation::from_value(&json!({})).unwrap(),
+            PromptRepresentation::default()
+        );
+    }
+
+    #[test]
+    fn prompt_representation_ignores_extra_keys() {
+        let value = json!({"explicit": [{"content": "x", "extra": 1}], "junk": true});
+        assert_eq!(
+            PromptRepresentation::from_value(&value).unwrap().explicit,
+            vec!["x"]
+        );
+    }
+
+    #[test]
+    fn prompt_representation_errors_on_bad_shape() {
+        assert!(PromptRepresentation::from_value(&json!({"explicit": "nope"})).is_err());
+        assert!(PromptRepresentation::from_value(&json!({"explicit": [{"no_content": 1}]})).is_err());
+        assert!(PromptRepresentation::from_value(&json!({"explicit": [{"content": 5}]})).is_err());
+    }
+
+    #[test]
+    fn from_prompt_representation_stamps_metadata() {
+        let prompt = PromptRepresentation {
+            explicit: vec!["fact one".to_string(), "fact two".to_string()],
+        };
+        let created = ts("2025-03-04T12:00:00Z");
+        let rep = Representation::from_prompt_representation(&prompt, &[10, 20], "sess1", created);
+
+        assert_eq!(rep.explicit.len(), 2);
+        assert!(rep.deductive.is_empty());
+        assert!(rep.inductive.is_empty());
+        assert!(rep.contradiction.is_empty());
+
+        let first = &rep.explicit[0];
+        assert_eq!(first.content, "fact one");
+        assert_eq!(first.id, "");
+        assert_eq!(first.created_at, created);
+        assert_eq!(first.message_ids, vec![10, 20]);
+        assert_eq!(first.session_name.as_deref(), Some("sess1"));
+    }
+
+    #[test]
+    fn from_prompt_representation_empty_is_empty() {
+        let rep = Representation::from_prompt_representation(
+            &PromptRepresentation::default(),
+            &[1],
+            "s",
+            ts("2025-01-01T00:00:00Z"),
+        );
+        assert!(rep.is_empty());
     }
 }
