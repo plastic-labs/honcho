@@ -25,7 +25,7 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::db;
-use crate::deriver::consumer::process_representation_work_unit_once;
+use crate::deriver::consumer::{process_item, process_representation_work_unit_once};
 use crate::deriver::deriver::{DeriverBatchContext, DeriverModelSettings};
 use crate::deriver::poll::PollScheduler;
 use crate::deriver::settings::DeriverSettings;
@@ -104,16 +104,32 @@ where
             }
         };
 
-        if work_unit.task_type != "representation" {
-            tracing::warn!(
-                task_type = %work_unit.task_type,
-                work_unit_key = %work_unit_key,
-                "task type not yet ported in the Rust worker; releasing claim, leaving queue items"
-            );
-            let _ = db::cleanup_work_unit(&self.pool, &aqs_id, &work_unit_key).await;
-            return 0;
-        }
+        let processed = match work_unit.task_type.as_str() {
+            "representation" => self.drain_representation(&work_unit, &work_unit_key, &aqs_id).await,
+            "deletion" => self.drain_via_process_item(&work_unit_key, &aqs_id).await,
+            other => {
+                tracing::warn!(
+                    task_type = %other,
+                    work_unit_key = %work_unit_key,
+                    "task type not yet ported in the Rust worker; releasing claim, leaving queue items"
+                );
+                0
+            }
+        };
 
+        // Release the claim (Python's finally `_cleanup_work_unit`). The
+        // queue.empty webhook is deferred.
+        let _ = db::cleanup_work_unit(&self.pool, &aqs_id, &work_unit_key).await;
+        processed
+    }
+
+    /// Drain a representation work unit by looping the batch iteration.
+    async fn drain_representation(
+        &self,
+        work_unit: &crate::producer::ParsedWorkUnit,
+        work_unit_key: &str,
+        aqs_id: &str,
+    ) -> usize {
         let batch_max_tokens = self.poll_settings.representation_batch_max_tokens;
         let flush_enabled = self.poll_settings.flush_enabled;
 
@@ -122,9 +138,9 @@ where
             let ctx = self.batch_context();
             match process_representation_work_unit_once(
                 &ctx,
-                &work_unit,
-                &work_unit_key,
-                &aqs_id,
+                work_unit,
+                work_unit_key,
+                aqs_id,
                 batch_max_tokens,
                 flush_enabled,
             )
@@ -133,18 +149,48 @@ where
                 Ok(Some(count)) => processed += count,
                 Ok(None) => break,
                 Err(error) => {
-                    tracing::error!(
-                        work_unit_key = %work_unit_key,
-                        "error processing representation batch: {error:?}"
-                    );
+                    tracing::error!(work_unit_key = %work_unit_key, "error processing representation batch: {error:?}");
                     break;
                 }
             }
         }
+        processed
+    }
 
-        // Release the claim (Python's finally `_cleanup_work_unit`). The
-        // queue.empty webhook is deferred.
-        let _ = db::cleanup_work_unit(&self.pool, &aqs_id, &work_unit_key).await;
+    /// Drain a non-representation work unit one item at a time via
+    /// [`process_item`] (Python's `get_next_queue_item` → `process_item` →
+    /// `mark_queue_items_as_processed` loop). On a per-item error the item is
+    /// marked errored and the loop stops (mirrors `_handle_processing_error`).
+    async fn drain_via_process_item(&self, work_unit_key: &str, aqs_id: &str) -> usize {
+        let mut processed = 0usize;
+        loop {
+            let item = match db::get_next_queue_item(&self.pool, work_unit_key, aqs_id).await {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::error!(work_unit_key = %work_unit_key, "error fetching queue item: {error}");
+                    break;
+                }
+            };
+            match process_item(&self.pool, self.emitter.as_ref(), &item).await {
+                Ok(()) => {
+                    let _ =
+                        db::mark_queue_items_as_processed(&self.pool, &[item.id], work_unit_key).await;
+                    processed += 1;
+                }
+                Err(error) => {
+                    tracing::error!(work_unit_key = %work_unit_key, "error processing queue item: {error}");
+                    let _ = db::mark_queue_item_as_errored(
+                        &self.pool,
+                        item.id,
+                        work_unit_key,
+                        &error.to_string(),
+                    )
+                    .await;
+                    break;
+                }
+            }
+        }
         processed
     }
 

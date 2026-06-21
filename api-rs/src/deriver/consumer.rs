@@ -224,6 +224,54 @@ pub async fn process_deletion(
     outcome
 }
 
+/// Failure modes of [`process_item`].
+#[derive(Debug)]
+pub enum ProcessItemError {
+    /// No ported handler for this task type yet (summary/dream/webhook/reconciler).
+    Unsupported(String),
+    /// A deletion task arrived without a `workspace_name` (Python `ValueError`).
+    MissingWorkspace,
+    /// The payload failed to validate (pydantic `ValidationError`).
+    Payload(String),
+    Database(sqlx::Error),
+}
+
+impl std::fmt::Display for ProcessItemError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProcessItemError::Unsupported(task) => write!(f, "unsupported task type: {task}"),
+            ProcessItemError::MissingWorkspace => write!(f, "task requires a workspace_name"),
+            ProcessItemError::Payload(message) => write!(f, "invalid payload: {message}"),
+            ProcessItemError::Database(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+/// Port of the non-representation dispatch in `consumer.py::process_item`. Only
+/// `deletion` is wired today; the remaining arms (webhook/summary/dream/
+/// reconciler) return [`ProcessItemError::Unsupported`] until their handlers are
+/// ported. Representation never reaches here — it goes through the batch path.
+pub async fn process_item(
+    pool: &PgPool,
+    emitter: &dyn Emitter,
+    queue_item: &db::QueueItem,
+) -> Result<(), ProcessItemError> {
+    match queue_item.task_type.as_str() {
+        "deletion" => {
+            let workspace = queue_item
+                .workspace_name
+                .as_deref()
+                .ok_or(ProcessItemError::MissingWorkspace)?;
+            let payload = DeletionPayload::from_value(&queue_item.payload)
+                .map_err(ProcessItemError::Payload)?;
+            process_deletion(pool, emitter, &payload, workspace)
+                .await
+                .map_err(ProcessItemError::Database)
+        }
+        other => Err(ProcessItemError::Unsupported(other.to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

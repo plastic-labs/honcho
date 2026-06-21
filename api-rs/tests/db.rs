@@ -3661,6 +3661,66 @@ async fn process_deletion_observation_soft_deletes_and_emits() {
 }
 
 #[tokio::test]
+async fn deriver_worker_processes_a_deletion_work_unit() {
+    use honcho_api_rs::deriver::deriver::DeriverModelSettings;
+    use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::deriver::settings::DeriverSettings;
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::telemetry::Emitter;
+    use std::sync::Arc;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    seed_deletion_fixture(&test_db.pool).await;
+
+    // Enqueue a workspace-deletion work unit (as the API accept path would).
+    sqlx::query(
+        "INSERT INTO queue (work_unit_key, payload, task_type, workspace_name, message_id, processed) \
+         VALUES ($1, $2, 'deletion', 'ws', NULL, false)",
+    )
+    .bind("deletion:ws:workspace:ws")
+    .bind(json!({"task_type": "deletion", "deletion_type": "workspace", "resource_id": "ws"}))
+    .execute(&test_db.pool)
+    .await
+    .expect("enqueue deletion");
+
+    let emitter = Arc::new(CapturingEmitter {
+        events: std::sync::Mutex::new(Vec::new()),
+    });
+    let worker = Arc::new(DeriverWorker::new(
+        test_db.pool.clone(),
+        Arc::new(CannedLlmHttp(json!(null))), // not used by the deletion path
+        Arc::new(IndexedEmbedder),
+        Arc::clone(&emitter) as Arc<dyn Emitter>,
+        TransportApiKeys::default(),
+        DeriverModelSettings::default(),
+        DeriverSettings {
+            workers: 1,
+            ..DeriverSettings::default()
+        },
+    ));
+
+    let processed = worker.poll_once().await.expect("poll once");
+    assert_eq!(processed, 1);
+
+    // The workspace was cascade-deleted and a deletion.completed event emitted.
+    let workspaces: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE name = 'ws'")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("ws count");
+    assert_eq!(workspaces, 0);
+
+    let events = emitter.events.lock().unwrap().clone();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0, "deletion.completed");
+    assert_eq!(events[0].1["success"], true);
+    assert_eq!(events[0].1["peers_deleted"], 2);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn get_or_create_collection_creates_then_reuses() {
     let Some(test_db) = TestDb::setup().await else {
         return;
