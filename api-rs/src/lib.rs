@@ -21,6 +21,7 @@ pub mod representation;
 pub mod representation_manager;
 pub mod search;
 pub mod structured_output;
+pub mod summarizer;
 pub mod telemetry;
 pub mod text;
 pub mod tokens;
