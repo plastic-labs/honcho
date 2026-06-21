@@ -9,15 +9,19 @@
 //! non-representation `process_item` arms (webhook/summary/dream/deletion/
 //! reconciler) land with the worker binary as their dependencies are ported.
 
+use chrono::Utc;
 use serde_json::Value;
 use sqlx::PgPool;
 
-use crate::db::{self, QueueBatchError};
+use crate::db::{self, HardDeleteError, QueueBatchError};
 use crate::dialectic::Embedder;
 use crate::llm::http::LlmHttp;
 use crate::producer::ParsedWorkUnit;
+use crate::telemetry::Emitter;
+use crate::telemetry::events::DeletionCompletedEvent;
 
 use super::deriver::{DeriverBatchContext, process_representation_tasks_batch};
+use super::payload::{DeletionPayload, DeletionType};
 
 /// Port of the observer-extraction in `process_work_unit`: the new payload shape
 /// carries an `observers` array; the legacy shape carries a single `observer`
@@ -133,6 +137,91 @@ where
 
     db::mark_queue_items_as_processed(pool, &item_ids, work_unit_key).await?;
     Ok(Some(item_ids.len()))
+}
+
+/// Port of `process_deletion` (`src/deriver/consumer.py`): execute a deletion
+/// task and ALWAYS emit a [`DeletionCompletedEvent`] (success or failure),
+/// mirroring Python's try/except/finally.
+///
+/// `NotFound` from the hard-delete crud is treated as idempotent success (the
+/// resource was already deleted). A DB error sets `success=false` + an
+/// `error_message` on the emitted event and is then returned to the caller.
+/// Cascade counts populate the event per deletion type.
+pub async fn process_deletion(
+    pool: &PgPool,
+    emitter: &dyn Emitter,
+    payload: &DeletionPayload,
+    workspace_name: &str,
+) -> Result<(), sqlx::Error> {
+    let resource_id = &payload.resource_id;
+    let mut success = true;
+    let mut error_message: Option<String> = None;
+    let (mut peers, mut sessions, mut messages, mut conclusions) = (0i64, 0i64, 0i64, 0i64);
+
+    let outcome: Result<(), sqlx::Error> = match payload.deletion_type {
+        DeletionType::Session => {
+            match db::hard_delete_session(pool, workspace_name, resource_id).await {
+                Ok(counts) => {
+                    messages = counts.messages_deleted;
+                    conclusions = counts.conclusions_deleted;
+                    Ok(())
+                }
+                Err(HardDeleteError::NotFound) => {
+                    tracing::warn!(session = %resource_id, "session not found during deletion (idempotent)");
+                    Ok(())
+                }
+                Err(HardDeleteError::Database(error)) => Err(error),
+            }
+        }
+        DeletionType::Observation => {
+            match db::mark_document_deleted(pool, workspace_name, resource_id).await {
+                Ok(true) => {
+                    conclusions = 1;
+                    Ok(())
+                }
+                Ok(false) => {
+                    tracing::warn!(document = %resource_id, "observation not found during deletion (idempotent)");
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            }
+        }
+        DeletionType::Workspace => match db::hard_delete_workspace(pool, workspace_name).await {
+            Ok(counts) => {
+                peers = counts.peers_deleted;
+                sessions = counts.sessions_deleted;
+                messages = counts.messages_deleted;
+                conclusions = counts.conclusions_deleted;
+                Ok(())
+            }
+            Err(HardDeleteError::NotFound) => {
+                tracing::warn!(workspace = %workspace_name, "workspace not found during deletion (idempotent)");
+                Ok(())
+            }
+            Err(HardDeleteError::Database(error)) => Err(error),
+        },
+    };
+
+    if let Err(ref error) = outcome {
+        success = false;
+        error_message = Some(error.to_string());
+    }
+
+    // `finally`: the event always fires.
+    emitter.emit(&DeletionCompletedEvent {
+        timestamp: Utc::now(),
+        workspace_name: workspace_name.to_string(),
+        deletion_type: payload.deletion_type.as_str().to_string(),
+        resource_id: resource_id.clone(),
+        success,
+        peers_deleted: peers,
+        sessions_deleted: sessions,
+        messages_deleted: messages,
+        conclusions_deleted: conclusions,
+        error_message,
+    });
+
+    outcome
 }
 
 #[cfg(test)]

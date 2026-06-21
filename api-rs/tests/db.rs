@@ -3558,6 +3558,108 @@ async fn mark_document_deleted_is_idempotent() {
     test_db.teardown().await;
 }
 
+/// Captures emitted telemetry event bodies for assertions.
+struct CapturingEmitter {
+    events: std::sync::Mutex<Vec<(String, serde_json::Value)>>,
+}
+impl honcho_api_rs::telemetry::Emitter for CapturingEmitter {
+    fn emit(&self, event: &dyn honcho_api_rs::telemetry::TelemetryEvent) {
+        self.events
+            .lock()
+            .unwrap()
+            .push((event.event_type().to_string(), event.to_body()));
+    }
+}
+
+#[tokio::test]
+async fn process_deletion_workspace_emits_event_and_cascades() {
+    use honcho_api_rs::deriver::consumer::process_deletion;
+    use honcho_api_rs::deriver::payload::{DeletionPayload, DeletionType};
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    seed_deletion_fixture(&test_db.pool).await;
+
+    let emitter = CapturingEmitter {
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+    let payload = DeletionPayload {
+        deletion_type: DeletionType::Workspace,
+        resource_id: "ws".to_string(),
+    };
+    process_deletion(&test_db.pool, &emitter, &payload, "ws")
+        .await
+        .expect("process deletion");
+
+    // Workspace cascade-deleted.
+    let workspaces: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE name = 'ws'")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("ws count");
+    assert_eq!(workspaces, 0);
+
+    // Exactly one deletion.completed event with the cascade counts.
+    let events = emitter.events.lock().unwrap().clone();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0, "deletion.completed");
+    let body = &events[0].1;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["deletion_type"], "workspace");
+    assert_eq!(body["peers_deleted"], 2);
+    assert_eq!(body["sessions_deleted"], 1);
+    assert_eq!(body["messages_deleted"], 2);
+    assert_eq!(body["conclusions_deleted"], 2);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn process_deletion_observation_soft_deletes_and_emits() {
+    use honcho_api_rs::deriver::consumer::process_deletion;
+    use honcho_api_rs::deriver::payload::{DeletionPayload, DeletionType};
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    seed_deletion_fixture(&test_db.pool).await;
+    let doc_id: String = sqlx::query_scalar(
+        "SELECT id FROM documents WHERE workspace_name = 'ws' AND content = 'bob likes coffee'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("doc id");
+
+    let emitter = CapturingEmitter {
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+    let payload = DeletionPayload {
+        deletion_type: DeletionType::Observation,
+        resource_id: doc_id.clone(),
+    };
+    process_deletion(&test_db.pool, &emitter, &payload, "ws")
+        .await
+        .expect("process deletion");
+
+    // The document is soft-deleted; the event reports one conclusion deleted.
+    let deleted_at: Option<chrono::DateTime<Utc>> =
+        sqlx::query_scalar("SELECT deleted_at FROM documents WHERE id = $1")
+            .bind(&doc_id)
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("deleted_at");
+    assert!(deleted_at.is_some());
+
+    let events = emitter.events.lock().unwrap().clone();
+    assert_eq!(events.len(), 1);
+    let body = &events[0].1;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["deletion_type"], "observation");
+    assert_eq!(body["conclusions_deleted"], 1);
+
+    test_db.teardown().await;
+}
+
 #[tokio::test]
 async fn get_or_create_collection_creates_then_reuses() {
     let Some(test_db) = TestDb::setup().await else {

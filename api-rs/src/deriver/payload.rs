@@ -61,6 +61,16 @@ impl DeletionType {
             _ => None,
         }
     }
+
+    /// The wire string for this deletion type (the value emitted on the
+    /// `DeletionCompletedEvent.deletion_type` field).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Observation => "observation",
+            Self::Workspace => "workspace",
+        }
+    }
 }
 
 /// `SummaryPayload`.
