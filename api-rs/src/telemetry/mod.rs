@@ -8,6 +8,8 @@
 //! orchestrators can be wired with the event payloads computed here ahead of the
 //! transport.
 
+pub mod events;
+
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Timelike, Utc};
