@@ -3586,3 +3586,204 @@ async fn save_representation_empty_writes_nothing() {
 
     test_db.teardown().await;
 }
+
+// --- process_representation_tasks_batch orchestrator ---
+
+/// A fixed-response `LlmHttp` for the deriver orchestrator test: every call
+/// returns the same canned provider body, so the structured-output content is
+/// deterministic without a real LLM.
+struct CannedLlmHttp(serde_json::Value);
+impl honcho_api_rs::llm::http::LlmHttp for CannedLlmHttp {
+    async fn post_json(
+        &self,
+        _url: &str,
+        _headers: &[(String, String)],
+        _body: &serde_json::Value,
+    ) -> Result<serde_json::Value, honcho_api_rs::llm::http::LlmHttpError> {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn process_representation_tasks_batch_saves_and_emits() {
+    use honcho_api_rs::db::BatchMessage;
+    use honcho_api_rs::deriver::deriver::{
+        DeriverBatchContext, DeriverModelSettings, process_representation_tasks_batch,
+    };
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::llm::{ModelConfig, Provider};
+    use honcho_api_rs::producer::ResolvedConfiguration;
+    use honcho_api_rs::telemetry::NoopEmitter;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    // Seed ws/sess/peer bob (message id 1) and observer peer alice.
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("bob", "I like coffee and live in Berlin")],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed session");
+    db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("peer alice");
+
+    // The LLM "returns" a representation as its text content (Anthropic shape).
+    let content_json =
+        "{\"explicit\":[{\"content\":\"bob likes coffee\"},{\"content\":\"bob lives in Berlin\"}]}";
+    let http = CannedLlmHttp(json!({
+        "content": [{"type": "text", "text": content_json}],
+        "usage": {"input_tokens": 50, "output_tokens": 7},
+        "stop_reason": "end_turn"
+    }));
+
+    let settings = DeriverModelSettings {
+        model_config: ModelConfig::new("claude-x", Provider::Anthropic),
+        ..DeriverModelSettings::default()
+    };
+    let keys = TransportApiKeys {
+        anthropic: Some("k".to_string()),
+        openai: None,
+        gemini: None,
+    };
+    let emitter = NoopEmitter;
+    let ctx = DeriverBatchContext {
+        pool: &test_db.pool,
+        http: &http,
+        keys,
+        embedder: &IndexedEmbedder,
+        settings,
+        emitter: &emitter,
+    };
+
+    let created = Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0).unwrap();
+    let messages = vec![BatchMessage {
+        id: 1,
+        public_id: "msg_1".to_string(),
+        content: "I like coffee and live in Berlin".to_string(),
+        created_at: created,
+        peer_name: "bob".to_string(),
+        token_count: 10,
+        session_name: "sess".to_string(),
+        workspace_name: "ws".to_string(),
+    }];
+    let configuration = ResolvedConfiguration::default();
+
+    let event = process_representation_tasks_batch(
+        &ctx,
+        &messages,
+        &configuration,
+        &["alice".to_string()],
+        "bob",
+        &[1],
+        false,
+        false,
+        1024,
+    )
+    .await
+    .expect("batch ok")
+    .expect("processed (Some)");
+
+    // Telemetry accounting.
+    assert_eq!(event.observer_count, 1);
+    assert_eq!(event.explicit_conclusion_count, 2);
+    assert_eq!(event.message_count, 1);
+    assert_eq!(event.queue_items_processed, 1);
+    assert_eq!(event.queued_message_count, 1);
+    assert_eq!(event.input_tokens, 10); // messages_tokens (id 1 queued, token_count 10)
+    assert_eq!(event.total_input_tokens, 50); // response.input_tokens
+    assert_eq!(event.output_tokens, 7);
+    assert_eq!(event.earliest_message_id, "msg_1");
+    assert_eq!(event.latest_message_id, "msg_1");
+    assert!(!event.hit_input_token_cap);
+
+    // The two explicit observations were written to alice→bob.
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT content, level FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL ORDER BY content",
+    )
+    .fetch_all(&test_db.pool)
+    .await
+    .expect("docs");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].0, "bob likes coffee");
+    assert_eq!(rows[0].1, "explicit");
+    assert_eq!(rows[1].0, "bob lives in Berlin");
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn process_representation_tasks_batch_skips_when_reasoning_disabled() {
+    use honcho_api_rs::db::BatchMessage;
+    use honcho_api_rs::deriver::deriver::{
+        DeriverBatchContext, DeriverModelSettings, process_representation_tasks_batch,
+    };
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::producer::ResolvedConfiguration;
+    use honcho_api_rs::telemetry::NoopEmitter;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    // An http that would panic if hit — it must not be called when disabled.
+    let http = CannedLlmHttp(json!(null));
+    let emitter = NoopEmitter;
+    let ctx = DeriverBatchContext {
+        pool: &test_db.pool,
+        http: &http,
+        keys: TransportApiKeys::default(),
+        embedder: &IndexedEmbedder,
+        settings: DeriverModelSettings::default(),
+        emitter: &emitter,
+    };
+
+    let created = Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0).unwrap();
+    let messages = vec![BatchMessage {
+        id: 1,
+        public_id: "msg_1".to_string(),
+        content: "hello".to_string(),
+        created_at: created,
+        peer_name: "bob".to_string(),
+        token_count: 3,
+        session_name: "sess".to_string(),
+        workspace_name: "ws".to_string(),
+    }];
+    let configuration = ResolvedConfiguration {
+        reasoning_enabled: false,
+        ..ResolvedConfiguration::default()
+    };
+
+    let result = process_representation_tasks_batch(
+        &ctx,
+        &messages,
+        &configuration,
+        &["alice".to_string()],
+        "bob",
+        &[1],
+        false,
+        false,
+        1024,
+    )
+    .await
+    .expect("batch ok");
+    assert!(result.is_none()); // reasoning disabled → early return
+
+    // Nothing written.
+    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("doc count");
+    assert_eq!(docs, 0);
+
+    test_db.teardown().await;
+}
