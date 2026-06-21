@@ -3221,6 +3221,93 @@ async fn batch_returns_empty_when_ownership_lost() {
 }
 
 #[tokio::test]
+async fn process_representation_work_unit_once_drives_batch_and_marks_processed() {
+    use honcho_api_rs::deriver::consumer::process_representation_work_unit_once;
+    use honcho_api_rs::deriver::deriver::{DeriverBatchContext, DeriverModelSettings};
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::llm::{ModelConfig, Provider};
+    use honcho_api_rs::producer::parse_work_unit_key;
+    use honcho_api_rs::telemetry::NoopEmitter;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("peer alice");
+
+    let key = "representation:ws:sess:bob";
+    let m1 = seed_one(&test_db.pool, "bob", "I like coffee", 4).await;
+    let m2 = seed_one(&test_db.pool, "bob", "I live in Berlin", 4).await;
+    // New-format payload carries the observer list.
+    insert_queue_row_payload(&test_db.pool, key, m1, json!({"observers": ["alice"]})).await;
+    insert_queue_row_payload(&test_db.pool, key, m2, json!({"observers": ["alice"]})).await;
+    let aqs = claim_one(&test_db.pool, key).await;
+
+    let http = CannedLlmHttp(json!({
+        "content": [{"type": "text", "text":
+            "{\"explicit\":[{\"content\":\"bob likes coffee\"},{\"content\":\"bob lives in Berlin\"}]}"}],
+        "usage": {"input_tokens": 40, "output_tokens": 6},
+        "stop_reason": "end_turn"
+    }));
+    let settings = DeriverModelSettings {
+        model_config: ModelConfig::new("claude-x", Provider::Anthropic),
+        ..DeriverModelSettings::default()
+    };
+    let emitter = NoopEmitter;
+    let ctx = DeriverBatchContext {
+        pool: &test_db.pool,
+        http: &http,
+        keys: TransportApiKeys {
+            anthropic: Some("k".to_string()),
+            openai: None,
+            gemini: None,
+        },
+        embedder: &IndexedEmbedder,
+        settings,
+        emitter: &emitter,
+    };
+
+    let work_unit = parse_work_unit_key(key).expect("parse key");
+
+    // First iteration: both queued items processed.
+    let processed = process_representation_work_unit_once(&ctx, &work_unit, key, &aqs, 100, false)
+        .await
+        .expect("work unit ok");
+    assert_eq!(processed, Some(2));
+
+    // Documents were written to alice→bob.
+    let doc_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("doc count");
+    assert_eq!(doc_count, 2);
+
+    // Both queue items are marked processed.
+    let unprocessed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE work_unit_key = $1 AND processed = false")
+            .bind(key)
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("unprocessed count");
+    assert_eq!(unprocessed, 0);
+
+    // Second iteration: nothing left → None (the loop would break).
+    let again = process_representation_work_unit_once(&ctx, &work_unit, key, &aqs, 100, false)
+        .await
+        .expect("work unit ok");
+    assert_eq!(again, None);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn get_or_create_collection_creates_then_reuses() {
     let Some(test_db) = TestDb::setup().await else {
         return;

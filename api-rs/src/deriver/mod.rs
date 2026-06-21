@@ -4,6 +4,7 @@
 //! DB-touching queue-claim/batch queries, the batch-config resolution, and the
 //! consumer/processing pipeline follow as separate units.
 
+pub mod consumer;
 // Mirrors the Python module path `src/deriver/deriver.py`.
 #[allow(clippy::module_inception)]
 pub mod deriver;
