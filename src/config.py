@@ -722,6 +722,11 @@ class LLMSettings(HonchoSettings):
     # obtain a refresh token interactively.
     OPENAI_AUTH_MODE: Literal["api_key", "oauth"] = "api_key"
     OPENAI_REFRESH_TOKEN: str | None = None
+    # Path to a file that stores the current refresh token.  On startup the
+    # manager reads it (taking precedence over OPENAI_REFRESH_TOKEN when the file
+    # exists) so a previously rotated token survives container restarts.  On every
+    # rotation the manager writes the new token back to this file.
+    OPENAI_REFRESH_TOKEN_FILE: str | None = None
     OPENAI_CLIENT_ID: str = "app_EMoamEEZ73f0CkXaXp7hrann"
     # Base URL used when OPENAI_AUTH_MODE=oauth.  Defaults to the ChatGPT/Codex
     # Responses API backend (included with ChatGPT Plus, no billing credits needed).

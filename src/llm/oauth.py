@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -38,7 +39,15 @@ class OAuthTokenManager:
         self,
         refresh_token: str,
         client_id: str = _DEFAULT_CLIENT_ID,
+        token_file: str | None = None,
     ) -> None:
+        self._token_file = Path(token_file) if token_file else None
+        # If a token file exists, it holds the most recently rotated token and
+        # takes precedence over the value passed in (which may be stale).
+        if self._token_file and self._token_file.exists():
+            stored = self._token_file.read_text().strip()
+            if stored:
+                refresh_token = stored
         self._refresh_token = refresh_token
         self._client_id = client_id
         self._access_token: str = ""
@@ -73,6 +82,12 @@ class OAuthTokenManager:
             ) from exc
         if "refresh_token" in data:
             self._refresh_token = data["refresh_token"]
+            if self._token_file is not None:
+                # Write atomically so a crash mid-write doesn't corrupt the file.
+                tmp = self._token_file.with_suffix(".tmp")
+                tmp.write_text(self._refresh_token)
+                tmp.replace(self._token_file)
+                logger.debug("Persisted rotated refresh token to %s", self._token_file)
         expires_in: int = data.get("expires_in", 600)
         self._expires_at = time.time() + expires_in
         logger.info(

@@ -161,6 +161,7 @@ async def initialize_oauth() -> OAuthTokenManager | None:
     manager = OAuthTokenManager(
         refresh_token=settings.LLM.OPENAI_REFRESH_TOKEN,
         client_id=settings.LLM.OPENAI_CLIENT_ID,
+        token_file=settings.LLM.OPENAI_REFRESH_TOKEN_FILE,
     )
     await manager.refresh()
     _oauth_manager = manager

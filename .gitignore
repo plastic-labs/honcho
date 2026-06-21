@@ -196,3 +196,4 @@ grafana-data/
 
 # Claude Code addon stuff
 .omc
+secrets/
