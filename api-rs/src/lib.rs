@@ -11,6 +11,7 @@ pub mod embedding;
 pub mod error;
 pub mod files;
 pub mod filters;
+pub mod json_parser;
 pub mod llm;
 pub mod pagination;
 pub mod producer;
