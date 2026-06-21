@@ -15,3 +15,4 @@
 
 pub mod context;
 pub mod object_comparer;
+pub mod parser;
