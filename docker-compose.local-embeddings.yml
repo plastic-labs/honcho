@@ -1,15 +1,15 @@
-# Side-by-side Honcho stack for testing local mxbai-embed-large embeddings.
+# Side-by-side Honcho stack for testing local bge-m3 embeddings.
 # Use with:
 #   docker compose -p honcho-local-embed -f docker-compose.yml -f docker-compose.local-embeddings.yml up -d --build
 
 x-local-embedding-env: &local_embedding_env
   EMBEDDING_VECTOR_DIMENSIONS: "1024"
-  # Ollama's mxbai tokenizer can count some payloads higher than Honcho's
+  # Ollama embedding tokenizers can count some payloads higher than Honcho's
   # cl100k estimate; keep chunks and provider requests below context.
   EMBEDDING_MAX_INPUT_TOKENS: "768"
   EMBEDDING_MAX_TOKENS_PER_REQUEST: "768"
   EMBEDDING_MODEL_CONFIG__TRANSPORT: openai
-  EMBEDDING_MODEL_CONFIG__MODEL: mxbai-embed-large
+  EMBEDDING_MODEL_CONFIG__MODEL: bge-m3
   EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE: never
   EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL: http://host.docker.internal:11434/v1
   EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV: LOCAL_EMBEDDING_API_KEY

@@ -13,7 +13,7 @@ NAMESPACE = "honcho"
 
 [embedding]
 VECTOR_DIMENSIONS = 1024
-# Ollama's mxbai tokenizer can count some Hermes/Honcho messages much higher than
+# Ollama embedding tokenizers can count some Hermes/Honcho messages much higher than
 # Honcho's cl100k estimate. 768 still caused `input length exceeds context length`
 # on normal Hermes memory snapshots (~695 cl100k tokens), so keep chunks well below
 # the provider context and one large chunk per provider request.
@@ -43,9 +43,9 @@ DEFAULT_MAX_TOKENS = 2500
 
 [embedding.MODEL_CONFIG]
 transport = "openai"
-# bge-m3 now returns NaN embeddings on this Pi/Ollama build.
-# mxbai-embed-large is currently verified 1024-dim local fallback for Hermes/Honcho.
-model = "mxbai-embed-large"
+# mxbai-embed-large now returns NaN embeddings on this Pi/Ollama build.
+# bge-m3 is currently verified 1024-dim local fallback for Hermes/Honcho.
+model = "bge-m3"
 dimensions_mode = "never"
 
 [embedding.MODEL_CONFIG.overrides]
