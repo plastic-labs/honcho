@@ -89,6 +89,68 @@ impl super::TelemetryEvent for RepresentationCompletedEvent {
     }
 }
 
+/// Port of `DeletionCompletedEvent` (events/deletion.py): emitted when a deletion
+/// task completes. `success` + cascade counts + optional `error_message` mirror
+/// the pydantic model; the counts default to 0 / `None`.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeletionCompletedEvent {
+    pub timestamp: DateTime<Utc>,
+    pub workspace_name: String,
+    /// `"workspace"`, `"session"`, or `"conclusions"`.
+    pub deletion_type: String,
+    pub resource_id: String,
+    pub success: bool,
+    // ---- Cascade counts (pydantic defaults: 0) ----
+    pub peers_deleted: i64,
+    pub sessions_deleted: i64,
+    pub messages_deleted: i64,
+    pub conclusions_deleted: i64,
+    /// Error detail when `success` is false (pydantic default: `None`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+impl DeletionCompletedEvent {
+    pub const EVENT_TYPE: &'static str = "deletion.completed";
+    pub const SCHEMA_VERSION: i32 = 1;
+    pub const CATEGORY: &'static str = "deletion";
+
+    /// Port of `get_resource_id`: `{workspace}:{type}:{resource}`.
+    pub fn get_resource_id(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            self.workspace_name, self.deletion_type, self.resource_id
+        )
+    }
+
+    /// Port of `generate_id` (package version folded in by the caller).
+    pub fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp);
+        generate_event_id(Self::EVENT_TYPE, &self.get_resource_id(), &iso, honcho_version)
+    }
+}
+
+impl super::TelemetryEvent for DeletionCompletedEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        DeletionCompletedEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +225,33 @@ mod tests {
         //   "2026-06-21T12:00:00+00:00", "9.9.9").
         let event = sample();
         assert_eq!(event.generate_id(Some("9.9.9")), "evt_IYFU_IGcJmlPIF1Q8C2UgA");
+    }
+
+    #[test]
+    fn deletion_event_metadata_and_golden_id() {
+        use crate::telemetry::TelemetryEvent;
+        let event = DeletionCompletedEvent {
+            timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
+            workspace_name: "ws1".to_string(),
+            deletion_type: "workspace".to_string(),
+            resource_id: "ws1".to_string(),
+            success: true,
+            peers_deleted: 2,
+            sessions_deleted: 3,
+            messages_deleted: 10,
+            conclusions_deleted: 5,
+            error_message: None,
+        };
+        assert_eq!(event.get_resource_id(), "ws1:workspace:ws1");
+        assert_eq!(DeletionCompletedEvent::EVENT_TYPE, "deletion.completed");
+        assert_eq!(DeletionCompletedEvent::SCHEMA_VERSION, 1);
+        assert_eq!(DeletionCompletedEvent::CATEGORY, "deletion");
+        // Golden from generate_event_id("deletion.completed", "ws1:workspace:ws1",
+        //   "2026-06-21T12:00:00+00:00", "9.9.9").
+        assert_eq!(event.generate_id(Some("9.9.9")), "evt_a-rvRoLarKuWrWn6RtmOrA");
+        // error_message=None is omitted from the body (skip_serializing_if).
+        let body = TelemetryEvent::to_body(&event);
+        assert_eq!(body["peers_deleted"], 2);
+        assert!(body.get("error_message").is_none());
     }
 }
