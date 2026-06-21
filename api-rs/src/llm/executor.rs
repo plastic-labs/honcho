@@ -264,20 +264,18 @@ impl<'a, H: LlmHttp> HonchoCaller<'a, H> {
             last_provider: Mutex::new(transport),
         }
     }
-}
 
-impl<H: LlmHttp + Sync> ToolLoopCaller for HonchoCaller<'_, H> {
-    fn provider(&self) -> Provider {
-        *self.last_provider.lock().unwrap()
-    }
-
-    async fn complete(
+    /// The shared retry + fallback attempt loop (used by both the tool-loop
+    /// `complete` and the single-call `complete_single`). Per attempt: plan the
+    /// config (final attempt swaps to fallback), resolve credentials, build the
+    /// effective config, dispatch via [`execute_completion`]. On exhaustion the
+    /// last error string is returned.
+    async fn run_attempts(
         &self,
         messages: &[Value],
-        tools: &[Value],
+        tools_opt: Option<&[Value]>,
         tool_choice: Option<&Value>,
     ) -> Result<CompletionResult, String> {
-        let tools_opt = if tools.is_empty() { None } else { Some(tools) };
         let mut last_error: Option<String> = None;
 
         for attempt in 1..=self.retry.attempts {
@@ -338,6 +336,32 @@ impl<H: LlmHttp + Sync> ToolLoopCaller for HonchoCaller<'_, H> {
         }
 
         Err(last_error.unwrap_or_else(|| "completion failed with no attempts".to_string()))
+    }
+
+    /// Single (toolless) completion with retry + fallback, mapped to the public
+    /// [`HonchoLLMCallResponse`]. This is the structured-output / minimal-deriver
+    /// path: the caller applies structured-output validation to `content`
+    /// afterwards (the Python backend does the equivalent inline via
+    /// `response_format`).
+    pub async fn complete_single(&self, messages: &[Value]) -> Result<HonchoLLMCallResponse, String> {
+        let result = self.run_attempts(messages, None, None).await?;
+        Ok(completion_result_to_response(&result))
+    }
+}
+
+impl<H: LlmHttp + Sync> ToolLoopCaller for HonchoCaller<'_, H> {
+    fn provider(&self) -> Provider {
+        *self.last_provider.lock().unwrap()
+    }
+
+    async fn complete(
+        &self,
+        messages: &[Value],
+        tools: &[Value],
+        tool_choice: Option<&Value>,
+    ) -> Result<CompletionResult, String> {
+        let tools_opt = if tools.is_empty() { None } else { Some(tools) };
+        self.run_attempts(messages, tools_opt, tool_choice).await
     }
 }
 
@@ -427,6 +451,39 @@ mod tests {
         .expect("completion");
         assert_eq!(http.last_body()["max_tokens"], json!(256));
         assert_eq!(http.last_body()["top_p"], json!(0.9));
+    }
+
+    #[tokio::test]
+    async fn complete_single_feeds_structured_output_finalize() {
+        // The LLM returns a JSON representation as its text content.
+        let json_text = "{\"explicit\": [{\"content\": \"likes coffee\"}]}";
+        let http = MockHttp::ok(json!({
+            "content": [{"type": "text", "text": json_text}],
+            "usage": {"input_tokens": 5, "output_tokens": 7},
+            "stop_reason": "end_turn"
+        }));
+        let keys = TransportApiKeys {
+            anthropic: Some("k".to_string()),
+            openai: None,
+            gemini: None,
+        };
+        let config = ModelConfig::new("claude-x", Provider::Anthropic);
+        let mut caller = HonchoCaller::new(&http, keys, config, 1024);
+        caller.retry = no_backoff();
+        caller.json_mode = true;
+
+        let response = caller.complete_single(&messages()).await.expect("single call");
+        assert_eq!(response.content, json!(json_text));
+        assert_eq!(response.output_tokens, 7);
+
+        // The caller-side structured-output step (what the deriver runs) turns the
+        // JSON text content into a validated PromptRepresentation.
+        let pr = crate::structured_output::finalize_structured_output(
+            &response.content,
+            crate::structured_output::FailurePolicy::RepairThenEmpty,
+        )
+        .expect("finalize");
+        assert_eq!(pr.explicit, vec!["likes coffee".to_string()]);
     }
 
     #[tokio::test]
