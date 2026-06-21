@@ -29,6 +29,7 @@ use super::prompts::{estimate_deriver_prompt_tokens, minimal_deriver_prompt};
 /// The deriver model + write knobs read by [`process_representation_tasks_batch`],
 /// porting the subset of `settings.DERIVER` / `settings.LLM` that fixes the LLM
 /// call shape. (The polling/batching subset lives in [`super::settings`].)
+#[derive(Debug, Clone)]
 pub struct DeriverModelSettings {
     /// `settings.DERIVER.MODEL_CONFIG` (default openai / gpt-5.4-mini).
     pub model_config: ModelConfig,

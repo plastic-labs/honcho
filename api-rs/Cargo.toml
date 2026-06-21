@@ -7,6 +7,10 @@ edition = "2024"
 name = "honcho-api-rs"
 path = "src/main.rs"
 
+[[bin]]
+name = "honcho-deriver"
+path = "src/bin/deriver.rs"
+
 [dependencies]
 axum = "0.8"
 base64 = "0.22"

@@ -3308,6 +3308,94 @@ async fn process_representation_work_unit_once_drives_batch_and_marks_processed(
 }
 
 #[tokio::test]
+async fn deriver_worker_poll_once_claims_processes_and_releases() {
+    use honcho_api_rs::deriver::deriver::DeriverModelSettings;
+    use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::deriver::settings::DeriverSettings;
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::llm::{ModelConfig, Provider};
+    use honcho_api_rs::telemetry::NoopEmitter;
+    use std::sync::Arc;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("peer alice");
+
+    let key = "representation:ws:sess:bob";
+    let m1 = seed_one(&test_db.pool, "bob", "I like coffee", 4).await;
+    let m2 = seed_one(&test_db.pool, "bob", "I live in Berlin", 4).await;
+    insert_queue_row_payload(&test_db.pool, key, m1, json!({"observers": ["alice"]})).await;
+    insert_queue_row_payload(&test_db.pool, key, m2, json!({"observers": ["alice"]})).await;
+
+    let http = Arc::new(CannedLlmHttp(json!({
+        "content": [{"type": "text", "text":
+            "{\"explicit\":[{\"content\":\"bob likes coffee\"},{\"content\":\"bob lives in Berlin\"}]}"}],
+        "usage": {"input_tokens": 40, "output_tokens": 6},
+        "stop_reason": "end_turn"
+    })));
+    let model_settings = DeriverModelSettings {
+        model_config: ModelConfig::new("claude-x", Provider::Anthropic),
+        ..DeriverModelSettings::default()
+    };
+    // flush_enabled bypasses the batch-token threshold so the small batch claims.
+    let poll_settings = DeriverSettings {
+        workers: 1,
+        flush_enabled: true,
+        ..DeriverSettings::default()
+    };
+    let worker = Arc::new(DeriverWorker::new(
+        test_db.pool.clone(),
+        http,
+        Arc::new(IndexedEmbedder),
+        Arc::new(NoopEmitter),
+        TransportApiKeys {
+            anthropic: Some("k".to_string()),
+            openai: None,
+            gemini: None,
+        },
+        model_settings,
+        poll_settings,
+    ));
+
+    let processed = worker.poll_once().await.expect("poll once");
+    assert_eq!(processed, 2);
+
+    // Documents written, queue drained, and the active-queue-session claim released.
+    let docs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM documents WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("doc count");
+    assert_eq!(docs, 2);
+
+    let unprocessed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE processed = false")
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("unprocessed");
+    assert_eq!(unprocessed, 0);
+
+    let claims: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM active_queue_sessions")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("claims");
+    assert_eq!(claims, 0); // released by cleanup_work_unit
+
+    // A second poll finds nothing.
+    let again = worker.poll_once().await.expect("poll again");
+    assert_eq!(again, 0);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn get_or_create_collection_creates_then_reuses() {
     let Some(test_db) = TestDb::setup().await else {
         return;

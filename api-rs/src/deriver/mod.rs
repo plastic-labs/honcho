@@ -10,6 +10,7 @@ pub mod consumer;
 pub mod deriver;
 pub mod payload;
 pub mod poll;
+pub mod queue_manager;
 pub mod prompts;
 pub mod settings;
 

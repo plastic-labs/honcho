@@ -910,6 +910,49 @@ impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OpenAiEmbedder<'_, H> {
     }
 }
 
+/// An owned-transport variant of [`OpenAiEmbedder`] for contexts that must hold
+/// the embedder for a `'static` lifetime (e.g. the deriver worker's spawned
+/// tasks, where the borrow-based [`OpenAiEmbedder`] can't satisfy `Arc<E>`).
+/// Owns its `H` transport and delegates to the same embedding calls.
+pub struct OwnedOpenAiEmbedder<H: crate::llm::http::LlmHttp> {
+    pub http: H,
+    pub credentials: crate::llm::http::Credentials,
+    pub model: String,
+    pub vector_dimensions: usize,
+    pub send_dimensions: bool,
+    pub max_tokens: usize,
+}
+
+impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OwnedOpenAiEmbedder<H> {
+    async fn embed(&self, query: &str) -> Result<Vec<f32>, String> {
+        crate::embedding::embed_openai(
+            &self.http,
+            &self.credentials,
+            &self.model,
+            query,
+            self.vector_dimensions,
+            self.send_dimensions,
+            self.max_tokens,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        crate::embedding::embed_openai_batch(
+            &self.http,
+            &self.credentials,
+            &self.model,
+            texts,
+            self.vector_dimensions,
+            self.send_dimensions,
+            self.max_tokens,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+}
+
 /// Bridges the ported dialectic tool handlers to the generic
 /// [`crate::llm::tool_loop::execute_tool_loop`] via its [`ToolExecutor`] seam:
 /// dispatches a tool call by name to the matching handler, embedding the query
