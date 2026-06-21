@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
@@ -16,6 +17,103 @@ from src.llm.structured_output import (
 )
 
 logger = logging.getLogger(__name__)
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _json_payload(text: str) -> str | None:
+    """Return ``text`` if it parses as a JSON object/array, else None."""
+    try:
+        if isinstance(json.loads(text), (dict, list)):
+            return text
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return None
+
+
+def _strip_reasoning_and_fences(text: str | None) -> str:
+    """Reduce a model response to its first complete JSON value.
+
+    OpenAI-compatible providers that don't honor ``response_format`` as a hard
+    grammar (Ollama, many self-hosted llama.cpp builds, chain-of-thought models
+    like GLM / MiniMax / DeepSeek) wrap structured output in ``<think>…</think>``
+    blocks and/or ```json fences, and sometimes append a natural-language
+    explanation after the JSON. ``repair_response_model_json`` then fails with
+    ``Expecting value: line 1 column 1 (char 0)`` and the deriver produces zero
+    observations. If no JSON structure is present the text is returned
+    unchanged."""
+    text = text or ""
+    # 1. Already a JSON object/array — return untouched. Done first so a value
+    #    that legitimately contains "<think>" or stray braces is never mangled.
+    payload = _json_payload(text)
+    if payload is not None:
+        return payload
+    # 2. Strip closed <think>…</think> blocks (and the surrounding fence/prose
+    #    they sit in), then retry.
+    cleaned = _THINK_RE.sub("", text).strip()
+    if (payload := _json_payload(cleaned)) is not None:
+        return cleaned
+    # 3. Extract the first complete JSON value starting at the first { or [.
+    #    raw_decode is string-aware and stops at the end of that value, so it
+    #    ignores ```json fences, trailing prose (incl. stray braces/brackets),
+    #    and unclosed reasoning that precedes real JSON.
+    start = min(
+        (i for i in (cleaned.find("{"), cleaned.find("[")) if i != -1),
+        default=-1,
+    )
+    if start != -1:
+        try:
+            _, end = json.JSONDecoder().raw_decode(cleaned, start)
+            return cleaned[start:end]
+        except (json.JSONDecodeError, ValueError):
+            # Truncated/invalid — hand the tail to repair_response_model_json.
+            return cleaned[start:]
+    return cleaned
+
+
+def _inject_schema_hint(
+    messages: list[dict[str, Any]],
+    response_format: type[BaseModel],
+) -> list[dict[str, Any]]:
+    """Append the target JSON schema to the system message.
+
+    ``json_object`` mode (unlike native ``json_schema``) does not tell the model
+    which fields to emit, so weaker / local models return empty or free-text
+    JSON. Injecting the schema makes the fallback reliable."""
+    try:
+        schema = json.dumps(response_format.model_json_schema())
+    except Exception as exc:
+        logger.warning(
+            "Could not serialize schema for %s; json_object fallback proceeds "
+            + "without a schema hint: %s",
+            getattr(response_format, "__name__", response_format),
+            exc,
+        )
+        return messages
+    hint = (
+        "You must respond with a single JSON object that conforms exactly to "
+        + "this JSON schema. Output only the JSON object — no prose, no markdown "
+        + "code fences, no <think> tags.\n\nSchema:\n"
+        + schema
+    )
+    # Shallow copy is sufficient: we replace a message's content, never mutate
+    # the original dicts or their nested values in place.
+    messages = [dict(m) for m in messages]
+    sys_idx = next(
+        (i for i, m in enumerate(messages) if m.get("role") == "system"), None
+    )
+    if sys_idx is None:
+        messages.insert(0, {"role": "system", "content": hint})
+        return messages
+    content = messages[sys_idx].get("content", "")
+    if isinstance(content, str):
+        messages[sys_idx]["content"] = f"{content}\n\n{hint}" if content else hint
+    elif isinstance(content, list):
+        # Multi-modal content: append the hint as an additional text part.
+        messages[sys_idx]["content"] = [*content, {"type": "text", "text": hint}]
+    else:
+        messages[sys_idx]["content"] = hint
+    return messages
 
 
 def _uses_max_completion_tokens(model: str) -> bool:
@@ -149,7 +247,7 @@ class OpenAIBackend:
                 truncated = exc.completion
                 raw_content = truncated.choices[0].message.content or ""
                 content = repair_response_model_json(
-                    raw_content,
+                    _strip_reasoning_and_fences(raw_content),
                     response_format,
                     model,
                 )
@@ -175,7 +273,7 @@ class OpenAIBackend:
             raw_content = response.choices[0].message.content or ""
             if parsed is None and raw_content:
                 content = repair_response_model_json(
-                    raw_content,
+                    _strip_reasoning_and_fences(raw_content),
                     response_format,
                     model,
                 )
@@ -381,13 +479,14 @@ class OpenAIBackend:
         response_format: type[BaseModel],
     ) -> Any:
         structured_params = dict(params)
-        structured_params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": response_format.__name__,
-                "schema": response_format.model_json_schema(),
-            },
-        }
+        # The native attempt already failed, often because the provider rejects
+        # or ignores json_schema. Retry with json_object (widely supported) and
+        # inject the schema so the model still knows the target shape; the
+        # response is repaired/validated by the caller.
+        structured_params["response_format"] = {"type": "json_object"}
+        structured_params["messages"] = _inject_schema_hint(
+            structured_params["messages"], response_format
+        )
         return await self._client.chat.completions.create(**structured_params)
 
     @staticmethod
@@ -398,7 +497,8 @@ class OpenAIBackend:
     ) -> BaseModel | str:
         raw_content = response.choices[0].message.content or ""
         if raw_content:
-            return repair_response_model_json(raw_content, response_format, model)
+            cleaned = _strip_reasoning_and_fences(raw_content)
+            return repair_response_model_json(cleaned, response_format, model)
         refusal = getattr(response.choices[0].message, "refusal", None)
         if refusal:
             return refusal
