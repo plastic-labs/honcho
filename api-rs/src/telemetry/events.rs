@@ -68,6 +68,27 @@ impl RepresentationCompletedEvent {
     }
 }
 
+impl super::TelemetryEvent for RepresentationCompletedEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        RepresentationCompletedEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +133,28 @@ mod tests {
         assert_eq!(RepresentationCompletedEvent::EVENT_TYPE, "representation.completed");
         assert_eq!(RepresentationCompletedEvent::SCHEMA_VERSION, 2);
         assert_eq!(RepresentationCompletedEvent::CATEGORY, "representation");
+    }
+
+    #[test]
+    fn telemetry_event_trait_dispatch() {
+        use crate::telemetry::{Emitter, NoopEmitter, TelemetryEvent};
+        let event = sample();
+        // Trait methods agree with the inherent impl + consts.
+        assert_eq!(TelemetryEvent::event_type(&event), "representation.completed");
+        assert_eq!(TelemetryEvent::schema_version(&event), 2);
+        assert_eq!(TelemetryEvent::category(&event), "representation");
+        assert_eq!(event.volume_class(), "ground_truth");
+        assert_eq!(TelemetryEvent::get_resource_id(&event), "ws1:sess1:msg_latest");
+        assert_eq!(
+            TelemetryEvent::generate_id(&event, Some("9.9.9")),
+            "evt_IYFU_IGcJmlPIF1Q8C2UgA"
+        );
+        // Body serializes the queued-message metering key.
+        let body = event.to_body();
+        assert_eq!(body["input_tokens"], 30);
+        // NoopEmitter accepts the event as a trait object (compile + run check).
+        let emitter = NoopEmitter;
+        emitter.emit(&event);
     }
 
     #[test]

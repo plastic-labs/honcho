@@ -46,6 +46,70 @@ pub fn generate_event_id(
     format!("evt_{encoded}")
 }
 
+/// Port of the `BaseEvent` interface (`events/base.py`): the metadata + identity
+/// methods the emitter reads off every event. Concrete event structs implement
+/// it so the emitter can stay generic over event type.
+pub trait TelemetryEvent {
+    /// The CloudEvents `type` string (`_event_type`).
+    fn event_type(&self) -> &'static str;
+    /// Schema version for evolution (`_schema_version`).
+    fn schema_version(&self) -> i32;
+    /// `"work"`, `"activity"`, or `"resource"` — used to build the source path.
+    fn category(&self) -> &'static str;
+    /// `"ground_truth"` (default) or `"high_volume"` — drives sampling.
+    fn volume_class(&self) -> &'static str {
+        "ground_truth"
+    }
+    /// When the event occurred.
+    fn timestamp(&self) -> DateTime<Utc>;
+    /// Unique identifier for the operation, hashed into the idempotency key.
+    fn get_resource_id(&self) -> String;
+    /// Deterministic idempotency id. The package version is folded in by the
+    /// caller (Python reads `HONCHO_VERSION`).
+    fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp());
+        generate_event_id(self.event_type(), &self.get_resource_id(), &iso, honcho_version)
+    }
+    /// Serialize the event body — the CloudEvent `data` payload.
+    fn to_body(&self) -> serde_json::Value;
+}
+
+/// Port of the `emit()` entry point (`events/__init__.py`). `emit` is
+/// fire-and-forget observability that never feeds back into control flow, so
+/// worker orchestrators take an `&dyn Emitter` and call it best-effort.
+///
+/// The full buffered CloudEvents HTTP transport (`emitter.py`, sampling +
+/// retry + batching) is a follow-on unit; until it lands, [`NoopEmitter`]
+/// matches Python's "emitter not initialized → drop event" default and
+/// [`LogEmitter`] surfaces events at debug level for local worker runs.
+pub trait Emitter: Send + Sync {
+    fn emit(&self, event: &dyn TelemetryEvent);
+}
+
+/// Drops every event. Mirrors the Python default when the telemetry emitter is
+/// uninitialized or `TELEMETRY.ENABLED` is false (`emit()` no-ops).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopEmitter;
+
+impl Emitter for NoopEmitter {
+    fn emit(&self, _event: &dyn TelemetryEvent) {}
+}
+
+/// Logs each event's type + idempotency id at debug level. A stand-in for the
+/// real transport during worker bring-up.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LogEmitter;
+
+impl Emitter for LogEmitter {
+    fn emit(&self, event: &dyn TelemetryEvent) {
+        tracing::debug!(
+            event_type = event.event_type(),
+            event_id = event.generate_id(None),
+            "telemetry event"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
