@@ -403,6 +403,36 @@ fn simple_bracket_repair(json_str: &str) -> String {
     repaired
 }
 
+/// Port of `validate_and_repair_json` (`json_parser.py`).
+///
+/// Mirrors Python: first run `repair_json` (the json_repair library, ported in
+/// [`crate::json_repair`]); if it yields a non-empty result, return it. Otherwise
+/// fall back to [`comprehensive_json_repair`] and validate it. `Err` corresponds
+/// to Python raising `ValueError` ("could not repair").
+///
+/// Faithfulness: the `repair_json` branch returns a *re-serialized* value
+/// (serde's compact form rather than Python `json.dumps`' spaced form). The only
+/// caller re-parses the result, so this is parsed-value equivalent — what the
+/// downstream `repair_response_model_json` actually depends on. The comprehensive
+/// fallback branch is byte-identical to Python.
+pub fn validate_and_repair_json(json_str: &str) -> Result<String, String> {
+    let trimmed = json_str.trim();
+
+    // repair_json(json_str): "" only when the parsed value is the empty string.
+    let parsed = crate::json_repair::repair_json_value(trimmed);
+    if parsed != serde_json::Value::String(String::new()) {
+        return Ok(serde_json::to_string(&parsed).unwrap_or_default());
+    }
+
+    // Comprehensive repair fallback, then validate.
+    let repaired = comprehensive_json_repair(trimmed);
+    if is_valid_json(&repaired) {
+        Ok(repaired)
+    } else {
+        Err(format!("Could not repair JSON. Original input: {trimmed:?}"))
+    }
+}
+
 /// Port of `comprehensive_json_repair`: multi-strategy malformed-JSON repair.
 ///
 /// Each strategy's truthy result short-circuits, mirroring Python's `if repaired:`
@@ -482,6 +512,27 @@ mod tests {
         // Trailing quote -> excluded by the `$` branch of the lookahead.
         assert_eq!(escape_unescaped_quotes("abc\""), "abc\"");
         assert_eq!(escape_unescaped_quotes("\"\""), "\\\"\"");
+    }
+
+    #[test]
+    fn validate_and_repair_json_parsed_equivalence() {
+        // (input, expected parsed value as JSON, or None for Python ValueError)
+        let ok_cases: Vec<(&str, &str)> = vec![
+            ("{\"a\": 1, \"b\": 2", "{\"a\": 1, \"b\": 2}"),
+            ("{\"a\": 1}", "{\"a\": 1}"),
+            ("[1,2,3,]", "[1, 2, 3]"),
+            ("{'x': 1}", "{\"x\": 1}"),
+            ("```json\n{\"k\":[1,2}\n```", "{\"k\": [1, 2]}"),
+            ("{\"a\":", "{\"a\": \"\"}"),
+        ];
+        for (input, expected_json) in ok_cases {
+            let out = validate_and_repair_json(input).expect("should repair");
+            let got: serde_json::Value = serde_json::from_str(&out).unwrap();
+            let expected: serde_json::Value = serde_json::from_str(expected_json).unwrap();
+            assert_eq!(got, expected, "validate_and_repair_json({input:?})");
+        }
+        // Unrepairable -> Err (Python ValueError).
+        assert!(validate_and_repair_json("not json at all").is_err());
     }
 
     #[test]

@@ -10,7 +10,17 @@
 //!   negative wrap (`s[-1]` is the last char) before going out of range. The
 //!   parser relies on this (e.g. `get_char_at(-1)`).
 
+use serde_json::Value;
+
+use super::STRING_DELIMITERS;
+use super::array::parse_array;
+use super::comment::parse_comment;
 use super::context::{ContextValues, JsonContext};
+use super::number::parse_number;
+use super::object::parse_object;
+use super::object_comparer::is_same_object;
+use super::parenthesized::{parenthesized_is_explicit_tuple, top_level_parenthesized_can_start_value};
+use super::string::parse_string;
 
 pub struct JsonParser {
     /// The string to parse, as code points (Python `self.json_str`).
@@ -118,6 +128,119 @@ impl JsonParser {
     /// Convenience wrapper for the single-character form of `skip_to_character`.
     pub fn skip_to_char(&self, target: char, idx: i64) -> i64 {
         self.skip_to_character(&[target], idx)
+    }
+
+    /// Python slice `json_str[start:end]` for non-negative indices: clamped to
+    /// bounds, empty when `start >= end`.
+    pub fn substr(&self, start: i64, end: i64) -> String {
+        let n = self.len();
+        let s = start.clamp(0, n);
+        let e = end.clamp(0, n);
+        if s >= e {
+            return String::new();
+        }
+        self.json[s as usize..e as usize].iter().collect()
+    }
+
+    /// Replace `json[start..end]` with `replacement` (the in-place buffer
+    /// splicing the Python parser does via `self.json_str = ... + ... + ...`).
+    pub fn splice(&mut self, start: i64, end: i64, replacement: &str) {
+        let n = self.len();
+        let s = start.clamp(0, n) as usize;
+        let e = end.clamp(0, n) as usize;
+        let e = e.max(s);
+        self.json.splice(s..e, replacement.chars());
+    }
+
+    /// Port of `JSONParser.parse` + `_parse_top_level` (no schema, non-strict).
+    pub fn parse(&mut self) -> Value {
+        let mut json = self.parse_json();
+        if self.index < self.len() {
+            let mut elements = vec![json];
+            while self.index < self.len() {
+                self.context.clear();
+                self.deferred_contexts.clear();
+                let j = self.parse_json();
+                if super::is_truthy(&j) {
+                    let last = elements.last().unwrap();
+                    // Treat repeated objects as updates; also drop a falsy tail.
+                    if is_same_object(last, &j) || !super::is_truthy(last) {
+                        elements.pop();
+                    }
+                    elements.push(j);
+                } else {
+                    self.index += 1;
+                }
+            }
+            json = if elements.len() == 1 {
+                elements.pop().unwrap()
+            } else {
+                Value::Array(elements)
+            };
+        }
+        json
+    }
+
+    /// Port of `JSONParser.parse_json` (no-schema path).
+    pub fn parse_json(&mut self) -> Value {
+        if !self.deferred_contexts.is_empty() {
+            let deferred = std::mem::take(&mut self.deferred_contexts);
+            for &cv in &deferred {
+                self.context.set(cv);
+            }
+            let result = self.parse_json();
+            for _ in &deferred {
+                self.context.reset();
+            }
+            return result;
+        }
+
+        loop {
+            let char = self.get_char_at(0);
+            match char {
+                None => return Value::String(String::new()),
+                Some('{') => {
+                    self.index += 1;
+                    return parse_object(self);
+                }
+                Some('[') => {
+                    self.index += 1;
+                    return parse_array(self, ']');
+                }
+                Some('(') => {
+                    if !self.context.empty || top_level_parenthesized_can_start_value(self) {
+                        return self.parse_parenthesized();
+                    }
+                    self.index += 1;
+                }
+                Some(c) => {
+                    if !self.context.empty && (STRING_DELIMITERS.contains(&c) || c.is_alphabetic()) {
+                        return parse_string(self);
+                    }
+                    if !self.context.empty && (c.is_ascii_digit() || c == '-' || c == '.') {
+                        return parse_number(self);
+                    }
+                    if c == '#' || c == '/' {
+                        return parse_comment(self);
+                    }
+                    self.index += 1;
+                }
+            }
+        }
+    }
+
+    /// Port of `JSONParser.parse_parenthesized`.
+    fn parse_parenthesized(&mut self) -> Value {
+        let explicit_tuple = parenthesized_is_explicit_tuple(self);
+        self.index += 1;
+        let values = parse_array(self, ')');
+        if let Value::Array(arr) = values {
+            if explicit_tuple || arr.len() != 1 {
+                return Value::Array(arr);
+            }
+            return arr.into_iter().next().unwrap();
+        }
+        values
     }
 }
 
