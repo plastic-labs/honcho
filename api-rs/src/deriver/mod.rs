@@ -4,6 +4,7 @@
 //! DB-touching queue-claim/batch queries, the batch-config resolution, and the
 //! consumer/processing pipeline follow as separate units.
 
+pub mod deriver;
 pub mod payload;
 pub mod poll;
 pub mod prompts;
