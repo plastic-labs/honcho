@@ -3663,6 +3663,197 @@ pub async fn enqueue_workspace_deletion(
     Ok(())
 }
 
+/// Cascade counts from [`hard_delete_workspace`] (Python `WorkspaceDeletionResult`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspaceDeletionCounts {
+    pub peers_deleted: i64,
+    pub sessions_deleted: i64,
+    pub messages_deleted: i64,
+    pub conclusions_deleted: i64,
+}
+
+/// Cascade counts from [`hard_delete_session`] (Python `SessionDeletionResult`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionDeletionCounts {
+    pub messages_deleted: i64,
+    pub conclusions_deleted: i64,
+}
+
+/// Failure modes of the worker hard-delete crud.
+#[derive(Debug)]
+pub enum HardDeleteError {
+    /// The target resource does not exist (Python `ResourceNotFoundException`).
+    NotFound,
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for HardDeleteError {
+    fn from(error: sqlx::Error) -> Self {
+        HardDeleteError::Database(error)
+    }
+}
+
+/// Port of the worker-side `crud.delete_workspace` (`src/crud/workspace.py`): the
+/// hard, cascading workspace delete the deriver's deletion task performs (distinct
+/// from the API's [`enqueue_workspace_deletion`] accept-and-enqueue). Snapshots the
+/// cascade counts, then deletes every child in FK-safe order within one
+/// transaction. The external-vector-store namespace and cache invalidations are
+/// no-ops on the default pgvector path and are not ported.
+pub async fn hard_delete_workspace(
+    pool: &PgPool,
+    workspace_name: &str,
+) -> Result<WorkspaceDeletionCounts, HardDeleteError> {
+    let mut tx = pool.begin().await?;
+
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM workspaces WHERE name = $1)")
+            .bind(workspace_name)
+            .fetch_one(&mut *tx)
+            .await?;
+    if !exists {
+        return Err(HardDeleteError::NotFound);
+    }
+
+    // Counts captured before deletion (telemetry snapshot).
+    let count_in = |sql: &'static str| async move {
+        sqlx::query_scalar::<_, i64>(sql)
+            .bind(workspace_name)
+            .fetch_one(pool)
+            .await
+    };
+    let peers_deleted = count_in("SELECT COUNT(*) FROM peers WHERE workspace_name = $1").await?;
+    let sessions_deleted =
+        count_in("SELECT COUNT(*) FROM sessions WHERE workspace_name = $1").await?;
+    let messages_deleted =
+        count_in("SELECT COUNT(*) FROM messages WHERE workspace_name = $1").await?;
+    let conclusions_deleted =
+        count_in("SELECT COUNT(*) FROM documents WHERE workspace_name = $1").await?;
+
+    // Cascade deletes in dependency order (mirrors the Python sequence).
+    for sql in [
+        "DELETE FROM active_queue_sessions WHERE split_part(work_unit_key, ':', 2) = $1",
+        "DELETE FROM queue WHERE workspace_name = $1",
+        "DELETE FROM queue WHERE message_id IN (SELECT id FROM messages WHERE workspace_name = $1)",
+        "DELETE FROM message_embeddings WHERE workspace_name = $1",
+        "DELETE FROM documents WHERE workspace_name = $1",
+        "DELETE FROM collections WHERE workspace_name = $1",
+        "DELETE FROM messages WHERE workspace_name = $1",
+        "DELETE FROM webhook_endpoints WHERE workspace_name = $1",
+        "DELETE FROM session_peers WHERE workspace_name = $1",
+        "DELETE FROM sessions WHERE workspace_name = $1",
+        "DELETE FROM peers WHERE workspace_name = $1",
+        "DELETE FROM workspaces WHERE name = $1",
+    ] {
+        sqlx::query(sql).bind(workspace_name).execute(&mut *tx).await?;
+    }
+
+    tx.commit().await?;
+    Ok(WorkspaceDeletionCounts {
+        peers_deleted,
+        sessions_deleted,
+        messages_deleted,
+        conclusions_deleted,
+    })
+}
+
+/// Port of the worker-side `crud.delete_session` (`src/crud/session.py`): the hard,
+/// cascading session delete (distinct from the API's [`delete_session`] soft
+/// is_active=false + enqueue). Resolves the session id (including inactive), then
+/// cascade-deletes in FK-safe order within one transaction, returning the message
+/// and conclusion counts. External-vector-store deletes are no-ops on pgvector,
+/// and the per-5000 batching is collapsed into single DELETEs (semantically identical).
+pub async fn hard_delete_session(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+) -> Result<SessionDeletionCounts, HardDeleteError> {
+    let mut tx = pool.begin().await?;
+
+    let session_id: Option<String> =
+        sqlx::query_scalar("SELECT id FROM sessions WHERE workspace_name = $1 AND name = $2")
+            .bind(workspace_name)
+            .bind(session_name)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let session_id = session_id.ok_or(HardDeleteError::NotFound)?;
+
+    sqlx::query(
+        "DELETE FROM active_queue_sessions \
+         WHERE split_part(work_unit_key, ':', 2) = $1 AND split_part(work_unit_key, ':', 3) = $2",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("DELETE FROM queue WHERE session_id = $1")
+        .bind(&session_id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("DELETE FROM message_embeddings WHERE session_name = $1 AND workspace_name = $2")
+        .bind(session_name)
+        .bind(workspace_name)
+        .execute(&mut *tx)
+        .await?;
+
+    let conclusions_deleted =
+        sqlx::query("DELETE FROM documents WHERE session_name = $1 AND workspace_name = $2")
+            .bind(session_name)
+            .bind(workspace_name)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected() as i64;
+
+    let messages_deleted =
+        sqlx::query("DELETE FROM messages WHERE session_name = $1 AND workspace_name = $2")
+            .bind(session_name)
+            .bind(workspace_name)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected() as i64;
+
+    sqlx::query("DELETE FROM session_peers WHERE session_name = $1 AND workspace_name = $2")
+        .bind(session_name)
+        .bind(workspace_name)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("DELETE FROM sessions WHERE workspace_name = $1 AND name = $2")
+        .bind(workspace_name)
+        .bind(session_name)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(SessionDeletionCounts {
+        messages_deleted,
+        conclusions_deleted,
+    })
+}
+
+/// Port of `crud.delete_document_by_id` (`src/crud/document.py`): SOFT-delete a
+/// document (set `deleted_at = now()`); the reconciler later hard-deletes it.
+/// Returns `true` when a row was marked, `false` when none matched (already
+/// deleted / wrong workspace) — the caller treats the latter as idempotent
+/// success, matching how `process_deletion` swallows `ResourceNotFoundException`.
+pub async fn mark_document_deleted(
+    pool: &PgPool,
+    workspace_name: &str,
+    document_id: &str,
+) -> Result<bool, sqlx::Error> {
+    let affected = sqlx::query(
+        "UPDATE documents SET deleted_at = now() \
+         WHERE id = $1 AND workspace_name = $2 AND deleted_at IS NULL",
+    )
+    .bind(document_id)
+    .bind(workspace_name)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(affected > 0)
+}
+
 async fn fetch_count(pool: &PgPool, sql: &str, bindings: &[Value]) -> Result<i64, sqlx::Error> {
     fetch_count_with_tail(pool, sql, bindings, &[]).await
 }

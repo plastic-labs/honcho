@@ -3395,6 +3395,169 @@ async fn deriver_worker_poll_once_claims_processes_and_releases() {
     test_db.teardown().await;
 }
 
+// --- worker hard-delete crud ---
+
+/// Seed a workspace with one session, two bob messages, observer alice, and two
+/// alice→bob documents. Returns nothing — callers query counts directly.
+async fn seed_deletion_fixture(pool: &PgPool) {
+    use honcho_api_rs::representation::{ExplicitObservation, Representation};
+    use honcho_api_rs::representation_manager::save_representation;
+
+    db::create_messages(pool, "ws", "sess", &[message("bob", "hi"), message("bob", "yo")], false, 8192)
+        .await
+        .expect("seed messages");
+    db::get_or_create_peer(pool, "ws", "alice", None, None)
+        .await
+        .expect("peer alice");
+
+    let created = Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0).unwrap();
+    let rep = Representation {
+        explicit: vec![
+            ExplicitObservation {
+                id: String::new(),
+                created_at: created,
+                message_ids: vec![1],
+                session_name: Some("sess".to_string()),
+                content: "bob likes coffee".to_string(),
+            },
+            ExplicitObservation {
+                id: String::new(),
+                created_at: created,
+                message_ids: vec![1],
+                session_name: Some("sess".to_string()),
+                content: "bob lives in Berlin".to_string(),
+            },
+        ],
+        ..Representation::default()
+    };
+    save_representation(
+        pool,
+        &IndexedEmbedder,
+        "ws",
+        "alice",
+        "bob",
+        &rep,
+        &[1],
+        "sess",
+        created,
+        true,
+    )
+    .await
+    .expect("save docs");
+}
+
+#[tokio::test]
+async fn hard_delete_session_removes_data_and_counts() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    seed_deletion_fixture(&test_db.pool).await;
+
+    let counts = db::hard_delete_session(&test_db.pool, "ws", "sess")
+        .await
+        .expect("hard delete session");
+    assert_eq!(counts.messages_deleted, 2);
+    assert_eq!(counts.conclusions_deleted, 2);
+
+    // Session, messages, and documents are gone; peers + workspace remain.
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE workspace_name = 'ws'")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("sessions");
+    assert_eq!(sessions, 0);
+    let messages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE workspace_name = 'ws'")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("messages");
+    assert_eq!(messages, 0);
+    let peers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM peers WHERE workspace_name = 'ws'")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("peers");
+    assert_eq!(peers, 2); // bob + alice survive a session delete
+
+    // Missing session → NotFound.
+    let missing = db::hard_delete_session(&test_db.pool, "ws", "nope").await;
+    assert!(matches!(missing, Err(db::HardDeleteError::NotFound)));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn hard_delete_workspace_cascades_everything() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    seed_deletion_fixture(&test_db.pool).await;
+
+    let counts = db::hard_delete_workspace(&test_db.pool, "ws")
+        .await
+        .expect("hard delete workspace");
+    assert_eq!(counts.peers_deleted, 2);
+    assert_eq!(counts.sessions_deleted, 1);
+    assert_eq!(counts.messages_deleted, 2);
+    assert_eq!(counts.conclusions_deleted, 2);
+
+    let workspaces: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces WHERE name = 'ws'")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("workspaces");
+    assert_eq!(workspaces, 0);
+    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE workspace_name = 'ws'")
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("docs");
+    assert_eq!(docs, 0);
+
+    // Missing workspace → NotFound.
+    let missing = db::hard_delete_workspace(&test_db.pool, "nope").await;
+    assert!(matches!(missing, Err(db::HardDeleteError::NotFound)));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn mark_document_deleted_is_idempotent() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    seed_deletion_fixture(&test_db.pool).await;
+
+    let doc_id: String = sqlx::query_scalar(
+        "SELECT id FROM documents WHERE workspace_name = 'ws' AND content = 'bob likes coffee'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("doc id");
+
+    // First mark soft-deletes it.
+    let first = db::mark_document_deleted(&test_db.pool, "ws", &doc_id)
+        .await
+        .expect("mark");
+    assert!(first);
+    let deleted_at: Option<chrono::DateTime<Utc>> =
+        sqlx::query_scalar("SELECT deleted_at FROM documents WHERE id = $1")
+            .bind(&doc_id)
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("deleted_at");
+    assert!(deleted_at.is_some());
+
+    // Second mark is a no-op (already deleted) → false.
+    let second = db::mark_document_deleted(&test_db.pool, "ws", &doc_id)
+        .await
+        .expect("mark again");
+    assert!(!second);
+
+    // Unknown id → false.
+    let unknown = db::mark_document_deleted(&test_db.pool, "ws", "missing")
+        .await
+        .expect("mark unknown");
+    assert!(!unknown);
+
+    test_db.teardown().await;
+}
+
 #[tokio::test]
 async fn get_or_create_collection_creates_then_reuses() {
     let Some(test_db) = TestDb::setup().await else {
