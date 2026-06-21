@@ -13,6 +13,11 @@
 //! `comprehensive_json_repair` (see [`crate::json_parser`]) remains the only
 //! wired repair path.
 
+pub mod boolean_null;
 pub mod context;
 pub mod object_comparer;
 pub mod parser;
+pub mod string_helpers;
+
+/// Port of `STRING_DELIMITERS` (`utils/constants.py`).
+pub const STRING_DELIMITERS: [char; 4] = ['"', '\'', '\u{201c}', '\u{201d}'];
