@@ -2189,6 +2189,96 @@ async fn query_documents_recent_and_most_derived_order_correctly() {
     test_db.teardown().await;
 }
 
+/// `delete_documents` soft-deletes the matching live rows in one statement,
+/// returns `(id, level)` for the rows actually deleted, skips ids outside the
+/// `(observer, observed)` scope, and skips ids already soft-deleted.
+#[tokio::test]
+async fn delete_documents_soft_deletes_scoped_rows_and_returns_levels() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd", "other"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    for (idx, observed) in [(50, "obsd"), (51, "other")] {
+        sqlx::query(
+            "INSERT INTO collections (id, workspace_name, observer, observed) \
+             VALUES ($1, 'ws', 'obs', $2)",
+        )
+        .bind(doc_id(idx))
+        .bind(observed)
+        .execute(&test_db.pool)
+        .await
+        .expect("collection");
+    }
+
+    let insert = |id: String, level: &'static str, observed: &'static str| {
+        let pool = test_db.pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO documents \
+                 (id, content, workspace_name, observer, observed, level, sync_state) \
+                 VALUES ($1, 'c', 'ws', 'obs', $2, $3, 'synced')",
+            )
+            .bind(&id)
+            .bind(observed)
+            .bind(level)
+            .execute(&pool)
+            .await
+            .expect("seed doc");
+        }
+    };
+
+    insert(doc_id(1), "explicit", "obsd").await;
+    insert(doc_id(2), "deductive", "obsd").await;
+    // Out-of-scope: different observed peer — must NOT be deleted.
+    insert(doc_id(3), "explicit", "other").await;
+
+    // Pre-soft-delete doc 4 so it's skipped (already deleted).
+    insert(doc_id(4), "inductive", "obsd").await;
+    db::mark_document_deleted(&test_db.pool, "ws", &doc_id(4))
+        .await
+        .expect("pre-delete");
+
+    let ids = vec![doc_id(1), doc_id(2), doc_id(3), doc_id(4), "missing".to_string()];
+    let mut deleted = db::delete_documents(&test_db.pool, "ws", &ids, "obs", "obsd", None)
+        .await
+        .expect("delete_documents");
+    deleted.sort();
+
+    // Only docs 1 and 2 (in scope, live) are deleted, with their levels.
+    assert_eq!(
+        deleted,
+        vec![
+            (doc_id(1), Some("explicit".to_string())),
+            (doc_id(2), Some("deductive".to_string())),
+        ]
+    );
+
+    // Doc 3 (wrong observed) remains live.
+    let live: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM documents WHERE id = $1 AND deleted_at IS NULL")
+            .bind(doc_id(3))
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("count");
+    assert_eq!(live, 1);
+
+    // Empty id list is a no-op.
+    let empty = db::delete_documents(&test_db.pool, "ws", &[], "obs", "obsd", None)
+        .await
+        .expect("empty");
+    assert!(empty.is_empty());
+
+    test_db.teardown().await;
+}
+
 /// `query_documents_full` returns the full document shape (level, source_ids,
 /// internal_metadata) and `Representation::from_documents` reconstructs the
 /// observations from it. Uses deterministic one-hot embeddings (no OpenAI), so

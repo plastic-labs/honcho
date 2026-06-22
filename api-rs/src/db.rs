@@ -4249,6 +4249,45 @@ pub async fn mark_document_deleted(
     Ok(affected > 0)
 }
 
+/// Port of `crud.delete_documents` (document.py:672): soft-delete multiple
+/// documents in one `UPDATE ... RETURNING`, scoped to `(workspace, observer,
+/// observed)` and (optionally) session. Returns `(id, level)` for the rows that
+/// were actually deleted (matched the filter and weren't already soft-deleted);
+/// callers diff against the input ids to detect misses. `level` is nullable in
+/// the schema, so it surfaces as `Option<String>`.
+pub async fn delete_documents(
+    pool: &PgPool,
+    workspace_name: &str,
+    document_ids: &[String],
+    observer: &str,
+    observed: &str,
+    session_name: Option<&str>,
+) -> Result<Vec<(String, Option<String>)>, sqlx::Error> {
+    if document_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let session_clause = if session_name.is_some() {
+        " AND session_name = $5"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "UPDATE documents SET deleted_at = now() \
+         WHERE id = ANY($1) AND workspace_name = $2 AND observer = $3 AND observed = $4 \
+           AND deleted_at IS NULL{session_clause} \
+         RETURNING id, level"
+    );
+    let mut query = sqlx::query_as::<_, (String, Option<String>)>(&sql)
+        .bind(document_ids)
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed);
+    if let Some(session) = session_name {
+        query = query.bind(session);
+    }
+    query.fetch_all(pool).await
+}
+
 async fn fetch_count(pool: &PgPool, sql: &str, bindings: &[Value]) -> Result<i64, sqlx::Error> {
     fetch_count_with_tail(pool, sql, bindings, &[]).await
 }
