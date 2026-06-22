@@ -49,7 +49,8 @@ model = "mxbai-embed-large"
 dimensions_mode = "never"
 
 [embedding.MODEL_CONFIG.overrides]
-base_url = "http://host.docker.internal:11434/v1"
+# Remote LAN Ollama on MBP2020. Keep mxbai-embed-large + 1024 dims aligned with existing pgvector data.
+base_url = "http://192.168.1.145:11434/v1"
 api_key_env = "LOCAL_EMBEDDING_API_KEY"
 
 [vector_store]
