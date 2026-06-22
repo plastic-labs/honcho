@@ -375,7 +375,7 @@ async def test_openai_backend_rejects_non_mapping_passthrough() -> None:
     client.chat.completions.create = AsyncMock()
 
     backend = OpenAIBackend(client)
-    with pytest.raises(ValidationException, match="provider_params.extra_headers"):
+    with pytest.raises(ValidationException, match=r"provider_params\.extra_headers"):
         await backend.complete(
             model="gpt-4.1",
             messages=[{"role": "user", "content": "Hello"}],

@@ -187,7 +187,7 @@ verbosity = "low"
 
 #### Transport passthrough keys
 
-Three keys inside `provider_params` are recognized as request-level escape hatches and forwarded to the underlying transport. Their values must be mappings — a non-mapping value raises a configuration error:
+Three keys inside `provider_params` are recognized as request-level escape hatches and forwarded to the underlying transport. Where a transport actually validates and merges one of these keys, its value must be a mapping — a non-mapping value raises a configuration error (see the per-transport behavior below; a key a transport ignores is not validated):
 
 - **`extra_body`** — merged into the request body
 - **`extra_headers`** — extra HTTP headers
