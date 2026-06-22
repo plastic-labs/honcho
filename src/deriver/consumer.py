@@ -43,17 +43,20 @@ async def process_item(queue_item: models.QueueItem) -> None:
 
     # Handle reconciler first - it's the only task type that doesn't require workspace_name
     if task_type == "reconciler":
-        with sentry_sdk.start_transaction(name="process_reconciler_task", op="deriver"):
-            try:
-                validated = ReconcilerPayload(**queue_payload)
-            except ValidationError as e:
-                logger.error(
-                    "Invalid reconciler payload received: %s. Payload: %s",
-                    str(e),
-                    queue_payload,
-                )
-                raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_reconciler(validated)
+        # No top-level transaction here: reconciler tasks poll on a fixed
+        # interval and usually find no work. Tracing is started per-batch
+        # inside the reconciler only when actual work is found, so idle
+        # cycles don't consume Sentry tracing/profiling quota.
+        try:
+            validated = ReconcilerPayload(**queue_payload)
+        except ValidationError as e:
+            logger.error(
+                "Invalid reconciler payload received: %s. Payload: %s",
+                str(e),
+                queue_payload,
+            )
+            raise ValueError(f"Invalid payload structure: {str(e)}") from e
+        await process_reconciler(validated)
         return
 
     # All other task types require a workspace_name
