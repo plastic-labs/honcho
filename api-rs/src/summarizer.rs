@@ -359,6 +359,64 @@ where
     Ok(())
 }
 
+/// Port of `summarize_if_needed`: create the short and/or long summary for this
+/// message when its sequence hits the configured intervals (and summaries are
+/// enabled). Both tiers are attempted independently (Python runs them via
+/// `asyncio.gather(return_exceptions=True)`); the first error is returned after
+/// both are tried, rather than aborting the second.
+#[allow(clippy::too_many_arguments)]
+pub async fn summarize_if_needed<H>(
+    pool: &PgPool,
+    http: &H,
+    keys: &TransportApiKeys,
+    settings: &SummaryModelSettings,
+    enabled: bool,
+    workspace_name: &str,
+    session_name: &str,
+    message_id: i64,
+    message_seq_in_session: i64,
+    message_public_id: &str,
+    created_at_iso: &str,
+) -> Result<(), sqlx::Error>
+where
+    H: LlmHttp + Sync,
+{
+    let decision = decide_summaries(
+        enabled,
+        message_seq_in_session,
+        settings.messages_per_short_summary,
+        settings.messages_per_long_summary,
+    );
+    if !decision.any() {
+        return Ok(());
+    }
+
+    let mut result = Ok(());
+    if decision.create_long {
+        if let Err(error) = create_and_save_summary(
+            pool, http, keys, settings, workspace_name, session_name, message_id,
+            message_seq_in_session, message_public_id, SummaryType::Long, created_at_iso,
+        )
+        .await
+        {
+            result = Err(error);
+        }
+    }
+    if decision.create_short {
+        if let Err(error) = create_and_save_summary(
+            pool, http, keys, settings, workspace_name, session_name, message_id,
+            message_seq_in_session, message_public_id, SummaryType::Short, created_at_iso,
+        )
+        .await
+        {
+            if result.is_ok() {
+                result = Err(error);
+            }
+        }
+    }
+    result
+}
+
 /// The basic fallback summary string (Python's `f"Conversation with {count}
 /// messages about {preview}..."`, or empty when there are no messages).
 fn fallback_summary(message_count: usize, preview: &str) -> String {

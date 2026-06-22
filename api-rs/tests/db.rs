@@ -3796,6 +3796,74 @@ async fn create_and_save_summary_does_not_save_empty_fallback() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn summarize_if_needed_creates_both_tiers_at_long_boundary() {
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::llm::{ModelConfig, Provider};
+    use honcho_api_rs::summarizer::{SummaryModelSettings, SummaryType, summarize_if_needed};
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    // Seed 6 messages (seqs 1..6).
+    let msgs: Vec<_> = (0..6).map(|i| message("bob", &format!("m{i}"))).collect();
+    db::create_messages(&test_db.pool, "ws", "sess", &msgs, false, 8192)
+        .await
+        .expect("seed");
+
+    let http = CannedLlmHttp(json!({
+        "content": [{"type": "text", "text": "summary text"}],
+        "usage": {"input_tokens": 20, "output_tokens": 5},
+        "stop_reason": "end_turn"
+    }));
+    let settings = SummaryModelSettings {
+        model_config: ModelConfig::new("claude-x", Provider::Anthropic),
+        max_tokens_short: 1000,
+        max_tokens_long: 4000,
+        messages_per_short_summary: 3,
+        messages_per_long_summary: 6,
+    };
+    let keys = TransportApiKeys { anthropic: Some("k".to_string()), openai: None, gemini: None };
+
+    // seq 6 is a multiple of both 3 and 6 → both tiers created.
+    summarize_if_needed(
+        &test_db.pool, &http, &keys, &settings, true, "ws", "sess", 6, 6, "pub_6",
+        "2025-03-04T12:00:00+00:00",
+    )
+    .await
+    .expect("summarize");
+
+    let short = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("short")
+        .expect("present");
+    let long = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Long.as_str())
+        .await
+        .expect("long")
+        .expect("present");
+    assert_eq!(short["content"], "summary text");
+    assert_eq!(long["content"], "summary text");
+
+    // Disabled → no-op even at a boundary.
+    let none_db = TestDb::setup().await.unwrap();
+    db::create_messages(&none_db.pool, "ws", "sess", &msgs, false, 8192)
+        .await
+        .expect("seed2");
+    summarize_if_needed(
+        &none_db.pool, &http, &keys, &settings, false, "ws", "sess", 6, 6, "pub_6",
+        "2025-03-04T12:00:00+00:00",
+    )
+    .await
+    .expect("disabled");
+    let nothing = db::get_summary(&none_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("short2");
+    assert!(nothing.is_none());
+    none_db.teardown().await;
+
+    test_db.teardown().await;
+}
+
 /// Captures emitted telemetry event bodies for assertions.
 struct CapturingEmitter {
     events: std::sync::Mutex<Vec<(String, serde_json::Value)>>,
