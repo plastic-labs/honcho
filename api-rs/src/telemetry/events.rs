@@ -151,6 +151,107 @@ impl super::TelemetryEvent for DeletionCompletedEvent {
     }
 }
 
+/// Port of `SyncVectorsCompletedEvent` (events/reconciliation.py): emitted when a
+/// vector sync cycle completes. Global operation — no workspace context; the
+/// resource id is the fixed string `"sync_vectors"`. Count fields default to 0.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncVectorsCompletedEvent {
+    pub timestamp: DateTime<Utc>,
+    pub documents_synced: i64,
+    pub documents_failed: i64,
+    pub documents_cleaned: i64,
+    pub message_embeddings_synced: i64,
+    pub message_embeddings_failed: i64,
+    pub total_duration_ms: f64,
+}
+
+impl SyncVectorsCompletedEvent {
+    pub const EVENT_TYPE: &'static str = "reconciliation.sync_vectors.completed";
+    pub const SCHEMA_VERSION: i32 = 1;
+    pub const CATEGORY: &'static str = "reconciliation";
+
+    /// Port of `get_resource_id`: fixed for this global operation.
+    pub fn get_resource_id(&self) -> String {
+        "sync_vectors".to_string()
+    }
+
+    /// Port of `generate_id` (package version folded in by the caller).
+    pub fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp);
+        generate_event_id(Self::EVENT_TYPE, &self.get_resource_id(), &iso, honcho_version)
+    }
+}
+
+impl super::TelemetryEvent for SyncVectorsCompletedEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        SyncVectorsCompletedEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
+/// Port of `CleanupStaleItemsCompletedEvent` (events/reconciliation.py): emitted
+/// when a stale-items cleanup cycle completes. Global operation — no workspace
+/// context; the resource id is the fixed string `"cleanup_stale_items"`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CleanupStaleItemsCompletedEvent {
+    pub timestamp: DateTime<Utc>,
+    pub documents_cleaned: i64,
+    pub queue_items_cleaned: i64,
+    pub total_duration_ms: f64,
+}
+
+impl CleanupStaleItemsCompletedEvent {
+    pub const EVENT_TYPE: &'static str = "reconciliation.cleanup_stale_items.completed";
+    pub const SCHEMA_VERSION: i32 = 1;
+    pub const CATEGORY: &'static str = "reconciliation";
+
+    /// Port of `get_resource_id`: fixed for this global operation.
+    pub fn get_resource_id(&self) -> String {
+        "cleanup_stale_items".to_string()
+    }
+
+    /// Port of `generate_id` (package version folded in by the caller).
+    pub fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp);
+        generate_event_id(Self::EVENT_TYPE, &self.get_resource_id(), &iso, honcho_version)
+    }
+}
+
+impl super::TelemetryEvent for CleanupStaleItemsCompletedEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        CleanupStaleItemsCompletedEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,5 +354,56 @@ mod tests {
         let body = TelemetryEvent::to_body(&event);
         assert_eq!(body["peers_deleted"], 2);
         assert!(body.get("error_message").is_none());
+    }
+
+    #[test]
+    fn sync_vectors_event_metadata_and_golden_id() {
+        use crate::telemetry::TelemetryEvent;
+        let event = SyncVectorsCompletedEvent {
+            timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
+            documents_synced: 4,
+            documents_failed: 1,
+            documents_cleaned: 2,
+            message_embeddings_synced: 7,
+            message_embeddings_failed: 0,
+            total_duration_ms: 12.5,
+        };
+        assert_eq!(event.get_resource_id(), "sync_vectors");
+        assert_eq!(
+            SyncVectorsCompletedEvent::EVENT_TYPE,
+            "reconciliation.sync_vectors.completed"
+        );
+        assert_eq!(SyncVectorsCompletedEvent::SCHEMA_VERSION, 1);
+        assert_eq!(SyncVectorsCompletedEvent::CATEGORY, "reconciliation");
+        assert_eq!(event.volume_class(), "ground_truth");
+        // Golden from generate_event_id("reconciliation.sync_vectors.completed",
+        //   ts=2026-06-21T12:00:00+00:00, "sync_vectors", "9.9.9").
+        assert_eq!(event.generate_id(Some("9.9.9")), "evt_bC7QKIVrMuNEkEdK1b9Nfg");
+        let body = TelemetryEvent::to_body(&event);
+        assert_eq!(body["message_embeddings_synced"], 7);
+        assert_eq!(body["documents_cleaned"], 2);
+    }
+
+    #[test]
+    fn cleanup_stale_items_event_metadata_and_golden_id() {
+        use crate::telemetry::TelemetryEvent;
+        let event = CleanupStaleItemsCompletedEvent {
+            timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
+            documents_cleaned: 0,
+            queue_items_cleaned: 9,
+            total_duration_ms: 3.0,
+        };
+        assert_eq!(event.get_resource_id(), "cleanup_stale_items");
+        assert_eq!(
+            CleanupStaleItemsCompletedEvent::EVENT_TYPE,
+            "reconciliation.cleanup_stale_items.completed"
+        );
+        assert_eq!(CleanupStaleItemsCompletedEvent::SCHEMA_VERSION, 1);
+        assert_eq!(CleanupStaleItemsCompletedEvent::CATEGORY, "reconciliation");
+        // Golden from generate_event_id("reconciliation.cleanup_stale_items.completed",
+        //   ts=2026-06-21T12:00:00+00:00, "cleanup_stale_items", "9.9.9").
+        assert_eq!(event.generate_id(Some("9.9.9")), "evt_2UxFc6lRt08lhWl9jznrVw");
+        let body = TelemetryEvent::to_body(&event);
+        assert_eq!(body["queue_items_cleaned"], 9);
     }
 }
