@@ -9,5 +9,6 @@
 //! target. A dream simply runs without surprisal hints, which is the
 //! default-config behavior.
 
+pub mod handlers;
 pub mod specialists;
 pub mod tools;
