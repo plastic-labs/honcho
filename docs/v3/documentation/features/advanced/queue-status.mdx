@@ -179,6 +179,15 @@ work units are stalled, use `queue_work_units` / `queueWorkUnits`. It returns
 one row per unprocessed work unit with the token totals, in-progress flag,
 and threshold classification needed to debug "why isn't this advancing?".
 
+<Note>
+The two endpoints count at different granularities. `queue/status` counts
+individual queue items (one per message awaiting processing), while
+`queue/work-units` returns one row per work unit — items sharing a
+`work_unit_key` collapse into a single row. So a status response reporting
+`pending_work_units: 3` can correspond to a single row (`total: 1`) here when
+those three items belong to the same work unit.
+</Note>
+
 <CodeGroup>
 ```python Python
 from honcho import Honcho

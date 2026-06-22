@@ -340,14 +340,6 @@ export interface QueueStatusParams {
   session_id?: string
 }
 
-export interface QueueWorkUnitsParams {
-  observer_id?: string
-  sender_id?: string
-  session_id?: string
-  cursor?: string
-  size?: number
-}
-
 /**
  * Queue status scoped to a single session.
  */

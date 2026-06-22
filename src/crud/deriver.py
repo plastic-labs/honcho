@@ -271,6 +271,10 @@ def _build_queue_work_units_query(
     observer_name_expr = models.QueueItem.payload["observer"].astext
     observed_name_expr = models.QueueItem.payload["observed"].astext
 
+    # Labeled so the cursor orders by (and binds the keyset to) a named SELECT
+    # column rather than re-deriving the bare aggregate expression.
+    oldest_item_at = func.min(models.QueueItem.created_at).label("oldest_item_at")
+
     stmt = (
         select(
             models.QueueItem.work_unit_key.label("work_unit_key"),
@@ -283,7 +287,7 @@ def _build_queue_work_units_query(
             func.coalesce(
                 func.sum(func.coalesce(models.Message.token_count, 0)), 0
             ).label("pending_tokens"),
-            func.min(models.QueueItem.created_at).label("oldest_item_at"),
+            oldest_item_at,
             func.max(models.QueueItem.created_at).label("newest_item_at"),
             func.bool_or(models.ActiveQueueSession.id.isnot(None)).label("in_progress"),
         )
@@ -313,7 +317,7 @@ def _build_queue_work_units_query(
             # Oldest-pending first surfaces the most-stuck work for debugging.
             # work_unit_key is a unique tiebreaker required by sqlakeyset for
             # stable cursor pagination when timestamps collide.
-            func.min(models.QueueItem.created_at),
+            oldest_item_at,
             models.QueueItem.work_unit_key,
         )
     )
