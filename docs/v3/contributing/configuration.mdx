@@ -354,6 +354,17 @@ DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000
 # Worker settings
 DERIVER_WORKERS=1  # Increase for higher throughput
 DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0
+# Adaptive polling: when idle/erroring, the sleep interval grows from the base
+# toward DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS by the multiplier each cycle,
+# then snaps back to base when work is found. Cuts steady-state query load.
+DERIVER_POLLING_BACKOFF_ENABLED=true
+DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS=30.0
+DERIVER_POLLING_BACKOFF_MULTIPLIER=2.0
+# Jitter so instances that start together don't poll in lockstep. Startup: sleep
+# a random delay in [0, value] before the first poll (0.0 disables). Per-cycle:
+# multiply every poll sleep by a random factor in [1-ratio, 1+ratio] (0.0 disables).
+DERIVER_POLLING_STARTUP_JITTER_SECONDS=30.0
+DERIVER_POLLING_JITTER_RATIO=0.5
 DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5
 
 # Queue management
@@ -459,10 +470,13 @@ DB_SCHEMA=public
 DB_POOL_PRE_PING=true
 DB_POOL_SIZE=10
 DB_MAX_OVERFLOW=20
-DB_POOL_TIMEOUT=30
+DB_POOL_TIMEOUT=5
 DB_POOL_RECYCLE=300
 DB_POOL_USE_LIFO=true
 DB_SQL_DEBUG=false
+# Per-connection establish timeout (seconds) so a single connection attempt
+# fails fast instead of hanging when the server/pooler is unreachable.
+DB_CONNECT_TIMEOUT_SECONDS=2
 ```
 
 ### Authentication

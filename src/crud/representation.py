@@ -334,7 +334,7 @@ class RepresentationManager:
             )
 
         async with tracked_db(
-            "representation_manager.get_working_representation"
+            "representation_manager.get_working_representation", read_only=True
         ) as new_db:
             return await self._get_working_representation_internal(
                 new_db,
@@ -502,7 +502,13 @@ class RepresentationManager:
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
             )
-            .order_by(models.Document.times_derived.desc())
+            .order_by(
+                models.Document.times_derived.desc(),
+                models.Document.created_at.desc(),
+                # created_at is the transaction timestamp, so documents created
+                # in the same batch share it -- id keeps the order deterministic.
+                models.Document.id,
+            )
         )
 
         result = await db.execute(stmt)

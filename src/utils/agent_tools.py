@@ -1622,7 +1622,7 @@ async def _handle_get_recent_history(
 ) -> "str | ToolResult":
     """Handle get_recent_history tool."""
     _ = tool_input
-    async with tracked_db("tool.get_recent_history") as db:
+    async with tracked_db("tool.get_recent_history", read_only=True) as db:
         history: list[models.Message] = await get_recent_history(
             db,
             workspace_name=ctx.workspace_name,
@@ -1738,7 +1738,7 @@ async def _handle_get_observation_context(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
     """Handle get_observation_context tool."""
-    async with tracked_db("tool.get_observation_context") as db:
+    async with tracked_db("tool.get_observation_context", read_only=True) as db:
         messages = await get_observation_context(
             db,
             workspace_name=ctx.workspace_name,
@@ -1877,7 +1877,7 @@ async def _handle_get_messages_by_date_range(
     if isinstance(before_date, str):
         return before_date  # Error message
 
-    async with tracked_db("tool.get_messages_by_date_range") as db:
+    async with tracked_db("tool.get_messages_by_date_range", read_only=True) as db:
         messages = await crud.get_messages_by_date_range(
             db,
             workspace_name=ctx.workspace_name,
@@ -1995,7 +1995,7 @@ async def _handle_get_recent_observations(
 ) -> str:
     """Handle get_recent_observations tool."""
     session_only = tool_input.get("session_only", False)
-    async with tracked_db("tool.get_recent_observations") as db:
+    async with tracked_db("tool.get_recent_observations", read_only=True) as db:
         documents = await crud.query_documents_recent(
             db=db,
             workspace_name=ctx.workspace_name,
@@ -2021,7 +2021,7 @@ async def _handle_get_most_derived_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_most_derived_observations tool."""
-    async with tracked_db("tool.get_most_derived_observations") as db:
+    async with tracked_db("tool.get_most_derived_observations", read_only=True) as db:
         documents = await crud.query_documents_most_derived(
             db=db,
             workspace_name=ctx.workspace_name,
@@ -2053,7 +2053,7 @@ async def _handle_get_session_summary(
         if summary_type == "long"
         else summarizer.SummaryType.SHORT
     )
-    async with tracked_db("tool.get_session_summary") as db:
+    async with tracked_db("tool.get_session_summary", read_only=True) as db:
         summary = await summarizer.get_summary(
             db, ctx.workspace_name, ctx.session_name, st
         )
@@ -2065,7 +2065,7 @@ async def _handle_get_session_summary(
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle get_peer_card tool."""
     _ = tool_input
-    async with tracked_db("tool.get_peer_card") as db:
+    async with tracked_db("tool.get_peer_card", read_only=True) as db:
         peer_card = await crud.get_peer_card(
             db,
             workspace_name=ctx.workspace_name,
@@ -2224,7 +2224,7 @@ async def _handle_get_reasoning_chain(
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
     # Get the observation itself
-    async with tracked_db("tool.get_reasoning_chain") as db:
+    async with tracked_db("tool.get_reasoning_chain", read_only=True) as db:
         docs = await crud.get_documents_by_ids(db, ctx.workspace_name, [observation_id])
         if not docs or not docs[0]:
             return f"ERROR: Observation '{observation_id}' not found"

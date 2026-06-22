@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import db, tracked_db
+from src.dependencies import db, read_db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.embedding_client import embedding_client
 from src.exceptions import AuthenticationException, ResourceNotFoundException
@@ -43,7 +43,7 @@ async def get_peers(
         None, description="Filtering options for the peers list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Peers for a Workspace, paginated with optional filters."""
     filter_param = None
@@ -134,7 +134,7 @@ async def get_sessions_for_peer(
         None, description="Filtering options for the sessions list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Sessions for a Peer, paginated with optional filters."""
     filter_param = None
@@ -318,7 +318,7 @@ async def get_peer_card(
         None,
         description="Optional target peer to retrieve a card for, from the observer's perspective. If not provided, returns the observer's own card",
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get a peer card for a specific peer relationship.
 
@@ -412,7 +412,6 @@ async def get_peer_context(
         le=100,
         description="Maximum number of conclusions to include in the representation",
     ),
-    db: AsyncSession = db,
 ):
     """
     Get context for a peer, including their representation and peer card.
@@ -459,10 +458,12 @@ async def get_peer_context(
             parent_category="api",
         )
 
-        # Get the peer card
-        peer_card = await crud.get_peer_card(
-            db, workspace_id, observer=peer_id, observed=observed
-        )
+        async with tracked_db(
+            "peers.get_peer_context.peer_card", read_only=True
+        ) as card_db:
+            peer_card = await crud.get_peer_card(
+                card_db, workspace_id, observer=peer_id, observed=observed
+            )
 
         response = schemas.PeerContext(
             peer_id=peer_id,

@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.0.7-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.0.9-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/honcho)
@@ -393,6 +393,26 @@ the `AUTH_JWT_SECRET` environment variable. This is required for `AUTH_USE_AUTH`
 ```env
 AUTH_JWT_SECRET=<generated_secret>
 ```
+
+Once auth is enabled, use `scripts/generate_jwt.py` to mint tokens for local
+development and scripting:
+
+```bash
+# Admin token (full access, no expiry)
+uv run python scripts/generate_jwt.py --admin
+
+# Admin token expiring in 24 hours
+uv run python scripts/generate_jwt.py --admin --expires 24h
+
+# Workspace-scoped token
+uv run python scripts/generate_jwt.py --workspace my-workspace --expires 30d
+
+# Capture a token for use in curl/scripts
+TOKEN=$(uv run python scripts/generate_jwt.py --admin --print-only)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/v3/workspaces
+```
+
+Duration units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks), `y` (years).
 
 5. **Run database migrations**
 
