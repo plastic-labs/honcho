@@ -2944,6 +2944,123 @@ async fn cleanup_stale_work_units_removes_only_old_rows() {
 }
 
 #[tokio::test]
+async fn cleanup_queue_items_deletes_processed_respecting_error_retention() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    let now = Utc::now();
+    let old = now - chrono::Duration::hours(2);
+    // (key, processed, error, created_at)
+    let rows: [(&str, bool, Option<&str>, chrono::DateTime<Utc>); 4] = [
+        ("summary:ws:s:a:ok", true, None, now),         // processed, no error → delete
+        ("summary:ws:s:a:err_fresh", true, Some("boom"), now), // errored, fresh → keep
+        ("summary:ws:s:a:err_old", true, Some("boom"), old), // errored, old → delete
+        ("summary:ws:s:a:pending", false, None, now),   // not processed → keep
+    ];
+    for (key, processed, error, created_at) in rows {
+        sqlx::query(
+            "INSERT INTO queue (work_unit_key, payload, task_type, workspace_name, processed, error, created_at) \
+             VALUES ($1, '{}'::jsonb, 'summary', 'ws', $2, $3, $4)",
+        )
+        .bind(key)
+        .bind(processed)
+        .bind(error)
+        .bind(created_at)
+        .execute(&test_db.pool)
+        .await
+        .expect("insert queue row");
+    }
+
+    // Retention 1h: the fresh errored row is kept, the 2h-old errored row deleted.
+    let deleted = db::cleanup_queue_items(&test_db.pool, 3600)
+        .await
+        .expect("cleanup queue items");
+    assert_eq!(deleted, 2);
+
+    let mut remaining: Vec<String> =
+        sqlx::query_scalar("SELECT work_unit_key FROM queue ORDER BY work_unit_key")
+            .fetch_all(&test_db.pool)
+            .await
+            .expect("remaining");
+    remaining.sort();
+    assert_eq!(
+        remaining,
+        vec![
+            "summary:ws:s:a:err_fresh".to_string(),
+            "summary:ws:s:a:pending".to_string(),
+        ]
+    );
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn cleanup_soft_deleted_documents_pgvector_removes_only_old_soft_deletes() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("peer");
+    sqlx::query(
+        "INSERT INTO collections (id, workspace_name, observer, observed) \
+         VALUES ($1, 'ws', 'alice', 'alice')",
+    )
+    .bind("c".repeat(21))
+    .execute(&test_db.pool)
+    .await
+    .expect("seed collection");
+
+    let now = Utc::now();
+    let old = now - chrono::Duration::minutes(10);
+    // (id, deleted_at)
+    let docs: [(&str, Option<chrono::DateTime<Utc>>); 3] = [
+        ("doc_old_softdel____01", Some(old)), // old soft-delete → cleaned
+        ("doc_fresh_softdel__02", Some(now)), // fresh soft-delete → kept
+        ("doc_live___________03", None),      // not soft-deleted → kept
+    ];
+    for (id, deleted_at) in docs {
+        sqlx::query(
+            "INSERT INTO documents (id, content, workspace_name, observer, observed, deleted_at) \
+             VALUES ($1, 'a fact', 'ws', 'alice', 'alice', $2)",
+        )
+        .bind(id)
+        .bind(deleted_at)
+        .execute(&test_db.pool)
+        .await
+        .expect("seed document");
+    }
+
+    let deleted = db::cleanup_soft_deleted_documents_pgvector(&test_db.pool, 50, 5)
+        .await
+        .expect("cleanup docs");
+    assert_eq!(deleted, 1);
+
+    let mut remaining: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM documents ORDER BY id")
+            .fetch_all(&test_db.pool)
+            .await
+            .expect("remaining");
+    remaining.sort();
+    assert_eq!(
+        remaining,
+        vec![
+            "doc_fresh_softdel__02".to_string(),
+            "doc_live___________03".to_string(),
+        ]
+    );
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn get_next_queue_item_orders_and_checks_ownership() {
     let Some(test_db) = TestDb::setup().await else {
         return;

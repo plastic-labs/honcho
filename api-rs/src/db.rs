@@ -3667,6 +3667,64 @@ pub async fn cleanup_stale_work_units(
     Ok(deleted)
 }
 
+/// Port of `reconciler.queue_cleanup.cleanup_queue_items`: delete processed queue
+/// items. Successfully processed items (`error IS NULL`) are deleted immediately;
+/// errored items are kept until `created_at` is older than the error-retention
+/// window (`now() - error_retention_seconds`). Returns the number deleted.
+pub async fn cleanup_queue_items(
+    pool: &PgPool,
+    error_retention_seconds: i64,
+) -> Result<u64, sqlx::Error> {
+    let error_cutoff = Utc::now() - chrono::Duration::seconds(error_retention_seconds);
+    let result = sqlx::query(
+        "DELETE FROM queue \
+         WHERE processed \
+           AND (error IS NULL \
+                OR (error IS NOT NULL AND created_at < $1))",
+    )
+    .bind(error_cutoff)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Port of `reconciler.sync_vectors._cleanup_soft_deleted_documents_pgvector`:
+/// hard-delete up to `batch_size` soft-deleted documents whose `deleted_at` is
+/// older than `older_than_minutes`. Rows are claimed with `FOR UPDATE SKIP
+/// LOCKED` so concurrent reconcilers don't contend, then deleted in the same
+/// transaction. Returns the number deleted. (pgvector mode: no external vector
+/// store cleanup is needed.)
+pub async fn cleanup_soft_deleted_documents_pgvector(
+    pool: &PgPool,
+    batch_size: i64,
+    older_than_minutes: i64,
+) -> Result<u64, sqlx::Error> {
+    let cutoff = Utc::now() - chrono::Duration::minutes(older_than_minutes);
+    let mut transaction = pool.begin().await?;
+    let doc_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM documents \
+         WHERE deleted_at IS NOT NULL AND deleted_at < $1 \
+         LIMIT $2 FOR UPDATE SKIP LOCKED",
+    )
+    .bind(cutoff)
+    .bind(batch_size)
+    .fetch_all(&mut *transaction)
+    .await?;
+
+    if doc_ids.is_empty() {
+        transaction.commit().await?;
+        return Ok(0);
+    }
+
+    let result = sqlx::query("DELETE FROM documents WHERE id = ANY($1)")
+        .bind(&doc_ids)
+        .execute(&mut *transaction)
+        .await?;
+    let deleted = result.rows_affected();
+    transaction.commit().await?;
+    Ok(deleted)
+}
+
 /// Port of `enqueue_dream` (the `schedule_dream` route's manual path): enqueue
 /// a `dream` queue item for `(observer, observed)`, deduplicated against an
 /// in-progress `active_queue_sessions` row or a pending (`processed = false`)
