@@ -3314,6 +3314,7 @@ async fn deriver_worker_poll_once_claims_processes_and_releases() {
     use honcho_api_rs::deriver::settings::DeriverSettings;
     use honcho_api_rs::llm::credentials::TransportApiKeys;
     use honcho_api_rs::llm::{ModelConfig, Provider};
+    use honcho_api_rs::summarizer::SummaryGlobalSettings;
     use honcho_api_rs::telemetry::NoopEmitter;
     use std::sync::Arc;
 
@@ -3360,6 +3361,7 @@ async fn deriver_worker_poll_once_claims_processes_and_releases() {
             gemini: None,
         },
         model_settings,
+        SummaryGlobalSettings::default(),
         poll_settings,
     ));
 
@@ -3972,6 +3974,7 @@ async fn deriver_worker_processes_a_deletion_work_unit() {
     use honcho_api_rs::deriver::queue_manager::DeriverWorker;
     use honcho_api_rs::deriver::settings::DeriverSettings;
     use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::summarizer::SummaryGlobalSettings;
     use honcho_api_rs::telemetry::Emitter;
     use std::sync::Arc;
 
@@ -4001,6 +4004,7 @@ async fn deriver_worker_processes_a_deletion_work_unit() {
         Arc::clone(&emitter) as Arc<dyn Emitter>,
         TransportApiKeys::default(),
         DeriverModelSettings::default(),
+        SummaryGlobalSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4022,6 +4026,92 @@ async fn deriver_worker_processes_a_deletion_work_unit() {
     assert_eq!(events[0].0, "deletion.completed");
     assert_eq!(events[0].1["success"], true);
     assert_eq!(events[0].1["peers_deleted"], 2);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn deriver_worker_processes_a_summary_work_unit_with_public_id_fallback() {
+    use honcho_api_rs::deriver::deriver::DeriverModelSettings;
+    use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::deriver::settings::DeriverSettings;
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::summarizer::{SummaryGlobalSettings, SummaryType};
+    use honcho_api_rs::telemetry::{Emitter, NoopEmitter};
+    use std::sync::Arc;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    // Seed 3 messages (seqs 1..3); a short summary is due at seq 3.
+    let msgs: Vec<_> = (0..3).map(|i| message("bob", &format!("m{i}"))).collect();
+    let created = db::create_messages(&test_db.pool, "ws", "sess", &msgs, false, 8192)
+        .await
+        .expect("seed");
+    let boundary = &created[2];
+    assert_eq!(boundary.seq_in_session, 3);
+
+    // Enqueue a summary work unit. message_public_id is intentionally OMITTED
+    // from the payload to exercise the worker's DB fallback lookup.
+    sqlx::query(
+        "INSERT INTO queue (work_unit_key, payload, task_type, workspace_name, message_id, processed) \
+         VALUES ($1, $2, 'summary', 'ws', $3, false)",
+    )
+    .bind("summary:ws:sess:bob:bob")
+    .bind(json!({
+        "task_type": "summary",
+        "session_name": "sess",
+        "message_seq_in_session": 3,
+        "configuration": {
+            "reasoning": {"enabled": true},
+            "peer_card": {"use": false, "create": false},
+            "summary": {
+                "enabled": true,
+                "messages_per_short_summary": 3,
+                "messages_per_long_summary": 6
+            },
+            "dream": {"enabled": false}
+        }
+    }))
+    .bind(boundary.id)
+    .execute(&test_db.pool)
+    .await
+    .expect("enqueue summary");
+
+    // OpenAI-shaped response: SummaryGlobalSettings::default() targets an
+    // OpenAI model, so complete_single dispatches to the OpenAI backend.
+    let http = CannedLlmHttp(json!({
+        "choices": [{"message": {"content": "summary text"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 20, "completion_tokens": 5}
+    }));
+    let worker = Arc::new(DeriverWorker::new(
+        test_db.pool.clone(),
+        Arc::new(http),
+        Arc::new(IndexedEmbedder),
+        Arc::new(NoopEmitter) as Arc<dyn Emitter>,
+        TransportApiKeys {
+            anthropic: None,
+            openai: Some("k".to_string()),
+            gemini: None,
+        },
+        DeriverModelSettings::default(),
+        SummaryGlobalSettings::default(),
+        DeriverSettings {
+            workers: 1,
+            ..DeriverSettings::default()
+        },
+    ));
+
+    let processed = worker.poll_once().await.expect("poll once");
+    assert_eq!(processed, 1);
+
+    // The short summary was saved, carrying the public id resolved via fallback.
+    let short = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("short")
+        .expect("present");
+    assert_eq!(short["content"], "summary text");
+    assert_eq!(short["message_public_id"], boundary.public_id);
 
     test_db.teardown().await;
 }

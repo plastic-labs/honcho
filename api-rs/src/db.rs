@@ -1089,6 +1089,30 @@ pub async fn get_messages_by_seq_range(
         .collect())
 }
 
+/// Fetch a message's `public_id` by its primary-key `id`, scoped to
+/// workspace + session. Backs the summary task's `message_public_id` fallback
+/// (Python `consumer.py` `summary_fallback`): when the queue payload omits the
+/// public id, the worker looks it up before summarizing. Returns `None` when no
+/// such message exists (Python logs and returns without summarizing).
+pub async fn get_message_public_id(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    message_id: i64,
+) -> Result<Option<String>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT public_id FROM messages \
+         WHERE workspace_name = $1 AND session_name = $2 AND id = $3",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .bind(message_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|row| row.get("public_id")))
+}
+
 /// Port of `summarizer._save_summary`: shallow-merge `summary` under
 /// `internal_metadata["summaries"][summary_type]` for the session, atomically via
 /// nested JSONB `||` (existing summaries of other types are preserved; the same

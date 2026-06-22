@@ -18,6 +18,7 @@ use honcho_api_rs::deriver::queue_manager::DeriverWorker;
 use honcho_api_rs::deriver::settings::DeriverSettings;
 use honcho_api_rs::dialectic::OwnedOpenAiEmbedder;
 use honcho_api_rs::llm::http::{Credentials, ReqwestHttp};
+use honcho_api_rs::summarizer::SummaryGlobalSettings;
 use honcho_api_rs::telemetry::NoopEmitter;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
@@ -70,6 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Arc::new(NoopEmitter),
         keys,
         DeriverModelSettings::default(),
+        SummaryGlobalSettings::default(),
         poll_settings,
     ));
 

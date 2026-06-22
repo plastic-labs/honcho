@@ -27,12 +27,14 @@ use tokio::task::JoinSet;
 use crate::db;
 use crate::deriver::consumer::{process_item, process_representation_work_unit_once};
 use crate::deriver::deriver::{DeriverBatchContext, DeriverModelSettings};
+use crate::deriver::payload::SummaryPayload;
 use crate::deriver::poll::PollScheduler;
 use crate::deriver::settings::DeriverSettings;
 use crate::dialectic::Embedder;
 use crate::llm::credentials::TransportApiKeys;
 use crate::llm::http::LlmHttp;
 use crate::producer::parse_work_unit_key;
+use crate::summarizer::{SummaryGlobalSettings, SummaryModelSettings, summarize_if_needed};
 
 /// The deriver worker: owns the collaborators behind `Arc` so per-work-unit
 /// tasks can be spawned, and drives the claim → process → release cycle.
@@ -47,6 +49,7 @@ where
     emitter: Arc<dyn crate::telemetry::Emitter>,
     keys: TransportApiKeys,
     model_settings: DeriverModelSettings,
+    summary_settings: SummaryGlobalSettings,
     poll_settings: DeriverSettings,
 }
 
@@ -63,6 +66,7 @@ where
         emitter: Arc<dyn crate::telemetry::Emitter>,
         keys: TransportApiKeys,
         model_settings: DeriverModelSettings,
+        summary_settings: SummaryGlobalSettings,
         poll_settings: DeriverSettings,
     ) -> Self {
         Self {
@@ -72,6 +76,7 @@ where
             emitter,
             keys,
             model_settings,
+            summary_settings,
             poll_settings,
         }
     }
@@ -106,7 +111,7 @@ where
 
         let processed = match work_unit.task_type.as_str() {
             "representation" => self.drain_representation(&work_unit, &work_unit_key, &aqs_id).await,
-            "deletion" => self.drain_via_process_item(&work_unit_key, &aqs_id).await,
+            "deletion" | "summary" => self.drain_via_process_item(&work_unit_key, &aqs_id).await,
             other => {
                 tracing::warn!(
                     task_type = %other,
@@ -172,7 +177,16 @@ where
                     break;
                 }
             };
-            match process_item(&self.pool, self.emitter.as_ref(), &item).await {
+            // Dispatch by task type: summary needs the worker's LLM
+            // collaborators; the other arms go through process_item.
+            let outcome = if item.task_type == "summary" {
+                self.process_summary_item(&item).await
+            } else {
+                process_item(&self.pool, self.emitter.as_ref(), &item)
+                    .await
+                    .map_err(|error| error.to_string())
+            };
+            match outcome {
                 Ok(()) => {
                     let _ =
                         db::mark_queue_items_as_processed(&self.pool, &[item.id], work_unit_key).await;
@@ -180,18 +194,85 @@ where
                 }
                 Err(error) => {
                     tracing::error!(work_unit_key = %work_unit_key, "error processing queue item: {error}");
-                    let _ = db::mark_queue_item_as_errored(
-                        &self.pool,
-                        item.id,
-                        work_unit_key,
-                        &error.to_string(),
-                    )
-                    .await;
+                    let _ =
+                        db::mark_queue_item_as_errored(&self.pool, item.id, work_unit_key, &error)
+                            .await;
                     break;
                 }
             }
         }
         processed
+    }
+
+    /// Handle a `summary` queue item: build the per-call summary settings from
+    /// the worker's global config + the payload's interval configuration, then
+    /// run [`summarize_if_needed`].
+    async fn process_summary_item(&self, item: &db::QueueItem) -> Result<(), String> {
+        let workspace = item
+            .workspace_name
+            .as_deref()
+            .ok_or_else(|| "summary task requires a workspace_name".to_string())?;
+        let message_id = item
+            .message_id
+            .ok_or_else(|| "summary task requires a message_id".to_string())?;
+        let payload = SummaryPayload::from_value(&item.payload).map_err(|e| e.to_string())?;
+        let config = &payload.configuration;
+
+        // Resolve the message public id, falling back to a DB lookup when the
+        // payload omits it (Python `consumer.py` `summary_fallback`). A missing
+        // message is an idempotent no-op success, matching Python's early return.
+        let message_public_id = match payload
+            .message_public_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+        {
+            Some(id) => id.to_string(),
+            None => {
+                match db::get_message_public_id(
+                    &self.pool,
+                    workspace,
+                    &payload.session_name,
+                    message_id,
+                )
+                .await
+                .map_err(|error| error.to_string())?
+                {
+                    Some(id) => id,
+                    None => {
+                        tracing::error!(
+                            message_id,
+                            "Failed to fetch message for process_summary_task"
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+        };
+
+        let settings = SummaryModelSettings {
+            model_config: self.summary_settings.model_config.clone(),
+            max_tokens_short: self.summary_settings.max_tokens_short,
+            max_tokens_long: self.summary_settings.max_tokens_long,
+            messages_per_short_summary: config.messages_per_short_summary,
+            messages_per_long_summary: config.messages_per_long_summary,
+        };
+        let now_iso = crate::telemetry::python_isoformat_utc(chrono::Utc::now());
+
+        summarize_if_needed(
+            &self.pool,
+            self.http.as_ref(),
+            &self.keys,
+            &settings,
+            config.summary_enabled,
+            workspace,
+            &payload.session_name,
+            message_id,
+            payload.message_seq_in_session,
+            &message_public_id,
+            &now_iso,
+        )
+        .await
+        .map_err(|error| error.to_string())
     }
 
     /// One non-spawning poll cycle: claim available work units (with no owned

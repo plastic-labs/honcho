@@ -211,6 +211,27 @@ where
         .join("\n")
 }
 
+/// The global (non-per-message) summary model knobs from `settings.SUMMARY`,
+/// held by the deriver worker. The per-message interval counts come from the
+/// queue payload's configuration and are combined into a [`SummaryModelSettings`]
+/// at call time.
+#[derive(Debug, Clone)]
+pub struct SummaryGlobalSettings {
+    pub model_config: ModelConfig,
+    pub max_tokens_short: i64,
+    pub max_tokens_long: i64,
+}
+
+impl Default for SummaryGlobalSettings {
+    fn default() -> Self {
+        Self {
+            model_config: ModelConfig::new("gpt-5.4-mini", crate::llm::Provider::Openai),
+            max_tokens_short: 1000,
+            max_tokens_long: 4000,
+        }
+    }
+}
+
 /// The LLM + model knobs [`create_and_save_summary`] needs (Python
 /// `settings.SUMMARY`). The caller is built per-call with the type's max-tokens.
 pub struct SummaryModelSettings {
