@@ -3061,6 +3061,77 @@ async fn cleanup_soft_deleted_documents_pgvector_removes_only_old_soft_deletes()
 }
 
 #[tokio::test]
+async fn try_enqueue_reconciler_task_dedups_against_pending_and_in_progress() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    // First enqueue inserts a reconciler queue item.
+    let enqueued = db::try_enqueue_reconciler_task(
+        &test_db.pool,
+        "reconciler:sync_vectors",
+        "sync_vectors",
+    )
+    .await
+    .expect("first enqueue");
+    assert!(enqueued);
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queue WHERE work_unit_key = 'reconciler:sync_vectors'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("count");
+    assert_eq!(count, 1);
+    // Payload is exactly {"reconciler_type": ...} (no task_type), task_type column set.
+    let payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM queue WHERE work_unit_key = 'reconciler:sync_vectors'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("payload");
+    assert_eq!(payload, json!({"reconciler_type": "sync_vectors"}));
+
+    // Second enqueue is skipped: a pending item already exists.
+    let again = db::try_enqueue_reconciler_task(
+        &test_db.pool,
+        "reconciler:sync_vectors",
+        "sync_vectors",
+    )
+    .await
+    .expect("second enqueue");
+    assert!(!again);
+
+    // Mark the pending item processed, then claim it (in-progress AQS row).
+    sqlx::query("UPDATE queue SET processed = true WHERE work_unit_key = 'reconciler:sync_vectors'")
+        .execute(&test_db.pool)
+        .await
+        .expect("mark processed");
+    db::claim_work_units(&test_db.pool, &["reconciler:sync_vectors".to_string()])
+        .await
+        .expect("claim");
+
+    // Still skipped while in-progress, even though no pending item remains.
+    let blocked = db::try_enqueue_reconciler_task(
+        &test_db.pool,
+        "reconciler:sync_vectors",
+        "sync_vectors",
+    )
+    .await
+    .expect("blocked enqueue");
+    assert!(!blocked);
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queue WHERE work_unit_key = 'reconciler:sync_vectors'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("total");
+    assert_eq!(total, 1);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn get_next_queue_item_orders_and_checks_ownership() {
     let Some(test_db) = TestDb::setup().await else {
         return;

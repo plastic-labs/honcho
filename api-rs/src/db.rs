@@ -3927,6 +3927,50 @@ pub async fn enqueue_dream(
     Ok(())
 }
 
+/// Port of `reconciler.scheduler.ReconcilerScheduler._try_enqueue_task`: enqueue a
+/// `reconciler` queue item for `work_unit_key`, deduplicated against an in-progress
+/// `active_queue_sessions` row or a pending (`processed = false`) queue item with
+/// the same key. The payload is just `{"reconciler_type": <name>}` (no
+/// `task_type` field, matching the scheduler), `workspace_name`/`message_id`/
+/// `session_id` all NULL. Returns whether an item was enqueued.
+pub async fn try_enqueue_reconciler_task(
+    pool: &PgPool,
+    work_unit_key: &str,
+    reconciler_type: &str,
+) -> Result<bool, sqlx::Error> {
+    let in_progress: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM active_queue_sessions WHERE work_unit_key = $1)",
+    )
+    .bind(work_unit_key)
+    .fetch_one(pool)
+    .await?;
+    if in_progress {
+        return Ok(false);
+    }
+
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM queue WHERE work_unit_key = $1 AND processed = false)",
+    )
+    .bind(work_unit_key)
+    .fetch_one(pool)
+    .await?;
+    if pending {
+        return Ok(false);
+    }
+
+    let payload = serde_json::json!({ "reconciler_type": reconciler_type });
+    sqlx::query(
+        "INSERT INTO queue \
+         (work_unit_key, payload, session_id, task_type, workspace_name, message_id) \
+         VALUES ($1, $2, NULL, 'reconciler', NULL, NULL)",
+    )
+    .bind(work_unit_key)
+    .bind(payload)
+    .execute(pool)
+    .await?;
+    Ok(true)
+}
+
 /// Failure modes of `enqueue_workspace_deletion`, mapped to the same HTTP
 /// statuses Python's `delete_workspace` produces.
 #[derive(Debug)]

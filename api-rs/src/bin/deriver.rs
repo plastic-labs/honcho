@@ -18,6 +18,9 @@ use honcho_api_rs::deriver::queue_manager::DeriverWorker;
 use honcho_api_rs::deriver::settings::DeriverSettings;
 use honcho_api_rs::dialectic::OwnedOpenAiEmbedder;
 use honcho_api_rs::llm::http::{Credentials, ReqwestHttp};
+use honcho_api_rs::reconciler::scheduler::{
+    DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS, default_reconciler_tasks, run_reconciler_scheduler,
+};
 use honcho_api_rs::summarizer::SummaryGlobalSettings;
 use honcho_api_rs::telemetry::NoopEmitter;
 use sqlx::postgres::PgPoolOptions;
@@ -63,6 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         max_tokens: embedding.max_tokens,
     });
 
+    // The reconciler scheduler shares the pool; clone before the worker takes it.
+    let scheduler_pool = pool.clone();
+
     let poll_settings = DeriverSettings::from_env();
     let worker = Arc::new(DeriverWorker::new(
         pool,
@@ -84,8 +90,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         signal_flag.store(true, Ordering::Relaxed);
     });
 
+    // Host the reconciler scheduler in-process alongside the queue loop (Python
+    // starts it from the deriver). It enqueues `reconciler:*` tasks on their
+    // intervals; the worker then drains them. The sync_vectors interval source
+    // (VECTOR_STORE.RECONCILIATION_INTERVAL_SECONDS) is not yet in AppConfig, so
+    // the default (5 min) is used.
+    let scheduler_tasks = default_reconciler_tasks(DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS);
+    let scheduler_handle = tokio::spawn(run_reconciler_scheduler(
+        scheduler_pool,
+        scheduler_tasks,
+        Arc::clone(&shutdown),
+    ));
+
     tracing::info!("deriver worker starting");
     Arc::clone(&worker).run(shutdown).await;
+    // The worker returns once shutdown is set; the scheduler observes the same
+    // flag, so just await its exit.
+    let _ = scheduler_handle.await;
     tracing::info!("deriver worker stopped");
     Ok(())
 }

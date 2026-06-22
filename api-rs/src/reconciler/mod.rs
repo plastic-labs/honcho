@@ -13,6 +13,8 @@
 //! single-session cycle. Holding the lock through the embed is what prevents two
 //! concurrent reconcilers from double-embedding the same chunks.
 
+pub mod scheduler;
+
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
