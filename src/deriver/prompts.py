@@ -70,6 +70,8 @@ RULES:
 - Observations should make sense on their own. Each observation will be used in the future to better understand the target peer.
 - Extract ALL observations from the target peer's messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
+- Extract only what the messages support. Do not invent specifics, list items, or entities the peer didn't state, and do not let a general-knowledge leap add detail beyond a safe, direct implication.
+- State the plain fact, not a hedged guess. If something is uncertain, leave it out rather than asserting "likely"/"probably" — a confirmed fact needs no hedge, and an unconfirmed one is not yet a fact.
 
 EXAMPLES (using `alice` as the target peer id):
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "alice is 25 years old", "alice's birthday is June 21st"
