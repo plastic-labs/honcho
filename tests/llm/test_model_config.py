@@ -41,6 +41,62 @@ def test_fallback_config_is_independent() -> None:
     assert config.fallback.base_url == "https://example.com/v1"
 
 
+def test_select_model_config_for_attempt_preserves_structured_output_mode() -> None:
+    """The per-attempt fallback config must carry structured_output_mode.
+
+    The operator sets it on the (independent) fallback; dropping it on the final
+    attempt would silently send json_schema to a provider that can't parse it.
+    """
+    from src.config import ResolvedFallbackConfig
+    from src.llm.runtime import select_model_config_for_attempt
+
+    config = ModelConfig(
+        model="gpt-5.4-mini",
+        transport="openai",
+        fallback=ResolvedFallbackConfig(
+            model="glm-4.6",
+            transport="openai",
+            structured_output_mode="json_object",
+        ),
+    )
+
+    # Final attempt swaps to the fallback.
+    selected = select_model_config_for_attempt(config, attempt=3, retry_attempts=3)
+
+    assert selected.model == "glm-4.6"
+    assert selected.structured_output_mode == "json_object"
+
+
+def test_structured_output_mode_rejected_on_non_openai_transport() -> None:
+    """structured_output_mode is a no-op off the openai transport — reject it."""
+    with pytest.raises(ValueError, match="structured_output_mode is only supported"):
+        ConfiguredModelSettings(
+            model="claude-haiku-4-5",
+            transport="anthropic",
+            structured_output_mode="json_object",
+        )
+
+
+def test_structured_output_mode_rejected_on_non_openai_fallback() -> None:
+    from src.config import FallbackModelSettings
+
+    with pytest.raises(ValueError, match="structured_output_mode is only supported"):
+        FallbackModelSettings(
+            model="gemini-2.5-pro",
+            transport="gemini",
+            structured_output_mode="json_object",
+        )
+
+
+def test_structured_output_mode_allowed_on_openai_transport() -> None:
+    config = ConfiguredModelSettings(
+        model="glm-4.6",
+        transport="openai",
+        structured_output_mode="json_object",
+    )
+    assert config.structured_output_mode == "json_object"
+
+
 def test_base_url_is_allowed_for_any_transport() -> None:
     config = ModelConfig(
         model="claude-haiku-4-5",

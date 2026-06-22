@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterator
+from functools import cache
 from typing import Any, cast
 
 from openai import BadRequestError, LengthFinishReasonError
@@ -11,12 +12,30 @@ from pydantic import BaseModel, ValidationError
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.structured_output import (
+    StructuredOutputError,
     empty_structured_output,
     repair_response_model_json,
     validate_structured_output,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@cache
+def _json_object_instruction(response_format: type[BaseModel]) -> str:
+    """Schema-injection instruction for json_object mode.
+
+    The JSON schema is static per response_format class, so cache the serialized
+    instruction — the deriver issues one structured call per batch on the worker
+    hot path and would otherwise re-walk the schema + re-serialize it every call.
+    """
+    # "JSON" must appear in the messages to satisfy the json_object contract.
+    return (
+        "You must respond with a single JSON object that conforms exactly to "
+        "the following JSON schema. Do not include any text, markdown, or code "
+        "fences outside the JSON object.\n\nJSON schema:\n"
+        f"{json.dumps(response_format.model_json_schema())}"
+    )
 
 
 def _uses_max_completion_tokens(model: str) -> bool:
@@ -144,10 +163,7 @@ class OpenAIBackend:
 
         if isinstance(response_format, type):
             if self._structured_output_mode(extra_params) == "json_object":
-                params["messages"] = self._with_json_schema_instructions(
-                    params["messages"], response_format
-                )
-                params["response_format"] = {"type": "json_object"}
+                self._apply_json_object_mode(params, response_format)
                 response = await self._client.chat.completions.create(**params)
                 content = self._parse_or_repair_structured_content(
                     response, response_format, model
@@ -168,17 +184,19 @@ class OpenAIBackend:
                     truncated,
                     content_override=content,
                 )
-            except (BadRequestError, json.JSONDecodeError, ValidationError) as exc:
-                # No retry: a provider that rejects json_schema rejects it again,
-                # so the old second request just doubled latency (#797). Return
-                # empty so existing flows don't start erroring; the warning is
-                # the signal to set structured_output_mode=json_object.
+            except BadRequestError:
+                # A 400 means the provider rejected the request shape — most
+                # often it doesn't support OpenAI Structured Outputs (json_schema).
+                # Retrying or re-requesting won't help (it rejects the same shape
+                # again, the latency trap of #797), so return empty rather than
+                # erroring existing flows. The warning is the signal to set
+                # structured_output_mode=json_object. There is no response body to
+                # account for, so token usage is legitimately zero here.
                 logger.warning(
-                    "Structured output via json_schema failed for model %s (%s); "
+                    "Structured output via json_schema rejected by model %s; "
                     + "set structured_output_mode=json_object if the provider does "
                     + "not support OpenAI Structured Outputs.",
                     model,
-                    exc.__class__.__name__,
                 )
                 # empty_structured_output() validates {} against the model, which
                 # itself raises if the model has required fields. Fall back to
@@ -252,10 +270,7 @@ class OpenAIBackend:
             if self._structured_output_mode(extra_params) == "json_object":
                 # Inject the schema into the prompt for providers without
                 # json_schema support; repair happens downstream.
-                params["messages"] = self._with_json_schema_instructions(
-                    params["messages"], response_format
-                )
-                params["response_format"] = {"type": "json_object"}
+                self._apply_json_object_mode(params, response_format)
             else:
                 # Streaming create() can't take a BaseModel like parse() does;
                 # convert to a json_schema dict.
@@ -406,26 +421,42 @@ class OpenAIBackend:
             return None
         return extra_params.get("structured_output_mode")
 
+    def _apply_json_object_mode(
+        self,
+        params: dict[str, Any],
+        response_format: type[BaseModel],
+    ) -> None:
+        """Configure params for json_object mode in place (shared by complete/stream).
+
+        Injects the schema into the prompt and requests loose JSON, so providers
+        without OpenAI Structured Outputs (json_schema) support still return JSON.
+        """
+        params["messages"] = self._with_json_schema_instructions(
+            params["messages"], response_format
+        )
+        params["response_format"] = {"type": "json_object"}
+
     @staticmethod
     def _with_json_schema_instructions(
         messages: list[dict[str, Any]],
         response_format: type[BaseModel],
     ) -> list[dict[str, Any]]:
-        """Add JSON-schema instructions to a copy of messages for json_object mode."""
-        # "JSON" must appear in the messages to satisfy the json_object contract.
-        instruction = (
-            "You must respond with a single JSON object that conforms exactly to "
-            "the following JSON schema. Do not include any text, markdown, or code "
-            "fences outside the JSON object.\n\nJSON schema:\n"
-            f"{json.dumps(response_format.model_json_schema())}"
-        )
+        """Add JSON-schema instructions to a copy of messages for json_object mode.
+
+        The Anthropic backend has its own schema-into-prompt injection
+        (``_append_text_to_last_message``); the two are intentionally kept
+        separate since the providers want different placement and wording.
+        """
+        instruction = _json_object_instruction(response_format)
         new_messages = [dict(message) for message in messages]
         first = new_messages[0] if new_messages else None
         # Only merge into a leading system message when its content is a plain
         # string; non-string content (e.g. a list of content parts) would be
         # corrupted by f-string coercion, so prepend a fresh system message.
-        if first and first.get("role") == "system" and isinstance(
-            first.get("content"), str
+        if (
+            first
+            and first.get("role") == "system"
+            and isinstance(first.get("content"), str)
         ):
             first["content"] = f"{first['content']}\n\n{instruction}".strip()
         else:
@@ -438,15 +469,26 @@ class OpenAIBackend:
         response_format: type[BaseModel],
         model: str,
     ) -> BaseModel | str:
-        raw_content = response.choices[0].message.content or ""
+        message = response.choices[0].message
+        raw_content = message.content or ""
         if raw_content:
-            return repair_response_model_json(raw_content, response_format, model)
-        refusal = getattr(response.choices[0].message, "refusal", None)
+            # Fast path: clean JSON validates directly. Only fall back to the
+            # repair pipeline when validation fails — repair is comparatively
+            # expensive and silently degrades malformed input to an empty model.
+            try:
+                return validate_structured_output(raw_content, response_format)
+            except (StructuredOutputError, ValidationError):
+                return repair_response_model_json(raw_content, response_format, model)
+        refusal = getattr(message, "refusal", None)
         if refusal:
             return refusal
-        raise ValidationException(
-            "No raw content available for structured output repair"
-        )
+        # Empty body, no refusal: mirror the json_schema path's graceful-empty
+        # behavior rather than raising, so json_object mode is no less robust
+        # than the default path on a contentless response.
+        try:
+            return empty_structured_output(response_format)
+        except ValidationError:
+            return ""
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

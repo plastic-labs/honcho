@@ -118,6 +118,7 @@ def select_model_config_for_attempt(
         seed=fb.seed,
         thinking_effort=fb.thinking_effort,
         thinking_budget_tokens=fb.thinking_budget_tokens,
+        structured_output_mode=fb.structured_output_mode,
         provider_params=fb.provider_params,
         max_output_tokens=fb.max_output_tokens,
         stop_sequences=fb.stop_sequences,

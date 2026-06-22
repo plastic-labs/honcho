@@ -4,7 +4,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
+from openai import BadRequestError
 from pydantic import BaseModel
 
 from src.llm.backends.openai import OpenAIBackend
@@ -16,6 +18,15 @@ def _await_kwargs(mock_method: Any) -> dict[str, Any]:
     if await_args is None:
         raise AssertionError("Expected the mocked method to have been awaited")
     return await_args.kwargs
+
+
+def _bad_request_error() -> BadRequestError:
+    """A 400 like a provider that doesn't support json_schema would return."""
+    request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+    response = httpx.Response(400, request=request)
+    return BadRequestError(
+        "response_format json_schema is not supported", response=response, body=None
+    )
 
 
 async def _empty_stream() -> AsyncIterator[Any]:
@@ -407,14 +418,16 @@ async def test_structured_output_default_mode_uses_parse() -> None:
 
 
 @pytest.mark.asyncio
-async def test_structured_output_parse_failure_returns_empty_without_second_request() -> (
+async def test_structured_output_json_schema_rejected_returns_empty_without_second_request() -> (
     None
 ):
-    """parse() failure returns an empty representation, no second request (#797)."""
+    """A provider that rejects json_schema (400) returns empty, no second request.
+
+    Retrying or re-requesting the same shape is pointless (#797), so a
+    BadRequestError is swallowed to an empty representation rather than erroring.
+    """
     client = Mock()
-    client.chat.completions.parse = AsyncMock(
-        side_effect=json.JSONDecodeError("Expecting value", "not json", 0)
-    )
+    client.chat.completions.parse = AsyncMock(side_effect=_bad_request_error())
     client.chat.completions.create = AsyncMock()
 
     backend = OpenAIBackend(client)
@@ -432,16 +445,14 @@ async def test_structured_output_parse_failure_returns_empty_without_second_requ
 
 
 @pytest.mark.asyncio
-async def test_structured_output_parse_failure_with_required_fields_does_not_raise() -> (
+async def test_structured_output_json_schema_rejected_with_required_fields_does_not_raise() -> (
     None
 ):
-    """parse() failure must not raise even when the response model has required
-    fields (empty_structured_output() can't build an empty instance) — it falls
-    back to empty content instead of escaping the handler."""
+    """A json_schema rejection must not raise even when the response model has
+    required fields (empty_structured_output() can't build an empty instance) —
+    it falls back to empty content instead of escaping the handler."""
     client = Mock()
-    client.chat.completions.parse = AsyncMock(
-        side_effect=json.JSONDecodeError("Expecting value", "not json", 0)
-    )
+    client.chat.completions.parse = AsyncMock(side_effect=_bad_request_error())
     client.chat.completions.create = AsyncMock()
 
     backend = OpenAIBackend(client)
@@ -455,6 +466,39 @@ async def test_structured_output_parse_failure_with_required_fields_does_not_rai
     assert client.chat.completions.parse.await_count == 1
     assert client.chat.completions.create.await_count == 0  # no second request
     assert result.content == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc",
+    [
+        json.JSONDecodeError("Expecting value", "not json", 0),
+        ValueError("transient parse glitch"),
+    ],
+)
+async def test_structured_output_transient_parse_error_propagates_for_retry(
+    exc: Exception,
+) -> None:
+    """Non-400 parse failures propagate so the retry/fallback chain can engage.
+
+    Only a 400 (json_schema rejection) is treated as terminal-empty; a transient
+    decode/validation glitch must re-raise so tenacity retries and the fallback
+    model gets a chance — not be silently swallowed to empty on the first try.
+    """
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(side_effect=exc)
+    client.chat.completions.create = AsyncMock()
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(type(exc)):
+        await backend.complete(
+            model="glm-4.6",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=PromptRepresentation,
+        )
+
+    assert client.chat.completions.create.await_count == 0  # no second request
 
 
 @pytest.mark.asyncio
@@ -511,6 +555,52 @@ async def test_structured_output_json_object_mode_repairs_markdown() -> None:
     )
 
     assert isinstance(result.content, PromptRepresentation)
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_empty_content_returns_empty() -> None:
+    """An empty body with no refusal must produce a graceful empty result, not
+    raise — matching the json_schema path's behavior on a contentless response.
+    """
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return("")
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=PromptRepresentation,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    assert isinstance(result.content, PromptRepresentation)
+    assert result.content.explicit == []
+    # Usage from the (empty) response is preserved, not zeroed.
+    assert result.input_tokens == 10
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_empty_content_required_fields() -> None:
+    """Empty content for a required-field model falls back to empty string content
+    instead of raising (empty_structured_output can't build the instance)."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return("")
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,  # has a required field
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    assert result.content == ""
 
 
 @pytest.mark.asyncio

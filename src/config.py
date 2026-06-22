@@ -121,6 +121,23 @@ def _validate_thinking_constraints(
         raise ValueError("thinking_budget_tokens must be >= 1024 for Anthropic models")
 
 
+def _validate_structured_output_mode(
+    transport: ModelTransport, structured_output_mode: StructuredOutputMode | None
+) -> None:
+    """Reject ``structured_output_mode`` on transports that ignore it.
+
+    Only the OpenAI backend honors this setting (it controls the json_schema vs
+    json_object structured-output path). On the anthropic/gemini transports it is
+    a silent no-op, so a value set there is a misconfiguration — fail fast at
+    startup rather than letting the operator wonder why it has no effect.
+    """
+    if structured_output_mode is not None and transport != "openai":
+        raise ValueError(
+            "structured_output_mode is only supported on the 'openai' transport; "
+            + f"remove it from the '{transport}' model config"
+        )
+
+
 class FallbackModelSettings(BaseModel):
     """Independent fallback model configuration. No inheritance from primary."""
 
@@ -161,6 +178,7 @@ class FallbackModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "FallbackModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
 
 
@@ -207,6 +225,7 @@ class ConfiguredModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
 
 
