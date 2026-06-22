@@ -226,7 +226,7 @@ pub async fn run_specialist<H, E>(
     pool: &PgPool,
     http: &H,
     keys: TransportApiKeys,
-    embedder: E,
+    embedder: &E,
     workspace_name: &str,
     observer: &str,
     observed: &str,

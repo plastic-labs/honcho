@@ -143,7 +143,7 @@ fn format_rejection_feedback(
 pub struct DreamerToolExecutor<'a, E: Embedder> {
     pub pool: &'a PgPool,
     pub ctx: ToolContext,
-    pub embedder: E,
+    pub embedder: &'a E,
     pub include_observation_ids: bool,
     pub peer_card_create: bool,
     pub run_id: String,
@@ -163,7 +163,7 @@ impl<'a, E: Embedder + Sync> DreamerToolExecutor<'a, E> {
     pub fn new(
         pool: &'a PgPool,
         ctx: ToolContext,
-        embedder: E,
+        embedder: &'a E,
         include_observation_ids: bool,
         peer_card_create: bool,
         run_id: String,
@@ -222,7 +222,7 @@ impl<'a, E: Embedder + Sync> DreamerToolExecutor<'a, E> {
 
         let out = create_observations(
             self.pool,
-            &self.embedder,
+            self.embedder,
             &self.ctx.workspace_name,
             &self.ctx.observer,
             &self.ctx.observed,

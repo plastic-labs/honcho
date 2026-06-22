@@ -11,5 +11,6 @@
 
 pub mod executor;
 pub mod handlers;
+pub mod orchestrator;
 pub mod specialists;
 pub mod tools;

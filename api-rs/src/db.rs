@@ -22,7 +22,7 @@ pub fn quote_identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
-fn generate_nanoid() -> String {
+pub(crate) fn generate_nanoid() -> String {
     let mut rng = rand::thread_rng();
     (0..NANOID_LENGTH)
         .map(|_| {
@@ -3106,6 +3106,75 @@ pub async fn get_or_create_collection(
         .fetch_one(pool)
         .await?;
     Ok(Collection::from_row(&row))
+}
+
+/// Port of `process_dream`'s guard-pair write: in one transaction, lock the
+/// `(observer, observed)` collection `FOR UPDATE`, count its live `explicit`
+/// documents, and advance the collection's `internal_metadata.dream`
+/// `{last_dream_at, last_dream_document_count}` together. Existing `dream`
+/// sub-keys are preserved (the two guard fields are merged over them). No-op when
+/// the collection does not exist. Returns the explicit count written.
+pub async fn record_dream_guard(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    now_iso: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    let existing: Option<Value> = sqlx::query_scalar(
+        "SELECT internal_metadata FROM collections \
+         WHERE observer = $1 AND observed = $2 AND workspace_name = $3 \
+         FOR UPDATE",
+    )
+    .bind(observer)
+    .bind(observed)
+    .bind(workspace_name)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let Some(internal_metadata) = existing else {
+        return Ok(None);
+    };
+
+    let explicit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM documents \
+         WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+           AND level = 'explicit'",
+    )
+    .bind(workspace_name)
+    .bind(observer)
+    .bind(observed)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    // Build the new dream sub-object from the existing one (preserve other keys).
+    let mut dream_meta = internal_metadata
+        .get("dream")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    dream_meta.insert("last_dream_at".to_string(), Value::String(now_iso.to_string()));
+    dream_meta.insert(
+        "last_dream_document_count".to_string(),
+        Value::from(explicit_count),
+    );
+    let patch = json!({ "dream": Value::Object(dream_meta) });
+
+    sqlx::query(
+        "UPDATE collections SET internal_metadata = internal_metadata || $1::jsonb \
+         WHERE observer = $2 AND observed = $3 AND workspace_name = $4",
+    )
+    .bind(patch)
+    .bind(observer)
+    .bind(observed)
+    .bind(workspace_name)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(Some(explicit_count))
 }
 
 /// An observation document to persist, mirroring the fields of

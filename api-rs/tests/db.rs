@@ -5033,7 +5033,7 @@ async fn dreamer_tool_executor_creates_updates_deletes_and_rolls_up() {
     let exec = DreamerToolExecutor::new(
         &test_db.pool,
         ctx,
-        IndexedEmbedder,
+        &IndexedEmbedder,
         true,  // include_observation_ids
         true,  // peer_card_create
         "run1".to_string(),
@@ -5137,7 +5137,7 @@ async fn run_specialist_preflights_runs_loop_and_emits_event() {
             openai: Some("k".to_string()),
             gemini: None,
         },
-        IndexedEmbedder,
+        &IndexedEmbedder,
         "ws",
         "obs",
         "obsd",
@@ -5175,6 +5175,99 @@ async fn run_specialist_preflights_runs_loop_and_emits_event() {
     assert_eq!(events[0].0, "dream.specialist");
     assert_eq!(events[0].1["success"], json!(true));
     assert_eq!(events[0].1["specialist_type"], json!("deduction"));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn process_dream_runs_specialists_and_writes_guard_pair() {
+    use honcho_api_rs::deriver::payload::{DreamPayload, DreamType};
+    use honcho_api_rs::dreamer::orchestrator::{DreamModelSettings, process_dream};
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::producer::ResolvedConfiguration;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::get_or_create_collection(&test_db.pool, "ws", "obs", "obsd")
+        .await
+        .expect("collection");
+    // Two explicit documents → guard count should record 2.
+    for i in 0..2 {
+        sqlx::query(
+            "INSERT INTO documents (id, content, workspace_name, observer, observed, level, sync_state) \
+             VALUES ($1, 'fact', 'ws', 'obs', 'obsd', 'explicit', 'synced')",
+        )
+        .bind(doc_id(i))
+        .execute(&test_db.pool)
+        .await
+        .expect("seed explicit doc");
+    }
+
+    // Specialists answer immediately (no tool calls).
+    let http = CannedLlmHttp(json!({
+        "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 7, "completion_tokens": 2}
+    }));
+    let emitter = CapturingEmitter {
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+    let payload = DreamPayload {
+        dream_type: DreamType::Omni,
+        observer: "obs".to_string(),
+        observed: "obsd".to_string(),
+        session_name: None,
+        trigger_reason: Some("document_threshold".to_string()),
+        delay_reason: None,
+        documents_since_last_dream_at_schedule: Some(2),
+        document_threshold: Some(2),
+    };
+
+    process_dream(
+        &test_db.pool,
+        &http,
+        TransportApiKeys {
+            anthropic: None,
+            openai: Some("k".to_string()),
+            gemini: None,
+        },
+        &IndexedEmbedder,
+        &payload,
+        "ws",
+        &ResolvedConfiguration::default(),
+        &DreamModelSettings::default(),
+        &emitter,
+        Some("9.9.9".to_string()),
+        "2026-06-22T00:00:00Z",
+    )
+    .await;
+
+    // Two specialist events + one run event.
+    let types: Vec<String> = {
+        let events = emitter.events.lock().unwrap();
+        events.iter().map(|(t, _)| t.clone()).collect()
+    };
+    assert_eq!(types.iter().filter(|t| *t == "dream.specialist").count(), 2);
+    assert_eq!(types.iter().filter(|t| *t == "dream.run").count(), 1);
+
+    // Guard-pair write recorded the explicit count + timestamp.
+    let dream_meta: Value = sqlx::query_scalar(
+        "SELECT internal_metadata -> 'dream' FROM collections \
+         WHERE workspace_name='ws' AND observer='obs' AND observed='obsd'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("dream meta");
+    assert_eq!(dream_meta["last_dream_document_count"], json!(2));
+    assert_eq!(dream_meta["last_dream_at"], json!("2026-06-22T00:00:00Z"));
 
     test_db.teardown().await;
 }

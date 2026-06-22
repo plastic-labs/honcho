@@ -42,6 +42,13 @@ impl DreamType {
             _ => None,
         }
     }
+
+    /// The wire string (`DreamType.value`, threaded onto `DreamRunEvent.dream_type`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Omni => "omni",
+        }
+    }
 }
 
 /// `DeletionPayload.deletion_type` (`Literal["session","observation","workspace"]`).
