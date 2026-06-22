@@ -12,9 +12,17 @@ Owns:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
+
+from tenacity import (
+    retry,
+    retry_if_not_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src.config import (
     ConfiguredModelSettings,
@@ -23,14 +31,39 @@ from src.config import (
     resolve_model_config,
     settings,
 )
+from src.exceptions import HonchoException
 
 from .registry import backend_for_provider, client_for_model_config
 from .types import ProviderClient, ReasoningEffortType
+
+_WrappedFn = TypeVar("_WrappedFn", bound=Callable[..., Any])
 
 logger = logging.getLogger(__name__)
 
 # ContextVar tracking the current retry attempt for provider switching.
 current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
+
+
+def with_llm_retry(
+    func: _WrappedFn,
+    *,
+    retry_attempts: int,
+    before_retry_callback: Callable[[Any], None],
+) -> _WrappedFn:
+    """Wrap an LLM-call closure with Honcho's standard retry policy.
+
+    Transient failures retry with exponential backoff, but ``HonchoException``
+    fails fast: these are deterministic input/config errors (e.g. an invalid
+    thinking budget/effort raised by a backend) and should propagate with their
+    own ``status_code`` instead of being retried, re-wrapped in tenacity's
+    ``RetryError``, and surfaced as a generic 500.
+    """
+    return retry(
+        stop=stop_after_attempt(retry_attempts),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_not_exception_type(HonchoException),
+        before_sleep=before_retry_callback,
+    )(func)
 
 
 def update_current_langfuse_observation(

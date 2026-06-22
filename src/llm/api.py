@@ -17,7 +17,6 @@ from typing import Any, Literal, TypeVar, cast, overload
 
 from pydantic import BaseModel
 from sentry_sdk.ai.monitoring import ai_track
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import ValidationException
@@ -32,6 +31,7 @@ from .runtime import (
     plan_attempt,
     resolve_runtime_model_config,
     update_current_langfuse_observation,
+    with_llm_retry,
 )
 from .tool_loop import execute_tool_loop
 from .types import (
@@ -287,11 +287,11 @@ async def honcho_llm_call(
             logger.info(f"Will retry with attempt {next_attempt}/{retry_attempts}")
 
     if enable_retry:
-        decorated = retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            before_sleep=before_retry_callback,
-        )(decorated)
+        decorated = with_llm_retry(
+            decorated,
+            retry_attempts=retry_attempts,
+            before_retry_callback=before_retry_callback,
+        )
 
     def _trace_thinking_budget() -> int | None:
         # Trace log should reflect what got applied, so fall back to the
@@ -400,11 +400,11 @@ async def honcho_llm_call(
             if track_name:
                 wrapped = ai_track(track_name)(wrapped)
             if enable_retry:
-                wrapped = retry(
-                    stop=stop_after_attempt(retry_attempts),
-                    wait=wait_exponential(multiplier=1, min=4, max=10),
-                    before_sleep=before_retry_callback,
-                )(wrapped)
+                wrapped = with_llm_retry(
+                    wrapped,
+                    retry_attempts=retry_attempts,
+                    before_retry_callback=before_retry_callback,
+                )
             result: (
                 HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
             ) = await wrapped()
