@@ -1,7 +1,25 @@
-//! Specialist prompt builders — port of the prompt-construction methods on
+//! Specialist prompt builders + the agentic `run()` orchestration — port of
 //! `BaseSpecialist` / `DeductionSpecialist` / `InductionSpecialist`
-//! (`src/dreamer/specialists.py`). These are pure, deterministic string builders;
-//! the agentic `run()` orchestration is ported separately once the WRITE tools land.
+//! (`src/dreamer/specialists.py`). The prompt builders are pure deterministic
+//! strings; [`run_specialist`] wires the preflight, prompts, tool executor, and
+//! the (already-ported) `execute_tool_loop` into one specialist run.
+
+use std::time::Instant;
+
+use serde_json::{Value, json};
+use sqlx::PgPool;
+
+use super::executor::{DreamerToolExecutor, DreamerToolMetrics};
+use super::tools;
+use crate::db;
+use crate::dialectic::{Embedder, ToolContext};
+use crate::llm::executor::HonchoCaller;
+use crate::llm::http::LlmHttp;
+use crate::llm::tool_loop::execute_tool_loop;
+use crate::llm::{ModelConfig, credentials::TransportApiKeys};
+use crate::telemetry::Emitter;
+use crate::telemetry::events::DreamSpecialistEvent;
+use chrono::Utc;
 
 /// Deduction's `peer_card_update_instruction` (specialists.py:442).
 const DEDUCTION_PEER_CARD_INSTRUCTION: &str = "Update this with `update_peer_card` only for stable identity markers. See the PEER CARD section in the system prompt for the allowed entry kinds and rules.";
@@ -90,6 +108,289 @@ pub fn induction_user_prompt(hints: Option<&[String]>) -> String {
         _ => "Explore the observation space and identify patterns.\n\nRemember: patterns need 2+ sources. Look for tendencies, preferences, and behavioral regularities.\n\nGo."
             .to_string(),
     }
+}
+
+/// The two dream specialists (port of `DeductionSpecialist` / `InductionSpecialist`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecialistKind {
+    Deduction,
+    Induction,
+}
+
+impl SpecialistKind {
+    /// `name` (specialist_type slug).
+    pub fn name(self) -> &'static str {
+        match self {
+            SpecialistKind::Deduction => "deduction",
+            SpecialistKind::Induction => "induction",
+        }
+    }
+
+    /// `can_update_peer_card` — induction never writes the peer card.
+    pub fn can_update_peer_card(self) -> bool {
+        matches!(self, SpecialistKind::Deduction)
+    }
+
+    /// `get_max_tokens` (deduction 8192, induction 8192).
+    pub fn max_tokens(self) -> i64 {
+        8192
+    }
+
+    /// `get_max_iterations` (deduction 12, induction 10).
+    pub fn max_iterations(self) -> usize {
+        match self {
+            SpecialistKind::Deduction => 12,
+            SpecialistKind::Induction => 10,
+        }
+    }
+
+    fn build_system_prompt(self, observed: &str, peer_card_enabled: bool) -> String {
+        match self {
+            SpecialistKind::Deduction => deduction_system_prompt(observed, peer_card_enabled),
+            SpecialistKind::Induction => induction_system_prompt(observed),
+        }
+    }
+
+    fn build_user_prompt(self, hints: Option<&[String]>, peer_card: Option<&[String]>) -> String {
+        match self {
+            SpecialistKind::Deduction => deduction_user_prompt(hints, peer_card),
+            SpecialistKind::Induction => induction_user_prompt(hints),
+        }
+    }
+
+    /// `get_tools(peer_card_enabled)` — deduction drops `update_peer_card` when
+    /// the peer card is disabled (`PEER_CARD_TOOL_NAMES` filter); induction
+    /// ignores the flag.
+    fn get_tools(self, peer_card_enabled: bool) -> Vec<Value> {
+        match self {
+            SpecialistKind::Deduction => {
+                let tools = tools::deduction_specialist_tools();
+                if peer_card_enabled {
+                    tools
+                } else {
+                    tools
+                        .into_iter()
+                        .filter(|t| t["name"] != "update_peer_card")
+                        .collect()
+                }
+            }
+            SpecialistKind::Induction => tools::induction_specialist_tools(),
+        }
+    }
+}
+
+/// Result of a specialist run (port of `SpecialistResult`), plus the tool-call
+/// rollups the orchestrator aggregates into the `DreamRunEvent`.
+#[derive(Debug, Clone)]
+pub struct SpecialistResult {
+    pub run_id: String,
+    pub specialist_type: String,
+    pub iterations: i64,
+    pub tool_calls_count: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub duration_ms: f64,
+    pub success: bool,
+    pub content: String,
+    pub metrics: DreamerToolMetrics,
+}
+
+/// Extract the peer-card fact list from `db::get_peer_card`'s `{"peer_card": [...]}`
+/// JSON, or `None` when absent/empty.
+fn peer_card_facts(card: Option<Value>) -> Option<Vec<String>> {
+    let facts: Vec<String> = card
+        .as_ref()
+        .and_then(|v| v.get("peer_card"))
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if facts.is_empty() { None } else { Some(facts) }
+}
+
+/// Port of `BaseSpecialist.run`: preflight (get-or-create peers + peer-card
+/// fetch) → build prompts → run the tool loop with a [`DreamerToolExecutor`] →
+/// roll up the metrics → emit a [`DreamSpecialistEvent`] (always, success or
+/// failure) and return a [`SpecialistResult`].
+///
+/// Deviation: on the failure path the rollups are reported as zero (matching
+/// Python, which computes them only after a successful loop) even though the
+/// executor may have written some observations before the loop errored. The
+/// emitted event uses `iteration = 0` like the agent-tool events.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_specialist<H, E>(
+    kind: SpecialistKind,
+    pool: &PgPool,
+    http: &H,
+    keys: TransportApiKeys,
+    embedder: E,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    session_name: Option<&str>,
+    hints: Option<&[String]>,
+    peer_card_create: bool,
+    model_config: ModelConfig,
+    parent_run_id: &str,
+    emitter: &dyn Emitter,
+    honcho_version: Option<String>,
+    deduplicate: bool,
+) -> Result<SpecialistResult, sqlx::Error>
+where
+    H: LlmHttp + Sync,
+    E: Embedder + Sync,
+{
+    let run_id = parent_run_id.to_string();
+    let start = Instant::now();
+
+    // Preflight: get-or-create observer (+ observed when distinct).
+    db::get_or_create_peer(pool, workspace_name, observer, None, None).await?;
+    if observer != observed {
+        db::get_or_create_peer(pool, workspace_name, observed, None, None).await?;
+    }
+
+    let peer_card_enabled = kind.can_update_peer_card() && peer_card_create;
+    let current_peer_card = if peer_card_enabled {
+        peer_card_facts(db::get_peer_card(pool, workspace_name, observer, observed).await?)
+    } else {
+        None
+    };
+
+    let system_prompt = kind.build_system_prompt(observed, peer_card_enabled);
+    let user_prompt = kind.build_user_prompt(hints, current_peer_card.as_deref());
+    let messages = vec![
+        json!({"role": "system", "content": system_prompt}),
+        json!({"role": "user", "content": user_prompt}),
+    ];
+    let tool_schemas = kind.get_tools(peer_card_enabled);
+
+    let executor = DreamerToolExecutor::new(
+        pool,
+        ToolContext {
+            workspace_name: workspace_name.to_string(),
+            observer: observer.to_string(),
+            observed: observed.to_string(),
+            session_name: session_name.map(str::to_string),
+        },
+        embedder,
+        true, // include_observation_ids (dreamer)
+        peer_card_create,
+        run_id.clone(),
+        kind.name().to_string(),
+        "dream".to_string(),
+        emitter,
+        honcho_version.clone(),
+        deduplicate,
+    );
+
+    // max_output_tokens override on the ModelConfig wins when positive.
+    let effective_max_tokens = model_config
+        .max_output_tokens
+        .filter(|&max| max > 0)
+        .unwrap_or_else(|| kind.max_tokens());
+    let caller = HonchoCaller::new(http, keys, model_config, effective_max_tokens);
+
+    let loop_result = execute_tool_loop(
+        &caller,
+        &executor,
+        "",
+        Some(&messages),
+        &tool_schemas,
+        None,
+        kind.max_iterations(),
+        None,
+    )
+    .await;
+
+    let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    let (result, event) = match loop_result {
+        Ok(response) => {
+            let metrics = executor.metrics_snapshot();
+            let content = response
+                .content
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_default();
+            let result = SpecialistResult {
+                run_id: run_id.clone(),
+                specialist_type: kind.name().to_string(),
+                iterations: response.iterations as i64,
+                tool_calls_count: response.tool_calls_made.len() as i64,
+                input_tokens: response.input_tokens,
+                output_tokens: response.output_tokens,
+                duration_ms,
+                success: true,
+                content,
+                metrics: metrics.clone(),
+            };
+            let event = DreamSpecialistEvent {
+                timestamp: Utc::now(),
+                run_id: run_id.clone(),
+                specialist_type: kind.name().to_string(),
+                workspace_name: workspace_name.to_string(),
+                observer: observer.to_string(),
+                observed: observed.to_string(),
+                iterations: result.iterations,
+                tool_calls_count: result.tool_calls_count,
+                input_tokens: result.input_tokens,
+                output_tokens: result.output_tokens,
+                duration_ms,
+                success: true,
+                created_observation_count: metrics.created_observation_count,
+                deleted_observation_count: metrics.deleted_observation_count,
+                created_counts_by_level: metrics.created_counts_by_level,
+                deleted_counts_by_level: metrics.deleted_counts_by_level,
+                peer_card_updated: metrics.peer_card_updated,
+                search_tool_calls_count: metrics.search_tool_calls_count,
+                error_class: None,
+            };
+            (result, event)
+        }
+        Err(error) => {
+            // Failure path: zero rollups (Python computes them post-loop only).
+            let result = SpecialistResult {
+                run_id: run_id.clone(),
+                specialist_type: kind.name().to_string(),
+                iterations: 0,
+                tool_calls_count: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                duration_ms,
+                success: false,
+                content: String::new(),
+                metrics: DreamerToolMetrics::default(),
+            };
+            let event = DreamSpecialistEvent {
+                timestamp: Utc::now(),
+                run_id: run_id.clone(),
+                specialist_type: kind.name().to_string(),
+                workspace_name: workspace_name.to_string(),
+                observer: observer.to_string(),
+                observed: observed.to_string(),
+                iterations: 0,
+                tool_calls_count: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                duration_ms,
+                success: false,
+                created_observation_count: 0,
+                deleted_observation_count: 0,
+                created_counts_by_level: Default::default(),
+                deleted_counts_by_level: Default::default(),
+                peer_card_updated: false,
+                search_tool_calls_count: 0,
+                error_class: Some(error.to_string()),
+            };
+            (result, event)
+        }
+    };
+
+    emitter.emit(&event);
+    Ok(result)
 }
 
 #[cfg(test)]

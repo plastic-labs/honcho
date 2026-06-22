@@ -5106,6 +5106,80 @@ async fn dreamer_tool_executor_creates_updates_deletes_and_rolls_up() {
 }
 
 #[tokio::test]
+async fn run_specialist_preflights_runs_loop_and_emits_event() {
+    use honcho_api_rs::dreamer::specialists::{SpecialistKind, run_specialist};
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::llm::{ModelConfig, Provider};
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    // Model answers immediately (no tool calls) — exercises the assembly:
+    // preflight peers, prompt build, caller, loop, event emit.
+    let http = CannedLlmHttp(json!({
+        "choices": [{"message": {"content": "done dreaming"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 3}
+    }));
+    let emitter = CapturingEmitter {
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+
+    let result = run_specialist(
+        SpecialistKind::Deduction,
+        &test_db.pool,
+        &http,
+        TransportApiKeys {
+            anthropic: None,
+            openai: Some("k".to_string()),
+            gemini: None,
+        },
+        IndexedEmbedder,
+        "ws",
+        "obs",
+        "obsd",
+        None,
+        None,
+        true, // peer_card_create
+        ModelConfig::new("gpt-5.4-mini", Provider::Openai),
+        "run-xyz",
+        &emitter,
+        Some("9.9.9".to_string()),
+        true,
+    )
+    .await
+    .expect("run specialist");
+
+    assert!(result.success);
+    assert_eq!(result.specialist_type, "deduction");
+    assert_eq!(result.run_id, "run-xyz");
+    assert_eq!(result.content, "done dreaming");
+    assert_eq!(result.input_tokens, 11);
+    assert_eq!(result.output_tokens, 3);
+
+    // Preflight created both peers.
+    let peers: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM peers WHERE workspace_name='ws' AND name IN ('obs','obsd')",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("peer count");
+    assert_eq!(peers, 2);
+
+    // Emitted exactly one dream.specialist event, success=true.
+    let events = emitter.events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0, "dream.specialist");
+    assert_eq!(events[0].1["success"], json!(true));
+    assert_eq!(events[0].1["specialist_type"], json!("deduction"));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn save_representation_writes_documents() {
     use honcho_api_rs::representation::{ExplicitObservation, Representation};
     use honcho_api_rs::representation_manager::save_representation;
