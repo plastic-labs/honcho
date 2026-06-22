@@ -123,6 +123,99 @@ async def test_anthropic_backend_skips_assistant_prefill_for_claude_4_models() -
 
 
 @pytest.mark.asyncio
+async def test_anthropic_backend_forwards_provider_params_passthroughs() -> None:
+    """provider_params.extra_body/extra_headers/extra_query reach the Anthropic
+    SDK call as kwargs of the same name (the SDK's documented passthrough).
+    """
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text="ok")],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={
+            "extra_body": {"anthropic_beta": ["context-1m-2025-01-15"]},
+            "extra_headers": {"X-Proxy-Route": "vertex"},
+            "extra_query": {"trace_id": "abc123"},
+        },
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic client call")
+    call = await_args.kwargs
+    assert call["extra_body"] == {"anthropic_beta": ["context-1m-2025-01-15"]}
+    assert call["extra_headers"] == {"X-Proxy-Route": "vertex"}
+    assert call["extra_query"] == {"trace_id": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_stream_forwards_provider_params_passthroughs() -> None:
+    """The stream() path forwards provider_params passthroughs to the SDK the
+    same way complete() does — it has its own merge block, so cover it too.
+    """
+
+    class _FakeStream:
+        async def __aenter__(self) -> "_FakeStream":
+            return self
+
+        async def __aexit__(self, *_: object) -> bool:
+            return False
+
+        def __aiter__(self) -> "_FakeStream":
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+        async def get_final_message(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                usage=SimpleNamespace(output_tokens=5),
+                stop_reason="end_turn",
+            )
+
+    client = Mock()
+    client.messages.stream = Mock(return_value=_FakeStream())
+
+    backend = AnthropicBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-haiku-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            extra_params={
+                "extra_body": {"anthropic_beta": ["context-1m-2025-01-15"]},
+                "extra_headers": {"X-Proxy-Route": "vertex"},
+                "extra_query": {"trace_id": "abc123"},
+            },
+        )
+    ]
+
+    assert chunks  # the terminal is_done chunk is always emitted
+    call = client.messages.stream.call_args
+    if call is None:
+        raise AssertionError("Expected Anthropic stream call")
+    kwargs = call.kwargs
+    assert kwargs["extra_body"] == {"anthropic_beta": ["context-1m-2025-01-15"]}
+    assert kwargs["extra_headers"] == {"X-Proxy-Route": "vertex"}
+    assert kwargs["extra_query"] == {"trace_id": "abc123"}
+
+
+@pytest.mark.asyncio
 async def test_anthropic_backend_ignores_thinking_effort() -> None:
     client = Mock()
     client.messages.create = AsyncMock(

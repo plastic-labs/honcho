@@ -7,13 +7,69 @@ src/llm/api.py, src/llm/tool_loop.py, src/llm/runtime.py.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
 from src.config import ModelConfig, PromptCachePolicy
+from src.exceptions import ValidationException
 
 from .backend import CompletionResult, ProviderBackend, StreamChunk
+
+# Operator escape-hatch keys recognized inside ModelConfig.provider_params.
+PASSTHROUGH_KEYS = ("extra_body", "extra_headers", "extra_query")
+
+
+def coerce_passthrough_mapping(key: str, value: Any) -> dict[str, Any]:
+    """Validate an operator-supplied provider_params passthrough is a mapping.
+
+    ``provider_params`` is typed ``dict[str, Any]`` with no nested schema, so an
+    operator can supply a non-mapping (e.g. a list or string) for one of the
+    passthrough keys. Catch that here with a clear error instead of letting a
+    later ``dict.update()`` raise an opaque ``TypeError`` deep in the transport.
+
+    Args:
+        key: The passthrough key name, used only for the error message.
+        value: The operator-supplied value to validate.
+
+    Returns:
+        The value, narrowed to ``dict[str, Any]``.
+
+    Raises:
+        ValidationException: If ``value`` is not a mapping.
+    """
+    if not isinstance(value, dict):
+        raise ValidationException(
+            f"provider_params.{key} must be a mapping, got {type(value).__name__}"
+        )
+    return cast(dict[str, Any], value)
+
+
+def apply_sdk_passthroughs(
+    params: dict[str, Any], extra_params: dict[str, Any]
+) -> None:
+    """Forward operator provider_params passthroughs onto an SDK call dict.
+
+    OpenAI and Anthropic both accept ``extra_body`` / ``extra_headers`` /
+    ``extra_query`` as identically-named SDK kwargs, so they share this merge.
+    Operator values shallow-merge onto ``params`` in place, winning over any
+    value Honcho already set under the same top-level key (e.g. an auto-injected
+    ``extra_body.reasoning``). Gemini handles passthroughs separately because the
+    google-genai SDK does not expose these as kwargs.
+
+    Args:
+        params: The SDK call kwargs being assembled; mutated in place.
+        extra_params: Flattened per-call params (see build_config_extra_params).
+
+    Raises:
+        ValidationException: If a passthrough value is not a mapping.
+    """
+    for passthrough_key in PASSTHROUGH_KEYS:
+        operator_value = extra_params.get(passthrough_key)
+        if not operator_value:
+            continue
+        existing = params.setdefault(passthrough_key, {})
+        existing.update(coerce_passthrough_mapping(passthrough_key, operator_value))
 
 
 def build_config_extra_params(config: ModelConfig) -> dict[str, Any]:
