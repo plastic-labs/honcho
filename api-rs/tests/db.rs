@@ -4234,6 +4234,96 @@ async fn deriver_worker_processes_a_summary_work_unit_with_public_id_fallback() 
 }
 
 #[tokio::test]
+async fn deriver_worker_processes_a_reconciler_sync_vectors_work_unit() {
+    use honcho_api_rs::deriver::deriver::DeriverModelSettings;
+    use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::deriver::settings::DeriverSettings;
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::summarizer::SummaryGlobalSettings;
+    use honcho_api_rs::telemetry::Emitter;
+    use std::sync::Arc;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    // embed_messages=true → create_messages inserts pending message_embeddings
+    // rows with a NULL vector (embedding deferred to the reconciler).
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("bob", "hello world"), message("bob", "another chunk")],
+        true,
+        8192,
+    )
+    .await
+    .expect("seed");
+
+    let pending_before: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM message_embeddings WHERE sync_state = 'pending' AND embedding IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("pending count");
+    assert!(pending_before >= 1, "expected pending embeddings to reconcile");
+
+    // Enqueue a reconciler sync_vectors work unit (no workspace_name/message_id).
+    sqlx::query(
+        "INSERT INTO queue (work_unit_key, payload, task_type, workspace_name, message_id, processed) \
+         VALUES ($1, $2, 'reconciler', NULL, NULL, false)",
+    )
+    .bind("reconciler:sync_vectors")
+    .bind(json!({"task_type": "reconciler", "reconciler_type": "sync_vectors"}))
+    .execute(&test_db.pool)
+    .await
+    .expect("enqueue reconciler");
+
+    let emitter = Arc::new(CapturingEmitter {
+        events: std::sync::Mutex::new(Vec::new()),
+    });
+    let worker = Arc::new(DeriverWorker::new(
+        test_db.pool.clone(),
+        Arc::new(CannedLlmHttp(json!(null))), // unused by the reconciler path
+        Arc::new(IndexedEmbedder),
+        Arc::clone(&emitter) as Arc<dyn Emitter>,
+        TransportApiKeys::default(),
+        DeriverModelSettings::default(),
+        SummaryGlobalSettings::default(),
+        DeriverSettings {
+            workers: 1,
+            ..DeriverSettings::default()
+        },
+    ));
+
+    let processed = worker.poll_once().await.expect("poll once");
+    assert_eq!(processed, 1);
+
+    // Every pending row is now synced with a persisted vector.
+    let still_pending: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM message_embeddings WHERE sync_state = 'pending'")
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("still pending");
+    assert_eq!(still_pending, 0);
+    let synced_with_vector: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM message_embeddings WHERE sync_state = 'synced' AND embedding IS NOT NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("synced count");
+    assert_eq!(synced_with_vector, pending_before);
+
+    // A single sync_vectors.completed event reports the synced count.
+    let events = emitter.events.lock().unwrap().clone();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].0, "reconciliation.sync_vectors.completed");
+    assert_eq!(events[0].1["message_embeddings_synced"], pending_before);
+    assert_eq!(events[0].1["message_embeddings_failed"], 0);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn get_or_create_collection_creates_then_reuses() {
     let Some(test_db) = TestDb::setup().await else {
         return;

@@ -111,7 +111,9 @@ where
 
         let processed = match work_unit.task_type.as_str() {
             "representation" => self.drain_representation(&work_unit, &work_unit_key, &aqs_id).await,
-            "deletion" | "summary" => self.drain_via_process_item(&work_unit_key, &aqs_id).await,
+            "deletion" | "summary" | "reconciler" => {
+                self.drain_via_process_item(&work_unit_key, &aqs_id).await
+            }
             other => {
                 tracing::warn!(
                     task_type = %other,
@@ -177,14 +179,14 @@ where
                     break;
                 }
             };
-            // Dispatch by task type: summary needs the worker's LLM
-            // collaborators; the other arms go through process_item.
-            let outcome = if item.task_type == "summary" {
-                self.process_summary_item(&item).await
-            } else {
-                process_item(&self.pool, self.emitter.as_ref(), &item)
+            // Dispatch by task type: summary + reconciler need the worker's LLM /
+            // embedding collaborators; the other arms go through process_item.
+            let outcome = match item.task_type.as_str() {
+                "summary" => self.process_summary_item(&item).await,
+                "reconciler" => self.process_reconciler_item(&item).await,
+                _ => process_item(&self.pool, self.emitter.as_ref(), &item)
                     .await
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| error.to_string()),
             };
             match outcome {
                 Ok(()) => {
@@ -270,6 +272,26 @@ where
             payload.message_seq_in_session,
             &message_public_id,
             &now_iso,
+        )
+        .await
+        .map_err(|error| error.to_string())
+    }
+
+    /// Handle a `reconciler` queue item (Python `process_reconciler`): run the
+    /// pgvector vector-reconciliation cycle or the queue-cleanup pass, using the
+    /// worker's embedder + emitter. Reconciler items carry no workspace_name, so
+    /// (unlike summary) nothing here reads `item.workspace_name`.
+    async fn process_reconciler_item(&self, item: &db::QueueItem) -> Result<(), String> {
+        let payload =
+            crate::deriver::payload::ReconcilerPayload::from_value(&item.payload)
+                .map_err(|e| e.to_string())?;
+        crate::reconciler::process_reconciler(
+            &self.pool,
+            self.emitter.as_ref(),
+            self.embedder.as_ref(),
+            &payload,
+            self.poll_settings.queue_error_retention_seconds,
+            chrono::Utc::now(),
         )
         .await
         .map_err(|error| error.to_string())

@@ -17,6 +17,7 @@ pub mod llm;
 pub mod pagination;
 pub mod producer;
 pub mod queue_status;
+pub mod reconciler;
 pub mod representation;
 pub mod representation_manager;
 pub mod search;

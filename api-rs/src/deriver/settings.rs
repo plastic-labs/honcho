@@ -37,6 +37,10 @@ pub struct DeriverSettings {
     pub representation_batch_max_tokens: i64,
     /// `DERIVER_FLUSH_ENABLED` — bypass the batch token threshold.
     pub flush_enabled: bool,
+    /// `DERIVER_QUEUE_ERROR_RETENTION_SECONDS` — how long errored queue items are
+    /// retained before the reconciler's cleanup_queue task deletes them
+    /// (default 30 days). Successfully processed items are deleted immediately.
+    pub queue_error_retention_seconds: i64,
 }
 
 impl Default for DeriverSettings {
@@ -53,6 +57,7 @@ impl Default for DeriverSettings {
             stale_work_unit_cleanup_interval_seconds: 60.0,
             representation_batch_max_tokens: 1024,
             flush_enabled: false,
+            queue_error_retention_seconds: 30 * 24 * 3600,
         }
     }
 }
@@ -151,6 +156,10 @@ impl DeriverSettings {
                 defaults.representation_batch_max_tokens,
             ),
             flush_enabled: parse_bool("DERIVER_FLUSH_ENABLED", defaults.flush_enabled),
+            queue_error_retention_seconds: parse_i64(
+                "DERIVER_QUEUE_ERROR_RETENTION_SECONDS",
+                defaults.queue_error_retention_seconds,
+            ),
         }
     }
 }

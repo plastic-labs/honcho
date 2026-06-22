@@ -3725,6 +3725,147 @@ pub async fn cleanup_soft_deleted_documents_pgvector(
     Ok(deleted)
 }
 
+/// A pending `message_embeddings` row claimed by the reconciler. `has_embedding`
+/// is `embedding IS NOT NULL` — the vector value itself is never read back (a row
+/// that already has a vector just needs marking `synced`; a row without one is
+/// re-embedded from `content`).
+#[derive(Debug, Clone)]
+pub struct PendingMessageEmbedding {
+    pub id: i64,
+    pub content: String,
+    pub has_embedding: bool,
+    pub message_id: String,
+    pub workspace_name: String,
+    pub sync_attempts: i32,
+}
+
+/// Port of `reconciler.sync_vectors._get_message_embeddings_needing_sync`: claim
+/// pending message-embedding rows on the given connection (so the caller can hold
+/// the `FOR UPDATE SKIP LOCKED` rows through the embed call, matching Python's
+/// single-session cycle). Step 1 picks up to `batch_size` distinct `message_id`s
+/// that have at least one backoff-eligible pending row, oldest `last_sync_at`
+/// first; step 2 claims ALL eligible pending rows for those messages so a
+/// message's chunks are always processed together. `backoff_minutes` is the flat
+/// retry wait (Python `SYNC_BACKOFF`).
+pub async fn claim_pending_message_embeddings(
+    conn: &mut sqlx::PgConnection,
+    batch_size: i64,
+    backoff_minutes: i64,
+) -> Result<Vec<PendingMessageEmbedding>, sqlx::Error> {
+    let backoff_cutoff = Utc::now() - chrono::Duration::minutes(backoff_minutes);
+
+    // Step 1: distinct message_ids with an eligible pending row, oldest first.
+    let message_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT message_id \
+         FROM message_embeddings \
+         WHERE sync_state = 'pending' \
+           AND (last_sync_at IS NULL OR last_sync_at < $1) \
+         GROUP BY message_id \
+         ORDER BY MIN(last_sync_at) ASC NULLS FIRST \
+         LIMIT $2",
+    )
+    .bind(backoff_cutoff)
+    .bind(batch_size)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    if message_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Step 2: claim all eligible pending rows for those messages.
+    let rows = sqlx::query(
+        "SELECT id, content, (embedding IS NOT NULL) AS has_embedding, \
+                message_id, workspace_name, sync_attempts \
+         FROM message_embeddings \
+         WHERE message_id = ANY($1) \
+           AND sync_state = 'pending' \
+           AND (last_sync_at IS NULL OR last_sync_at < $2) \
+         ORDER BY message_id, id \
+         FOR UPDATE SKIP LOCKED",
+    )
+    .bind(&message_ids)
+    .bind(backoff_cutoff)
+    .fetch_all(&mut *conn)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| PendingMessageEmbedding {
+            id: row.get("id"),
+            content: row.get("content"),
+            has_embedding: row.get("has_embedding"),
+            message_id: row.get("message_id"),
+            workspace_name: row.get("workspace_name"),
+            sync_attempts: row.get("sync_attempts"),
+        })
+        .collect())
+}
+
+/// Mark a message-embedding row `synced` (Python's per-row UPDATE in
+/// `_sync_message_embeddings`, pgvector branch): set `sync_state='synced'`,
+/// `last_sync_at=now()`, `sync_attempts=0`, and write `fresh_embedding` when the
+/// row was just re-embedded (a pre-existing vector is left untouched).
+pub async fn mark_message_embedding_synced(
+    conn: &mut sqlx::PgConnection,
+    id: i64,
+    fresh_embedding: Option<&[f32]>,
+) -> Result<(), sqlx::Error> {
+    match fresh_embedding {
+        Some(embedding) => {
+            sqlx::query(
+                "UPDATE message_embeddings \
+                 SET sync_state = 'synced', last_sync_at = now(), sync_attempts = 0, \
+                     embedding = $2::vector \
+                 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(crate::search::vector_literal(embedding))
+            .execute(&mut *conn)
+            .await?;
+        }
+        None => {
+            sqlx::query(
+                "UPDATE message_embeddings \
+                 SET sync_state = 'synced', last_sync_at = now(), sync_attempts = 0 \
+                 WHERE id = $1",
+            )
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Port of `reconciler.sync_vectors._bump_message_embedding_sync_attempts` for one
+/// row: increment `sync_attempts`, set `last_sync_at=now()`, and flip to `failed`
+/// once attempts reach `max_attempts` (else stays `pending` for a later retry).
+pub async fn bump_message_embedding_sync_attempts(
+    conn: &mut sqlx::PgConnection,
+    id: i64,
+    current_attempts: i32,
+    max_attempts: i32,
+) -> Result<(), sqlx::Error> {
+    let new_attempts = current_attempts + 1;
+    let new_state = if new_attempts >= max_attempts {
+        "failed"
+    } else {
+        "pending"
+    };
+    sqlx::query(
+        "UPDATE message_embeddings \
+         SET sync_state = $2, sync_attempts = $3, last_sync_at = now() \
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(new_state)
+    .bind(new_attempts)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Port of `enqueue_dream` (the `schedule_dream` route's manual path): enqueue
 /// a `dream` queue item for `(observer, observed)`, deduplicated against an
 /// in-progress `active_queue_sessions` row or a pending (`processed = false`)
