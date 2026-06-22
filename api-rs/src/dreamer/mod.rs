@@ -10,3 +10,4 @@
 //! default-config behavior.
 
 pub mod specialists;
+pub mod tools;
