@@ -4931,6 +4931,79 @@ impl honcho_api_rs::dialectic::Embedder for IndexedEmbedder {
 }
 
 #[tokio::test]
+async fn create_observations_writes_documents_with_levels() {
+    use honcho_api_rs::dreamer::handlers::{ObservationInput, create_observations};
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+
+    let obs = vec![
+        ObservationInput {
+            content: "  alice is a swe  ".into(),
+            level: "deductive".into(),
+            source_ids: Some(vec!["s1".into()]),
+            premises: Some(vec!["works at google".into()]),
+            sources: None,
+            pattern_type: None,
+            confidence: None,
+        },
+        // Empty-after-strip → dropped before embed/insert.
+        ObservationInput {
+            content: "   ".into(),
+            level: "deductive".into(),
+            source_ids: Some(vec!["s2".into()]),
+            premises: Some(vec!["x".into()]),
+            sources: None,
+            pattern_type: None,
+            confidence: None,
+        },
+    ];
+
+    let out = create_observations(
+        &test_db.pool,
+        &IndexedEmbedder,
+        "ws",
+        "obs",
+        "obsd",
+        None,
+        obs,
+        &[],
+        "2026-06-22T00:00:00Z",
+        true,
+    )
+    .await
+    .expect("create_observations");
+
+    assert_eq!(out.created_count, 1);
+    assert_eq!(out.created_levels, vec!["deductive".to_string()]);
+    assert!(out.failed.is_empty());
+
+    // The accepted document is persisted with stripped content + metadata.
+    let row: (String, String, Value) = sqlx::query_as(
+        "SELECT content, level, internal_metadata FROM documents \
+         WHERE workspace_name = 'ws' AND observer = 'obs' AND observed = 'obsd' AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("fetch doc");
+    assert_eq!(row.0, "alice is a swe");
+    assert_eq!(row.1, "deductive");
+    assert_eq!(row.2["premises"], json!(["works at google"]));
+    assert_eq!(row.2["source_ids"], json!(["s1"]));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn save_representation_writes_documents() {
     use honcho_api_rs::representation::{ExplicitObservation, Representation};
     use honcho_api_rs::representation_manager::save_representation;
