@@ -430,7 +430,13 @@ async def honcho_llm_call(
     run_label = (telemetry.track_name if telemetry else None) or "Agent"
     run_handle = start_langfuse_agent_run(run_label, telemetry)
     if run_handle is not None:
-        run_handle.update(input=messages)
+        # Mirror execute_tool_loop's prompt-only handling: when messages is
+        # omitted it seeds the conversation with a single user message built
+        # from prompt. Record that same effective input so the run span isn't
+        # blank for prompt-only calls.
+        run_handle.update(
+            input=messages if messages else [{"role": "user", "content": prompt}]
+        )
     try:
         # execute_tool_loop raises ValidationException on out-of-range
         # max_tool_iterations; fail-fast is cheaper than silent clamping here.
