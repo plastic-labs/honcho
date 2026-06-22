@@ -3657,6 +3657,145 @@ async fn save_and_get_summary_round_trips_and_merges() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn create_and_save_summary_persists_and_skips_when_covered() {
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::llm::{ModelConfig, Provider};
+    use honcho_api_rs::summarizer::{
+        SummaryModelSettings, SummaryType, create_and_save_summary,
+    };
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("bob", "hi"), message("bob", "more"), message("bob", "even more")],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages"); // ids/seqs 1,2,3
+
+    let http = CannedLlmHttp(json!({
+        "content": [{"type": "text", "text": "a concise summary of the chat"}],
+        "usage": {"input_tokens": 30, "output_tokens": 8},
+        "stop_reason": "end_turn"
+    }));
+    let settings = SummaryModelSettings {
+        model_config: ModelConfig::new("claude-x", Provider::Anthropic),
+        max_tokens_short: 1000,
+        max_tokens_long: 4000,
+        messages_per_short_summary: 3,
+        messages_per_long_summary: 6,
+    };
+    let keys = TransportApiKeys {
+        anthropic: Some("k".to_string()),
+        openai: None,
+        gemini: None,
+    };
+
+    create_and_save_summary(
+        &test_db.pool,
+        &http,
+        &keys,
+        &settings,
+        "ws",
+        "sess",
+        3, // message_id
+        3, // message_seq_in_session
+        "pub_3",
+        SummaryType::Short,
+        "2025-03-04T12:00:00+00:00",
+    )
+    .await
+    .expect("create summary");
+
+    let saved = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("get summary")
+        .expect("present");
+    assert_eq!(saved["content"], "a concise summary of the chat");
+    assert_eq!(saved["message_id"], 3);
+    assert_eq!(saved["token_count"], 8); // response.output_tokens
+    assert_eq!(saved["created_at"], "2025-03-04T12:00:00+00:00");
+
+    // Calling again for the same (already-covered) message is a no-op: a fresh
+    // canned response with different text must NOT overwrite.
+    let http2 = CannedLlmHttp(json!({
+        "content": [{"type": "text", "text": "DIFFERENT TEXT"}],
+        "usage": {"input_tokens": 30, "output_tokens": 8},
+        "stop_reason": "end_turn"
+    }));
+    create_and_save_summary(
+        &test_db.pool, &http2, &keys, &settings, "ws", "sess", 3, 3, "pub_3",
+        SummaryType::Short, "2025-03-04T13:00:00+00:00",
+    )
+    .await
+    .expect("skip covered");
+    let unchanged = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("get summary")
+        .expect("present");
+    assert_eq!(unchanged["content"], "a concise summary of the chat");
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_and_save_summary_does_not_save_empty_fallback() {
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::llm::{ModelConfig, Provider};
+    use honcho_api_rs::summarizer::{
+        SummaryModelSettings, SummaryType, create_and_save_summary,
+    };
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::create_messages(&test_db.pool, "ws", "sess", &[message("bob", "hi")], false, 8192)
+        .await
+        .expect("seed");
+
+    // Empty LLM output → fallback → not saved.
+    let http = CannedLlmHttp(json!({
+        "content": [{"type": "text", "text": "   "}],
+        "usage": {"input_tokens": 5, "output_tokens": 0},
+        "stop_reason": "end_turn"
+    }));
+    let settings = SummaryModelSettings {
+        model_config: ModelConfig::new("claude-x", Provider::Anthropic),
+        max_tokens_short: 1000,
+        max_tokens_long: 4000,
+        messages_per_short_summary: 1,
+        messages_per_long_summary: 6,
+    };
+    create_and_save_summary(
+        &test_db.pool,
+        &http,
+        &TransportApiKeys { anthropic: Some("k".to_string()), openai: None, gemini: None },
+        &settings,
+        "ws",
+        "sess",
+        1,
+        1,
+        "pub_1",
+        SummaryType::Short,
+        "2025-03-04T12:00:00+00:00",
+    )
+    .await
+    .expect("fallback ok");
+
+    let none = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("get");
+    assert!(none.is_none()); // fallback summaries are not persisted
+
+    test_db.teardown().await;
+}
+
 /// Captures emitted telemetry event bodies for assertions.
 struct CapturingEmitter {
     events: std::sync::Mutex<Vec<(String, serde_json::Value)>>,

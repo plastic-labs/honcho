@@ -5,7 +5,14 @@
 //! gating) follow once the summaries crud is ported.
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sqlx::PgPool;
 
+use crate::db;
+use crate::llm::ModelConfig;
+use crate::llm::credentials::TransportApiKeys;
+use crate::llm::executor::HonchoCaller;
+use crate::llm::http::LlmHttp;
 use crate::tokens::estimate_tokens;
 
 /// The summary kinds stored in session metadata (`SummaryType`).
@@ -202,6 +209,164 @@ where
         .map(|(peer, content)| format!("{}: {}", peer.as_ref(), content.as_ref()))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The LLM + model knobs [`create_and_save_summary`] needs (Python
+/// `settings.SUMMARY`). The caller is built per-call with the type's max-tokens.
+pub struct SummaryModelSettings {
+    /// `settings.SUMMARY.MODEL_CONFIG`.
+    pub model_config: ModelConfig,
+    /// `settings.SUMMARY.MAX_TOKENS_SHORT`.
+    pub max_tokens_short: i64,
+    /// `settings.SUMMARY.MAX_TOKENS_LONG`.
+    pub max_tokens_long: i64,
+    /// `configuration.summary.messages_per_short_summary`.
+    pub messages_per_short_summary: i64,
+    /// `configuration.summary.messages_per_long_summary`.
+    pub messages_per_long_summary: i64,
+}
+
+/// Port of `_create_and_save_summary`: create one summary of `summary_type` for
+/// the session and persist it. Skips (no-op) when the latest stored summary of
+/// that type already covers `message_id`, or when there are no messages in the
+/// range. Fallback summaries (empty LLM output or an LLM error) are NOT saved,
+/// matching Python's `if not is_fallback` guard.
+///
+/// `created_at_iso` is injected (Python calls `utc_now_iso()`) so the saved
+/// timestamp is deterministic under test. The per-call telemetry
+/// (`AgentToolSummaryCreatedEvent`) and Prometheus token tracking are
+/// observability-only and omitted.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_and_save_summary<H>(
+    pool: &PgPool,
+    http: &H,
+    keys: &TransportApiKeys,
+    settings: &SummaryModelSettings,
+    workspace_name: &str,
+    session_name: &str,
+    message_id: i64,
+    message_seq_in_session: i64,
+    message_public_id: &str,
+    summary_type: SummaryType,
+    created_at_iso: &str,
+) -> Result<(), sqlx::Error>
+where
+    H: LlmHttp + Sync,
+{
+    // 1. Latest summary of this type; skip if it already covers this message.
+    let latest = db::get_summary(pool, workspace_name, session_name, summary_type.as_str()).await?;
+    let previous_summary_content = latest
+        .as_ref()
+        .and_then(|v| v.get("content").and_then(|c| c.as_str()))
+        .map(str::to_string);
+    let previous_summary_tokens = latest
+        .as_ref()
+        .and_then(|v| v.get("token_count").and_then(|t| t.as_i64()))
+        .unwrap_or(0);
+    if let Some(latest) = &latest {
+        if let Some(covered) = latest.get("message_id").and_then(|m| m.as_i64()) {
+            if covered >= message_id {
+                return Ok(());
+            }
+        }
+    }
+
+    // 2. Messages covering the last interval, up to this sequence.
+    let messages_per_summary = match summary_type {
+        SummaryType::Long => settings.messages_per_long_summary,
+        SummaryType::Short => settings.messages_per_short_summary,
+    };
+    let start_seq = summary_start_seq(message_seq_in_session, messages_per_summary);
+    let messages =
+        db::get_messages_by_seq_range(pool, workspace_name, session_name, start_seq, Some(message_seq_in_session))
+            .await?;
+    let Some(last) = messages.last() else {
+        tracing::warn!(message_id, "no messages to summarize");
+        return Ok(());
+    };
+
+    // 3. Format + token accounting.
+    let formatted = format_messages(
+        messages.iter().map(|m| (m.peer_name.as_str(), m.content.as_str())),
+    );
+    let last_message_id = last.id;
+    let preview: String = last.content.chars().take(30).collect();
+    let message_count = messages.len();
+    let messages_tokens: i64 = messages.iter().map(|m| m.token_count as i64).sum();
+    let input_tokens = messages_tokens + previous_summary_tokens;
+
+    // 4. Build the prompt + LLM call (text completion).
+    let previous_text = previous_summary_text(previous_summary_content.as_deref());
+    let (prompt, max_tokens) = match summary_type {
+        SummaryType::Short => (
+            short_summary_prompt(
+                &formatted,
+                short_summary_output_words(input_tokens, settings.max_tokens_short),
+                previous_text,
+            ),
+            settings.max_tokens_short,
+        ),
+        SummaryType::Long => (
+            long_summary_prompt(
+                &formatted,
+                long_summary_output_words(settings.max_tokens_long),
+                previous_text,
+            ),
+            settings.max_tokens_long,
+        ),
+    };
+
+    let caller = HonchoCaller::new(http, keys.clone(), settings.model_config.clone(), max_tokens);
+    let call_messages = vec![json!({"role": "user", "content": prompt})];
+
+    // 5. Result + fallback (empty output or LLM error → don't save).
+    let (summary_text, summary_tokens, is_fallback) = match caller.complete_single(&call_messages).await {
+        Ok(response) => {
+            let text = response.content.as_str().unwrap_or("").to_string();
+            if text.trim().is_empty() {
+                tracing::error!("generated summary is empty; falling back");
+                (fallback_summary(message_count, &preview), 0, true)
+            } else {
+                (text, response.output_tokens, false)
+            }
+        }
+        Err(error) => {
+            tracing::error!("error generating summary: {error}");
+            (fallback_summary(message_count, &preview), 0, true)
+        }
+    };
+
+    // 6. Persist only non-fallback summaries.
+    if !is_fallback {
+        let summary = Summary {
+            content: summary_text,
+            message_id: last_message_id,
+            summary_type: summary_type.as_str().to_string(),
+            created_at: created_at_iso.to_string(),
+            token_count: summary_tokens,
+            message_public_id: message_public_id.to_string(),
+        };
+        db::save_summary(
+            pool,
+            workspace_name,
+            session_name,
+            summary_type.as_str(),
+            &serde_json::to_value(&summary).unwrap_or(serde_json::Value::Null),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// The basic fallback summary string (Python's `f"Conversation with {count}
+/// messages about {preview}..."`, or empty when there are no messages).
+fn fallback_summary(message_count: usize, preview: &str) -> String {
+    if message_count > 0 {
+        format!("Conversation with {message_count} messages about {preview}...")
+    } else {
+        String::new()
+    }
 }
 
 #[cfg(test)]

@@ -1030,6 +1030,65 @@ pub async fn get_summary(
     Ok(value.filter(|v| !v.is_null()))
 }
 
+/// Port of `crud.get_messages_by_seq_range`: fetch a session's messages whose
+/// `seq_in_session` falls in `[start_seq, end_seq]` (inclusive; open-ended when
+/// `end_seq` is `None`), ordered ascending by sequence. Returns empty for an
+/// invalid range (`start_seq < 1` or `start_seq > end_seq`), matching Python.
+pub async fn get_messages_by_seq_range(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    start_seq: i64,
+    end_seq: Option<i64>,
+) -> Result<Vec<BatchMessage>, sqlx::Error> {
+    if start_seq < 1 || end_seq.is_some_and(|end| start_seq > end) {
+        return Ok(Vec::new());
+    }
+
+    let rows = if let Some(end) = end_seq {
+        sqlx::query(
+            "SELECT id, public_id, content, created_at, peer_name, token_count, \
+             session_name, workspace_name FROM messages \
+             WHERE workspace_name = $1 AND session_name = $2 \
+             AND seq_in_session >= $3 AND seq_in_session <= $4 \
+             ORDER BY seq_in_session ASC",
+        )
+        .bind(workspace_name)
+        .bind(session_name)
+        .bind(start_seq)
+        .bind(end)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT id, public_id, content, created_at, peer_name, token_count, \
+             session_name, workspace_name FROM messages \
+             WHERE workspace_name = $1 AND session_name = $2 \
+             AND seq_in_session >= $3 \
+             ORDER BY seq_in_session ASC",
+        )
+        .bind(workspace_name)
+        .bind(session_name)
+        .bind(start_seq)
+        .fetch_all(pool)
+        .await?
+    };
+
+    Ok(rows
+        .into_iter()
+        .map(|row| BatchMessage {
+            id: row.get("id"),
+            public_id: row.get("public_id"),
+            content: row.get("content"),
+            created_at: row.get("created_at"),
+            peer_name: row.get("peer_name"),
+            token_count: row.get("token_count"),
+            session_name: row.get("session_name"),
+            workspace_name: row.get("workspace_name"),
+        })
+        .collect())
+}
+
 /// Port of `summarizer._save_summary`: shallow-merge `summary` under
 /// `internal_metadata["summaries"][summary_type]` for the session, atomically via
 /// nested JSONB `||` (existing summaries of other types are preserved; the same
