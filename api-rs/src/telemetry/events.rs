@@ -390,6 +390,168 @@ impl super::TelemetryEvent for DreamSpecialistEvent {
     }
 }
 
+/// Port of `AgentToolConclusionsCreatedEvent` (events/agent.py): fired when a
+/// `create_observations*` tool call persists conclusions, with the per-level
+/// breakdown. Schema version 2.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentToolConclusionsCreatedEvent {
+    pub timestamp: DateTime<Utc>,
+    pub run_id: String,
+    pub iteration: i64,
+    pub parent_category: String,
+    pub agent_type: String,
+    pub workspace_name: String,
+    pub observer: String,
+    pub observed: String,
+    pub conclusion_count: i64,
+    /// Level of each created conclusion (pydantic default `[]`).
+    pub levels: Vec<String>,
+}
+
+impl AgentToolConclusionsCreatedEvent {
+    pub const EVENT_TYPE: &'static str = "agent.tool.conclusions.created";
+    pub const SCHEMA_VERSION: i32 = 2;
+    pub const CATEGORY: &'static str = "agent";
+
+    /// Port of `get_resource_id`: `{run_id}:{iteration}:conclusions_created`.
+    pub fn get_resource_id(&self) -> String {
+        format!("{}:{}:conclusions_created", self.run_id, self.iteration)
+    }
+
+    pub fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp);
+        generate_event_id(Self::EVENT_TYPE, &self.get_resource_id(), &iso, honcho_version)
+    }
+}
+
+impl super::TelemetryEvent for AgentToolConclusionsCreatedEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        AgentToolConclusionsCreatedEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
+/// Port of `AgentToolConclusionsDeletedEvent` (events/agent.py): fired when a
+/// `delete_observations` tool call soft-deletes conclusions. **Schema version 3**
+/// (note: deleted is one version ahead of created/peer_card).
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentToolConclusionsDeletedEvent {
+    pub timestamp: DateTime<Utc>,
+    pub run_id: String,
+    pub iteration: i64,
+    pub parent_category: String,
+    pub agent_type: String,
+    pub workspace_name: String,
+    pub observer: String,
+    pub observed: String,
+    pub conclusion_count: i64,
+    /// Level of each deleted conclusion (pydantic default `[]`).
+    pub levels: Vec<String>,
+}
+
+impl AgentToolConclusionsDeletedEvent {
+    pub const EVENT_TYPE: &'static str = "agent.tool.conclusions.deleted";
+    pub const SCHEMA_VERSION: i32 = 3;
+    pub const CATEGORY: &'static str = "agent";
+
+    /// Port of `get_resource_id`: `{run_id}:{iteration}:conclusions_deleted`.
+    pub fn get_resource_id(&self) -> String {
+        format!("{}:{}:conclusions_deleted", self.run_id, self.iteration)
+    }
+
+    pub fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp);
+        generate_event_id(Self::EVENT_TYPE, &self.get_resource_id(), &iso, honcho_version)
+    }
+}
+
+impl super::TelemetryEvent for AgentToolConclusionsDeletedEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        AgentToolConclusionsDeletedEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
+/// Port of `AgentToolPeerCardUpdatedEvent` (events/agent.py): fired when an
+/// `update_peer_card` tool call replaces the peer card. Schema version 2.
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentToolPeerCardUpdatedEvent {
+    pub timestamp: DateTime<Utc>,
+    pub run_id: String,
+    pub iteration: i64,
+    pub parent_category: String,
+    pub agent_type: String,
+    pub workspace_name: String,
+    pub observer: String,
+    pub observed: String,
+    pub facts_count: i64,
+}
+
+impl AgentToolPeerCardUpdatedEvent {
+    pub const EVENT_TYPE: &'static str = "agent.tool.peer_card.updated";
+    pub const SCHEMA_VERSION: i32 = 2;
+    pub const CATEGORY: &'static str = "agent";
+
+    /// Port of `get_resource_id`: `{run_id}:{iteration}:peer_card_updated`.
+    pub fn get_resource_id(&self) -> String {
+        format!("{}:{}:peer_card_updated", self.run_id, self.iteration)
+    }
+
+    pub fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp);
+        generate_event_id(Self::EVENT_TYPE, &self.get_resource_id(), &iso, honcho_version)
+    }
+}
+
+impl super::TelemetryEvent for AgentToolPeerCardUpdatedEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        AgentToolPeerCardUpdatedEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,5 +786,71 @@ mod tests {
         assert_eq!(body["created_observation_count"], 3);
         assert_eq!(body["created_counts_by_level"]["deductive"], 3);
         assert!(body.get("error_class").is_some_and(|v| v.is_null()));
+    }
+
+    #[test]
+    fn agent_tool_conclusions_created_event_metadata_and_golden_id() {
+        use crate::telemetry::TelemetryEvent;
+        let event = AgentToolConclusionsCreatedEvent {
+            timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
+            run_id: "run123".to_string(),
+            iteration: 4,
+            parent_category: "dream".to_string(),
+            agent_type: "deduction".to_string(),
+            workspace_name: "ws1".to_string(),
+            observer: "alice".to_string(),
+            observed: "bob".to_string(),
+            conclusion_count: 2,
+            levels: vec!["deductive".to_string(), "deductive".to_string()],
+        };
+        assert_eq!(event.get_resource_id(), "run123:4:conclusions_created");
+        assert_eq!(AgentToolConclusionsCreatedEvent::SCHEMA_VERSION, 2);
+        assert_eq!(event.category(), "agent");
+        assert_eq!(event.generate_id(Some("9.9.9")), "evt_mlGEXQWTht36-sslY1DwdQ");
+        let body = TelemetryEvent::to_body(&event);
+        assert_eq!(body["conclusion_count"], 2);
+        assert_eq!(body["levels"][0], "deductive");
+    }
+
+    #[test]
+    fn agent_tool_conclusions_deleted_event_metadata_and_golden_id() {
+        use crate::telemetry::TelemetryEvent;
+        let event = AgentToolConclusionsDeletedEvent {
+            timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
+            run_id: "run123".to_string(),
+            iteration: 4,
+            parent_category: "dream".to_string(),
+            agent_type: "deduction".to_string(),
+            workspace_name: "ws1".to_string(),
+            observer: "alice".to_string(),
+            observed: "bob".to_string(),
+            conclusion_count: 1,
+            levels: vec!["explicit".to_string()],
+        };
+        assert_eq!(event.get_resource_id(), "run123:4:conclusions_deleted");
+        // Deleted is schema version 3 — one ahead of created/peer_card.
+        assert_eq!(AgentToolConclusionsDeletedEvent::SCHEMA_VERSION, 3);
+        assert_eq!(event.generate_id(Some("9.9.9")), "evt_hFpbTGqu2r8EcCvyyMyq_Q");
+    }
+
+    #[test]
+    fn agent_tool_peer_card_updated_event_metadata_and_golden_id() {
+        use crate::telemetry::TelemetryEvent;
+        let event = AgentToolPeerCardUpdatedEvent {
+            timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
+            run_id: "run123".to_string(),
+            iteration: 4,
+            parent_category: "dream".to_string(),
+            agent_type: "deduction".to_string(),
+            workspace_name: "ws1".to_string(),
+            observer: "alice".to_string(),
+            observed: "bob".to_string(),
+            facts_count: 7,
+        };
+        assert_eq!(event.get_resource_id(), "run123:4:peer_card_updated");
+        assert_eq!(AgentToolPeerCardUpdatedEvent::SCHEMA_VERSION, 2);
+        assert_eq!(event.generate_id(Some("9.9.9")), "evt_T_PfXbz2-ljh0CJw1GcLVw");
+        let body = TelemetryEvent::to_body(&event);
+        assert_eq!(body["facts_count"], 7);
     }
 }
