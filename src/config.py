@@ -22,7 +22,7 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "lmstudio"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 
@@ -95,7 +95,7 @@ def _normalize_model_transport(data: Any) -> Any:
     transport_value = update.get("transport")
     if isinstance(model_value, str) and "/" in model_value and transport_value is None:
         prefix, bare_model = model_value.split("/", 1)
-        if prefix in {"anthropic", "openai", "gemini"}:
+        if prefix in {"anthropic", "openai", "gemini", "lmstudio"}:
             update["transport"] = prefix
             update["model"] = bare_model
     return update
@@ -662,6 +662,8 @@ class LLMSettings(HonchoSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
+    LMSTUDIO_API_KEY: str | None = None
+    LMSTUDIO_BASE_URL: str | None = None
 
     # Base URLs for LLM providers (for OpenAI-compatible proxies like
     # OpenRouter, vLLM, Together, Anyscale, self-hosted, etc.)
@@ -671,6 +673,11 @@ class LLMSettings(HonchoSettings):
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
+
+    # Default timeout in seconds for all LLM provider HTTP clients.
+    # Raised from SDK default (~60s) to accommodate slower local models (e.g.
+    # LMStudio fallback) without hardcoding in registry.py.
+    DEFAULT_TIMEOUT: Annotated[float, Field(default=180.0, gt=0)] = 180.0
 
     # Maximum characters for tool output to prevent token explosion.
     # Set to 10,000 chars (~2,500 tokens at 4 chars/token) to stay well under
