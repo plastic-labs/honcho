@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.config import settings
+from src.crud.session import is_peer_in_session
 from src.dependencies import db, read_db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.embedding_client import embedding_client
@@ -167,19 +168,31 @@ async def get_sessions_for_peer(
             },
         },
     },
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
-    ],
 )
 async def chat(
     workspace_id: str = Path(...),
     peer_id: str = Path(...),
     options: schemas.DialecticOptions = Body(...),
+    jwt_params: JWTParams = Depends(
+        require_auth(workspace_name="workspace_id", peer_name="peer_id")
+    ),
 ):
     """
     Query a Peer's representation using natural language. Performs agentic search and reasoning to comprehensively
     answer the query based on all latent knowledge gathered about the peer from their messages and conclusions.
     """
+    # The session id arrives in the body, so require_auth can't gate on it. A
+    # peer-scoped key may only scope a chat to a session its peer belongs to;
+    # without this check it could read any session's messages (the dialectic
+    # injects session history) by naming it here. Workspace/admin tokens
+    # (jwt_params.p is None) are unaffected.
+    if jwt_params.p is not None and options.session_id:
+        async with tracked_db("peers.chat.is_peer_in_session", read_only=True) as s_db:
+            if not await is_peer_in_session(
+                s_db, workspace_id, options.session_id, jwt_params.p
+            ):
+                raise AuthenticationException("JWT not permissioned for this resource")
+
     # Get or create the peer to ensure it exists
     async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
         peers_result = await crud.get_or_create_peers(
