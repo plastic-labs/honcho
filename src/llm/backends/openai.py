@@ -165,14 +165,19 @@ class OpenAIBackend:
             if self._structured_output_mode(extra_params) == "json_object":
                 self._apply_json_object_mode(params, response_format)
                 response = await self._client.chat.completions.create(**params)
+                # A loose provider that returns nothing shouldn't crash the call.
                 content = self._parse_or_repair_structured_content(
-                    response, response_format, model
+                    response, response_format, model, empty_on_missing=True
                 )
                 return self._normalize_response(response, content_override=content)
             params["response_format"] = response_format
             try:
                 response = await self._client.chat.completions.parse(**params)
             except LengthFinishReasonError as exc:
+                # Truncated output: repair the partial content directly. repair
+                # handles empty/unrepairable JSON with its own model-aware fallback
+                # (PromptRepresentation -> empty, others -> raise), which differs
+                # from the parse-fallback terminal below, so it stays a direct call.
                 truncated = exc.completion
                 raw_content = truncated.choices[0].message.content or ""
                 content = repair_response_model_json(
@@ -207,26 +212,19 @@ class OpenAIBackend:
                     fallback_content = ""
                 return CompletionResult(content=fallback_content)
             parsed = response.choices[0].message.parsed
-            raw_content = response.choices[0].message.content or ""
-            if parsed is None and raw_content:
-                content = repair_response_model_json(
-                    raw_content,
-                    response_format,
-                    model,
+            if parsed is not None:
+                return self._normalize_response(
+                    response,
+                    content_override=validate_structured_output(
+                        parsed, response_format
+                    ),
                 )
-                return self._normalize_response(response, content_override=content)
-            if parsed is None:
-                refusal = getattr(response.choices[0].message, "refusal", None)
-                if refusal:
-                    return self._normalize_response(
-                        response,
-                        content_override=refusal,
-                    )
-                raise ValidationException("No parsed content in structured response")
-            return self._normalize_response(
-                response,
-                content_override=validate_structured_output(parsed, response_format),
+            # parse() returned no model: repair raw content, surface a refusal,
+            # or raise so the retry/fallback chain engages on a junk response.
+            content = self._parse_or_repair_structured_content(
+                response, response_format, model, empty_on_missing=False
             )
+            return self._normalize_response(response, content_override=content)
         if response_format is not None:
             params["response_format"] = response_format
 
@@ -468,7 +466,17 @@ class OpenAIBackend:
         response: Any,
         response_format: type[BaseModel],
         model: str,
+        *,
+        empty_on_missing: bool,
     ) -> BaseModel | str:
+        """Validate (or repair) the raw structured content of a response.
+
+        Shared by the json_object path and the json_schema parse() fallbacks
+        (truncation, parsed=None). On a contentless response with no refusal,
+        ``empty_on_missing`` selects the terminal behavior: json_object returns a
+        graceful empty so a loose provider can't crash the call, while json_schema
+        raises so the retry/fallback chain engages on a junk response.
+        """
         message = response.choices[0].message
         raw_content = message.content or ""
         if raw_content:
@@ -482,9 +490,11 @@ class OpenAIBackend:
         refusal = getattr(message, "refusal", None)
         if refusal:
             return refusal
-        # Empty body, no refusal: mirror the json_schema path's graceful-empty
-        # behavior rather than raising, so json_object mode is no less robust
-        # than the default path on a contentless response.
+        if not empty_on_missing:
+            raise ValidationException("No parsed content in structured response")
+        # empty_structured_output() validates {} against the model, which itself
+        # raises if the model has required fields. Fall back to empty string
+        # content rather than letting that escape the handler.
         try:
             return empty_structured_output(response_format)
         except ValidationError:

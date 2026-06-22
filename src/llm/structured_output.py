@@ -1,21 +1,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
-from typing import Literal
 
 from pydantic import BaseModel, ValidationError
 
 from src.utils.json_parser import validate_and_repair_json
 from src.utils.representation import PromptRepresentation
-
-from .backend import CompletionResult
-
-StructuredOutputFailurePolicy = Literal[
-    "raise",
-    "repair_then_raise",
-    "repair_then_empty",
-]
 
 
 class StructuredOutputError(ValueError):
@@ -79,54 +69,7 @@ def validate_structured_output(
     )
 
 
-def attempt_structured_output_repair(
-    content: object,
-    response_model: type[BaseModel],
-    model: str,
-) -> BaseModel | None:
-    if not isinstance(content, str):
-        return None
-    try:
-        return repair_response_model_json(content, response_model, model)
-    except (StructuredOutputError, ValidationError):
-        return None
-
-
 def empty_structured_output(response_model: type[BaseModel]) -> BaseModel:
     if response_model is PromptRepresentation:
         return PromptRepresentation(explicit=[])
     return response_model.model_validate({})
-
-
-async def execute_structured_output_call(
-    executor: Callable[[], Awaitable[CompletionResult]],
-    *,
-    response_model: type[BaseModel],
-    model_name: str,
-    failure_policy: StructuredOutputFailurePolicy = "repair_then_raise",
-) -> CompletionResult:
-    result = await executor()
-
-    try:
-        result.content = validate_structured_output(result.content, response_model)
-        return result
-    except (StructuredOutputError, ValidationError):
-        if failure_policy == "raise":
-            raise
-
-    repaired = attempt_structured_output_repair(
-        result.content,
-        response_model,
-        model_name,
-    )
-    if repaired is not None:
-        result.content = repaired
-        return result
-
-    if failure_policy == "repair_then_empty":
-        result.content = empty_structured_output(response_model)
-        return result
-
-    raise StructuredOutputError(
-        f"Failed to produce valid structured output for {model_name}"
-    )

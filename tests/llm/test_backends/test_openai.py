@@ -392,6 +392,66 @@ def test_openai_classic_models_use_max_tokens(model: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_output_parsed_none_with_raw_content_repairs() -> None:
+    """parse() returning parsed=None but with raw content repairs that content."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok"}', parsed=None)
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+    )
+
+    assert isinstance(result.content, _StructuredResponse)
+    assert result.content.answer == "ok"
+
+
+@pytest.mark.asyncio
+async def test_structured_output_parsed_none_returns_refusal() -> None:
+    """parse() returning parsed=None with no content surfaces the refusal."""
+    client = Mock()
+    response = _structured_create_return("", parsed=None)
+    response.choices[0].message.refusal = "I can't help with that"
+    client.chat.completions.parse = AsyncMock(return_value=response)
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+    )
+
+    assert result.content == "I can't help with that"
+
+
+@pytest.mark.asyncio
+async def test_structured_output_parsed_none_no_content_raises() -> None:
+    """json_schema with no parsed model, content, or refusal raises so the
+    retry/fallback chain engages — it must NOT silently empty like json_object."""
+    from src.exceptions import ValidationException
+
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return("", parsed=None)
+    )
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(ValidationException):
+        await backend.complete(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            response_format=_StructuredResponse,
+        )
+
+
+@pytest.mark.asyncio
 async def test_structured_output_default_mode_uses_parse() -> None:
     """Default json_schema mode uses parse(), not the json_object path."""
     client = Mock()
