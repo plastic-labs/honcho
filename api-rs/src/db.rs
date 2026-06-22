@@ -1319,6 +1319,22 @@ pub async fn list_webhook_endpoints(
     Ok(page_response(items, total as u64, page))
 }
 
+/// All webhook endpoint URLs for a workspace (unpaginated), for the delivery
+/// path. Port of `webhook_delivery._get_webhook_urls` / `crud.list_webhook_endpoints`
+/// used in the worker context (which fetches every endpoint, not a page).
+pub async fn get_webhook_endpoint_urls(
+    pool: &PgPool,
+    workspace_name: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    let urls: Vec<String> = sqlx::query_scalar(
+        "SELECT url FROM webhook_endpoints WHERE workspace_name = $1",
+    )
+    .bind(workspace_name)
+    .fetch_all(pool)
+    .await?;
+    Ok(urls)
+}
+
 pub async fn list_messages(
     pool: &PgPool,
     workspace_name: &str,

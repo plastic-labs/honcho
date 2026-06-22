@@ -26,3 +26,4 @@ pub mod summarizer;
 pub mod telemetry;
 pub mod text;
 pub mod tokens;
+pub mod webhooks;
