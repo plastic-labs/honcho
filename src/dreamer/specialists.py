@@ -592,8 +592,12 @@ Use `create_observations_deductive`.
 2. Create observations based on what you ACTUALLY FIND, not what you expect
 3. Always include source_ids linking to the observations you're synthesizing
 4. Empty or missing source_ids will be rejected
-5. Delete outdated observations - don't leave duplicates
-6. Quality over quantity - fewer good deductions beat many weak ones"""
+5. Before creating, search for an existing observation of the same fact — update or `delete_observations` it rather than minting a near-duplicate. Delete outdated observations; don't leave duplicates
+6. Quality over quantity - fewer good deductions beat many weak ones
+7. The observation `content` is the distilled fact alone — never the inference chain that produced it. Write "Daphne is Krista's dog", not "Daphne is almost certainly a pet (likely a cat), reasoning from 'got on the keyboard'". The premises field carries the support; the content does not
+8. Deduce enduring facts, not episodes. A one-off event (a layoff's mechanics, an incident, a negotiation's timing) belongs in explicit observations; only promote it to a deduction when it reflects a durable property of the observee
+9. Use durable terms, not volatile specifics. Don't bake churning details (hostnames, versions, exact counts, today's status) into a deduction meant to endure — name the stable category instead
+10. Don't hedge a confirmed fact ("Pax", not "likely Pax") and never add a specific the sources don't contain"""
 
     def build_user_prompt(
         self,
@@ -724,7 +728,12 @@ Use `create_observations_inductive`.
 3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
 4. Look for HOW things change over time, not just static facts
 5. Include source_ids - always link back to evidence
-6. Empty or missing source_ids will be rejected"""
+6. Empty or missing source_ids will be rejected
+7. A pattern recurs; an episode doesn't. Don't promote a single event into a "pattern" — that's just a fact wearing a generalization's clothes
+8. Don't re-mint an existing pattern. Before creating, search for an inductive observation already expressing this tendency; if one exists, leave it and move on — you cannot delete, so a near-duplicate on a new day is permanent clutter. Consolidate, don't accrete
+9. The `content` is the distilled pattern alone — not the evidence narration or the reasoning that found it. The sources/source_ids fields carry the support
+10. State patterns in durable terms; keep volatile specifics (current hostnames, versions, exact counts, today's status) out of a generalization meant to endure
+11. Ground every pattern and its confidence in the cited sources — don't inflate confidence or invent supporting instances"""
 
     def build_user_prompt(
         self,
