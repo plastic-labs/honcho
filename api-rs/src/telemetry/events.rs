@@ -252,6 +252,144 @@ impl super::TelemetryEvent for CleanupStaleItemsCompletedEvent {
     }
 }
 
+/// Port of `DreamRunEvent` (events/dream.py): the top-level event for a full
+/// dream orchestration, with aggregate metrics across both specialists. Optional
+/// fields (`session_name` + the additive scheduling-context block) serialize as
+/// `null` when absent, matching pydantic `model_dump`. Schema version 2.
+#[derive(Debug, Clone, Serialize)]
+pub struct DreamRunEvent {
+    pub timestamp: DateTime<Utc>,
+    pub run_id: String,
+    pub workspace_name: String,
+    pub session_name: Option<String>,
+    pub observer: String,
+    pub observed: String,
+    pub specialists_run: Vec<String>,
+    pub deduction_success: bool,
+    pub induction_success: bool,
+    // ---- Surprisal sampling (pydantic defaults: false / 0) ----
+    pub surprisal_enabled: bool,
+    pub surprisal_conclusion_count: i64,
+    // ---- Aggregated metrics ----
+    pub total_iterations: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub total_duration_ms: f64,
+    // ---- Additive scheduling-context fields (pydantic defaults: None / 0) ----
+    pub dream_type: Option<String>,
+    pub enabled_types_count: i64,
+    pub trigger_reason: Option<String>,
+    pub delay_reason: Option<String>,
+    pub documents_since_last_dream_at_schedule: Option<i64>,
+    pub document_threshold: Option<i64>,
+}
+
+impl DreamRunEvent {
+    pub const EVENT_TYPE: &'static str = "dream.run";
+    pub const SCHEMA_VERSION: i32 = 2;
+    pub const CATEGORY: &'static str = "dream";
+
+    /// Port of `get_resource_id`: the run_id (unique per dream cycle).
+    pub fn get_resource_id(&self) -> String {
+        self.run_id.clone()
+    }
+
+    /// Port of `generate_id` (package version folded in by the caller).
+    pub fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp);
+        generate_event_id(Self::EVENT_TYPE, &self.get_resource_id(), &iso, honcho_version)
+    }
+}
+
+impl super::TelemetryEvent for DreamRunEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        DreamRunEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
+/// Port of `DreamSpecialistEvent` (events/dream.py): emitted per specialist
+/// (deduction / induction), correlated to the parent [`DreamRunEvent`] by
+/// `run_id`. The additive denormalized rollups default to 0 / false / empty;
+/// the per-level count maps serialize as JSON objects. Schema version 2.
+#[derive(Debug, Clone, Serialize)]
+pub struct DreamSpecialistEvent {
+    pub timestamp: DateTime<Utc>,
+    pub run_id: String,
+    /// `"deduction"` or `"induction"`.
+    pub specialist_type: String,
+    pub workspace_name: String,
+    pub observer: String,
+    pub observed: String,
+    pub iterations: i64,
+    pub tool_calls_count: i64,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub duration_ms: f64,
+    pub success: bool,
+    // ---- Additive denormalized rollups (pydantic defaults: 0 / false / {}) ----
+    pub created_observation_count: i64,
+    pub deleted_observation_count: i64,
+    pub created_counts_by_level: std::collections::BTreeMap<String, i64>,
+    pub deleted_counts_by_level: std::collections::BTreeMap<String, i64>,
+    pub peer_card_updated: bool,
+    pub search_tool_calls_count: i64,
+    /// Exception class name when `success` is false; `None` on success.
+    pub error_class: Option<String>,
+}
+
+impl DreamSpecialistEvent {
+    pub const EVENT_TYPE: &'static str = "dream.specialist";
+    pub const SCHEMA_VERSION: i32 = 2;
+    pub const CATEGORY: &'static str = "dream";
+
+    /// Port of `get_resource_id`: `{run_id}:{specialist_type}`.
+    pub fn get_resource_id(&self) -> String {
+        format!("{}:{}", self.run_id, self.specialist_type)
+    }
+
+    /// Port of `generate_id` (package version folded in by the caller).
+    pub fn generate_id(&self, honcho_version: Option<&str>) -> String {
+        let iso = python_isoformat_utc(self.timestamp);
+        generate_event_id(Self::EVENT_TYPE, &self.get_resource_id(), &iso, honcho_version)
+    }
+}
+
+impl super::TelemetryEvent for DreamSpecialistEvent {
+    fn event_type(&self) -> &'static str {
+        Self::EVENT_TYPE
+    }
+    fn schema_version(&self) -> i32 {
+        Self::SCHEMA_VERSION
+    }
+    fn category(&self) -> &'static str {
+        Self::CATEGORY
+    }
+    fn timestamp(&self) -> DateTime<Utc> {
+        self.timestamp
+    }
+    fn get_resource_id(&self) -> String {
+        DreamSpecialistEvent::get_resource_id(self)
+    }
+    fn to_body(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,5 +543,86 @@ mod tests {
         assert_eq!(event.generate_id(Some("9.9.9")), "evt_2UxFc6lRt08lhWl9jznrVw");
         let body = TelemetryEvent::to_body(&event);
         assert_eq!(body["queue_items_cleaned"], 9);
+    }
+
+    #[test]
+    fn dream_run_event_metadata_and_golden_id() {
+        use crate::telemetry::TelemetryEvent;
+        let event = DreamRunEvent {
+            timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
+            run_id: "run123".to_string(),
+            workspace_name: "ws1".to_string(),
+            session_name: None,
+            observer: "alice".to_string(),
+            observed: "bob".to_string(),
+            specialists_run: vec!["deduction".to_string(), "induction".to_string()],
+            deduction_success: true,
+            induction_success: false,
+            surprisal_enabled: false,
+            surprisal_conclusion_count: 0,
+            total_iterations: 7,
+            total_input_tokens: 100,
+            total_output_tokens: 40,
+            total_duration_ms: 250.0,
+            dream_type: Some("omni".to_string()),
+            enabled_types_count: 1,
+            trigger_reason: Some("document_threshold".to_string()),
+            delay_reason: None,
+            documents_since_last_dream_at_schedule: Some(55),
+            document_threshold: Some(50),
+        };
+        assert_eq!(event.get_resource_id(), "run123");
+        assert_eq!(DreamRunEvent::EVENT_TYPE, "dream.run");
+        assert_eq!(DreamRunEvent::SCHEMA_VERSION, 2);
+        assert_eq!(DreamRunEvent::CATEGORY, "dream");
+        assert_eq!(event.volume_class(), "ground_truth");
+        // Golden from generate_event_id("dream.run", ts=2026-06-21T12:00:00+00:00,
+        //   "run123", "9.9.9").
+        assert_eq!(event.generate_id(Some("9.9.9")), "evt_EWh1zmNaVOn1i79NeLHsyA");
+        // Optional fields serialize as null (pydantic model_dump includes them).
+        let body = TelemetryEvent::to_body(&event);
+        assert_eq!(body["total_iterations"], 7);
+        assert!(body.get("session_name").is_some_and(|v| v.is_null()));
+        assert!(body.get("delay_reason").is_some_and(|v| v.is_null()));
+        assert_eq!(body["dream_type"], "omni");
+    }
+
+    #[test]
+    fn dream_specialist_event_metadata_and_golden_id() {
+        use crate::telemetry::TelemetryEvent;
+        let mut created = std::collections::BTreeMap::new();
+        created.insert("deductive".to_string(), 3i64);
+        let event = DreamSpecialistEvent {
+            timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
+            run_id: "run123".to_string(),
+            specialist_type: "deduction".to_string(),
+            workspace_name: "ws1".to_string(),
+            observer: "alice".to_string(),
+            observed: "bob".to_string(),
+            iterations: 4,
+            tool_calls_count: 6,
+            input_tokens: 80,
+            output_tokens: 30,
+            duration_ms: 120.0,
+            success: true,
+            created_observation_count: 3,
+            deleted_observation_count: 0,
+            created_counts_by_level: created,
+            deleted_counts_by_level: std::collections::BTreeMap::new(),
+            peer_card_updated: true,
+            search_tool_calls_count: 2,
+            error_class: None,
+        };
+        assert_eq!(event.get_resource_id(), "run123:deduction");
+        assert_eq!(DreamSpecialistEvent::EVENT_TYPE, "dream.specialist");
+        assert_eq!(DreamSpecialistEvent::SCHEMA_VERSION, 2);
+        assert_eq!(DreamSpecialistEvent::CATEGORY, "dream");
+        // Golden from generate_event_id("dream.specialist",
+        //   ts=2026-06-21T12:00:00+00:00, "run123:deduction", "9.9.9").
+        assert_eq!(event.generate_id(Some("9.9.9")), "evt_zT7dVJ0YPBfTv1eGPfCq4g");
+        let body = TelemetryEvent::to_body(&event);
+        assert_eq!(body["created_observation_count"], 3);
+        assert_eq!(body["created_counts_by_level"]["deductive"], 3);
+        assert!(body.get("error_class").is_some_and(|v| v.is_null()));
     }
 }
