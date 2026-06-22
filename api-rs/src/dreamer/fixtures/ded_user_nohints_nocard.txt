@@ -1,0 +1,10 @@
+Explore the observation space and create deductive observations.
+
+Start with `get_recent_observations` to see what's been learned recently, then investigate whatever seems most promising.
+
+Look for:
+1. Knowledge updates (same fact, different values over time)
+2. Logical implications that haven't been made explicit
+3. Contradictions that need flagging
+
+Go.

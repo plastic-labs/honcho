@@ -7,6 +7,7 @@ pub mod deriver;
 pub mod dialectic;
 pub mod dialectic_agent;
 pub mod dialectic_config;
+pub mod dreamer;
 pub mod embedding;
 pub mod error;
 pub mod files;

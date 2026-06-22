@@ -1,0 +1,11 @@
+Explore and find patterns. These areas may be worth investigating:
+
+- topic one
+- topic two
+- topic three
+- topic four
+- topic five
+
+But follow the evidence - if you find patterns elsewhere, pursue those.
+
+Start with `get_recent_observations`.
