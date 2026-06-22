@@ -4,9 +4,10 @@
 //!
 //! Mirrors the API server's bootstrap (`src/main.rs`) for config + pool wiring,
 //! then runs [`DeriverWorker::run`] until SIGINT/SIGTERM, draining in-flight work
-//! units on shutdown. Only `representation` work units are fully processed today
-//! (see the module docs in `deriver::queue_manager`); telemetry uses a no-op
-//! emitter until the CloudEvents transport lands.
+//! units on shutdown. Representation, deletion, summary, reconciler, and webhook
+//! work units are fully processed today; `dream` remains unported (see the module
+//! docs in `deriver::queue_manager`). Telemetry uses a no-op emitter until the
+//! CloudEvents transport lands.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +24,7 @@ use honcho_api_rs::reconciler::scheduler::{
 };
 use honcho_api_rs::summarizer::SummaryGlobalSettings;
 use honcho_api_rs::telemetry::NoopEmitter;
+use honcho_api_rs::webhooks::ReqwestWebhookSender;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
@@ -70,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let scheduler_pool = pool.clone();
 
     let poll_settings = DeriverSettings::from_env();
+    let webhook_secret = config.webhook_secret.clone();
     let worker = Arc::new(DeriverWorker::new(
         pool,
         http,
@@ -79,6 +82,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
         poll_settings,
+        Arc::new(ReqwestWebhookSender::new()),
+        webhook_secret,
     ));
 
     // Graceful shutdown on SIGINT/SIGTERM.

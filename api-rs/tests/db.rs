@@ -3499,6 +3499,7 @@ async fn process_representation_work_unit_once_drives_batch_and_marks_processed(
 async fn deriver_worker_poll_once_claims_processes_and_releases() {
     use honcho_api_rs::deriver::deriver::DeriverModelSettings;
     use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::webhooks::ReqwestWebhookSender;
     use honcho_api_rs::deriver::settings::DeriverSettings;
     use honcho_api_rs::llm::credentials::TransportApiKeys;
     use honcho_api_rs::llm::{ModelConfig, Provider};
@@ -3551,6 +3552,8 @@ async fn deriver_worker_poll_once_claims_processes_and_releases() {
         model_settings,
         SummaryGlobalSettings::default(),
         poll_settings,
+        Arc::new(ReqwestWebhookSender::new()),
+        None,
     ));
 
     let processed = worker.poll_once().await.expect("poll once");
@@ -4160,6 +4163,7 @@ async fn process_deletion_observation_soft_deletes_and_emits() {
 async fn deriver_worker_processes_a_deletion_work_unit() {
     use honcho_api_rs::deriver::deriver::DeriverModelSettings;
     use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::webhooks::ReqwestWebhookSender;
     use honcho_api_rs::deriver::settings::DeriverSettings;
     use honcho_api_rs::llm::credentials::TransportApiKeys;
     use honcho_api_rs::summarizer::SummaryGlobalSettings;
@@ -4197,6 +4201,8 @@ async fn deriver_worker_processes_a_deletion_work_unit() {
             workers: 1,
             ..DeriverSettings::default()
         },
+        Arc::new(ReqwestWebhookSender::new()),
+        None,
     ));
 
     let processed = worker.poll_once().await.expect("poll once");
@@ -4222,6 +4228,7 @@ async fn deriver_worker_processes_a_deletion_work_unit() {
 async fn deriver_worker_processes_a_summary_work_unit_with_public_id_fallback() {
     use honcho_api_rs::deriver::deriver::DeriverModelSettings;
     use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::webhooks::ReqwestWebhookSender;
     use honcho_api_rs::deriver::settings::DeriverSettings;
     use honcho_api_rs::llm::credentials::TransportApiKeys;
     use honcho_api_rs::summarizer::{SummaryGlobalSettings, SummaryType};
@@ -4288,6 +4295,8 @@ async fn deriver_worker_processes_a_summary_work_unit_with_public_id_fallback() 
             workers: 1,
             ..DeriverSettings::default()
         },
+        Arc::new(ReqwestWebhookSender::new()),
+        None,
     ));
 
     let processed = worker.poll_once().await.expect("poll once");
@@ -4308,6 +4317,7 @@ async fn deriver_worker_processes_a_summary_work_unit_with_public_id_fallback() 
 async fn deriver_worker_processes_a_reconciler_sync_vectors_work_unit() {
     use honcho_api_rs::deriver::deriver::DeriverModelSettings;
     use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::webhooks::ReqwestWebhookSender;
     use honcho_api_rs::deriver::settings::DeriverSettings;
     use honcho_api_rs::llm::credentials::TransportApiKeys;
     use honcho_api_rs::summarizer::SummaryGlobalSettings;
@@ -4364,6 +4374,8 @@ async fn deriver_worker_processes_a_reconciler_sync_vectors_work_unit() {
             workers: 1,
             ..DeriverSettings::default()
         },
+        Arc::new(ReqwestWebhookSender::new()),
+        None,
     ));
 
     let processed = worker.poll_once().await.expect("poll once");
@@ -4390,6 +4402,132 @@ async fn deriver_worker_processes_a_reconciler_sync_vectors_work_unit() {
     assert_eq!(events[0].0, "reconciliation.sync_vectors.completed");
     assert_eq!(events[0].1["message_embeddings_synced"], pending_before);
     assert_eq!(events[0].1["message_embeddings_failed"], 0);
+
+    test_db.teardown().await;
+}
+
+/// A [`WebhookSender`] that records every delivery and reports HTTP 200, so the
+/// worker test can assert what was POSTed without a live HTTP endpoint.
+struct CapturingWebhookSender {
+    #[allow(clippy::type_complexity)]
+    calls: std::sync::Mutex<Vec<(String, String, Vec<(String, String)>)>>,
+}
+
+impl honcho_api_rs::webhooks::WebhookSender for CapturingWebhookSender {
+    fn post<'a>(
+        &'a self,
+        url: &'a str,
+        body: &'a str,
+        headers: &'a [(String, String)],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u16, String>> + Send + 'a>>
+    {
+        let url = url.to_string();
+        let body = body.to_string();
+        let headers = headers.to_vec();
+        Box::pin(async move {
+            self.calls.lock().unwrap().push((url, body, headers));
+            Ok(200u16)
+        })
+    }
+}
+
+#[tokio::test]
+async fn deriver_worker_processes_a_webhook_work_unit() {
+    use honcho_api_rs::deriver::deriver::DeriverModelSettings;
+    use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::deriver::settings::DeriverSettings;
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::summarizer::SummaryGlobalSettings;
+    use honcho_api_rs::telemetry::{Emitter, NoopEmitter};
+    use honcho_api_rs::webhooks::generate_webhook_signature;
+    use std::sync::Arc;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+
+    // Two registered endpoints — both must receive the same signed body.
+    for url in ["https://example.com/a", "https://example.com/b"] {
+        db::get_or_create_webhook_endpoint(&test_db.pool, "ws", url)
+            .await
+            .expect("register endpoint");
+    }
+
+    // Enqueue a webhook work unit (key `webhook:{workspace_name}`).
+    sqlx::query(
+        "INSERT INTO queue (work_unit_key, payload, task_type, workspace_name, message_id, processed) \
+         VALUES ($1, $2, 'webhook', $3, NULL, false)",
+    )
+    .bind("webhook:ws")
+    .bind(json!({
+        "task_type": "webhook",
+        "event_type": "test.event",
+        "data": {"session_id": "s1", "count": 2},
+    }))
+    .bind("ws")
+    .execute(&test_db.pool)
+    .await
+    .expect("enqueue webhook");
+
+    let sender = Arc::new(CapturingWebhookSender {
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let worker = Arc::new(DeriverWorker::new(
+        test_db.pool.clone(),
+        Arc::new(CannedLlmHttp(json!(null))), // unused by the webhook path
+        Arc::new(IndexedEmbedder),
+        Arc::new(NoopEmitter) as Arc<dyn Emitter>,
+        TransportApiKeys::default(),
+        DeriverModelSettings::default(),
+        SummaryGlobalSettings::default(),
+        DeriverSettings {
+            workers: 1,
+            ..DeriverSettings::default()
+        },
+        Arc::clone(&sender) as Arc<dyn honcho_api_rs::webhooks::WebhookSender>,
+        Some("topsecret".to_string()),
+    ));
+
+    let processed = worker.poll_once().await.expect("poll once");
+    assert_eq!(processed, 1);
+
+    // Both endpoints received the delivery.
+    let calls = sender.calls.lock().unwrap().clone();
+    assert_eq!(calls.len(), 2);
+    let mut urls: Vec<&str> = calls.iter().map(|(url, _, _)| url.as_str()).collect();
+    urls.sort();
+    assert_eq!(urls, vec!["https://example.com/a", "https://example.com/b"]);
+
+    // The signed body is identical across endpoints and signs to the sent secret.
+    let (_, body, headers) = &calls[0];
+    assert_eq!(&calls[1].1, body, "all endpoints get the same body");
+    let signature = headers
+        .iter()
+        .find(|(name, _)| name == "X-Honcho-Signature")
+        .map(|(_, value)| value.as_str())
+        .expect("signature header present");
+    assert_eq!(signature, generate_webhook_signature("topsecret", body));
+    assert!(
+        headers
+            .iter()
+            .any(|(name, value)| name == "Content-Type" && value == "application/json")
+    );
+
+    // Body is the sorted-key envelope carrying the event type + data.
+    let envelope: serde_json::Value = serde_json::from_str(body).expect("valid json body");
+    assert_eq!(envelope["type"], "test.event");
+    assert_eq!(envelope["data"]["count"], 2);
+
+    // The queue item is marked processed.
+    let unprocessed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE task_type = 'webhook' AND processed = false")
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("unprocessed count");
+    assert_eq!(unprocessed, 0);
 
     test_db.teardown().await;
 }

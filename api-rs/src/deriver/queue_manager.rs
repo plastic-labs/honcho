@@ -10,12 +10,12 @@
 //! drives them to completion, concurrency-capped at `DERIVER_WORKERS`, with a
 //! graceful-shutdown drain.
 //!
-//! Scope note: only `representation` work units are fully processed today. The
-//! non-representation `process_item` arms (webhook/summary/dream/deletion/
-//! reconciler) are unported — a claimed work unit of those types is released via
-//! `cleanup_work_unit` (its queue items are left intact for when those arms
-//! land) so the worker neither spins nor drops data. The `queue.empty` webhook
-//! emitted in Python's `process_work_unit` finally is likewise deferred.
+//! Scope note: `representation`, `deletion`, `summary`, `reconciler`, and
+//! `webhook` work units are fully processed today. Only `dream` remains unported
+//! — a claimed dream work unit is released via `cleanup_work_unit` (its queue
+//! items are left intact for when that arm lands) so the worker neither spins nor
+//! drops data. The `queue.empty` webhook emitted in Python's `process_work_unit`
+//! finally is likewise deferred.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,6 +35,7 @@ use crate::llm::credentials::TransportApiKeys;
 use crate::llm::http::LlmHttp;
 use crate::producer::parse_work_unit_key;
 use crate::summarizer::{SummaryGlobalSettings, SummaryModelSettings, summarize_if_needed};
+use crate::webhooks::{WebhookSender, deliver_webhook};
 
 /// The deriver worker: owns the collaborators behind `Arc` so per-work-unit
 /// tasks can be spawned, and drives the claim → process → release cycle.
@@ -51,6 +52,9 @@ where
     model_settings: DeriverModelSettings,
     summary_settings: SummaryGlobalSettings,
     poll_settings: DeriverSettings,
+    webhook_sender: Arc<dyn WebhookSender>,
+    /// `settings.WEBHOOK.SECRET` — required to sign deliveries; `None` skips them.
+    webhook_secret: Option<String>,
 }
 
 impl<H, E> DeriverWorker<H, E>
@@ -68,6 +72,8 @@ where
         model_settings: DeriverModelSettings,
         summary_settings: SummaryGlobalSettings,
         poll_settings: DeriverSettings,
+        webhook_sender: Arc<dyn WebhookSender>,
+        webhook_secret: Option<String>,
     ) -> Self {
         Self {
             pool,
@@ -78,6 +84,8 @@ where
             model_settings,
             summary_settings,
             poll_settings,
+            webhook_sender,
+            webhook_secret,
         }
     }
 
@@ -111,7 +119,7 @@ where
 
         let processed = match work_unit.task_type.as_str() {
             "representation" => self.drain_representation(&work_unit, &work_unit_key, &aqs_id).await,
-            "deletion" | "summary" | "reconciler" => {
+            "deletion" | "summary" | "reconciler" | "webhook" => {
                 self.drain_via_process_item(&work_unit_key, &aqs_id).await
             }
             other => {
@@ -184,6 +192,7 @@ where
             let outcome = match item.task_type.as_str() {
                 "summary" => self.process_summary_item(&item).await,
                 "reconciler" => self.process_reconciler_item(&item).await,
+                "webhook" => self.process_webhook_item(&item).await,
                 _ => process_item(&self.pool, self.emitter.as_ref(), &item)
                     .await
                     .map_err(|error| error.to_string()),
@@ -295,6 +304,31 @@ where
         )
         .await
         .map_err(|error| error.to_string())
+    }
+
+    /// Handle a `webhook` queue item (Python `process_item` webhook arm →
+    /// `webhook_delivery.deliver_webhook`). Delivery is best-effort: a malformed
+    /// payload is the one hard error (Python raises `ValueError`); everything else
+    /// — endpoint lookup, signing, transport — is logged and swallowed inside
+    /// [`deliver_webhook`], so this returns `Ok(())` once the payload validates.
+    async fn process_webhook_item(&self, item: &db::QueueItem) -> Result<(), String> {
+        let workspace = item
+            .workspace_name
+            .as_deref()
+            .ok_or_else(|| "webhook task requires a workspace_name".to_string())?;
+        let payload = crate::deriver::payload::WebhookPayload::from_value(&item.payload)
+            .map_err(|error| error.to_string())?;
+        let now_iso = crate::telemetry::python_isoformat_utc(chrono::Utc::now());
+        deliver_webhook(
+            &self.pool,
+            self.webhook_sender.as_ref(),
+            &payload,
+            workspace,
+            self.webhook_secret.as_deref(),
+            &now_iso,
+        )
+        .await;
+        Ok(())
     }
 
     /// One non-spawning poll cycle: claim available work units (with no owned

@@ -46,6 +46,10 @@ pub struct AppConfig {
     pub llm_anthropic_api_key: Option<String>,
     pub llm_openai_api_key: Option<String>,
     pub llm_gemini_api_key: Option<String>,
+    /// HMAC signing secret for webhook delivery (`WEBHOOK_SECRET`, Python
+    /// `settings.WEBHOOK.SECRET`, default `None`). The deriver worker cannot sign
+    /// — and therefore skips — deliveries when this is unset.
+    pub webhook_secret: Option<String>,
 }
 
 impl AppConfig {
@@ -238,6 +242,7 @@ impl AppConfig {
         let llm_anthropic_api_key = read_key("LLM_ANTHROPIC_API_KEY");
         let llm_openai_api_key = read_key("LLM_OPENAI_API_KEY");
         let llm_gemini_api_key = read_key("LLM_GEMINI_API_KEY");
+        let webhook_secret = read_key("WEBHOOK_SECRET");
         let dream_enabled = values
             .get("DREAM_ENABLED")
             .map(String::as_str)
@@ -280,6 +285,7 @@ impl AppConfig {
             llm_anthropic_api_key,
             llm_openai_api_key,
             llm_gemini_api_key,
+            webhook_secret,
         })
     }
 }
