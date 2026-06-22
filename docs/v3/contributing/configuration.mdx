@@ -60,6 +60,8 @@ You can mix providers freely — for example, use Gemini for the deriver and Cla
 
 For OpenAI-compatible proxies (OpenRouter, vLLM, Ollama, etc.), use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature to point at your endpoint.
 
+For text-generation calls, `transport = "openai"` can also use ChatGPT Codex subscription OAuth instead of an OpenAI API key. Set `MODEL_CONFIG__OVERRIDES__AUTH_MODE=codex_oauth` on the relevant Deriver, Dialectic, Summary, or Dream model config. Honcho reads Codex CLI tokens from `$CODEX_HOME/auth.json` or `~/.codex/auth.json`. Embeddings still need a configured embedding provider key.
+
 ### Tiered Model Setup
 
 Once you're past initial setup, you can assign different models per feature for better cost/quality tradeoffs. This example uses OpenRouter with light/medium/heavy tiers:
