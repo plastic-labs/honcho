@@ -1,0 +1,20 @@
+[Unit]
+Description=Honcho embedding endpoint fallback watchdog
+Documentation=file:/home/pi/honcho/scripts/honcho_embedding_endpoint_watchdog.py
+Wants=docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/honcho
+Environment=HOME=/home/pi
+Environment=PATH=/home/pi/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HONCHO_DIR=/home/pi/honcho
+Environment=HONCHO_REMOTE_EMBEDDING_BASE_URL=http://192.168.1.145:11434/v1
+Environment=HONCHO_LOCAL_EMBEDDING_BASE_URL=http://host.docker.internal:11434/v1
+Environment=HONCHO_LOCAL_OLLAMA_BASE_URL=http://localhost:11434
+Environment=HONCHO_EMBEDDING_ALERT_TARGET=email:andylin@gmail.com
+Environment="HONCHO_EMBEDDING_ALERT_SUBJECT=[Hermes][Honcho] Embedding fallback"
+ExecStart=/usr/bin/python3 /home/pi/honcho/scripts/honcho_embedding_endpoint_watchdog.py
