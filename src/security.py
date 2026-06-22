@@ -80,6 +80,28 @@ def create_jwt(params: JWTParams) -> str:
     )
 
 
+def scope_requires_workspace(
+    *, peer: str | None, session: str | None, workspace: str | None
+) -> bool:
+    """Return whether a peer- or session-scoped claim lacks its parent workspace.
+
+    A peer or session scope is meaningless without a workspace: the route-level
+    check cannot rule out cross-workspace use (a ``{p: "alice"}`` token would
+    match ``alice`` in any workspace). Truthiness-based so empty-string claims
+    count as absent. Shared by `verify_jwt` (the token-shape invariant) and the
+    keys API (the creation-time guard) so the two rules cannot drift apart.
+
+    Args:
+        peer: The peer claim, if any.
+        session: The session claim, if any.
+        workspace: The workspace claim, if any.
+
+    Returns:
+        True when a peer/session scope is present but the workspace is not.
+    """
+    return bool(peer or session) and not workspace
+
+
 def verify_jwt(token: str) -> JWTParams:
     """Verify a JWT and return the decoded parameters."""
 
@@ -101,17 +123,20 @@ def verify_jwt(token: str) -> JWTParams:
                     raise AuthenticationException("JWT expired")
         if "ad" in decoded:
             params.ad = decoded["ad"]
+        # Normalize empty-string scope claims to None so a blank `w`/`p`/`s`
+        # cannot masquerade as a present claim in the checks below.
         if "w" in decoded:
-            params.w = decoded["w"]
+            params.w = decoded["w"] or None
         if "p" in decoded:
-            params.p = decoded["p"]
+            params.p = decoded["p"] or None
         if "s" in decoded:
-            params.s = decoded["s"]
+            params.s = decoded["s"] or None
         # Token-shape invariant: a peer- or session-scoped token MUST also
-        # carry its parent workspace. Without `w`, the route-level check
-        # cannot rule out cross-workspace use (a `{p: "alice"}` token would
-        # match `alice` in any workspace).
-        if (params.s is not None or params.p is not None) and params.w is None:
+        # carry its parent workspace, otherwise the route-level check cannot
+        # rule out cross-workspace use.
+        if scope_requires_workspace(
+            peer=params.p, session=params.s, workspace=params.w
+        ):
             raise AuthenticationException(
                 "Invalid JWT scope: peer/session token missing workspace"
             )
@@ -166,6 +191,11 @@ def require_auth(
             allow_member_read=allow_member_read,
         )
 
+    # Tag the closure so route-policy tests can introspect which routes opt into
+    # member read without re-deriving it from HTTP method (an unreliable
+    # read/write signal here — some read routes use POST for a richer body).
+    auth_dependency.honcho_allow_member_read = allow_member_read  # pyright: ignore[reportFunctionMemberAccess]
+
     return auth_dependency
 
 
@@ -200,33 +230,38 @@ async def auth(
         # whose resource identifier is not available to require_auth().
         return jwt_params
 
+    # Every scoped, non-admin path requires the token's workspace to match the
+    # route's. Check it once here so no individual branch below can forget it
+    # and silently re-open cross-workspace access (the bug this module fixes).
+    if workspace_name and jwt_params.w != workspace_name:
+        raise AuthenticationException("JWT not permissioned for this resource")
+
     if jwt_params.s is not None:
         # Session-scoped token: confined to its own session. It gets no
         # cross-scope access to peer routes.
         if not session_name or jwt_params.s != session_name:
-            raise AuthenticationException("JWT not permissioned for this resource")
-        if workspace_name and jwt_params.w != workspace_name:
             raise AuthenticationException("JWT not permissioned for this resource")
         return jwt_params
 
     if jwt_params.p is not None:
         # Peer-scoped token: its own peer routes...
         if peer_name and jwt_params.p == peer_name:
-            if workspace_name and jwt_params.w != workspace_name:
-                raise AuthenticationException("JWT not permissioned for this resource")
             return jwt_params
         # ...plus read-only access to the sessions the peer is a member of.
         # Gated on `allow_member_read` so only read routes opt in; writes stay
         # denied. Requires the route's workspace so the membership lookup is
-        # scoped (every session route declares workspace_name).
+        # scoped (every session route declares workspace_name); the workspace
+        # match itself was already verified above.
         if allow_member_read and session_name and workspace_name:
-            if jwt_params.w != workspace_name:
-                raise AuthenticationException("JWT not permissioned for this resource")
             # Lazy imports avoid an import cycle with the crud/db layers and
             # keep this DB round-trip off the common (same-scope) auth path.
             from src.crud.session import is_peer_in_session
             from src.dependencies import tracked_db
 
+            # Membership is read on a separate committed-only (read_only)
+            # connection, so a peer added to the session in a not-yet-committed
+            # transaction reads as a non-member: writes must commit before a
+            # member-scoped read. Fails closed.
             async with tracked_db(
                 "auth.is_peer_in_session", read_only=True
             ) as member_db:
@@ -238,11 +273,9 @@ async def auth(
         raise AuthenticationException("JWT not permissioned for this resource")
 
     if jwt_params.w is not None:
-        # Workspace tokens reach any route inside their workspace. Routes
-        # without a declared workspace (e.g. POST /v3/workspaces) self-authorize
-        # by reading jwt_params.w themselves.
-        if workspace_name and jwt_params.w != workspace_name:
-            raise AuthenticationException("JWT not permissioned for this resource")
+        # Workspace tokens reach any route inside their workspace (the workspace
+        # match was verified above). Routes without a declared workspace (e.g.
+        # POST /v3/workspaces) self-authorize by reading jwt_params.w themselves.
         return jwt_params
 
     raise AuthenticationException("JWT not permissioned for this resource")

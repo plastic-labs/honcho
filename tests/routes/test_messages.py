@@ -339,6 +339,38 @@ async def test_member_peer_key_reads_session_but_cannot_write(
 
 
 @pytest.mark.asyncio
+async def test_member_peer_key_reads_only_own_session_peer_config(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A member peer key may read its OWN per-session config but not a
+    co-member's. The route opts into member read, so without the in-handler
+    self-check alice could read bob's config."""
+    test_workspace, alice = sample_data
+    bob_name = str(generate_nanoid())
+    session_name = str(generate_nanoid())
+    base = f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}"
+
+    # Create the session with alice and bob as active members; commit so the
+    # independent read-only tracked_db in auth() can resolve membership.
+    client.post(f"{base}/peers", json={alice.name: {}, bob_name: {}})
+    await db_session.commit()
+
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=alice.name))}"
+    )
+    # Own config: allowed.
+    assert client.get(f"{base}/peers/{alice.name}/config").status_code == 200
+    # Co-member's config: denied even though alice is a session member.
+    assert client.get(f"{base}/peers/{bob_name}/config").status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_get_messages_with_reverse(
     client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):

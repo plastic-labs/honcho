@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
-- Peer-scoped JWTs now get read-only access to the sessions their peer is an active member of (session context, summaries, peers, per-peer config, search, and message reads). Session-scoped JWTs remain confined to their session and cannot reach peer routes.
+- Peer-scoped JWTs now get read-only access to the sessions their peer is an active member of (session context, summaries, peers, their own per-session config, search, and message reads). Session-scoped JWTs remain confined to their session and cannot reach peer routes.
 
 ### Fixed
 
