@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from src.exceptions import ValidationException
 from src.llm.backends.openai import OpenAIBackend
 
 
@@ -225,6 +226,164 @@ async def test_openai_backend_skips_extra_body_when_thinking_budget_zero() -> No
         raise AssertionError("Expected OpenAI create call")
     call = await_args.kwargs
     assert "extra_body" not in call
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_forwards_provider_params_extra_body() -> None:
+    """Operator-supplied extra_body in provider_params reaches the OpenAI SDK call.
+
+    This is the escape hatch for OpenAI-compatible proxies that translate to
+    other providers (litellm → Vertex AI Anthropic) and need provider-native
+    body fields (e.g. Anthropic's `thinking`).
+    """
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={
+            "extra_body": {"thinking": {"type": "enabled", "budget_tokens": 4096}}
+        },
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["extra_body"] == {
+        "thinking": {"type": "enabled", "budget_tokens": 4096}
+    }
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_forwards_provider_params_extra_headers_and_query() -> (
+    None
+):
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={
+            "extra_headers": {"X-Proxy-Route": "vertex"},
+            "extra_query": {"trace_id": "abc123"},
+        },
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    assert call["extra_headers"] == {"X-Proxy-Route": "vertex"}
+    assert call["extra_query"] == {"trace_id": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_operator_extra_body_wins_over_auto_injection() -> None:
+    """When the operator supplies extra_body.reasoning, it must replace the
+    value that thinking_budget_tokens would otherwise auto-inject (operator-wins
+    shallow merge).
+    """
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="x-ai/grok-4.1-fast",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        thinking_budget_tokens=256,
+        extra_params={
+            "extra_body": {"reasoning": {"effort": "high", "max_tokens": 9999}}
+        },
+    )
+
+    await_args = client.chat.completions.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected OpenAI create call")
+    call = await_args.kwargs
+    # Operator's whole `reasoning` dict replaces Honcho's auto-injected one.
+    assert call["extra_body"] == {"reasoning": {"effort": "high", "max_tokens": 9999}}
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_rejects_non_mapping_passthrough() -> None:
+    """A non-mapping passthrough (operator misconfiguration) raises a clear
+    ValidationException instead of an opaque TypeError deep in the transport.
+    """
+    client = Mock()
+    client.chat.completions.create = AsyncMock()
+
+    backend = OpenAIBackend(client)
+    with pytest.raises(ValidationException, match=r"provider_params\.extra_headers"):
+        await backend.complete(
+            model="gpt-4.1",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            extra_params={"extra_headers": [["X-Foo", "bar"]]},
+        )
+
+    client.chat.completions.create.assert_not_awaited()
 
 
 @pytest.mark.asyncio
