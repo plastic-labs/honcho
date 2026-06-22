@@ -245,3 +245,82 @@ async def test_anthropic_backend_ignores_thinking_effort() -> None:
     call = await_args.kwargs
     assert "thinking" not in call
     assert "reasoning_effort" not in call
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_passes_timeout_to_completion_request() -> None:
+    """Anthropic completion requests receive per-request provider timeout."""
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=[TextBlock(type="text", text="ok")],
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+
+    backend = AnthropicBackend(client)
+    await backend.complete(
+        model="claude-haiku-4-5",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"timeout": 45},
+    )
+
+    await_args = client.messages.create.await_args
+    if await_args is None:
+        raise AssertionError("Expected Anthropic create call")
+    assert await_args.kwargs["timeout"] == 45.0
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_passes_timeout_to_stream_request() -> None:
+    """Anthropic stream requests receive per-request provider timeout."""
+
+    class FakeStream:
+        """Minimal async stream manager for Anthropic streaming tests."""
+
+        async def __aenter__(self):
+            """Return the stream object used by the backend."""
+            return self
+
+        async def __aexit__(self, *_args):
+            """Do not suppress stream errors."""
+            return False
+
+        def __aiter__(self):
+            """Return the async iterator used by the backend."""
+            return self
+
+        async def __anext__(self):
+            """End the fake stream immediately."""
+            raise StopAsyncIteration
+
+        async def get_final_message(self):
+            """Return the final message required by the backend."""
+            return SimpleNamespace(
+                usage=SimpleNamespace(output_tokens=1),
+                stop_reason="end_turn",
+            )
+
+    client = Mock()
+    client.messages.stream = Mock(return_value=FakeStream())
+
+    backend = AnthropicBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-haiku-4-5",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            extra_params={"timeout": "60"},
+        )
+    ]
+
+    assert chunks[-1].is_done is True
+    assert client.messages.stream.call_args.kwargs["timeout"] == 60.0
