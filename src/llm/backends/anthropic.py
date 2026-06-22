@@ -8,7 +8,12 @@ from typing import Any
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel, ValidationError
 
-from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
+from src.llm.backend import (
+    CompletionResult,
+    StreamChunk,
+    ToolCallResult,
+    request_timeout_from_extra_params,
+)
 from src.llm.request_builder import apply_sdk_passthroughs
 from src.llm.structured_output import repair_response_model_json, schema_instruction
 
@@ -73,6 +78,10 @@ class AnthropicBackend:
             # Operator escape hatch: forward Anthropic SDK passthrough kwargs
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
+
+        timeout = request_timeout_from_extra_params(extra_params)
+        if timeout is not None:
+            params["timeout"] = timeout
 
         # The '{' prefill forces a JSON-first response, which suppresses
         # tool_use blocks — skip it when tools are available and rely on the
@@ -157,6 +166,11 @@ class AnthropicBackend:
             # Operator escape hatch: forward Anthropic SDK passthrough kwargs
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
+
+        timeout = request_timeout_from_extra_params(extra_params)
+        if timeout is not None:
+            params["timeout"] = timeout
+
         # See complete(): no '{' prefill when tools are available, so
         # tool_use blocks stay reachable on the streamed path too.
         use_json_prefill = (

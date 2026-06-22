@@ -138,6 +138,7 @@ model = "gpt-5.4-mini"
 # api_key_env = "DERIVER_CUSTOM_BACKUP_API_KEY"
 # [deriver.model_config.overrides.provider_params]
 # verbosity = "low"
+# timeout = 3600.0
 
 # Peer card settings
 [peer_card]

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import math
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
+
+from src.exceptions import ValidationException
 
 
 @dataclass(slots=True)
@@ -43,6 +46,39 @@ class StreamChunk:
     is_done: bool = False
     finish_reason: str | None = None
     output_tokens: int | None = None
+
+
+def request_timeout_from_extra_params(
+    extra_params: dict[str, Any] | None,
+) -> float | None:
+    """Return a validated per-request provider timeout from extra params."""
+    if not extra_params or "timeout" not in extra_params:
+        return None
+
+    value = extra_params["timeout"]
+    if isinstance(value, bool):
+        raise ValidationException(
+            "provider_params.timeout must be a positive number of seconds"
+        )
+    if isinstance(value, int | float):
+        timeout = float(value)
+    elif isinstance(value, str):
+        try:
+            timeout = float(value.strip())
+        except ValueError as exc:
+            raise ValidationException(
+                "provider_params.timeout must be a positive number of seconds"
+            ) from exc
+    else:
+        raise ValidationException(
+            "provider_params.timeout must be a positive number of seconds"
+        )
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValidationException(
+            "provider_params.timeout must be a positive number of seconds"
+        )
+    return timeout
 
 
 @runtime_checkable
