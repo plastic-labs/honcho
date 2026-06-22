@@ -2279,6 +2279,63 @@ async fn delete_documents_soft_deletes_scoped_rows_and_returns_levels() {
     test_db.teardown().await;
 }
 
+/// `create_documents_returning_levels` inserts the accepted docs and reports each
+/// accepted level in order; `query_documents_recent_full` returns them as
+/// `representation::Document`s ordered newest-first.
+#[tokio::test]
+async fn create_documents_returning_levels_and_recent_full() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::get_or_create_collection(&test_db.pool, "ws", "obs", "obsd")
+        .await
+        .expect("collection");
+
+    let mk = |content: &str, level: &str| db::DocumentToCreate {
+        content: content.to_string(),
+        session_name: None,
+        level: level.to_string(),
+        internal_metadata: json!({"message_ids": [], "message_created_at": "2026-06-22T00:00:00Z"}),
+        embedding: query_vector(&[(0, 1.0)]),
+        times_derived: 1,
+        source_ids: None,
+    };
+
+    // deduplicate=false so both accepted; one-hot[0] twice would dedupe otherwise.
+    let levels = db::create_documents_returning_levels(
+        &test_db.pool,
+        vec![mk("first deductive", "deductive"), mk("second inductive", "inductive")],
+        "ws",
+        "obs",
+        "obsd",
+        false,
+    )
+    .await
+    .expect("create returning levels");
+    assert_eq!(levels, vec!["deductive".to_string(), "inductive".to_string()]);
+
+    let recent = db::query_documents_recent_full(&test_db.pool, "ws", "obs", "obsd", None, 10)
+        .await
+        .expect("recent full");
+    assert_eq!(recent.len(), 2);
+    // Both documents carry their level through the Document shape.
+    let recent_levels: std::collections::HashSet<&str> =
+        recent.iter().map(|d| d.level.as_str()).collect();
+    assert!(recent_levels.contains("deductive"));
+    assert!(recent_levels.contains("inductive"));
+
+    test_db.teardown().await;
+}
+
 /// `query_documents_full` returns the full document shape (level, source_ids,
 /// internal_metadata) and `Representation::from_documents` reconstructs the
 /// observations from it. Uses deterministic one-hot embeddings (no OpenAI), so

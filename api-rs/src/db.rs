@@ -2382,6 +2382,49 @@ pub async fn query_documents_recent(
         .collect())
 }
 
+/// Like [`query_documents_recent`] but returns the full
+/// [`crate::representation::Document`] shape (level/source_ids/internal_metadata)
+/// so callers can rebuild a `Representation`. The dreamer's
+/// `get_recent_observations` tool needs this rather than the conclusion-JSON
+/// projection.
+pub async fn query_documents_recent_full(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    session_name: Option<&str>,
+    limit: i64,
+) -> Result<Vec<crate::representation::Document>, sqlx::Error> {
+    let session_clause = if session_name.is_some() {
+        " AND session_name = $4"
+    } else {
+        ""
+    };
+    let limit_idx = if session_name.is_some() { 5 } else { 4 };
+    let sql = format!(
+        "SELECT id, content, level, created_at, session_name, source_ids, internal_metadata \
+         FROM documents \
+         WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+           AND deleted_at IS NULL{session_clause} \
+         ORDER BY created_at DESC \
+         LIMIT ${limit_idx}"
+    );
+    let mut query = sqlx::query_as::<_, DocumentRow>(&sql)
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed);
+    if let Some(session) = session_name {
+        query = query.bind(session);
+    }
+    query = query.bind(limit);
+    Ok(query
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(document_from_row)
+        .collect())
+}
+
 /// Most-reinforced conclusions for `(observer, observed)`, porting
 /// `crud.query_documents_most_derived`: live documents ordered by
 /// `times_derived` desc, then `created_at` desc, then `id` (stable tiebreak),
@@ -3193,8 +3236,28 @@ pub async fn create_documents(
     observed: &str,
     deduplicate: bool,
 ) -> Result<usize, sqlx::Error> {
+    Ok(
+        create_documents_returning_levels(pool, documents, workspace_name, observer, observed, deduplicate)
+            .await?
+            .len(),
+    )
+}
+
+/// Like [`create_documents`] but returns the `level` of each accepted (inserted)
+/// document, in insertion order — the dreamer's `create_observations` needs the
+/// per-level breakdown of what survived dedup (Python `create_documents` returns
+/// the accepted `DocumentCreate` list and the caller reads `[doc.level ...]`).
+pub async fn create_documents_returning_levels(
+    pool: &PgPool,
+    documents: Vec<DocumentToCreate>,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    deduplicate: bool,
+) -> Result<Vec<String>, sqlx::Error> {
     let mut transaction = pool.begin().await?;
     let mut inserted_ids: Vec<String> = Vec::new();
+    let mut inserted_levels: Vec<String> = Vec::new();
 
     for mut doc in documents {
         if deduplicate
@@ -3231,6 +3294,7 @@ pub async fn create_documents(
         .execute(&mut *transaction)
         .await?;
         inserted_ids.push(id);
+        inserted_levels.push(doc.level);
     }
 
     // pgvector mode: no external store, so mark the freshly-inserted docs synced.
@@ -3245,7 +3309,7 @@ pub async fn create_documents(
     }
 
     transaction.commit().await?;
-    Ok(inserted_ids.len())
+    Ok(inserted_levels)
 }
 
 /// A conversation message row forming the representation-batch context window
