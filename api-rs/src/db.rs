@@ -1007,6 +1007,59 @@ pub async fn get_session_summaries(
     session_summaries_json(session_name, &internal_metadata)
 }
 
+/// Port of `summarizer.get_summary`: fetch a single stored summary from
+/// `internal_metadata["summaries"][summary_type]`. Returns `None` when the
+/// session is missing or carries no summary of that type.
+pub async fn get_summary(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    summary_type: &str,
+) -> Result<Option<Value>, sqlx::Error> {
+    let value: Option<Value> = sqlx::query_scalar(
+        "SELECT internal_metadata -> 'summaries' -> $3 \
+         FROM sessions WHERE workspace_name = $1 AND name = $2",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .bind(summary_type)
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    // `null` JSONB decodes to `Value::Null`; normalize it to `None`.
+    Ok(value.filter(|v| !v.is_null()))
+}
+
+/// Port of `summarizer._save_summary`: shallow-merge `summary` under
+/// `internal_metadata["summaries"][summary_type]` for the session, atomically via
+/// nested JSONB `||` (existing summaries of other types are preserved; the same
+/// type is overwritten). A no-op when the session does not exist (Python logs and
+/// returns). Returns whether a row was updated.
+pub async fn save_summary(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    summary_type: &str,
+    summary: &Value,
+) -> Result<bool, sqlx::Error> {
+    let type_patch = json!({ summary_type: summary });
+    let affected = sqlx::query(
+        "UPDATE sessions \
+         SET internal_metadata = internal_metadata || jsonb_build_object( \
+             'summaries', \
+             COALESCE(internal_metadata -> 'summaries', '{}'::jsonb) || $3::jsonb \
+         ) \
+         WHERE workspace_name = $1 AND name = $2",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .bind(type_patch)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(affected > 0)
+}
+
 async fn list_sessions_with_where(
     pool: &PgPool,
     filter: &FilterClause,

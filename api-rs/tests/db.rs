@@ -3558,6 +3558,105 @@ async fn mark_document_deleted_is_idempotent() {
     test_db.teardown().await;
 }
 
+#[tokio::test]
+async fn save_and_get_summary_round_trips_and_merges() {
+    use honcho_api_rs::summarizer::{Summary, SummaryType};
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    // create_messages auto-creates ws + session "sess".
+    db::create_messages(&test_db.pool, "ws", "sess", &[message("bob", "hi")], false, 8192)
+        .await
+        .expect("seed session");
+
+    // No summary yet.
+    let none = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("get none");
+    assert!(none.is_none());
+
+    let short = Summary {
+        content: "short summary".to_string(),
+        message_id: 1,
+        summary_type: SummaryType::Short.as_str().to_string(),
+        created_at: "2025-03-04T12:00:00+00:00".to_string(),
+        token_count: 2,
+        message_public_id: "msg_pub_1".to_string(),
+    };
+    let updated = db::save_summary(
+        &test_db.pool,
+        "ws",
+        "sess",
+        SummaryType::Short.as_str(),
+        &serde_json::to_value(&short).unwrap(),
+    )
+    .await
+    .expect("save short");
+    assert!(updated);
+
+    // Round-trips back to the same struct.
+    let fetched = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("get short")
+        .expect("present");
+    let parsed: Summary = serde_json::from_value(fetched).unwrap();
+    assert_eq!(parsed, short);
+
+    // Saving a long summary preserves the short one (shallow merge).
+    let long = Summary {
+        content: "long summary".to_string(),
+        message_id: 1,
+        summary_type: SummaryType::Long.as_str().to_string(),
+        created_at: "2025-03-04T12:05:00+00:00".to_string(),
+        token_count: 2,
+        message_public_id: "msg_pub_1".to_string(),
+    };
+    db::save_summary(
+        &test_db.pool,
+        "ws",
+        "sess",
+        SummaryType::Long.as_str(),
+        &serde_json::to_value(&long).unwrap(),
+    )
+    .await
+    .expect("save long");
+
+    let short_still = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("get short again")
+        .expect("present");
+    assert_eq!(short_still["content"], "short summary");
+    let long_now = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Long.as_str())
+        .await
+        .expect("get long")
+        .expect("present");
+    assert_eq!(long_now["content"], "long summary");
+
+    // Overwriting the short summary replaces just that key.
+    let short2 = serde_json::json!({
+        "content": "newer short", "message_id": 5, "summary_type": SummaryType::Short.as_str(),
+        "created_at": "2025-03-04T12:10:00+00:00", "token_count": 2, "message_public_id": "msg_pub_5"
+    });
+    db::save_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str(), &short2)
+        .await
+        .expect("overwrite short");
+    let short_new = db::get_summary(&test_db.pool, "ws", "sess", SummaryType::Short.as_str())
+        .await
+        .expect("get short3")
+        .expect("present");
+    assert_eq!(short_new["content"], "newer short");
+    assert_eq!(short_new["message_id"], 5);
+
+    // Missing session → None (no row updated).
+    let missing = db::save_summary(&test_db.pool, "ws", "nope", SummaryType::Short.as_str(), &short2)
+        .await
+        .expect("save missing");
+    assert!(!missing);
+
+    test_db.teardown().await;
+}
+
 /// Captures emitted telemetry event bodies for assertions.
 struct CapturingEmitter {
     events: std::sync::Mutex<Vec<(String, serde_json::Value)>>,

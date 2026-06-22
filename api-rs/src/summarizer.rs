@@ -4,6 +4,8 @@
 //! the `summarize_if_needed` orchestrator (DB get/save of summaries, tier
 //! gating) follow once the summaries crud is ported.
 
+use serde::{Deserialize, Serialize};
+
 use crate::tokens::estimate_tokens;
 
 /// The summary kinds stored in session metadata (`SummaryType`).
@@ -14,13 +16,29 @@ pub enum SummaryType {
 }
 
 impl SummaryType {
-    /// The metadata key value for this summary type.
+    /// The metadata key value for this summary type (also the JSON map key under
+    /// `internal_metadata["summaries"]`).
     pub fn as_str(self) -> &'static str {
         match self {
             SummaryType::Short => "honcho_chat_summary_short",
             SummaryType::Long => "honcho_chat_summary_long",
         }
     }
+}
+
+/// Port of the `Summary` TypedDict: a stored session summary. Serializes to the
+/// exact JSON shape persisted under `internal_metadata["summaries"][type]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Summary {
+    pub content: String,
+    /// The primary-key id of the message this summary covers up to.
+    pub message_id: i64,
+    pub summary_type: String,
+    /// ISO-8601 creation timestamp.
+    pub created_at: String,
+    pub token_count: i64,
+    #[serde(default)]
+    pub message_public_id: String,
 }
 
 /// Port of `short_summary_prompt`. The Python `c(...)` (`inspect.cleandoc`) only
