@@ -8,7 +8,7 @@
 //! metadata shape, and the response template — is faithful. The non-deterministic
 //! `message_created_at` (`utc_now_iso()`) is injected by the caller.
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use sqlx::PgPool;
 
 use crate::db::{self, DocumentToCreate};
@@ -321,6 +321,7 @@ pub fn render_recent_observations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parse_rejects_empty_content() {

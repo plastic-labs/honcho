@@ -814,7 +814,6 @@ mod tests {
 
     #[test]
     fn agent_tool_conclusions_deleted_event_metadata_and_golden_id() {
-        use crate::telemetry::TelemetryEvent;
         let event = AgentToolConclusionsDeletedEvent {
             timestamp: Utc.with_ymd_and_hms(2026, 6, 21, 12, 0, 0).unwrap(),
             run_id: "run123".to_string(),

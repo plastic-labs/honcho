@@ -5004,6 +5004,108 @@ async fn create_observations_writes_documents_with_levels() {
 }
 
 #[tokio::test]
+async fn dreamer_tool_executor_creates_updates_deletes_and_rolls_up() {
+    use honcho_api_rs::dialectic::ToolContext;
+    use honcho_api_rs::dreamer::executor::DreamerToolExecutor;
+    use honcho_api_rs::llm::tool_loop::ToolExecutor;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+
+    let emitter = CapturingEmitter {
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+    let ctx = ToolContext {
+        workspace_name: "ws".to_string(),
+        observer: "obs".to_string(),
+        observed: "obsd".to_string(),
+        session_name: None,
+    };
+    let exec = DreamerToolExecutor::new(
+        &test_db.pool,
+        ctx,
+        IndexedEmbedder,
+        true,  // include_observation_ids
+        true,  // peer_card_create
+        "run1".to_string(),
+        "deduction".to_string(),
+        "dream".to_string(),
+        &emitter,
+        Some("9.9.9".to_string()),
+        true, // deduplicate
+    );
+
+    // create_observations_deductive
+    let created = exec
+        .execute(
+            "create_observations_deductive",
+            &json!({"observations": [{"content": "alice is a swe", "source_ids": ["s1"], "premises": ["works at google"]}]}),
+        )
+        .await
+        .expect("create");
+    assert!(created.starts_with("Created 1 observations"), "{created}");
+
+    // update_peer_card (one valid, one rejected)
+    let pc = exec
+        .execute(
+            "update_peer_card",
+            &json!({"content": ["IDENTITY: Name: Alice", "TRAIT: nope"]}),
+        )
+        .await
+        .expect("peer card");
+    assert!(pc.contains("Updated peer card for obsd by obs with 1 entries."), "{pc}");
+
+    // get_recent_observations shows the created deductive observation with id.
+    let recent = exec
+        .execute("get_recent_observations", &json!({"limit": 10}))
+        .await
+        .expect("recent");
+    assert!(recent.contains("recent observations from all sessions"), "{recent}");
+    assert!(recent.contains("alice is a swe"), "{recent}");
+
+    // Rollups so far.
+    let metrics = exec.metrics_snapshot();
+    assert_eq!(metrics.created_observation_count, 1);
+    assert_eq!(metrics.created_counts_by_level.get("deductive"), Some(&1));
+    assert!(metrics.peer_card_updated);
+
+    // Emitted the created + peer_card_updated events.
+    {
+        let events = emitter.events.lock().unwrap();
+        let types: Vec<&str> = events.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(types.contains(&"agent.tool.conclusions.created"));
+        assert!(types.contains(&"agent.tool.peer_card.updated"));
+    }
+
+    // Delete the created observation by its id.
+    let doc_id: String = sqlx::query_scalar(
+        "SELECT id FROM documents WHERE workspace_name='ws' AND observer='obs' AND observed='obsd' AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("doc id");
+    let deleted = exec
+        .execute("delete_observations", &json!({"observation_ids": [doc_id]}))
+        .await
+        .expect("delete");
+    assert_eq!(deleted, "Deleted 1 observations");
+    let metrics = exec.metrics_snapshot();
+    assert_eq!(metrics.deleted_observation_count, 1);
+    assert_eq!(metrics.deleted_counts_by_level.get("deductive"), Some(&1));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn save_representation_writes_documents() {
     use honcho_api_rs::representation::{ExplicitObservation, Representation};
     use honcho_api_rs::representation_manager::save_representation;
