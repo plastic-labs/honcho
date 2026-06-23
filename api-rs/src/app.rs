@@ -1091,8 +1091,9 @@ struct DialecticBody {
 /// Peer cards are injected when the resolved configuration enables them
 /// (`peer_card.use`), mirroring the Python preflight. The observer peer is
 /// get-or-created when writes are enabled (Python does this unconditionally; the
-/// read-only sidecar skips it and assumes the peer exists). Not yet ported: SSE
-/// streaming (`stream: true` → 501).
+/// read-only sidecar skips it and assumes the peer exists). `stream: true` runs
+/// the tool loop non-streaming, then streams the final response as SSE
+/// ([`answer_stream`](crate::dialectic_agent::answer_stream)).
 async fn chat(
     State(state): State<AppState>,
     headers: HeaderMap,
