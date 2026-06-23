@@ -396,7 +396,9 @@ async def honcho_llm_call(
                     before_sleep=before_retry_callback,
                 )(wrapped)
             result: (
-                HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+                HonchoLLMCallResponse[Any]
+                | AsyncIterator[HonchoLLMCallStreamChunk]
+                | StreamingResponseWithMetadata
             ) = await wrapped()
         else:
             result = await decorated()
@@ -468,8 +470,9 @@ async def honcho_llm_call(
             run_handle.end()
         raise
     # Streaming wrapper owns the handle and closes it after drain;
-    # non-streaming paths close it here with the final content as output.
-    if run_handle is not None and not isinstance(result, StreamingResponseWithMetadata):
+    # non-streaming paths (always a HonchoLLMCallResponse here) close it now
+    # with the final content as output.
+    if run_handle is not None and isinstance(result, HonchoLLMCallResponse):
         run_handle.end(output=result.content)
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(
