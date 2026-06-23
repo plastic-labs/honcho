@@ -94,6 +94,7 @@ fn decode_lossy(tokenizer: &CoreBPE, tokens: &[Rank]) -> String {
 
 use serde_json::{Value, json};
 
+use crate::llm::backends::gemini::DEFAULT_BASE_URL as GEMINI_DEFAULT_BASE_URL;
 use crate::llm::http::{Credentials, LlmHttp, LlmHttpError};
 
 /// The OpenAI SDK's default API base (already version-suffixed), used when no
@@ -336,6 +337,185 @@ pub async fn embed_openai_batch<H: LlmHttp>(
     parse_openai_embedding_response_batch(&response, texts.len(), vector_dimensions)
 }
 
+// ---------------------------------------------------------------------------
+// Gemini embeddings (`:embedContent` / `:batchEmbedContents`), ported from
+// `_EmbeddingClient.embed`'s Gemini branch. Like the Gemini chat backend, this
+// targets the documented REST API directly rather than the genai SDK: the SDK's
+// `embed_content(contents=query|[..], config={output_dimensionality})` maps to
+// these endpoints. `output_dimensionality` is always sent (Python passes it
+// unconditionally; there is no `send_dimensions` flag for Gemini). Parity is
+// against the documented REST shape, not a live/SDK oracle.
+// ---------------------------------------------------------------------------
+
+/// Address the model as `models/{model}` (idempotent if already prefixed), the
+/// same convention as the Gemini chat backend.
+fn gemini_model_path(model: &str) -> String {
+    if model.starts_with("models/") {
+        model.to_string()
+    } else {
+        format!("models/{model}")
+    }
+}
+
+/// Validate one Gemini `values` array against `vector_dimensions`, mirroring
+/// `_validate_embedding_dimensions`. Empty → [`EmbedError::NoEmbedding`].
+fn gemini_vector(values: &[Value], vector_dimensions: usize) -> Result<Vec<f32>, EmbedError> {
+    if values.is_empty() {
+        return Err(EmbedError::NoEmbedding);
+    }
+    let embedding: Vec<f32> = values
+        .iter()
+        .filter_map(|value| value.as_f64().map(|f| f as f32))
+        .collect();
+    if embedding.len() != vector_dimensions {
+        return Err(EmbedError::DimensionMismatch {
+            expected: vector_dimensions,
+            got: embedding.len(),
+        });
+    }
+    Ok(embedding)
+}
+
+/// Build a Gemini `:embedContent` request body.
+pub fn build_gemini_embedding_request(
+    model: &str,
+    query: &str,
+    vector_dimensions: usize,
+) -> Value {
+    json!({
+        "model": gemini_model_path(model),
+        "content": {"parts": [{"text": query}]},
+        "output_dimensionality": vector_dimensions,
+    })
+}
+
+/// Extract `embedding.values` from a Gemini `:embedContent` response.
+pub fn parse_gemini_embedding_response(
+    response: &Value,
+    vector_dimensions: usize,
+) -> Result<Vec<f32>, EmbedError> {
+    let values = response
+        .get("embedding")
+        .and_then(|embedding| embedding.get("values"))
+        .and_then(Value::as_array)
+        .ok_or(EmbedError::NoEmbedding)?;
+    gemini_vector(values, vector_dimensions)
+}
+
+/// Embed a single query via Gemini, porting `embed()`'s Gemini branch: enforce
+/// the token limit, POST `{base}/v1beta/models/{model}:embedContent` with
+/// `x-goog-api-key` auth, then extract + dimension-validate the vector.
+pub async fn embed_gemini<H: LlmHttp>(
+    http: &H,
+    credentials: &Credentials,
+    model: &str,
+    query: &str,
+    vector_dimensions: usize,
+    max_embedding_tokens: usize,
+) -> Result<Vec<f32>, EmbedError> {
+    let token_count = embedding_token_count(query);
+    if token_count > max_embedding_tokens {
+        return Err(EmbedError::TokenLimit {
+            limit: max_embedding_tokens,
+            got: token_count,
+        });
+    }
+    let body = build_gemini_embedding_request(model, query, vector_dimensions);
+    let url = format!(
+        "{}/v1beta/{}:embedContent",
+        credentials.effective_base_url(GEMINI_DEFAULT_BASE_URL),
+        gemini_model_path(model)
+    );
+    let headers = [("x-goog-api-key".to_string(), credentials.api_key.clone())];
+    let response = http
+        .post_json(&url, &headers, &body)
+        .await
+        .map_err(EmbedError::Http)?;
+    parse_gemini_embedding_response(&response, vector_dimensions)
+}
+
+/// Build a Gemini `:batchEmbedContents` request body (one `requests` entry per
+/// input, in order).
+pub fn build_gemini_embedding_request_batch(
+    model: &str,
+    inputs: &[String],
+    vector_dimensions: usize,
+) -> Value {
+    let requests: Vec<Value> = inputs
+        .iter()
+        .map(|text| {
+            json!({
+                "model": gemini_model_path(model),
+                "content": {"parts": [{"text": text}]},
+                "output_dimensionality": vector_dimensions,
+            })
+        })
+        .collect();
+    json!({ "requests": requests })
+}
+
+/// Parse a Gemini `:batchEmbedContents` response: `embeddings` is returned in
+/// request order (no `index` field), one `values` array per input.
+pub fn parse_gemini_embedding_response_batch(
+    response: &Value,
+    expected_count: usize,
+    vector_dimensions: usize,
+) -> Result<Vec<Vec<f32>>, EmbedError> {
+    let embeddings = response
+        .get("embeddings")
+        .and_then(Value::as_array)
+        .ok_or(EmbedError::NoEmbedding)?;
+    if embeddings.len() != expected_count {
+        return Err(EmbedError::NoEmbedding);
+    }
+    embeddings
+        .iter()
+        .map(|item| {
+            let values = item
+                .get("values")
+                .and_then(Value::as_array)
+                .ok_or(EmbedError::NoEmbedding)?;
+            gemini_vector(values, vector_dimensions)
+        })
+        .collect()
+}
+
+/// Batch-embed `texts` via Gemini `:batchEmbedContents`, mirroring
+/// `simple_batch_embed`'s Gemini branch (per-input token cap, one request).
+pub async fn embed_gemini_batch<H: LlmHttp>(
+    http: &H,
+    credentials: &Credentials,
+    model: &str,
+    texts: &[String],
+    vector_dimensions: usize,
+    max_embedding_tokens: usize,
+) -> Result<Vec<Vec<f32>>, EmbedError> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+    for text in texts {
+        let token_count = embedding_token_count(text);
+        if token_count > max_embedding_tokens {
+            return Err(EmbedError::TokenLimit {
+                limit: max_embedding_tokens,
+                got: token_count,
+            });
+        }
+    }
+    let body = build_gemini_embedding_request_batch(model, texts, vector_dimensions);
+    let url = format!(
+        "{}/v1beta/{}:batchEmbedContents",
+        credentials.effective_base_url(GEMINI_DEFAULT_BASE_URL),
+        gemini_model_path(model)
+    );
+    let headers = [("x-goog-api-key".to_string(), credentials.api_key.clone())];
+    let response = http
+        .post_json(&url, &headers, &body)
+        .await
+        .map_err(EmbedError::Http)?;
+    parse_gemini_embedding_response_batch(&response, texts.len(), vector_dimensions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,6 +602,57 @@ mod tests {
             build_openai_embedding_request_batch("text-embedding-3-small", &inputs, Some(1536)),
             json!({"model": "text-embedding-3-small", "input": ["a", "b"], "dimensions": 1536})
         );
+    }
+
+    #[test]
+    fn gemini_embedding_request_and_parse() {
+        // Single: model is prefixed and output_dimensionality is always sent.
+        assert_eq!(
+            build_gemini_embedding_request("gemini-embedding-001", "hi", 768),
+            json!({
+                "model": "models/gemini-embedding-001",
+                "content": {"parts": [{"text": "hi"}]},
+                "output_dimensionality": 768
+            })
+        );
+        // Already-prefixed model is left as-is.
+        assert_eq!(
+            build_gemini_embedding_request("models/text-embedding-004", "x", 3)["model"],
+            json!("models/text-embedding-004")
+        );
+        // Single parse pulls embedding.values and validates dimensionality.
+        let response = json!({"embedding": {"values": [0.1, 0.2, 0.3]}});
+        assert_eq!(
+            parse_gemini_embedding_response(&response, 3).unwrap(),
+            vec![0.1_f32, 0.2, 0.3]
+        );
+        assert!(matches!(
+            parse_gemini_embedding_response(&response, 2),
+            Err(EmbedError::DimensionMismatch { expected: 2, got: 3 })
+        ));
+    }
+
+    #[test]
+    fn gemini_batch_request_and_parse_preserve_order() {
+        let inputs = vec!["a".to_string(), "b".to_string()];
+        let body = build_gemini_embedding_request_batch("gemini-embedding-001", &inputs, 2);
+        assert_eq!(body["requests"].as_array().map(Vec::len), Some(2));
+        assert_eq!(body["requests"][1]["content"]["parts"][0]["text"], json!("b"));
+
+        // Batch responses are in request order (no index field).
+        let response = json!({"embeddings": [
+            {"values": [0.1, 0.2]},
+            {"values": [0.3, 0.4]},
+        ]});
+        assert_eq!(
+            parse_gemini_embedding_response_batch(&response, 2, 2).unwrap(),
+            vec![vec![0.1_f32, 0.2], vec![0.3_f32, 0.4]]
+        );
+        // A count mismatch is a NoEmbedding error.
+        assert!(matches!(
+            parse_gemini_embedding_response_batch(&response, 3, 2),
+            Err(EmbedError::NoEmbedding)
+        ));
     }
 
     #[test]

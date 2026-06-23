@@ -37,6 +37,9 @@ pub struct AppConfig {
     pub embedding_api_key: Option<String>,
     /// Optional embedding endpoint override (`EMBEDDING_BASE_URL`).
     pub embedding_base_url: Option<String>,
+    /// Embedding provider (`EMBEDDING_PROVIDER`, `openai` [default] or `gemini`),
+    /// selecting which `embed_*` backend the embedder dispatches to.
+    pub embedding_transport: crate::llm::Provider,
     /// Whether dream scheduling is enabled (`DREAM_ENABLED`, Python
     /// `settings.DREAM.ENABLED`, default true). `schedule_dream` 400s when off.
     pub dream_enabled: bool,
@@ -74,6 +77,7 @@ pub struct EmbeddingConfig {
     pub max_tokens: usize,
     pub api_key: Option<String>,
     pub base_url: Option<String>,
+    pub transport: crate::llm::Provider,
 }
 
 impl AppConfig {
@@ -86,6 +90,7 @@ impl AppConfig {
             max_tokens: self.embedding_max_tokens,
             api_key: self.embedding_api_key.clone(),
             base_url: self.embedding_base_url.clone(),
+            transport: self.embedding_transport,
         }
     }
 }
@@ -193,6 +198,11 @@ impl AppConfig {
         } else {
             embedding_max_input_tokens
         };
+        let embedding_transport = if embedding_provider == "gemini" {
+            crate::llm::Provider::Gemini
+        } else {
+            crate::llm::Provider::Openai
+        };
         let embedding_model = values
             .get("EMBEDDING_MODEL")
             .map(String::as_str)
@@ -281,6 +291,7 @@ impl AppConfig {
             embedding_send_dimensions,
             embedding_api_key,
             embedding_base_url,
+            embedding_transport,
             dream_enabled,
             llm_anthropic_api_key,
             llm_openai_api_key,

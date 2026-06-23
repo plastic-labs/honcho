@@ -66,6 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         vector_dimensions: embedding.vector_dimensions,
         send_dimensions: embedding.send_dimensions,
         max_tokens: embedding.max_tokens,
+        transport: embedding.transport,
     });
 
     // The reconciler scheduler shares the pool; clone before the worker takes it.

@@ -47,6 +47,7 @@ fn default_test_embedding_config() -> EmbeddingConfig {
         max_tokens: 8192,
         api_key: None,
         base_url: None,
+        transport: crate::llm::Provider::Openai,
     }
 }
 
@@ -1170,6 +1171,7 @@ async fn chat(
         vector_dimensions: state.embedding.vector_dimensions,
         send_dimensions: state.embedding.send_dimensions,
         max_tokens: state.embedding.max_tokens,
+        transport: state.embedding.transport,
     };
 
     let to_api_error = |error| match error {
@@ -1670,6 +1672,7 @@ async fn get_session_context(
                     vector_dimensions: state.embedding.vector_dimensions,
                     send_dimensions: state.embedding.send_dimensions,
                     max_tokens: state.embedding.max_tokens,
+                    transport: state.embedding.transport,
                 };
                 embedder.embed(text).await.ok()
             }

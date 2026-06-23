@@ -878,11 +878,15 @@ pub struct OpenAiEmbedder<'a, H: crate::llm::http::LlmHttp> {
     pub vector_dimensions: usize,
     pub send_dimensions: bool,
     pub max_tokens: usize,
+    /// Which provider's `embed_*` backend to dispatch to (`Openai` default;
+    /// `Gemini` targets the `:embedContent` REST endpoints).
+    pub transport: crate::llm::Provider,
 }
 
 impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OpenAiEmbedder<'_, H> {
     async fn embed(&self, query: &str) -> Result<Vec<f32>, String> {
-        crate::embedding::embed_openai(
+        embed_dispatch(
+            self.transport,
             self.http,
             &self.credentials,
             &self.model,
@@ -892,11 +896,11 @@ impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OpenAiEmbedder<'_, H> {
             self.max_tokens,
         )
         .await
-        .map_err(|error| error.to_string())
     }
 
     async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-        crate::embedding::embed_openai_batch(
+        batch_embed_dispatch(
+            self.transport,
             self.http,
             &self.credentials,
             &self.model,
@@ -906,8 +910,89 @@ impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OpenAiEmbedder<'_, H> {
             self.max_tokens,
         )
         .await
-        .map_err(|error| error.to_string())
     }
+}
+
+/// Provider-dispatched single embed, porting `_EmbeddingClient.embed`'s
+/// transport branch. `send_dimensions` only affects the OpenAI path (Gemini
+/// always sends `output_dimensionality`).
+#[allow(clippy::too_many_arguments)]
+async fn embed_dispatch<H: crate::llm::http::LlmHttp + Sync>(
+    transport: crate::llm::Provider,
+    http: &H,
+    credentials: &crate::llm::http::Credentials,
+    model: &str,
+    query: &str,
+    vector_dimensions: usize,
+    send_dimensions: bool,
+    max_tokens: usize,
+) -> Result<Vec<f32>, String> {
+    let result = match transport {
+        crate::llm::Provider::Gemini => {
+            crate::embedding::embed_gemini(
+                http,
+                credentials,
+                model,
+                query,
+                vector_dimensions,
+                max_tokens,
+            )
+            .await
+        }
+        _ => {
+            crate::embedding::embed_openai(
+                http,
+                credentials,
+                model,
+                query,
+                vector_dimensions,
+                send_dimensions,
+                max_tokens,
+            )
+            .await
+        }
+    };
+    result.map_err(|error| error.to_string())
+}
+
+/// Provider-dispatched batch embed (the `simple_batch_embed` transport branch).
+#[allow(clippy::too_many_arguments)]
+async fn batch_embed_dispatch<H: crate::llm::http::LlmHttp + Sync>(
+    transport: crate::llm::Provider,
+    http: &H,
+    credentials: &crate::llm::http::Credentials,
+    model: &str,
+    texts: &[String],
+    vector_dimensions: usize,
+    send_dimensions: bool,
+    max_tokens: usize,
+) -> Result<Vec<Vec<f32>>, String> {
+    let result = match transport {
+        crate::llm::Provider::Gemini => {
+            crate::embedding::embed_gemini_batch(
+                http,
+                credentials,
+                model,
+                texts,
+                vector_dimensions,
+                max_tokens,
+            )
+            .await
+        }
+        _ => {
+            crate::embedding::embed_openai_batch(
+                http,
+                credentials,
+                model,
+                texts,
+                vector_dimensions,
+                send_dimensions,
+                max_tokens,
+            )
+            .await
+        }
+    };
+    result.map_err(|error| error.to_string())
 }
 
 /// An owned-transport variant of [`OpenAiEmbedder`] for contexts that must hold
@@ -921,11 +1006,14 @@ pub struct OwnedOpenAiEmbedder<H: crate::llm::http::LlmHttp> {
     pub vector_dimensions: usize,
     pub send_dimensions: bool,
     pub max_tokens: usize,
+    /// See [`OpenAiEmbedder::transport`].
+    pub transport: crate::llm::Provider,
 }
 
 impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OwnedOpenAiEmbedder<H> {
     async fn embed(&self, query: &str) -> Result<Vec<f32>, String> {
-        crate::embedding::embed_openai(
+        embed_dispatch(
+            self.transport,
             &self.http,
             &self.credentials,
             &self.model,
@@ -935,11 +1023,11 @@ impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OwnedOpenAiEmbedder<H> {
             self.max_tokens,
         )
         .await
-        .map_err(|error| error.to_string())
     }
 
     async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
-        crate::embedding::embed_openai_batch(
+        batch_embed_dispatch(
+            self.transport,
             &self.http,
             &self.credentials,
             &self.model,
@@ -949,7 +1037,6 @@ impl<H: crate::llm::http::LlmHttp + Sync> Embedder for OwnedOpenAiEmbedder<H> {
             self.max_tokens,
         )
         .await
-        .map_err(|error| error.to_string())
     }
 }
 
@@ -1463,8 +1550,35 @@ mod tests {
             vector_dimensions: 2,
             send_dimensions: true,
             max_tokens: 8192,
+            transport: crate::llm::Provider::Openai,
         };
         assert_eq!(embedder.embed("hello").await.unwrap(), vec![1.0_f32, 2.0]);
+        assert!(http.last_url().ends_with("/embeddings"));
+    }
+
+    #[tokio::test]
+    async fn gemini_embedder_dispatches_to_embed_content() {
+        use crate::llm::http::Credentials;
+        use crate::llm::http::mock::MockHttp;
+
+        // The Gemini `:embedContent` response shape: embedding.values.
+        let http = MockHttp::ok(serde_json::json!({"embedding": {"values": [3.0, 4.0]}}));
+        let embedder = OpenAiEmbedder {
+            http: &http,
+            credentials: Credentials::new("g-key"),
+            model: "gemini-embedding-001".to_string(),
+            vector_dimensions: 2,
+            send_dimensions: true,
+            max_tokens: 2048,
+            transport: crate::llm::Provider::Gemini,
+        };
+        assert_eq!(embedder.embed("hello").await.unwrap(), vec![3.0_f32, 4.0]);
+        assert!(http.last_url().ends_with("/models/gemini-embedding-001:embedContent"));
+        assert_eq!(
+            http.last_headers(),
+            vec![("x-goog-api-key".to_string(), "g-key".to_string())]
+        );
+        assert_eq!(http.last_body()["output_dimensionality"], serde_json::json!(2));
     }
 
     #[test]
