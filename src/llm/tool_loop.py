@@ -36,6 +36,7 @@ from .runtime import (
     AttemptPlan,
     current_attempt,
     effective_temperature,
+    start_langfuse_agent_step,
 )
 from .types import (
     HonchoLLMCallResponse,
@@ -68,6 +69,17 @@ def _with_iteration_scope(
     return wrapper
 
 
+def _step_label(base: LLMTelemetryContext | None) -> str:
+    """Stable per-agent step-span name, e.g. "Dialectic Agent step".
+
+    No step number — Langfuse aggregates by name; the index rides on the
+    ``iteration`` metadata. The " step" suffix distinguishes it from the bare
+    agent name, which names the enclosing run trace (see
+    `start_langfuse_agent_run`).
+    """
+    return f"{(base.track_name if base else None) or 'Agent'} step"
+
+
 def _telemetry_for_iteration(
     base: LLMTelemetryContext | None, iteration: int
 ) -> LLMTelemetryContext | None:
@@ -79,17 +91,7 @@ def _telemetry_for_iteration(
     """
     if base is None:
         return None
-    return LLMTelemetryContext(
-        workspace_name=base.workspace_name,
-        call_purpose=base.call_purpose,
-        parent_category=base.parent_category,
-        run_id=base.run_id,
-        iteration=iteration,
-        observer=base.observer,
-        observed=base.observed,
-        peer_name=base.peer_name,
-        agent_type=base.agent_type,
-    )
+    return dataclasses.replace(base, iteration=iteration)
 
 
 def _emit_agent_iteration(
@@ -221,6 +223,13 @@ async def stream_final_response(
     # value — telemetry can't tell the retry sequence apart.
     stream_attempt = 0
 
+    # No ContextVar gymnastics around `_in_agent_run` here: the run handle
+    # is alive for the lifetime of the stream (owned by
+    # `StreamingResponseWithMetadata` and closed on drain), so this streamed
+    # generation correctly nests under the run span as the current OTel
+    # observation. The previous code had to flip `_in_agent_run` to escape
+    # the run; with imperative handles the run isn't going anywhere.
+
     async def _setup_stream() -> AsyncIterator[HonchoLLMCallStreamChunk]:
         nonlocal stream_attempt
         stream_attempt += 1
@@ -292,6 +301,7 @@ async def execute_tool_loop(
     stream_final: bool = False,
     iteration_callback: IterationCallback | None = None,
     telemetry: LLMTelemetryContext | None = None,
+    langfuse_run_handle: Any | None = None,
 ) -> HonchoLLMCallResponse[Any] | StreamingResponseWithMetadata:
     """Run the iterative tool calling loop for agentic LLM interactions.
 
@@ -337,195 +347,220 @@ async def execute_tool_loop(
     effective_tool_choice = tool_choice
 
     while iteration < max_tool_iterations:
-        # Reset attempt counter so each iteration starts with the primary provider.
-        current_attempt.set(1)
-        logger.debug(f"Tool execution iteration {iteration + 1}/{max_tool_iterations}")
-
-        if max_input_tokens is not None:
-            if count_message_tokens(conversation_messages) > max_input_tokens:
-                hit_input_token_cap = True
-            conversation_messages = truncate_messages_to_fit(
-                conversation_messages, max_input_tokens
-            )
-
-        async def _call_with_messages(
-            effective_tool_choice: str | dict[str, Any] | None = effective_tool_choice,
-            conversation_messages: list[dict[str, Any]] = conversation_messages,
-            iteration_for_call: int = iteration + 1,
-        ) -> HonchoLLMCallResponse[Any]:
-            plan = get_attempt_plan()
-            return await honcho_llm_call_inner(
-                plan.provider,
-                plan.model,
-                prompt,  # ignored when messages is passed
-                max_tokens,
-                response_model,
-                json_mode,
-                effective_temperature(temperature),
-                stop_seqs,
-                plan.reasoning_effort,
-                verbosity,
-                plan.thinking_budget_tokens,
-                stream=False,
-                client_override=plan.client,
-                tools=tools,
-                tool_choice=effective_tool_choice,
-                messages=conversation_messages,
-                selected_config=plan.selected_config,
-                plan=plan,
-                telemetry=_telemetry_for_iteration(telemetry, iteration_for_call),
-            )
-
-        if enable_retry:
-            call_func = retry(
-                stop=stop_after_attempt(retry_attempts),
-                wait=wait_exponential(multiplier=1, min=4, max=10),
-                before_sleep=before_retry_callback,
-            )(_call_with_messages)
-        else:
-            call_func = _call_with_messages
-
-        response = await call_func()
-
-        total_input_tokens += response.input_tokens
-        total_output_tokens += response.output_tokens
-        total_cache_creation_tokens += response.cache_creation_input_tokens
-        total_cache_read_tokens += response.cache_read_input_tokens
-
-        # emit one AgentIterationEvent per LLM response BEFORE the
-        # no-tool early return. The terminating iteration counts too — it has
-        # an empty tool_calls list and is essential for cost calibration.
-        _emit_agent_iteration(telemetry, iteration + 1, response)
-
-        if not response.tool_calls_made:
-            logger.debug("No tool calls in response, finishing")
-
-            if (
-                isinstance(response.content, str)
-                and not response.content.strip()
-                and empty_response_retries < 1
-                and iteration < max_tool_iterations - 1
-            ):
-                empty_response_retries += 1
-                conversation_messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Your last response was empty. Provide a concise answer "
-                            "to the original query using the available context."
-                        ),
-                    }
-                )
-                iteration += 1
-                continue
-
-            if stream_final:
-                # Snapshot the plan that just succeeded — streaming retries
-                # pin to this exact client/model so we don't bounce back to
-                # primary after the tool loop settled on fallback.
-                winning_plan = get_attempt_plan()
-                stream = stream_final_response(
-                    winning_plan=winning_plan,
-                    prompt=prompt,
-                    max_tokens=max_tokens,
-                    conversation_messages=conversation_messages,
-                    response_model=response_model,
-                    json_mode=json_mode,
-                    temperature=temperature,
-                    stop_seqs=stop_seqs,
-                    verbosity=verbosity,
-                    enable_retry=enable_retry,
-                    retry_attempts=retry_attempts,
-                    before_retry_callback=before_retry_callback,
-                    telemetry=_telemetry_for_iteration(telemetry, iteration + 1),
-                )
-                return StreamingResponseWithMetadata(
-                    stream=stream,
-                    tool_calls_made=all_tool_calls,
-                    input_tokens=total_input_tokens,
-                    output_tokens=total_output_tokens,
-                    cache_creation_input_tokens=total_cache_creation_tokens,
-                    cache_read_input_tokens=total_cache_read_tokens,
-                    thinking_content=response.thinking_content,
-                    iterations=iteration + 1,
-                    hit_input_token_cap=hit_input_token_cap,
-                )
-
-            response.tool_calls_made = all_tool_calls
-            response.input_tokens = total_input_tokens
-            response.output_tokens = total_output_tokens
-            response.cache_creation_input_tokens = total_cache_creation_tokens
-            response.cache_read_input_tokens = total_cache_read_tokens
-            response.iterations = iteration + 1
-            response.hit_input_token_cap = (
-                response.hit_input_token_cap or hit_input_token_cap
-            )
-            return response
-
-        current_provider = get_attempt_plan().provider
-
-        assistant_message = format_assistant_tool_message(
-            current_provider,
-            response.content,
-            response.tool_calls_made,
-            response.thinking_blocks,
-            response.reasoning_details,
+        step = start_langfuse_agent_step(
+            _step_label(telemetry),
+            _telemetry_for_iteration(telemetry, iteration + 1),
         )
-        conversation_messages.append(assistant_message)
+        try:
+            # Reset attempt counter so each iteration starts with the primary provider.
+            current_attempt.set(1)
+            logger.debug(
+                f"Tool execution iteration {iteration + 1}/{max_tool_iterations}"
+            )
 
-        # Telemetry context — 1-indexed iteration.
-        set_current_iteration(iteration + 1)
-
-        tool_results: list[dict[str, Any]] = []
-        for seq, tool_call in enumerate(response.tool_calls_made):
-            tool_name = tool_call["name"]
-            tool_input = tool_call["input"]
-            tool_id = tool_call.get("id", "")
-
-            logger.debug(f"Executing tool: {tool_name}")
-
-            # the executor closure reads these from
-            # ContextVars to populate AgentToolCallCompletedEvent. Set BEFORE
-            # the executor call so two calls to the same tool in one iteration
-            # get distinct seq values. Reset last-tool metadata so we never
-            # observe stale state from a prior call.
-            set_current_tool_call_seq(seq, tool_id or None)
-            set_last_tool_metadata({})
-
-            try:
-                tool_result = await tool_executor(tool_name, tool_input)
-                # Stash ToolResult.metadata on all_tool_calls so
-                # specialist rollups can read created/deleted observation
-                # counts without round-tripping through the event store.
-                tool_result_metadata = get_last_tool_metadata()
-                tool_results.append(
-                    {
-                        "tool_id": tool_id,
-                        "tool_name": tool_name,
-                        "result": tool_result,
-                    }
-                )
-                all_tool_calls.append(
-                    {
-                        "tool_name": tool_name,
-                        "tool_input": tool_input,
-                        "tool_result": tool_result,
-                        "tool_result_metadata": tool_result_metadata,
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Tool execution failed for {tool_name}: {e}")
-                tool_results.append(
-                    {
-                        "tool_id": tool_id,
-                        "tool_name": tool_name,
-                        "result": f"Error: {str(e)}",
-                        "is_error": True,
-                    }
+            if max_input_tokens is not None:
+                if count_message_tokens(conversation_messages) > max_input_tokens:
+                    hit_input_token_cap = True
+                conversation_messages = truncate_messages_to_fit(
+                    conversation_messages, max_input_tokens
                 )
 
-        append_tool_results(current_provider, tool_results, conversation_messages)
+            async def _call_with_messages(
+                tool_choice_for_call: str
+                | dict[str, Any]
+                | None = effective_tool_choice,
+                captured_messages: list[dict[str, Any]] = conversation_messages,
+                iteration_for_call: int = iteration + 1,
+            ) -> HonchoLLMCallResponse[Any]:
+                plan = get_attempt_plan()
+                return await honcho_llm_call_inner(
+                    plan.provider,
+                    plan.model,
+                    prompt,  # ignored when messages is passed
+                    max_tokens,
+                    response_model,
+                    json_mode,
+                    effective_temperature(temperature),
+                    stop_seqs,
+                    plan.reasoning_effort,
+                    verbosity,
+                    plan.thinking_budget_tokens,
+                    stream=False,
+                    client_override=plan.client,
+                    tools=tools,
+                    tool_choice=tool_choice_for_call,
+                    messages=captured_messages,
+                    selected_config=plan.selected_config,
+                    plan=plan,
+                    telemetry=_telemetry_for_iteration(telemetry, iteration_for_call),
+                )
 
+            call_func: Callable[[], Awaitable[HonchoLLMCallResponse[Any]]]
+            if enable_retry:
+                call_func = retry(
+                    stop=stop_after_attempt(retry_attempts),
+                    wait=wait_exponential(multiplier=1, min=4, max=10),
+                    before_sleep=before_retry_callback,
+                )(_call_with_messages)
+            else:
+                call_func = _call_with_messages  # pyright: ignore[reportGeneralTypeIssues]
+
+            response = await call_func()
+
+            total_input_tokens += response.input_tokens
+            total_output_tokens += response.output_tokens
+            total_cache_creation_tokens += response.cache_creation_input_tokens
+            total_cache_read_tokens += response.cache_read_input_tokens
+
+            # emit one AgentIterationEvent per LLM response BEFORE the
+            # no-tool early return. The terminating iteration counts too — it has
+            # an empty tool_calls list and is essential for cost calibration.
+            _emit_agent_iteration(telemetry, iteration + 1, response)
+
+            # Step span is current again (the generation closed); stamp this
+            # turn's I/O so it isn't blank.
+            if step is not None:
+                step.annotate_io(
+                    conversation_messages,
+                    response.content,
+                    response.tool_calls_made,
+                )
+
+            if not response.tool_calls_made:
+                logger.debug("No tool calls in response, finishing")
+
+                if (
+                    isinstance(response.content, str)
+                    and not response.content.strip()
+                    and empty_response_retries < 1
+                    and iteration < max_tool_iterations - 1
+                ):
+                    empty_response_retries += 1
+                    conversation_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your last response was empty. Provide a concise answer "
+                                "to the original query using the available context."
+                            ),
+                        }
+                    )
+                    iteration += 1
+                    continue
+
+                if stream_final:
+                    # Snapshot the plan that just succeeded — streaming retries
+                    # pin to this exact client/model so we don't bounce back to
+                    # primary after the tool loop settled on fallback.
+                    winning_plan = get_attempt_plan()
+                    stream = stream_final_response(
+                        winning_plan=winning_plan,
+                        prompt=prompt,
+                        max_tokens=max_tokens,
+                        conversation_messages=conversation_messages,
+                        response_model=response_model,
+                        json_mode=json_mode,
+                        temperature=temperature,
+                        stop_seqs=stop_seqs,
+                        verbosity=verbosity,
+                        enable_retry=enable_retry,
+                        retry_attempts=retry_attempts,
+                        before_retry_callback=before_retry_callback,
+                        telemetry=_telemetry_for_iteration(telemetry, iteration + 1),
+                    )
+                    return StreamingResponseWithMetadata(
+                        stream=stream,
+                        tool_calls_made=all_tool_calls,
+                        input_tokens=total_input_tokens,
+                        output_tokens=total_output_tokens,
+                        cache_creation_input_tokens=total_cache_creation_tokens,
+                        cache_read_input_tokens=total_cache_read_tokens,
+                        thinking_content=response.thinking_content,
+                        iterations=iteration + 1,
+                        hit_input_token_cap=hit_input_token_cap,
+                        langfuse_run_handle=langfuse_run_handle,
+                    )
+
+                response.tool_calls_made = all_tool_calls
+                response.input_tokens = total_input_tokens
+                response.output_tokens = total_output_tokens
+                response.cache_creation_input_tokens = total_cache_creation_tokens
+                response.cache_read_input_tokens = total_cache_read_tokens
+                response.iterations = iteration + 1
+                response.hit_input_token_cap = (
+                    response.hit_input_token_cap or hit_input_token_cap
+                )
+                return response
+
+            current_provider = get_attempt_plan().provider
+
+            assistant_message = format_assistant_tool_message(
+                current_provider,
+                response.content,
+                response.tool_calls_made,
+                response.thinking_blocks,
+                response.reasoning_details,
+            )
+            conversation_messages.append(assistant_message)
+
+            # Telemetry context — 1-indexed iteration.
+            set_current_iteration(iteration + 1)
+
+            tool_results: list[dict[str, Any]] = []
+            for seq, tool_call in enumerate(response.tool_calls_made):
+                tool_name = tool_call["name"]
+                tool_input = tool_call["input"]
+                tool_id = tool_call.get("id", "")
+
+                logger.debug(f"Executing tool: {tool_name}")
+
+                # the executor closure reads these from
+                # ContextVars to populate AgentToolCallCompletedEvent. Set BEFORE
+                # the executor call so two calls to the same tool in one iteration
+                # get distinct seq values. Reset last-tool metadata so we never
+                # observe stale state from a prior call.
+                set_current_tool_call_seq(seq, tool_id or None)
+                set_last_tool_metadata({})
+
+                try:
+                    tool_result = await tool_executor(tool_name, tool_input)
+                    # Stash ToolResult.metadata on all_tool_calls so
+                    # specialist rollups can read created/deleted observation
+                    # counts without round-tripping through the event store.
+                    tool_result_metadata = get_last_tool_metadata()
+                    tool_results.append(
+                        {
+                            "tool_id": tool_id,
+                            "tool_name": tool_name,
+                            "result": tool_result,
+                        }
+                    )
+                    all_tool_calls.append(
+                        {
+                            "tool_name": tool_name,
+                            "tool_input": tool_input,
+                            "tool_result": tool_result,
+                            "tool_result_metadata": tool_result_metadata,
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Tool execution failed for {tool_name}: {e}")
+                    tool_results.append(
+                        {
+                            "tool_id": tool_id,
+                            "tool_name": tool_name,
+                            "result": f"Error: {str(e)}",
+                            "is_error": True,
+                        }
+                    )
+
+            append_tool_results(current_provider, tool_results, conversation_messages)
+        finally:
+            if step is not None:
+                step.end()
+
+        # Between-turn bookkeeping lives outside the step span — the span
+        # scopes the LLM call + its tools, not the iteration accounting.
         if iteration_callback is not None:
             try:
                 iteration_data = IterationData(
@@ -602,6 +637,7 @@ async def execute_tool_loop(
             thinking_content=None,
             iterations=iteration + 1,
             hit_input_token_cap=hit_input_token_cap,
+            langfuse_run_handle=langfuse_run_handle,
         )
 
     current_attempt.set(1)
@@ -639,7 +675,18 @@ async def execute_tool_loop(
     else:
         final_call_func = _final_call
 
-    final_response = await final_call_func()
+    # Step span around the synthesis call — same shape as in-loop iterations
+    # so the generation nests under the run root instead of dangling at the
+    # trace. Imperative pair with a try/finally for the .end().
+    synthesis_step = start_langfuse_agent_step(
+        _step_label(telemetry),
+        _telemetry_for_iteration(telemetry, synthesis_iteration),
+    )
+    try:
+        final_response = await final_call_func()
+    finally:
+        if synthesis_step is not None:
+            synthesis_step.end()
 
     # emit the synthesis-call iteration event BEFORE merging cumulative
     # totals onto final_response below — otherwise the event's per-iteration

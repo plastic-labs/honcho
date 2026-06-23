@@ -131,16 +131,17 @@ for i in range(0, len(messages), 100):
     session.add_messages(messages[i:i + 100])
 ```
 
-Honcho only reasons over a peer once it accumulates ~1,000 tokens *within a single session*
-([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Scope
-the session to the volume you ingest:
+Honcho batches reasoning until a peer accumulates ~1,000 tokens *within a single session*,
+with a default age-based flush for quiet tails
+([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Scope the
+session to the volume you ingest:
 
 - **High-volume runs** (a day of emails, a CRM export) clear the threshold easily — a
   per-run session like `email-import-{date}` is fine.
 - **Low-volume or trickle imports** (a few short records at a time) should append to
   one **ongoing per-source session** (e.g. `email-import-gmail`), so content
-  accumulates across runs instead of fragmenting into thin sessions that each stall
-  below the threshold (nothing is lost — it just waits).
+  accumulates across runs instead of fragmenting into thin sessions that each flush
+  later with little context.
 
 The [Gmail](/v3/guides/gmail) and [Granola](/v3/guides/granola) guides are related
 import examples.

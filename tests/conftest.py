@@ -34,9 +34,16 @@ from src.config import settings
 from src.db import Base
 from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
-from src.main import app
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_admin_jwt, create_jwt
+
+# Disable Langfuse for the whole suite before importing src.main: @conditional_observe
+# binds to settings.LANGFUSE_PUBLIC_KEY at import time, so blanking it here keeps mocked
+# test calls from emitting traces to a configured Langfuse backend. Tests that exercise
+# Langfuse patch settings.LANGFUSE_PUBLIC_KEY themselves.
+settings.LANGFUSE_PUBLIC_KEY = None
+
+from src.main import app  # noqa: E402
 
 
 # Create a custom handler that doesn't get closed prematurely
@@ -78,6 +85,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
+    # Pure JWT scope tests — operate on src.security directly, no DB needed.
+    "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
 )
 

@@ -141,7 +141,7 @@ def test_get_peer_by_name_with_auth(
     # Test with peer-scoped JWT
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=test_peer.name))}"
         )
 
         # Get specific peer using get_or_create endpoint
@@ -218,7 +218,7 @@ def test_create_session_with_auth(
     # Test with peer-scoped JWT
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=test_peer.name))}"
         )
 
         session_name2 = str(generate_nanoid())
@@ -262,7 +262,7 @@ def test_get_session_by_name_with_auth(
     if auth_client.auth_type == "empty":
         # Test with session-scoped JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(s=session_name))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name, s=session_name))}"
         )
 
         response = auth_client.post(
@@ -282,7 +282,7 @@ def test_get_session_by_name_with_auth(
 
         # Test with peer-scoped JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=test_peer.name))}"
         )
 
         assert auth_client.post(

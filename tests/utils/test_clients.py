@@ -9,6 +9,7 @@ Tests cover:
 - Provider-specific features
 """
 
+import contextlib
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -37,6 +38,7 @@ from src.llm import (
     honcho_llm_call,
     honcho_llm_call_inner,
 )
+from src.llm.types import LLMTelemetryContext
 
 
 class SampleTestModel(BaseModel):
@@ -910,8 +912,10 @@ class TestMainLLMCallFunction:
 
             assert response.content == "No retry response"
 
-    async def test_track_name_updates_langfuse_span_name(self):
-        """track_name should rename the top-level Langfuse span."""
+    async def test_track_name_on_telemetry_names_langfuse_trace_and_generation(self):
+        """track_name on telemetry should name the Langfuse trace + generation
+        per agent and stamp provider/model metadata (via propagate_attributes +
+        update_current_generation; see annotate_current_langfuse_trace)."""
 
         mock_llm_client = AsyncMock(spec=AsyncAnthropic)
         mock_response = Mock()
@@ -921,11 +925,18 @@ class TestMainLLMCallFunction:
         mock_llm_client.messages.create = AsyncMock(return_value=mock_response)
 
         mock_langfuse_client = Mock()
+        captured: dict[str, Any] = {}
+
+        @contextlib.contextmanager
+        def fake_propagate(**kwargs: Any):
+            captured.update(kwargs)
+            yield
 
         with (
             patch.dict(CLIENTS, {"anthropic": mock_llm_client}),
             patch.object(settings, "LANGFUSE_PUBLIC_KEY", "test-public-key"),
             patch("langfuse.get_client", return_value=mock_langfuse_client),
+            patch("langfuse.propagate_attributes", fake_propagate),
         ):
             response = await honcho_llm_call(
                 model_config=ConfiguredModelSettings(
@@ -935,18 +946,74 @@ class TestMainLLMCallFunction:
                 prompt="Hello",
                 max_tokens=100,
                 enable_retry=False,
-                track_name="Dialectic Agent",
+                telemetry=LLMTelemetryContext(
+                    workspace_name="ws1", track_name="Dialectic Agent"
+                ),
             )
 
             assert response.content == "Named response"
-            mock_langfuse_client.update_current_span.assert_called_once_with(
-                name="Dialectic Agent",
-                metadata={
-                    "namespace": settings.NAMESPACE,
-                    "provider": "anthropic",
-                    "model": "claude-4-sonnet",
-                },
+            # No run_id → this single call IS the trace root: it names the trace
+            # and stamps metadata via propagate_attributes...
+            assert captured["trace_name"] == "Dialectic Agent"
+            assert captured["session_id"] is None
+            assert captured["metadata"]["namespace"] == settings.NAMESPACE
+            assert captured["metadata"]["provider"] == "anthropic"
+            assert captured["metadata"]["model"] == "claude-4-sonnet"
+            # ...and the generation is named + carries per-call model/metadata.
+            mock_langfuse_client.update_current_generation.assert_called_once()
+            gen_kwargs = mock_langfuse_client.update_current_generation.call_args.kwargs
+            assert gen_kwargs["name"] == "Dialectic Agent LLM call"
+            assert gen_kwargs["model"] == "claude-4-sonnet"
+            assert gen_kwargs["metadata"]["provider"] == "anthropic"
+
+    async def test_no_telemetry_still_stamps_trace_without_name(self):
+        """Without telemetry, propagate_attributes still fires with namespace
+        metadata, but the trace stays unnamed — track_name lives exclusively
+        on telemetry now. The per-call generation still gets model/metadata
+        stamped (the multi-turn-regression fix means we always stamp these)."""
+
+        mock_llm_client = AsyncMock(spec=AsyncAnthropic)
+        mock_response = Mock()
+        mock_response.content = [TextBlock(text="Unnamed response", type="text")]
+        mock_response.usage = Usage(input_tokens=5, output_tokens=5)
+        mock_response.stop_reason = "stop"
+        mock_llm_client.messages.create = AsyncMock(return_value=mock_response)
+
+        mock_langfuse_client = Mock()
+        captured: dict[str, Any] = {}
+
+        @contextlib.contextmanager
+        def fake_propagate(**kwargs: Any):
+            captured.update(kwargs)
+            yield
+
+        with (
+            patch.dict(CLIENTS, {"anthropic": mock_llm_client}),
+            patch.object(settings, "LANGFUSE_PUBLIC_KEY", "test-public-key"),
+            patch("langfuse.get_client", return_value=mock_langfuse_client),
+            patch("langfuse.propagate_attributes", fake_propagate),
+        ):
+            response = await honcho_llm_call(
+                model_config=ConfiguredModelSettings(
+                    model="claude-4-sonnet",
+                    transport="anthropic",
+                ),
+                prompt="Hello",
+                max_tokens=100,
+                enable_retry=False,
             )
+
+            assert response.content == "Unnamed response"
+            assert captured["user_id"] == str(settings.NAMESPACE)
+            assert captured["trace_name"] is None
+            assert captured["metadata"]["namespace"] == settings.NAMESPACE
+            assert captured["metadata"]["provider"] == "anthropic"
+            # Generation gets model + metadata even without a track_name — only
+            # the name kwarg stays None.
+            mock_langfuse_client.update_current_generation.assert_called_once()
+            gen_kwargs = mock_langfuse_client.update_current_generation.call_args.kwargs
+            assert gen_kwargs["name"] is None
+            assert gen_kwargs["model"] == "claude-4-sonnet"
 
 
 class TestEdgeCases:

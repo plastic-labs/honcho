@@ -2403,6 +2403,10 @@ async def create_tool_executor(
         metadata: dict[str, Any] = {}
         is_error: bool = False
 
+        # Langfuse tool observation; auto-parents under the active step span.
+        # Closed in the finally below with output + level.
+        tool_obs = _begin_tool_observation(tool_name, tool_input)
+
         try:
             handler = _TOOL_HANDLERS.get(tool_name)
             if handler:
@@ -2481,9 +2485,42 @@ async def create_tool_executor(
                 provider_tool_call_id=get_current_provider_tool_call_id(),
             )
 
+            _finish_tool_observation(tool_obs, result_str, is_error)
+
         return result_str
 
     return execute_tool
+
+
+def _begin_tool_observation(tool_name: str, tool_input: dict[str, Any]) -> Any:
+    """Open a non-current Langfuse "tool" observation for one tool execution.
+
+    Auto-parents under the active step span (else standalone). Returns a handle
+    (closed by `_finish_tool_observation`) or None when disabled/setup fails.
+    All tools are ``as_type="tool"`` — they share one generic dispatcher.
+    """
+    if not settings.LANGFUSE_PUBLIC_KEY:
+        return None
+    try:
+        from langfuse import get_client
+
+        return get_client().start_observation(
+            as_type="tool", name=tool_name, input=tool_input
+        )
+    except Exception:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to open Langfuse tool observation", exc_info=True)
+        return None
+
+
+def _finish_tool_observation(tool_obs: Any, result_str: str, is_error: bool) -> None:
+    """Close a Langfuse tool observation opened by `_begin_tool_observation`."""
+    if tool_obs is None:
+        return
+    try:
+        tool_obs.update(output=result_str, level="ERROR" if is_error else None)
+        tool_obs.end()
+    except Exception:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to close Langfuse tool observation", exc_info=True)
 
 
 def _emit_agent_tool_call_completed(

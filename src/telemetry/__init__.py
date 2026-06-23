@@ -52,8 +52,17 @@ async def shutdown_telemetry() -> None:
 
     This should be called during application shutdown to ensure:
     - CloudEvents buffer is flushed
+    - Langfuse's buffered observations are flushed (its background exporter and
+      atexit hook don't fire reliably on SIGTERM)
     """
     from src.telemetry.events import shutdown_telemetry_events
+    from src.telemetry.logging import flush_langfuse
 
-    # Shutdown CloudEvents emitter (flushes buffer)
-    await shutdown_telemetry_events()
+    # Flush Langfuse even if the CloudEvents shutdown raises, so the final
+    # batch of spans isn't dropped on a noisy shutdown.
+    try:
+        # Shutdown CloudEvents emitter (flushes buffer)
+        await shutdown_telemetry_events()
+    finally:
+        # Flush any buffered Langfuse spans before the process exits.
+        flush_langfuse()

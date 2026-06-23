@@ -20,13 +20,18 @@ from typing import Any, Literal, TypeVar, overload
 from pydantic import BaseModel
 
 from src.config import ModelConfig, ModelTransport
+from src.telemetry.logging import conditional_observe
 
 from .backend import CompletionResult as BackendCompletionResult
 from .backend import StreamChunk as BackendStreamChunk
 from .backend import ToolCallResult
 from .registry import CLIENTS, backend_for_provider
 from .request_builder import execute_completion, execute_stream
-from .runtime import AttemptPlan, effective_config_for_call
+from .runtime import (
+    AttemptPlan,
+    annotate_current_langfuse_trace,
+    effective_config_for_call,
+)
 from .types import (
     HonchoLLMCallResponse,
     HonchoLLMCallStreamChunk,
@@ -261,6 +266,7 @@ async def honcho_llm_call_inner(
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
+@conditional_observe(name="LLM Call", as_type="generation")
 async def honcho_llm_call_inner(
     provider: ModelTransport,
     model: str,
@@ -284,6 +290,11 @@ async def honcho_llm_call_inner(
 ) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     """One backend call. No retry, no fallback, no tool loop.
 
+    This is the Langfuse trace boundary (``@conditional_observe``): every
+    provider call is its own trace. Multi-turn agents thread a shared
+    ``run_id`` through ``telemetry`` so their per-iteration traces roll up into
+    one Langfuse session (see ``annotate_current_langfuse_trace``).
+
     The outer src/llm/api.py `honcho_llm_call` handles retry + fallback +
     tool orchestration on top of this.
 
@@ -299,6 +310,12 @@ async def honcho_llm_call_inner(
     client = client_override or CLIENTS.get(provider)
     if client is None:
         raise ValueError(f"Missing client for {provider}")
+
+    # Stamp this trace (user_id/session_id/metadata) now that the @observe
+    # span is open and the resolved provider/model are known. Set early so the
+    # annotation lands even on the stream path, where the span closes once the
+    # generator is returned (before chunks drain).
+    annotate_current_langfuse_trace(provider, model, telemetry=telemetry)
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
