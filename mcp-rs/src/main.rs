@@ -9,6 +9,7 @@ use tracing_subscriber::EnvFilter;
 
 const DEFAULT_BIND_ADDRESS: &str = "0.0.0.0:8787";
 const DEFAULT_HONCHO_API_URL: &str = "https://api.honcho.dev";
+const DEFAULT_ALLOWED_HOSTS: &[&str] = &["localhost", "127.0.0.1", "::1"];
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -21,12 +22,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .parse::<SocketAddr>()?;
     let api_url =
         std::env::var("HONCHO_API_URL").unwrap_or_else(|_| DEFAULT_HONCHO_API_URL.to_string());
+    let allowed_hosts = std::env::var("MCP_ALLOWED_HOSTS")
+        .ok()
+        .map(|hosts| {
+            hosts
+                .split(',')
+                .map(str::trim)
+                .filter(|host| !host.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|hosts| !hosts.is_empty())
+        .unwrap_or_else(|| {
+            DEFAULT_ALLOWED_HOSTS
+                .iter()
+                .map(|host| (*host).to_string())
+                .collect()
+        });
     let cancellation_token = CancellationToken::new();
 
     let service = StreamableHttpService::new(
         move || Ok(HonchoMcp::new(api_url.clone())),
         LocalSessionManager::default().into(),
         StreamableHttpServerConfig::default()
+            .with_allowed_hosts(allowed_hosts)
             .with_cancellation_token(cancellation_token.child_token()),
     );
     let app = Router::new().fallback_service(service);
