@@ -1031,6 +1031,36 @@ async fn get_peer_card(
     }
 }
 
+/// Fetch a peer card as a plain list of lines (Python `crud.get_peer_card`,
+/// which returns `list[str] | None`). [`db::get_peer_card`] wraps the result as
+/// `{"peer_card": <array|null>}`; here it is unwrapped to `Some(Vec)` when the
+/// card array is present, `None` when the peer is missing or has no card for the
+/// `(observer, observed)` pair.
+async fn fetch_peer_card_list(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+) -> Result<Option<Vec<String>>, ApiError> {
+    let card = db::get_peer_card(pool, workspace_name, observer, observed).await?;
+    Ok(card.as_ref().and_then(peer_card_value_to_list))
+}
+
+/// Extract the card lines from the `{"peer_card": <array|null>}` value
+/// [`db::get_peer_card`] returns. `Some(Vec)` when the array is present (possibly
+/// empty), `None` when the card is `null` (no card for the pair).
+fn peer_card_value_to_list(value: &Value) -> Option<Vec<String>> {
+    value
+        .get("peer_card")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect()
+        })
+}
+
 /// Request body for the dialectic chat endpoint, porting `schemas.DialecticOptions`.
 #[derive(serde::Deserialize)]
 struct DialecticBody {
@@ -1051,8 +1081,9 @@ struct DialecticBody {
 /// the observer for the omniscient/global perspective. Returns
 /// `DialecticResponse{content}` (null when the answer is empty).
 ///
-/// Not yet ported: SSE streaming (`stream: true` → 501), peer-card injection
-/// (cards are passed as `None`), and the get-or-create-peer write the Python
+/// Peer cards are injected when the resolved configuration enables them
+/// (`peer_card.use`), mirroring the Python preflight. Not yet ported: SSE
+/// streaming (`stream: true` → 501) and the get-or-create-peer write the Python
 /// endpoint performs first (the read-only sidecar assumes the peer exists).
 async fn chat(
     State(state): State<AppState>,
@@ -1086,6 +1117,30 @@ async fn chat(
     let observed = body.target.clone().unwrap_or_else(|| peer_id.clone());
     let pool = state.pool()?;
 
+    // Resolve peer-card injection (Python's dialectic preflight): merge the
+    // workspace + session configuration over defaults, and when `peer_card.use`
+    // is set, load the observer's self-card and its card of the observed peer.
+    let workspace_config = db::get_workspace_configuration(pool, &workspace_id).await?;
+    let session_config = match body.session_id.as_deref() {
+        Some(session) => db::fetch_session_for_enqueue(pool, &workspace_id, session)
+            .await?
+            .map(|(_, config)| config),
+        None => None,
+    };
+    let configuration =
+        crate::producer::resolve_configuration(Some(&workspace_config), session_config.as_ref(), None);
+    let (observer_card, observed_card) = if configuration.peer_card_use {
+        let observer_card = fetch_peer_card_list(pool, &workspace_id, &peer_id, &peer_id).await?;
+        let observed_card = if peer_id != observed {
+            fetch_peer_card_list(pool, &workspace_id, &peer_id, &observed).await?
+        } else {
+            None
+        };
+        (observer_card, observed_card)
+    } else {
+        (None, None)
+    };
+
     // One HTTP client for both the embedding (prefetch + search tools) and the
     // completion calls. A missing embedding key just makes prefetch degrade to
     // no-prefetch (the embed call errors and is swallowed).
@@ -1112,8 +1167,8 @@ async fn chat(
         body.session_id.as_deref(),
         &peer_id,
         &observed,
-        None,
-        None,
+        observer_card.as_deref(),
+        observed_card.as_deref(),
         &body.query,
         level,
     )
@@ -4096,8 +4151,36 @@ fn session_write_error(error: sqlx::Error, workspace_id: &str, session_id: &str)
 
 #[cfg(test)]
 mod tests {
-    use crate::app::{authorize_webhook_workspace, validate_webhook_url};
+    use crate::app::{authorize_webhook_workspace, peer_card_value_to_list, validate_webhook_url};
     use crate::auth::{AuthError, JwtParams};
+    use serde_json::json;
+
+    #[test]
+    fn peer_card_value_to_list_extracts_present_array() {
+        let value = json!({"peer_card": ["IDENTITY: alice", "ATTRIBUTE: likes tea"]});
+        assert_eq!(
+            peer_card_value_to_list(&value),
+            Some(vec![
+                "IDENTITY: alice".to_string(),
+                "ATTRIBUTE: likes tea".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn peer_card_value_to_list_none_for_null_card() {
+        // db::get_peer_card returns {"peer_card": null} when the peer exists but
+        // has no card for the (observer, observed) pair → None (Python returns None).
+        assert_eq!(peer_card_value_to_list(&json!({"peer_card": null})), None);
+    }
+
+    #[test]
+    fn peer_card_value_to_list_empty_array_is_some_empty() {
+        assert_eq!(
+            peer_card_value_to_list(&json!({"peer_card": []})),
+            Some(Vec::<String>::new())
+        );
+    }
 
     #[test]
     fn webhook_url_accepts_public_http_urls() {
