@@ -1,4 +1,4 @@
-use axum::extract::{Path, Query, State};
+use axum::extract::{Multipart, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -326,6 +326,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/",
             post(create_messages_for_session),
+        )
+        .route(
+            "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/upload",
+            post(create_messages_with_file),
         )
         .route(
             "/v3/workspaces/{workspace_id}/sessions/{session_id}/messages/list",
@@ -2614,6 +2618,183 @@ async fn create_messages_for_session(
     }
 
     Ok((StatusCode::CREATED, Json(response)).into_response())
+}
+
+/// Create messages from an uploaded file, porting `create_messages_with_file`:
+/// the file is extracted to text, split into `MAX_MESSAGE_SIZE`-char chunks, and
+/// each chunk becomes a message carrying shared file metadata in its
+/// `internal_metadata`. Mirrors the regular create path for enqueue + embedding.
+///
+/// Only `text/*` files extract today (see [`crate::files`]); `application/json`
+/// and `application/pdf` return 415 until their extractors land.
+async fn create_messages_with_file(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, session_id)): Path<(String, String)>,
+    mut multipart: Multipart,
+) -> Result<Response, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        None,
+        Some(&session_id),
+    )?;
+    ensure_writes_enabled(&state)?;
+    validate_resource_name(&workspace_id, "workspace_id")?;
+    validate_resource_name(&session_id, "session_id")?;
+
+    let mut peer_id: Option<String> = None;
+    let mut metadata_raw: Option<String> = None;
+    let mut configuration_raw: Option<String> = None;
+    let mut created_at_raw: Option<String> = None;
+    let mut file_bytes: Option<Vec<u8>> = None;
+    let mut filename: Option<String> = None;
+    let mut content_type: Option<String> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|error| ApiError::BadRequest(format!("Malformed multipart form: {error}")))?
+    {
+        match field.name() {
+            Some("peer_id") => peer_id = Some(field.text().await.map_err(multipart_read_err)?),
+            Some("metadata") => {
+                metadata_raw = Some(field.text().await.map_err(multipart_read_err)?)
+            }
+            Some("configuration") => {
+                configuration_raw = Some(field.text().await.map_err(multipart_read_err)?)
+            }
+            Some("created_at") => {
+                created_at_raw = Some(field.text().await.map_err(multipart_read_err)?)
+            }
+            Some("file") => {
+                filename = field.file_name().map(str::to_string);
+                content_type = field.content_type().map(str::to_string);
+                file_bytes = Some(field.bytes().await.map_err(multipart_read_err)?.to_vec());
+            }
+            // Drain any unexpected field so the stream advances.
+            _ => {
+                let _ = field.bytes().await;
+            }
+        }
+    }
+
+    let Some(peer_id) = peer_id else {
+        return Err(ApiError::Validation("peer_id form field is required".to_string()));
+    };
+    let Some(file_bytes) = file_bytes else {
+        return Err(ApiError::Validation("file is required".to_string()));
+    };
+    let content_type = content_type.unwrap_or_default();
+
+    if file_bytes.len() as i64 > db::MAX_FILE_SIZE {
+        return Err(ApiError::FileTooLarge(format!(
+            "File size ({} bytes) exceeds maximum allowed size ({} bytes)",
+            file_bytes.len(),
+            db::MAX_FILE_SIZE
+        )));
+    }
+
+    // Form fields are loosely parsed (Python `parse_upload_form` warns and falls
+    // back to None on a bad JSON / timestamp string).
+    let metadata = metadata_raw
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .filter(|value| value.is_object());
+    let configuration = configuration_raw
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|value| parse_message_configuration(&value, 0).unwrap_or(None));
+    let created_at = created_at_raw
+        .as_deref()
+        .and_then(|raw| parse_message_created_at(&Value::String(raw.to_string()), 0).ok());
+
+    let text = crate::files::extract_text(&file_bytes, &content_type).map_err(|error| match error {
+        crate::files::FileError::UnsupportedType(content_type) => {
+            ApiError::UnsupportedFileType(format!("Unsupported file type: {content_type}"))
+        }
+        crate::files::FileError::Decode => {
+            ApiError::Validation("Could not decode text file".to_string())
+        }
+    })?;
+
+    let file_id = db::generate_nanoid();
+    let chunks = crate::files::build_file_message_data(
+        &text,
+        &file_id,
+        filename.as_deref(),
+        Some(&content_type),
+        Some(file_bytes.len() as i64),
+        db::MAX_MESSAGE_SIZE,
+    );
+
+    // Build per-chunk inserts (NUL-stripped content, like MessageCreate).
+    let parsed: Vec<ParsedMessage> = chunks
+        .iter()
+        .map(|chunk| {
+            let content = chunk.content.replace('\0', "");
+            let token_count = crate::tokens::estimate_tokens(&content) as i32;
+            ParsedMessage {
+                peer_name: peer_id.clone(),
+                content,
+                metadata: metadata.clone().unwrap_or_else(|| json!({})),
+                configuration: configuration.clone(),
+                created_at,
+                token_count,
+            }
+        })
+        .collect();
+    let inserts = parsed
+        .iter()
+        .map(|message| db::MessageInsert {
+            peer_name: message.peer_name.clone(),
+            content: message.content.clone(),
+            metadata: message.metadata.clone(),
+            created_at: message.created_at,
+            token_count: message.token_count,
+        })
+        .collect::<Vec<_>>();
+
+    let pool = state.pool()?;
+    let created = db::create_messages(
+        pool,
+        &workspace_id,
+        &session_id,
+        &inserts,
+        state.embed_messages,
+        state.embedding_max_tokens,
+    )
+    .await?;
+
+    // Attach each chunk's file metadata to the created message (Python's
+    // post-create `internal_metadata.update`).
+    for (message, chunk) in created.iter().zip(&chunks) {
+        db::merge_message_internal_metadata(
+            pool,
+            &workspace_id,
+            &session_id,
+            message.id,
+            &chunk.file_metadata,
+        )
+        .await?;
+    }
+
+    let response = Value::Array(created.iter().map(db::CreatedMessage::to_json).collect());
+
+    if let Err(error) =
+        enqueue_created_messages(&state, &workspace_id, &session_id, &created, &parsed).await
+    {
+        tracing::warn!(?error, "failed to enqueue messages created from file upload");
+    }
+
+    Ok((StatusCode::CREATED, Json(response)).into_response())
+}
+
+/// Map a multipart field read error (truncated body, bad encoding) to a 400.
+fn multipart_read_err(error: axum::extract::multipart::MultipartError) -> ApiError {
+    ApiError::BadRequest(format!("Failed to read multipart field: {error}"))
 }
 
 /// Build and insert the queue records for a freshly-created batch, porting the

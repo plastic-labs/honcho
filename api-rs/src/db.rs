@@ -1426,6 +1426,39 @@ pub const GET_CONTEXT_MAX_TOKENS: i64 = 100_000;
 /// not pass `max_conclusions`.
 pub const WORKING_REPRESENTATION_MAX_OBSERVATIONS: i64 = 100;
 
+/// Mirror of `settings.MAX_FILE_SIZE` (default 5 MiB): the upper bound for an
+/// uploaded file before `FileTooLargeError`.
+pub const MAX_FILE_SIZE: i64 = 5_242_880;
+
+/// Mirror of `settings.MAX_MESSAGE_SIZE` (default 25_000): the per-message
+/// character cap, also used as the file-upload chunk size.
+pub const MAX_MESSAGE_SIZE: usize = 25_000;
+
+/// Shallow-merge `patch` into a message's `internal_metadata` (JSONB `||`),
+/// porting the file-upload post-create update (`message.internal_metadata.update(
+/// file_metadata); flag_modified`). Scoped by workspace + session + id. Returns
+/// whether a row was updated.
+pub async fn merge_message_internal_metadata(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    message_id: i64,
+    patch: &Value,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE messages \
+         SET internal_metadata = COALESCE(internal_metadata, '{}'::jsonb) || $4::jsonb \
+         WHERE workspace_name = $1 AND session_name = $2 AND id = $3",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .bind(message_id)
+    .bind(patch)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Port of `crud.get_messages_id_range`. Returns message rows by internal PK id
 /// range, optionally constrained by a descending running-token-sum window.
 ///

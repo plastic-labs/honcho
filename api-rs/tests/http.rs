@@ -1396,7 +1396,9 @@ fn no_auth_state() -> AppState {
 }
 
 #[tokio::test]
-async fn chat_rejects_streaming_with_501() {
+async fn chat_streaming_is_implemented() {
+    // `stream: true` is now wired (SSE); it is no longer a 501. Without a
+    // configured pool in this harness it reaches DB access and surfaces 500.
     let response = build_router(no_auth_state())
         .oneshot(
             Request::post("/v3/workspaces/ws/peers/alice/chat")
@@ -1408,7 +1410,8 @@ async fn chat_rejects_streaming_with_501() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_ne!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[tokio::test]
@@ -1527,6 +1530,75 @@ async fn get_context(query: &str) -> axum::response::Response {
         .oneshot(Request::get(&uri).body(Body::empty()).unwrap())
         .await
         .unwrap()
+}
+
+/// Build a minimal `multipart/form-data` body with optional `peer_id` field and
+/// one file part, returning `(content_type_header, body)`.
+fn multipart_upload_body(
+    peer_id: Option<&str>,
+    filename: &str,
+    file_content_type: &str,
+    file_bytes: &[u8],
+) -> (String, Vec<u8>) {
+    let boundary = "----rusttestboundary";
+    let mut body: Vec<u8> = Vec::new();
+    if let Some(peer_id) = peer_id {
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"peer_id\"\r\n\r\n{peer_id}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {file_content_type}\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(file_bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), body)
+}
+
+async fn post_upload(content_type: String, body: Vec<u8>) -> axum::response::Response {
+    let state = AppState::for_test_with_writes(AuthConfig {
+        use_auth: false,
+        jwt_secret: None,
+    });
+    build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/sessions/session-a/messages/upload")
+                .header("content-type", content_type)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn upload_rejects_unsupported_content_type() {
+    let (content_type, body) =
+        multipart_upload_body(Some("alice"), "doc.pdf", "application/pdf", b"%PDF-1.4 fake");
+    let response = post_upload(content_type, body).await;
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Unsupported file type: application/pdf"})
+    );
+}
+
+#[tokio::test]
+async fn upload_requires_peer_id_field() {
+    let (content_type, body) =
+        multipart_upload_body(None, "notes.txt", "text/plain", b"hello world");
+    let response = post_upload(content_type, body).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "peer_id form field is required"})
+    );
 }
 
 async fn post_search(body: &str) -> axum::response::Response {
@@ -1760,11 +1832,11 @@ async fn get_context_requires_peer_target_when_perspective_given() {
 }
 
 #[tokio::test]
-async fn get_context_perspective_path_is_not_implemented() {
+async fn get_context_perspective_path_is_implemented() {
+    // The perspective path is now ported (no longer a 501); without a configured
+    // pool in this harness it reaches DB access and surfaces 500. The real
+    // behavior is covered by the gated `perspective_session_context_*` DB test.
     let response = get_context("?peer_target=alice").await;
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(
-        response_json(response).await,
-        json!({"detail": "Perspective-scoped session context (peer_target) is not yet supported by the Rust API"})
-    );
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_ne!(response.status(), StatusCode::NOT_IMPLEMENTED);
 }

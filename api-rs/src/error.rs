@@ -50,6 +50,13 @@ pub enum ApiError {
     /// after retries). Surfaces as a 500.
     #[error("{0}")]
     Llm(String),
+    /// An uploaded file exceeds `MAX_FILE_SIZE` (`FileTooLargeError`, 413).
+    #[error("{0}")]
+    FileTooLarge(String),
+    /// An uploaded file's content type has no extractor (`UnsupportedFileTypeError`,
+    /// 415).
+    #[error("{0}")]
+    UnsupportedFileType(String),
 }
 
 impl IntoResponse for ApiError {
@@ -70,6 +77,8 @@ impl IntoResponse for ApiError {
             | Self::Llm(_) => StatusCode::INTERNAL_SERVER_ERROR,
             Self::Disabled | Self::WriteDisabled => StatusCode::METHOD_NOT_ALLOWED,
             Self::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+            Self::FileTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            Self::UnsupportedFileType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
         };
         let detail = match self {
             Self::RequestValidation(detail) => detail,

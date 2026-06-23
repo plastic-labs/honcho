@@ -2427,6 +2427,74 @@ async fn perspective_session_context_injects_representation_and_card() {
     test_db.teardown().await;
 }
 
+/// `merge_message_internal_metadata` shallow-merges a patch into a message's
+/// `internal_metadata` (the file-upload post-create update), scoped by id, and
+/// reports whether a row matched.
+#[tokio::test]
+async fn merge_message_internal_metadata_shallow_merges_by_id() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("alice", "chunk one")],
+        false,
+        8192,
+    )
+    .await
+    .expect("create message");
+    let message_id = created[0].id;
+
+    // First merge sets file metadata.
+    let updated = db::merge_message_internal_metadata(
+        &test_db.pool,
+        "ws",
+        "sess",
+        message_id,
+        &json!({"file_id": "f1", "chunk_index": 0}),
+    )
+    .await
+    .expect("merge 1");
+    assert!(updated);
+
+    // Second merge adds a key and overrides one, preserving the rest.
+    db::merge_message_internal_metadata(
+        &test_db.pool,
+        "ws",
+        "sess",
+        message_id,
+        &json!({"chunk_index": 1, "total_chunks": 3}),
+    )
+    .await
+    .expect("merge 2");
+
+    let stored: Value = sqlx::query_scalar("SELECT internal_metadata FROM messages WHERE id = $1")
+        .bind(message_id)
+        .fetch_one(&test_db.pool)
+        .await
+        .expect("read internal_metadata");
+    assert_eq!(stored["file_id"], json!("f1"));
+    assert_eq!(stored["chunk_index"], json!(1));
+    assert_eq!(stored["total_chunks"], json!(3));
+
+    // A non-matching id reports no update.
+    let missing = db::merge_message_internal_metadata(
+        &test_db.pool,
+        "ws",
+        "sess",
+        999_999,
+        &json!({"x": 1}),
+    )
+    .await
+    .expect("merge missing");
+    assert!(!missing);
+
+    test_db.teardown().await;
+}
+
 /// `query_documents_full` returns the full document shape (level, source_ids,
 /// internal_metadata) and `Representation::from_documents` reconstructs the
 /// observations from it. Uses deterministic one-hot embeddings (no OpenAI), so
