@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import assert_never
+from urllib.parse import urlparse
 
 from anthropic import AsyncAnthropic
 from google import genai
@@ -31,6 +32,8 @@ from .history_adapters import (
     OpenAIHistoryAdapter,
 )
 from .types import ProviderClient
+
+KIMI_CODING_USER_AGENT = "KimiCLI/1.5"
 
 
 @lru_cache(maxsize=1)
@@ -70,7 +73,25 @@ def get_openai_override_client(
     base_url: str | None, api_key: str | None
 ) -> AsyncOpenAI:
     """OpenAI client for a specific (base_url, api_key) pair. Cached by key."""
+    if _is_kimi_coding_base_url(base_url):
+        return AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            default_headers={"User-Agent": KIMI_CODING_USER_AGENT},
+        )
     return AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+
+def _is_kimi_coding_base_url(base_url: str | None) -> bool:
+    """Return whether base_url targets Kimi's coding-compatible endpoint."""
+    if not base_url:
+        return False
+
+    parsed = urlparse(base_url)
+    path = parsed.path.rstrip("/")
+    return parsed.hostname == "api.kimi.com" and (
+        path == "/coding" or path.startswith("/coding/")
+    )
 
 
 @lru_cache(maxsize=128)
