@@ -2336,6 +2336,97 @@ async fn create_documents_returning_levels_and_recent_full() {
     test_db.teardown().await;
 }
 
+/// The perspective session-context path: `query_working_representation` blends
+/// the `(observer, observed)` conclusions under the observation budget, and
+/// `get_perspective_session_context` injects the representation markdown + peer
+/// card alongside the token-budgeted session messages.
+#[tokio::test]
+async fn perspective_session_context_injects_representation_and_card() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::get_or_create_session(&test_db.pool, "ws", "sess", None, None)
+        .await
+        .expect("session");
+    db::get_or_create_collection(&test_db.pool, "ws", "obs", "obsd")
+        .await
+        .expect("collection");
+
+    db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[message("obs", "hello"), message("obsd", "hi there")],
+        false,
+        8192,
+    )
+    .await
+    .expect("messages");
+
+    let t1 = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+    let t2 = Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+    seed_document_full(&test_db.pool, &doc_id(1), "the user likes coffee", 1, t1).await;
+    seed_document_full(&test_db.pool, &doc_id(2), "the user is a runner", 2, t2).await;
+
+    // No search query and no most-frequent → the whole budget is recent
+    // explicit observations.
+    let representation = db::query_working_representation(
+        &test_db.pool,
+        "ws",
+        "obs",
+        "obsd",
+        None,
+        None,
+        false,
+        None,
+        None,
+        false,
+        db::WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+    )
+    .await
+    .expect("working representation");
+    let contents: std::collections::HashSet<&str> = representation
+        .explicit
+        .iter()
+        .map(|obs| obs.content.as_str())
+        .collect();
+    assert!(contents.contains("the user likes coffee"));
+    assert!(contents.contains("the user is a runner"));
+
+    let markdown = representation.format_as_markdown(false);
+    let card = Some(vec!["IDENTITY: marathon runner".to_string()]);
+    let value = db::get_perspective_session_context(
+        &test_db.pool,
+        "ws",
+        "sess",
+        100_000,
+        true,
+        markdown.clone(),
+        card.clone(),
+    )
+    .await
+    .expect("perspective context");
+
+    assert_eq!(value["id"], json!("sess"));
+    assert_eq!(value["peer_representation"], json!(markdown));
+    assert_eq!(value["peer_card"], json!(["IDENTITY: marathon runner"]));
+    assert!(value["summary"].is_null());
+    // No summary covers the session, so both messages fit the generous budget.
+    assert_eq!(value["messages"].as_array().map(|items| items.len()), Some(2));
+    assert!(markdown.contains("the user likes coffee"));
+
+    test_db.teardown().await;
+}
+
 /// `query_documents_full` returns the full document shape (level, source_ids,
 /// internal_metadata) and `Representation::from_documents` reconstructs the
 /// observations from it. Uses deterministic one-hot embeddings (no OpenAI), so

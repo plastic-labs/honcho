@@ -1421,6 +1421,11 @@ pub async fn fetch_messages_by_ids(
 /// and upper bound for the `get_context` `tokens` query parameter.
 pub const GET_CONTEXT_MAX_TOKENS: i64 = 100_000;
 
+/// Mirror of `settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS` (default
+/// 100): the observation budget for a working representation when the caller does
+/// not pass `max_conclusions`.
+pub const WORKING_REPRESENTATION_MAX_OBSERVATIONS: i64 = 100;
+
 /// Port of `crud.get_messages_id_range`. Returns message rows by internal PK id
 /// range, optionally constrained by a descending running-token-sum window.
 ///
@@ -1537,8 +1542,62 @@ pub async fn get_session_context(
     token_limit: i64,
     include_summary: bool,
 ) -> Result<Value, sqlx::Error> {
+    let (summary_json, messages) =
+        session_summary_and_messages(pool, workspace_name, session_name, token_limit, include_summary)
+            .await?;
+    Ok(session_context_json(session_name, summary_json, messages))
+}
+
+/// Perspective-scoped session context, porting the `peer_target` branch of
+/// Python `get_session_context`: the same 40%-summary / token-budgeted-messages
+/// selection as [`get_session_context`], but run against the budget already
+/// reduced by the target peer's working-representation + peer-card token cost,
+/// with both injected into the response. The caller computes `adjusted_token_limit`
+/// (and the markdown) because the representation + card token estimates depend on
+/// the LLM-facing string forms, which live outside the DB layer.
+pub async fn get_perspective_session_context(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    adjusted_token_limit: i64,
+    include_summary: bool,
+    peer_representation_markdown: String,
+    peer_card: Option<Vec<String>>,
+) -> Result<Value, sqlx::Error> {
+    let (summary_json, messages) = session_summary_and_messages(
+        pool,
+        workspace_name,
+        session_name,
+        adjusted_token_limit,
+        include_summary,
+    )
+    .await?;
+    Ok(json!({
+        "id": session_name,
+        "messages": Value::Array(messages.into_iter().map(message_json).collect()),
+        "summary": summary_json,
+        "peer_representation": peer_representation_markdown,
+        "peer_card": match peer_card {
+            Some(card) => Value::Array(card.into_iter().map(Value::String).collect()),
+            None => Value::Null,
+        },
+    }))
+}
+
+/// Shared summary-selection + token-budgeted message fetch behind
+/// [`get_session_context`] and [`get_perspective_session_context`]. Ports
+/// `_select_summary_for_context` (40% summary budget, long-preferred when it both
+/// fits and beats the short summary) followed by the `get_messages_id_range`
+/// fetch. Returns `(summary JSON or Null, messages)`.
+async fn session_summary_and_messages(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    token_limit: i64,
+    include_summary: bool,
+) -> Result<(Value, Vec<MessageRow>), sqlx::Error> {
     if token_limit <= 0 {
-        return Ok(session_context_json(session_name, Value::Null, Vec::new()));
+        return Ok((Value::Null, Vec::new()));
     }
 
     let mut messages_tokens = token_limit;
@@ -1592,7 +1651,7 @@ pub async fn get_session_context(
     )
     .await?;
 
-    Ok(session_context_json(session_name, summary_json, messages))
+    Ok((summary_json, messages))
 }
 
 fn session_context_json(session_name: &str, summary: Value, messages: Vec<MessageRow>) -> Value {
@@ -2451,6 +2510,121 @@ pub async fn query_documents_most_derived(
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().map(conclusion_json).collect())
+}
+
+/// Most-reinforced conclusions for `(observer, observed)` as full
+/// [`representation::Document`]s (the [`Representation::from_documents`] shape),
+/// porting `crud._query_documents_most_derived`: live documents ordered by
+/// `times_derived` desc, then `created_at` desc, then `id`, limited. The
+/// `Value`-returning [`query_documents_most_derived`] backs the conclusions list
+/// endpoint; this variant feeds the working representation.
+pub async fn query_documents_most_derived_full(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    limit: i64,
+) -> Result<Vec<crate::representation::Document>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, DocumentRow>(
+        "SELECT id, content, level, created_at, session_name, source_ids, internal_metadata \
+         FROM documents \
+         WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+           AND deleted_at IS NULL \
+         ORDER BY times_derived DESC, created_at DESC, id \
+         LIMIT $4",
+    )
+    .bind(workspace_name)
+    .bind(observer)
+    .bind(observed)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(document_from_row).collect())
+}
+
+/// Assemble a working representation for `(observer, observed)`, porting
+/// `RepresentationManager._get_working_representation_internal`: split the
+/// `max_observations` budget across semantic, most-derived, and recent
+/// conclusions, fetch each source, and merge (dedup + sort by `created_at`).
+///
+/// `embedding` is the query vector pre-computed by the caller (the route embeds
+/// outside the DB session). When a semantic query was requested but no embedding
+/// is available (the embed failed), the semantic slots stay reserved-but-unfilled
+/// — the same outcome Python reaches when its fallback embed fails — so the recent
+/// allocation is unchanged.
+#[allow(clippy::too_many_arguments)]
+pub async fn query_working_representation(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    session_name: Option<&str>,
+    embedding: Option<&[f32]>,
+    include_semantic_query: bool,
+    semantic_search_top_k: Option<i64>,
+    semantic_search_max_distance: Option<f64>,
+    include_most_derived: bool,
+    max_observations: i64,
+) -> Result<crate::representation::Representation, sqlx::Error> {
+    use crate::representation::Representation;
+
+    let total = max_observations.max(0);
+
+    let semantic = if include_semantic_query {
+        semantic_search_top_k.unwrap_or(total / 3).max(0).min(total)
+    } else {
+        0
+    };
+    let top = if include_semantic_query && include_most_derived {
+        (total / 3).max(0).min(total - semantic)
+    } else if include_most_derived {
+        (total / 2).max(0).min(total - semantic)
+    } else {
+        0
+    };
+    let recent = total - semantic - top;
+
+    let mut representation = Representation::default();
+
+    if include_semantic_query
+        && let Some(embedding) = embedding
+    {
+        let filter = FilterClause {
+            sql: String::new(),
+            bindings: Vec::new(),
+        };
+        let docs = query_documents_full(
+            pool,
+            workspace_name,
+            observer,
+            observed,
+            embedding,
+            &filter,
+            semantic_search_max_distance,
+            semantic,
+        )
+        .await?;
+        representation.merge(Representation::from_documents(&docs));
+    }
+
+    if include_most_derived {
+        let docs =
+            query_documents_most_derived_full(pool, workspace_name, observer, observed, top).await?;
+        representation.merge(Representation::from_documents(&docs));
+    }
+
+    let recent_docs = query_documents_recent_full(
+        pool,
+        workspace_name,
+        observer,
+        observed,
+        session_name,
+        recent,
+    )
+    .await?;
+    representation.merge(Representation::from_documents(&recent_docs));
+
+    Ok(representation)
 }
 
 /// Semantic search over conclusions (documents) by `(observer, observed)`,

@@ -145,14 +145,21 @@ pub struct PeerCardQuery {
 /// Query parameters for `GET .../sessions/{id}/context`. Numeric/boolean params
 /// are captured as raw strings so the handler can reproduce FastAPI's
 /// `int_parsing` / `less_than_equal` / `bool_parsing` error shapes byte-for-byte.
-/// Only the base (no-`peer_target`) path is ported; the perspective params are
-/// captured solely to branch onto a 501.
+/// Query parameters for the session-context endpoint, including the perspective
+/// (`peer_target`) path that injects the target peer's working representation +
+/// peer card. The search params are only consulted when `peer_target` is given.
 #[derive(Debug, Deserialize)]
 pub struct GetContextQuery {
     pub tokens: Option<String>,
     pub summary: Option<String>,
     pub peer_target: Option<String>,
     pub peer_perspective: Option<String>,
+    pub search_query: Option<String>,
+    pub limit_to_session: Option<String>,
+    pub search_top_k: Option<String>,
+    pub search_max_distance: Option<String>,
+    pub include_most_frequent: Option<String>,
+    pub max_conclusions: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1608,24 +1615,111 @@ async fn get_session_context(
         ));
     }
 
-    // The perspective path needs the representation/embedding subsystem, which
-    // is not ported. Surface a 501 rather than silently dropping the requested
-    // representation + peer card.
-    if query.peer_target.is_some() {
-        return Err(ApiError::NotImplemented(
-            "Perspective-scoped session context (peer_target) is not yet supported by the Rust API"
-                .to_string(),
-        ));
+    let pool = state.pool()?;
+
+    // Perspective path (`peer_target` given): inject the target peer's working
+    // representation + peer card, reducing the message/summary budget by their
+    // token cost first. Mirrors the `peer_target` branch of Python
+    // `get_session_context`. The base path below leaves both fields null.
+    if let Some(peer_target) = query.peer_target.as_deref() {
+        use crate::dialectic::Embedder;
+
+        // `peer_perspective or peer_target` → observer; `peer_target` → observed.
+        let observer = query.peer_perspective.as_deref().unwrap_or(peer_target);
+        let observed = peer_target;
+        let search_query = query.search_query.as_deref();
+
+        let limit_to_session = match query.limit_to_session.as_deref() {
+            Some(raw) => parse_query_bool(raw, "limit_to_session")?,
+            None => false,
+        };
+        let include_most_frequent = match query.include_most_frequent.as_deref() {
+            Some(raw) => parse_query_bool(raw, "include_most_frequent")?,
+            None => false,
+        };
+        let search_top_k = match query.search_top_k.as_deref() {
+            Some(raw) => Some(parse_query_int_bounded(raw, "search_top_k", 1, 100)?),
+            None => None,
+        };
+        let search_max_distance = match query.search_max_distance.as_deref() {
+            Some(raw) => Some(parse_query_float_bounded(raw, "search_max_distance", 0.0, 1.0)?),
+            None => None,
+        };
+        let max_conclusions = match query.max_conclusions.as_deref() {
+            Some(raw) => Some(parse_query_int_bounded(raw, "max_conclusions", 1, 100)?),
+            None => None,
+        };
+
+        // Pre-compute the query embedding outside the DB session (best-effort:
+        // a failed embed degrades to no semantic results, like Python).
+        let http = ReqwestHttp::default();
+        let embedding: Option<Vec<f32>> = match search_query {
+            Some(text) => {
+                let embedder = crate::dialectic::OpenAiEmbedder {
+                    http: &http,
+                    credentials: Credentials::with_base_url(
+                        state.embedding.api_key.clone().unwrap_or_default(),
+                        state.embedding.base_url.clone(),
+                    ),
+                    model: state.embedding.model.clone(),
+                    vector_dimensions: state.embedding.vector_dimensions,
+                    send_dimensions: state.embedding.send_dimensions,
+                    max_tokens: state.embedding.max_tokens,
+                };
+                embedder.embed(text).await.ok()
+            }
+            None => None,
+        };
+
+        let max_observations =
+            max_conclusions.unwrap_or(db::WORKING_REPRESENTATION_MAX_OBSERVATIONS);
+        let representation = db::query_working_representation(
+            pool,
+            &workspace_id,
+            observer,
+            observed,
+            if limit_to_session {
+                Some(session_id.as_str())
+            } else {
+                None
+            },
+            embedding.as_deref(),
+            search_query.is_some(),
+            search_top_k,
+            search_max_distance,
+            include_most_frequent,
+            max_observations,
+        )
+        .await?;
+
+        let card = fetch_peer_card_list(pool, &workspace_id, observer, observed).await?;
+
+        // Reduce the budget by the representation + card token cost. The token
+        // estimate uses the `__str__` form; the response uses the markdown form.
+        let rep_tokens = crate::tokens::estimate_tokens(&representation.to_string()) as i64;
+        let card_tokens = card
+            .as_ref()
+            .map(|lines| crate::tokens::estimate_tokens(&lines.join("\n")) as i64)
+            .unwrap_or(0);
+        let adjusted = token_limit - rep_tokens - card_tokens;
+        let representation_markdown = representation.format_as_markdown(false);
+
+        let value = db::get_perspective_session_context(
+            pool,
+            &workspace_id,
+            &session_id,
+            adjusted,
+            include_summary,
+            representation_markdown,
+            card,
+        )
+        .await?;
+        return Ok(Json(value));
     }
 
-    let value = db::get_session_context(
-        state.pool()?,
-        &workspace_id,
-        &session_id,
-        token_limit,
-        include_summary,
-    )
-    .await?;
+    let value =
+        db::get_session_context(pool, &workspace_id, &session_id, token_limit, include_summary)
+            .await?;
     Ok(Json(value))
 }
 
@@ -3998,6 +4092,74 @@ fn parse_query_bool(raw: &str, name: &str) -> Result<bool, ApiError> {
             None,
         )),
     }
+}
+
+/// Parse an integer query param with inclusive `[ge, le]` bounds, mirroring a
+/// Pydantic `Query(int, ge=.., le=..)`: parse failures and out-of-range values
+/// yield the matching 422 `*_parsing` / `greater_than_equal` / `less_than_equal`
+/// errors.
+fn parse_query_int_bounded(raw: &str, name: &str, ge: i64, le: i64) -> Result<i64, ApiError> {
+    let value: i64 = raw.trim().parse().map_err(|_| {
+        query_validation_error(
+            "int_parsing",
+            name,
+            "Input should be a valid integer, unable to parse string as an integer",
+            raw,
+            None,
+        )
+    })?;
+    if value < ge {
+        return Err(query_validation_error(
+            "greater_than_equal",
+            name,
+            &format!("Input should be greater than or equal to {ge}"),
+            raw,
+            Some(json!({ "ge": ge })),
+        ));
+    }
+    if value > le {
+        return Err(query_validation_error(
+            "less_than_equal",
+            name,
+            &format!("Input should be less than or equal to {le}"),
+            raw,
+            Some(json!({ "le": le })),
+        ));
+    }
+    Ok(value)
+}
+
+/// Parse a float query param with inclusive `[ge, le]` bounds, mirroring a
+/// Pydantic `Query(float, ge=.., le=..)`.
+fn parse_query_float_bounded(raw: &str, name: &str, ge: f64, le: f64) -> Result<f64, ApiError> {
+    let value: f64 = raw.trim().parse().map_err(|_| {
+        query_validation_error(
+            "float_parsing",
+            name,
+            "Input should be a valid number, unable to parse string as a number",
+            raw,
+            None,
+        )
+    })?;
+    if value < ge {
+        return Err(query_validation_error(
+            "greater_than_equal",
+            name,
+            &format!("Input should be greater than or equal to {ge}"),
+            raw,
+            Some(json!({ "ge": ge })),
+        ));
+    }
+    if value > le {
+        return Err(query_validation_error(
+            "less_than_equal",
+            name,
+            &format!("Input should be less than or equal to {le}"),
+            raw,
+            Some(json!({ "le": le })),
+        ));
+    }
+    Ok(value)
 }
 
 fn validation_error(

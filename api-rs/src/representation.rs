@@ -542,6 +542,50 @@ impl Representation {
             && self.contradiction.is_empty()
     }
 
+    /// Port of `Representation.merge_representation` (the `max_observations=None`
+    /// path used by `get_working_representation`): fold `other` into `self`,
+    /// deduplicate each level, and re-sort by `created_at`. Python dedups via
+    /// `set()` over the whole observation; document ids are unique, so deduping
+    /// by id is equivalent. The sort is stable, so observations sharing a
+    /// timestamp keep insertion (FIFO) order.
+    pub fn merge(&mut self, other: Representation) {
+        fn merge_level<T>(
+            base: &mut Vec<T>,
+            other: Vec<T>,
+            id_of: impl Fn(&T) -> &str,
+            created_at_of: impl Fn(&T) -> DateTime<Utc>,
+        ) {
+            base.extend(other);
+            let mut seen = std::collections::HashSet::new();
+            base.retain(|item| seen.insert(id_of(item).to_string()));
+            base.sort_by_key(|item| created_at_of(item));
+        }
+        merge_level(
+            &mut self.explicit,
+            other.explicit,
+            |o| &o.id,
+            |o| o.created_at,
+        );
+        merge_level(
+            &mut self.deductive,
+            other.deductive,
+            |o| &o.id,
+            |o| o.created_at,
+        );
+        merge_level(
+            &mut self.inductive,
+            other.inductive,
+            |o| &o.id,
+            |o| o.created_at,
+        );
+        merge_level(
+            &mut self.contradiction,
+            other.contradiction,
+            |o| &o.id,
+            |o| o.created_at,
+        );
+    }
+
     /// Port of `Representation.len`: total observation count across all levels.
     /// (Named `count` to avoid colliding with the `len`/`is_empty` clippy lint;
     /// Python's `len()` is a method, not the dunder.)
