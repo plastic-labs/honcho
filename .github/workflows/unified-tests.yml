@@ -6,10 +6,6 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
-  # TEMPORARY: run on PRs to test tag-based secret resolution. REVERT before merging.
-  # No `paths` filter on purpose so a workflow-only PR still triggers this.
-  pull_request:
-    branches: [main]
 
 permissions:
   contents: read
