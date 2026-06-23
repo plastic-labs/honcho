@@ -1,20 +1,16 @@
 //! The completion executor, porting the dispatch core of `request_builder.py`
 //! (`execute_completion`). Maps a [`ModelConfig`] plus per-call inputs into the
 //! right provider backend's `RequestParams` and runs the call over an
-//! [`LlmHttp`] transport.
-//!
-//! **Gemini is not yet routable here.** Its backend has no `complete()` send
-//! path (only the deterministic config/response helpers are ported), and Python
-//! delegates Gemini to the genai SDK — so there is no REST request body to port
-//! byte-identically. [`execute_completion`] returns
-//! [`ExecutorError::UnsupportedProvider`] for Gemini until that send path lands.
+//! [`LlmHttp`] transport. All three providers (Anthropic, OpenAI, Gemini) are
+//! routable; Gemini speaks the `generateContent` REST endpoint directly (Python
+//! uses the genai SDK — see `backends::gemini` for the REST-casing notes).
 
 use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
-use super::backends::{anthropic, openai};
+use super::backends::{anthropic, gemini, openai};
 use super::credentials::{TransportApiKeys, resolve_credentials};
 use super::http::{Credentials, LlmHttp, LlmHttpError};
 use super::request_builder::{build_config_extra_params, effective_max_tokens};
@@ -28,17 +24,12 @@ use super::{CompletionResult, ModelConfig, Provider};
 pub enum ExecutorError {
     /// The underlying provider HTTP call failed.
     Http(LlmHttpError),
-    /// The config's transport has no ported send path (currently Gemini).
-    UnsupportedProvider(Provider),
 }
 
 impl std::fmt::Display for ExecutorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ExecutorError::Http(error) => write!(f, "{error}"),
-            ExecutorError::UnsupportedProvider(provider) => {
-                write!(f, "no send path for provider {provider:?}")
-            }
         }
     }
 }
@@ -112,7 +103,21 @@ pub async fn execute_completion<H: LlmHttp>(
             };
             Ok(openai::complete(http, credentials, &params).await?)
         }
-        Provider::Gemini => Err(ExecutorError::UnsupportedProvider(Provider::Gemini)),
+        Provider::Gemini => {
+            let params = gemini::RequestParams {
+                model: &config.model,
+                messages,
+                max_tokens,
+                temperature: config.temperature,
+                stop: effective_stop,
+                tools,
+                tool_choice,
+                thinking_effort: config.thinking_effort.as_deref(),
+                thinking_budget_tokens: config.thinking_budget_tokens,
+                extra_params: &merged_extra_params,
+            };
+            Ok(gemini::complete(http, credentials, &params).await?)
+        }
     }
 }
 
@@ -422,19 +427,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gemini_is_unsupported() {
-        let http = ok_http();
+    async fn gemini_routes_to_generate_content_endpoint() {
+        // A camelCase REST-shaped reply, parsed via the dual-casing path.
+        let http = MockHttp::ok(json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "hi there"}]},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 2}
+        }));
         let creds = Credentials::new("key");
         let config = ModelConfig::new("gemini-x", Provider::Gemini);
-        let error = execute_completion(
+        let result = execute_completion(
             &http, &creds, &config, &messages(), 512, None, None, None, None,
         )
         .await
-        .expect_err("gemini has no send path");
-        assert!(matches!(
-            error,
-            ExecutorError::UnsupportedProvider(Provider::Gemini)
-        ));
+        .expect("completion");
+        assert_eq!(
+            http.last_url(),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-x:generateContent"
+        );
+        assert_eq!(
+            http.last_headers(),
+            vec![("x-goog-api-key".to_string(), "key".to_string())]
+        );
+        // contents carry the user turn; generation_config carries max tokens.
+        let body = http.last_body();
+        assert_eq!(body["contents"][0]["parts"][0]["text"], json!("hi"));
+        assert_eq!(body["generation_config"]["max_output_tokens"], json!(512));
+        // The camelCase response was parsed.
+        assert_eq!(result.content, json!("hi there"));
+        assert_eq!(result.input_tokens, 3);
+        assert_eq!(result.output_tokens, 2);
+        assert_eq!(result.finish_reason, "STOP");
     }
 
     #[tokio::test]

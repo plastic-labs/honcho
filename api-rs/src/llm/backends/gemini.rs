@@ -1,15 +1,37 @@
-//! Deterministic Gemini backend helpers, ported from
-//! `src/llm/backends/gemini.py`.
+//! Gemini backend, ported from `src/llm/backends/gemini.py`.
 //!
-//! Covers parsing a `generateContent` response into a [`CompletionResult`]
-//! (no `response_format`). The "blocked finish reason" escalation that Python
-//! raises as an `LLMError` is left to callers — [`is_blocked_finish_reason`] and
-//! [`BLOCKED_FINISH_REASONS`] expose the same set, and the parsed
-//! `finish_reason` is preserved so callers can decide.
+//! Python drives Gemini through the `google-genai` SDK; this port instead speaks
+//! the `generateContent` REST endpoint directly (like the other Rust backends),
+//! since there is no SDK in the loop. The deterministic config/tool/response
+//! helpers (`build_config`, `convert_tools`, `parse_response`, …) mirror the
+//! Python `_build_config` / `_convert_*` / `_normalize_response` exactly; the new
+//! [`complete`] wraps them in the REST request/response shape.
+//!
+//! REST casing note: Gemini's endpoint is proto3-JSON, which *accepts* snake_case
+//! field names on input (the "original field name" rule), so the request body
+//! reuses the SDK-shaped snake_case keys verbatim. Responses, however, come back
+//! camelCase, so [`parse_response`] reads each field under both spellings — that
+//! keeps the SDK-shaped fixtures working while also handling live REST replies.
+//! Parity here is against the documented REST API, not an SDK/live oracle.
+//!
+//! The "blocked finish reason" escalation that Python raises as an `LLMError` is
+//! left to callers — [`is_blocked_finish_reason`] and [`BLOCKED_FINISH_REASONS`]
+//! expose the same set, and the parsed `finish_reason` is preserved.
 
 use serde_json::{Map, Value, json};
 
+use crate::llm::http::{Credentials, LlmHttp, LlmHttpError};
 use crate::llm::{CompletionResult, ToolCallResult};
+
+/// The google-genai default API base (no version segment — `complete` appends
+/// `/v1beta/...`).
+pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
+
+/// Read a field that may appear under its proto snake_case name (SDK-shaped
+/// fixtures) or its camelCase JSON name (live REST responses).
+fn dual_field<'a>(value: &'a Value, snake: &str, camel: &str) -> Option<&'a Value> {
+    value.get(snake).or_else(|| value.get(camel))
+}
 
 /// Finish reasons that mean Gemini blocked the response (`GEMINI_BLOCKED_FINISH_REASONS`).
 pub const BLOCKED_FINISH_REASONS: &[&str] =
@@ -37,6 +59,155 @@ const ALLOWED_SCHEMA_KEYS: &[&str] = &[
 /// Gemini cannot accept together (matches the Python `ValidationException`).
 #[derive(Debug, PartialEq, Eq)]
 pub struct ConflictingThinkingParams;
+
+/// Inputs for [`build_request`] / [`complete`], mirroring the portable subset of
+/// the SDK call inputs (`response_format`/`response_schema` excluded; `json_mode`
+/// via `extra_params` is honored by [`build_config`]).
+#[derive(Debug, Clone)]
+pub struct RequestParams<'a> {
+    pub model: &'a str,
+    pub messages: &'a [Value],
+    pub max_tokens: i64,
+    pub temperature: Option<f64>,
+    pub stop: Option<&'a [String]>,
+    pub tools: Option<&'a [Value]>,
+    pub tool_choice: Option<&'a Value>,
+    pub thinking_effort: Option<&'a str>,
+    pub thinking_budget_tokens: Option<i64>,
+    pub extra_params: &'a Map<String, Value>,
+}
+
+/// Run one `generateContent` request: build the REST body, POST it through the
+/// [`LlmHttp`] transport authenticated with an `x-goog-api-key` header, and parse
+/// the response. The model is addressed as `models/{model}` (unless already
+/// prefixed). A conflicting thinking-params config surfaces as a transport-level
+/// error (Python raises before the call).
+pub async fn complete<H: LlmHttp>(
+    http: &H,
+    credentials: &Credentials,
+    params: &RequestParams<'_>,
+) -> Result<CompletionResult, LlmHttpError> {
+    let body = build_request(params).map_err(|_| {
+        LlmHttpError::Transport(
+            "gemini request cannot set both thinking_budget_tokens and thinking_effort".to_string(),
+        )
+    })?;
+    let model_path = if params.model.starts_with("models/") {
+        params.model.to_string()
+    } else {
+        format!("models/{}", params.model)
+    };
+    let url = format!(
+        "{}/v1beta/{model_path}:generateContent",
+        credentials.effective_base_url(DEFAULT_BASE_URL),
+    );
+    let headers = [("x-goog-api-key".to_string(), credentials.api_key.clone())];
+    let response = http.post_json(&url, &headers, &body).await?;
+    Ok(parse_response(&response))
+}
+
+/// Build the `GenerateContentRequest` REST body: split the canonical messages
+/// into `contents` + `system_instruction` ([`convert_messages`]), then layer
+/// [`build_config`]'s output in — `tools`/`tool_config` move to the top level
+/// (where the REST API expects them) and everything else nests under
+/// `generation_config`. Keys stay snake_case (proto3 JSON accepts proto field
+/// names on input). Errors when both thinking params are set, like Python.
+pub fn build_request(params: &RequestParams<'_>) -> Result<Value, ConflictingThinkingParams> {
+    let (contents, system_instruction) = convert_messages(params.messages);
+    let config = build_config(&ConfigParams {
+        max_tokens: params.max_tokens,
+        temperature: params.temperature,
+        stop: params.stop,
+        tools: params.tools,
+        tool_choice: params.tool_choice,
+        thinking_budget_tokens: params.thinking_budget_tokens,
+        thinking_effort: params.thinking_effort,
+        extra_params: params.extra_params,
+    })?;
+    let mut config_map = match config {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    // `tools` and `tool_config` are top-level REST fields, not generationConfig.
+    let tools = config_map.remove("tools");
+    let tool_config = config_map.remove("tool_config");
+
+    let mut body = Map::new();
+    body.insert("contents".to_string(), json!(contents));
+    if let Some(system) = system_instruction {
+        body.insert(
+            "system_instruction".to_string(),
+            json!({"parts": [{"text": system}]}),
+        );
+    }
+    if let Some(tools) = tools {
+        body.insert("tools".to_string(), tools);
+    }
+    if let Some(tool_config) = tool_config {
+        body.insert("tool_config".to_string(), tool_config);
+    }
+    body.insert("generation_config".to_string(), Value::Object(config_map));
+    Ok(Value::Object(body))
+}
+
+/// Split canonical messages into Gemini `contents` + a joined `system_instruction`,
+/// porting `_convert_messages`. `system` messages with string content are collected
+/// into the instruction; `assistant` becomes `model`; messages already carrying a
+/// `parts` array pass through (role rewritten); string content becomes a single
+/// text part; a content *list* keeps its `text` blocks.
+///
+/// Deviation from Python: a non-`text` content block is skipped rather than raising
+/// — by the time messages reach the backend the history adapter has already
+/// translated tool_use/tool_result blocks into native `parts`.
+pub fn convert_messages(messages: &[Value]) -> (Vec<Value>, Option<String>) {
+    let mut system_messages: Vec<String> = Vec::new();
+    let mut contents: Vec<Value> = Vec::new();
+
+    for message in messages {
+        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+        if role == "system" {
+            if let Some(content) = message.get("content").and_then(Value::as_str) {
+                system_messages.push(content.to_string());
+            }
+            continue;
+        }
+        let role = if role == "assistant" { "model" } else { role };
+
+        if message.get("parts").is_some_and(Value::is_array) {
+            let mut copy = message.clone();
+            if let Some(object) = copy.as_object_mut() {
+                object.insert("role".to_string(), json!(role));
+            }
+            contents.push(copy);
+            continue;
+        }
+
+        match message.get("content") {
+            Some(Value::String(text)) => {
+                contents.push(json!({"role": role, "parts": [{"text": text}]}));
+            }
+            Some(Value::Array(blocks)) => {
+                let mut parts: Vec<Value> = Vec::new();
+                for block in blocks {
+                    if block.get("type").and_then(Value::as_str) == Some("text") {
+                        parts.push(json!({"text": block.get("text").cloned().unwrap_or(Value::Null)}));
+                    }
+                }
+                if !parts.is_empty() {
+                    contents.push(json!({"role": role, "parts": parts}));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let system_instruction = if system_messages.is_empty() {
+        None
+    } else {
+        Some(system_messages.join("\n\n"))
+    };
+    (contents, system_instruction)
+}
 
 /// Inputs for [`build_config`], mirroring the portable subset of `_build_config`
 /// (the `response_format`/`response_schema` path is excluded; `json_mode` via
@@ -236,7 +407,7 @@ pub fn parse_response(response: &Value) -> CompletionResult {
         .and_then(|candidates| candidates.first());
 
     let finish_reason = candidate
-        .and_then(|candidate| candidate.get("finish_reason"))
+        .and_then(|candidate| dual_field(candidate, "finish_reason", "finishReason"))
         .and_then(Value::as_str)
         .unwrap_or("stop")
         .to_string();
@@ -257,9 +428,8 @@ pub fn parse_response(response: &Value) -> CompletionResult {
             {
                 text_parts.push(text.to_string());
             }
-            if let Some(function_call) = part.get("function_call") {
-                let signature = part
-                    .get("thought_signature")
+            if let Some(function_call) = dual_field(part, "function_call", "functionCall") {
+                let signature = dual_field(part, "thought_signature", "thoughtSignature")
                     .and_then(Value::as_str)
                     .map(str::to_string);
                 push_function_call(&mut tool_calls, function_call, signature);
@@ -284,20 +454,20 @@ pub fn parse_response(response: &Value) -> CompletionResult {
         }
     }
 
-    let usage = response.get("usage_metadata");
-    let usage_int = |key: &str| -> i64 {
+    let usage = dual_field(response, "usage_metadata", "usageMetadata");
+    let usage_int = |snake: &str, camel: &str| -> i64 {
         usage
-            .and_then(|usage| usage.get(key))
+            .and_then(|usage| dual_field(usage, snake, camel))
             .and_then(Value::as_i64)
             .unwrap_or(0)
     };
 
     CompletionResult {
         content: Value::String(text_parts.join("\n")),
-        input_tokens: usage_int("prompt_token_count"),
-        output_tokens: usage_int("candidates_token_count"),
+        input_tokens: usage_int("prompt_token_count", "promptTokenCount"),
+        output_tokens: usage_int("candidates_token_count", "candidatesTokenCount"),
         cache_creation_input_tokens: 0,
-        cache_read_input_tokens: usage_int("cached_content_token_count"),
+        cache_read_input_tokens: usage_int("cached_content_token_count", "cachedContentTokenCount"),
         finish_reason,
         tool_calls,
         thinking_content: None,
@@ -515,5 +685,133 @@ mod tests {
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].id, "call_f_0");
         assert!(result.tool_calls[0].thought_signature.is_none());
+    }
+
+    #[test]
+    fn convert_messages_splits_system_and_rewrites_roles() {
+        let messages = vec![
+            json!({"role": "system", "content": "be brief"}),
+            json!({"role": "user", "content": "hi"}),
+            json!({"role": "assistant", "content": "hello"}),
+            json!({"role": "system", "content": "also be kind"}),
+        ];
+        let (contents, system) = convert_messages(&messages);
+        assert_eq!(system.as_deref(), Some("be brief\n\nalso be kind"));
+        assert_eq!(contents.len(), 2);
+        assert_eq!(contents[0], json!({"role": "user", "parts": [{"text": "hi"}]}));
+        // assistant -> model
+        assert_eq!(
+            contents[1],
+            json!({"role": "model", "parts": [{"text": "hello"}]})
+        );
+    }
+
+    #[test]
+    fn convert_messages_passes_through_parts_and_drops_non_text_blocks() {
+        let messages = vec![
+            // A history-adapter-shaped tool message with native parts: passthrough.
+            json!({"role": "model", "parts": [{"function_call": {"name": "f", "args": {}}}]}),
+            // A content list keeps text blocks, skips others.
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "keep me"},
+                {"type": "image", "data": "..."},
+            ]}),
+        ];
+        let (contents, system) = convert_messages(&messages);
+        assert!(system.is_none());
+        assert_eq!(
+            contents[0],
+            json!({"role": "model", "parts": [{"function_call": {"name": "f", "args": {}}}]})
+        );
+        assert_eq!(
+            contents[1],
+            json!({"role": "user", "parts": [{"text": "keep me"}]})
+        );
+    }
+
+    #[test]
+    fn build_request_splits_tools_and_nests_generation_config() {
+        let messages = vec![
+            json!({"role": "system", "content": "sys"}),
+            json!({"role": "user", "content": "q"}),
+        ];
+        let tools = vec![json!({"name": "search", "description": "d", "input_schema": {"type": "object"}})];
+        let stop = vec!["STOP".to_string()];
+        let body = build_request(&RequestParams {
+            model: "gemini-x",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: Some(0.5),
+            stop: Some(&stop),
+            tools: Some(&tools),
+            tool_choice: Some(&json!("auto")),
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &Map::new(),
+        })
+        .unwrap();
+
+        // system_instruction lifted to a parts wrapper at the top level.
+        assert_eq!(
+            body["system_instruction"],
+            json!({"parts": [{"text": "sys"}]})
+        );
+        assert_eq!(body["contents"][0]["parts"][0]["text"], json!("q"));
+        // tools + tool_config are top-level, NOT inside generation_config.
+        assert_eq!(
+            body["tools"][0]["function_declarations"][0]["name"],
+            json!("search")
+        );
+        assert_eq!(
+            body["tool_config"]["function_calling_config"]["mode"],
+            json!("AUTO")
+        );
+        assert!(body["generation_config"].get("tools").is_none());
+        // generationConfig carries the tuning knobs (snake_case proto names).
+        assert_eq!(body["generation_config"]["max_output_tokens"], json!(256));
+        assert_eq!(body["generation_config"]["temperature"], json!(0.5));
+        assert_eq!(body["generation_config"]["stop_sequences"], json!(["STOP"]));
+    }
+
+    #[tokio::test]
+    async fn complete_posts_to_generate_content_and_parses_camel_case() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "answer"}]},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 3}
+        }));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let params = RequestParams {
+            model: "gemini-2.5-flash",
+            messages: &messages,
+            max_tokens: 128,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &Map::new(),
+        };
+        let result = complete(&http, &Credentials::new("api-key"), &params)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            http.last_url(),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        );
+        assert_eq!(
+            http.last_headers(),
+            vec![("x-goog-api-key".to_string(), "api-key".to_string())]
+        );
+        assert_eq!(result.content, json!("answer"));
+        assert_eq!(result.input_tokens, 7);
+        assert_eq!(result.output_tokens, 3);
+        assert_eq!(result.finish_reason, "STOP");
     }
 }
