@@ -6,6 +6,7 @@
 # Application-level settings
 [app]
 LOG_LEVEL = "INFO"
+PERFORMANCE_LOG_FORMAT = "compact" # "compact" for single-line logs, "rich" for local panels
 SESSION_OBSERVERS_LIMIT = 10
 GET_CONTEXT_MAX_TOKENS = 100000
 MAX_FILE_SIZE = 5242880  # 5MB

@@ -1024,8 +1024,10 @@ async def is_rejected_duplicate(
 
     # If new document has more or equal information, keep it and delete existing
     if score_new >= score_existing:
-        logger.warning(
-            f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
+        logger.debug(
+            "[DUPLICATE DETECTION] Deleting existing in favor of new. new=%r, existing=%r.",
+            doc.content,
+            existing_doc.content,
         )
         # Carry the reinforcement count forward so replacing a duplicate counts as
         # another derivation rather than resetting times_derived to 1.
@@ -1041,8 +1043,10 @@ async def is_rejected_duplicate(
     # reinforcing the same document must not lose updates.
     existing_doc.times_derived = models.Document.times_derived + 1
     await db.flush()
-    logger.warning(
-        f"[DUPLICATE DETECTION] Rejecting new in favor of existing. new='{doc.content}', existing='{existing_doc.content}'."
+    logger.debug(
+        "[DUPLICATE DETECTION] Rejecting new in favor of existing. new=%r, existing=%r.",
+        doc.content,
+        existing_doc.content,
     )
     return True
 
