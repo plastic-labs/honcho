@@ -6,7 +6,7 @@ import inspect
 import logging
 from collections.abc import Callable, Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 import sentry_sdk
 
@@ -20,6 +20,56 @@ if TYPE_CHECKING:
     from sentry_sdk.integrations import Integration
 
 logger = logging.getLogger(__name__)
+
+
+# Paths whose transactions carry no debugging value but are hit constantly
+# (health checks, Prometheus scrapes, OpenAPI schema, docs). Tracing them at the
+# same rate as real traffic drowns the signal and burns tracing/profiling quota.
+# Note: /docs and /redoc are disabled in production but are listed for safety.
+_UNSAMPLED_PATHS = frozenset(
+    {"/metrics", "/health", "/openapi.json", "/docs", "/redoc"}
+)
+
+
+def _is_unsampled_transaction_name(name: str | None) -> bool:
+    """Match infra/scrape transactions by name.
+
+    Fallback for transactions that don't expose an ASGI scope path (e.g. the
+    deriver's metrics server) or whose endpoint-style name encodes the route.
+    """
+    if not name:
+        return False
+    return (
+        name.endswith("openapi")
+        or name.endswith("metrics_endpoint")
+        or "prometheus.metrics" in name
+    )
+
+
+def traces_sampler(sampling_context: dict[str, Any]) -> float:
+    """Drop infra/scrape transactions; sample everything else at the default rate.
+
+    Using a sampler (rather than ``before_send_transaction``) means dropped
+    transactions are never recorded or profiled, and the decision propagates to
+    child spans. ``SENTRY.TRACES_SAMPLE_RATE`` remains the rate for real traffic.
+    """
+    asgi_scope = cast("dict[str, Any] | None", sampling_context.get("asgi_scope"))
+    if asgi_scope is not None and asgi_scope.get("path") in _UNSAMPLED_PATHS:
+        return 0.0
+
+    transaction_context = cast(
+        "dict[str, Any] | None", sampling_context.get("transaction_context")
+    )
+    name = transaction_context.get("name") if transaction_context else None
+    if _is_unsampled_transaction_name(name if isinstance(name, str) else None):
+        return 0.0
+
+    # Respect an upstream sampling decision when continuing a distributed trace.
+    parent_sampled = sampling_context.get("parent_sampled")
+    if parent_sampled is not None:
+        return float(parent_sampled)
+
+    return settings.SENTRY.TRACES_SAMPLE_RATE
 
 
 # Sentry SDK's default behavior:
@@ -44,7 +94,9 @@ def initialize_sentry(
         enable_tracing=True,
         release=settings.SENTRY.RELEASE,
         environment=settings.SENTRY.ENVIRONMENT,
-        traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
+        # traces_sampler supersedes traces_sample_rate; it returns the configured
+        # rate for real traffic and 0.0 for infra/scrape endpoints (see above).
+        traces_sampler=traces_sampler,
         profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
         before_send=before_send,
         integrations=integrations,

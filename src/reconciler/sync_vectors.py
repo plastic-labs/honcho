@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, cast
 
+import sentry_sdk
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
@@ -618,10 +619,13 @@ async def _reconcile_documents_batch(
         if not docs:
             return False
 
-        synced, failed = await _sync_documents(db, docs, external_vector_store)
-        metrics.documents_synced += synced
-        metrics.documents_failed += failed
-        await db.commit()
+        with sentry_sdk.start_transaction(
+            name="reconcile_documents_batch", op="reconciler"
+        ):
+            synced, failed = await _sync_documents(db, docs, external_vector_store)
+            metrics.documents_synced += synced
+            metrics.documents_failed += failed
+            await db.commit()
         return True
 
 
@@ -639,10 +643,15 @@ async def _reconcile_message_embeddings_batch(
         if not embs:
             return False
 
-        synced, failed = await _sync_message_embeddings(db, embs, external_vector_store)
-        metrics.message_embeddings_synced += synced
-        metrics.message_embeddings_failed += failed
-        await db.commit()
+        with sentry_sdk.start_transaction(
+            name="reconcile_message_embeddings_batch", op="reconciler"
+        ):
+            synced, failed = await _sync_message_embeddings(
+                db, embs, external_vector_store
+            )
+            metrics.message_embeddings_synced += synced
+            metrics.message_embeddings_failed += failed
+            await db.commit()
         return True
 
 
