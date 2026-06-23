@@ -232,6 +232,37 @@ impl Default for SummaryGlobalSettings {
     }
 }
 
+impl SummaryGlobalSettings {
+    /// Read from the process environment (Python `SUMMARY_*`).
+    pub fn from_env() -> Self {
+        Self::from_pairs(std::env::vars())
+    }
+
+    /// Read from an arbitrary key/value source (testable). `model_config` honors
+    /// nested `SUMMARY_MODEL_CONFIG__*` overrides.
+    pub fn from_pairs<I, K, V>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        use crate::deriver::settings::parse_or;
+        let values = crate::deriver::settings::collect_env(pairs);
+        let defaults = Self::default();
+        Self {
+            model_config: defaults
+                .model_config
+                .with_env_overrides(&values, "SUMMARY_MODEL_CONFIG"),
+            max_tokens_short: parse_or(
+                &values,
+                "SUMMARY_MAX_TOKENS_SHORT",
+                defaults.max_tokens_short,
+            ),
+            max_tokens_long: parse_or(&values, "SUMMARY_MAX_TOKENS_LONG", defaults.max_tokens_long),
+        }
+    }
+}
+
 /// The LLM + model knobs [`create_and_save_summary`] needs (Python
 /// `settings.SUMMARY`). The caller is built per-call with the type's max-tokens.
 pub struct SummaryModelSettings {
@@ -451,6 +482,25 @@ fn fallback_summary(message_count: usize, preview: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_settings_from_pairs_defaults_and_overrides() {
+        let s = SummaryGlobalSettings::from_pairs(Vec::<(String, String)>::new());
+        assert_eq!(s.max_tokens_short, 1000);
+        assert_eq!(s.max_tokens_long, 4000);
+        assert_eq!(s.model_config.model, "gpt-5.4-mini");
+
+        let s = SummaryGlobalSettings::from_pairs([
+            ("SUMMARY_MAX_TOKENS_SHORT", "1500"),
+            ("SUMMARY_MAX_TOKENS_LONG", "6000"),
+            ("SUMMARY_MODEL_CONFIG__TRANSPORT", "anthropic"),
+            ("SUMMARY_MODEL_CONFIG__MODEL", "claude-x"),
+        ]);
+        assert_eq!(s.max_tokens_short, 1500);
+        assert_eq!(s.max_tokens_long, 6000);
+        assert_eq!(s.model_config.transport, crate::llm::Provider::Anthropic);
+        assert_eq!(s.model_config.model, "claude-x");
+    }
 
     #[test]
     fn summary_type_metadata_keys() {

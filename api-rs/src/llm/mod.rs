@@ -77,6 +77,88 @@ impl ModelConfig {
             fallback: None,
         }
     }
+
+    /// Apply nested `{prefix}__{FIELD}` environment overrides onto this config,
+    /// returning the updated config. Mirrors Python's `env_nested_delimiter="__"`
+    /// parsing of `ConfiguredModelSettings` (e.g. `DERIVER_MODEL_CONFIG__MODEL`,
+    /// `SUMMARY_MODEL_CONFIG__TRANSPORT`). Recognized fields: `TRANSPORT`, `MODEL`,
+    /// `MAX_OUTPUT_TOKENS`, `TEMPERATURE`, `TOP_P`, `TOP_K`, `FREQUENCY_PENALTY`,
+    /// `PRESENCE_PENALTY`, `SEED`, `THINKING_BUDGET_TOKENS`, `THINKING_EFFORT`
+    /// (alias `REASONING_EFFORT`), `BASE_URL`, `API_KEY`. Blank or unparseable
+    /// values leave the existing value untouched.
+    ///
+    /// Deviation: fallback chains (`…__FALLBACK__*`), `STOP_SEQUENCES`,
+    /// `CACHE_POLICY`, and free-form provider params are not parsed here —
+    /// `fallback` and `stop_sequences` keep their existing values.
+    pub fn with_env_overrides(
+        mut self,
+        values: &std::collections::HashMap<String, String>,
+        prefix: &str,
+    ) -> Self {
+        let get = |field: &str| -> Option<String> {
+            values
+                .get(&format!("{prefix}__{field}"))
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+
+        if let Some(transport) = get("TRANSPORT").and_then(|t| Provider::from_transport(&t)) {
+            self.transport = transport;
+        }
+        if let Some(model) = get("MODEL") {
+            self.model = model;
+        }
+        if let Some(base_url) = get("BASE_URL") {
+            self.base_url = Some(base_url);
+        }
+        if let Some(api_key) = get("API_KEY") {
+            self.api_key = Some(api_key);
+        }
+        if let Some(effort) = get("THINKING_EFFORT").or_else(|| get("REASONING_EFFORT")) {
+            self.thinking_effort = Some(effort);
+        }
+        if let Some(value) = get("MAX_OUTPUT_TOKENS").and_then(|v| v.parse::<i64>().ok()) {
+            self.max_output_tokens = Some(value);
+        }
+        if let Some(value) = get("THINKING_BUDGET_TOKENS").and_then(|v| v.parse::<i64>().ok()) {
+            self.thinking_budget_tokens = Some(value);
+        }
+        if let Some(value) = get("TEMPERATURE").and_then(|v| v.parse::<f64>().ok()) {
+            self.temperature = Some(value);
+        }
+        if let Some(value) = get("TOP_P").and_then(|v| v.parse::<f64>().ok()) {
+            self.top_p = Some(value);
+        }
+        if let Some(value) = get("TOP_K").and_then(|v| v.parse::<i64>().ok()) {
+            self.top_k = Some(value);
+        }
+        if let Some(value) = get("FREQUENCY_PENALTY").and_then(|v| v.parse::<f64>().ok()) {
+            self.frequency_penalty = Some(value);
+        }
+        if let Some(value) = get("PRESENCE_PENALTY").and_then(|v| v.parse::<f64>().ok()) {
+            self.presence_penalty = Some(value);
+        }
+        if let Some(value) = get("SEED").and_then(|v| v.parse::<i64>().ok()) {
+            self.seed = Some(value);
+        }
+
+        self
+    }
+}
+
+impl Provider {
+    /// Parse a `ModelTransport` string (`anthropic`/`openai`/`gemini`,
+    /// case-insensitive). Returns `None` for anything else (the caller keeps its
+    /// current transport).
+    pub fn from_transport(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "anthropic" => Some(Provider::Anthropic),
+            "openai" => Some(Provider::Openai),
+            "gemini" => Some(Provider::Gemini),
+            _ => None,
+        }
+    }
 }
 
 /// A normalized tool call extracted from any provider's response. Mirrors
@@ -144,4 +226,67 @@ pub enum Provider {
     Anthropic,
     Openai,
     Gemini,
+}
+
+#[cfg(test)]
+mod env_override_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn provider_from_transport_parses_known_values() {
+        assert_eq!(Provider::from_transport("OpenAI"), Some(Provider::Openai));
+        assert_eq!(Provider::from_transport("anthropic"), Some(Provider::Anthropic));
+        assert_eq!(Provider::from_transport(" gemini "), Some(Provider::Gemini));
+        assert_eq!(Provider::from_transport("bedrock"), None);
+    }
+
+    #[test]
+    fn env_overrides_apply_nested_fields() {
+        let values = map(&[
+            ("DERIVER_MODEL_CONFIG__TRANSPORT", "anthropic"),
+            ("DERIVER_MODEL_CONFIG__MODEL", "claude-x"),
+            ("DERIVER_MODEL_CONFIG__MAX_OUTPUT_TOKENS", "4096"),
+            ("DERIVER_MODEL_CONFIG__THINKING_EFFORT", "high"),
+            ("DERIVER_MODEL_CONFIG__TEMPERATURE", "0.7"),
+            ("DERIVER_MODEL_CONFIG__BASE_URL", "https://relay.example/v1"),
+        ]);
+        let config = ModelConfig::new("gpt-5.4-mini", Provider::Openai)
+            .with_env_overrides(&values, "DERIVER_MODEL_CONFIG");
+        assert_eq!(config.transport, Provider::Anthropic);
+        assert_eq!(config.model, "claude-x");
+        assert_eq!(config.max_output_tokens, Some(4096));
+        assert_eq!(config.thinking_effort.as_deref(), Some("high"));
+        assert_eq!(config.temperature, Some(0.7));
+        assert_eq!(config.base_url.as_deref(), Some("https://relay.example/v1"));
+    }
+
+    #[test]
+    fn reasoning_effort_alias_and_blanks_ignored() {
+        let values = map(&[
+            ("X__REASONING_EFFORT", "low"),
+            ("X__MODEL", "   "),
+            ("X__MAX_OUTPUT_TOKENS", "not-a-number"),
+        ]);
+        let config =
+            ModelConfig::new("base-model", Provider::Openai).with_env_overrides(&values, "X");
+        assert_eq!(config.thinking_effort.as_deref(), Some("low"));
+        assert_eq!(config.model, "base-model"); // blank ignored
+        assert_eq!(config.max_output_tokens, None); // unparseable ignored
+    }
+
+    #[test]
+    fn no_overrides_keeps_base() {
+        let config = ModelConfig::new("base-model", Provider::Openai)
+            .with_env_overrides(&HashMap::new(), "DERIVER_MODEL_CONFIG");
+        assert_eq!(config.model, "base-model");
+        assert_eq!(config.transport, Provider::Openai);
+    }
 }

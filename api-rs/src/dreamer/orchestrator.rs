@@ -49,6 +49,51 @@ impl Default for DreamModelSettings {
     }
 }
 
+impl DreamModelSettings {
+    /// Read from the process environment (Python `DREAM_*` / `DERIVER_*`).
+    pub fn from_env() -> Self {
+        Self::from_pairs(std::env::vars())
+    }
+
+    /// Read from an arbitrary key/value source (testable). The two specialist
+    /// model configs honor nested `DREAM_DEDUCTION_MODEL_CONFIG__*` /
+    /// `DREAM_INDUCTION_MODEL_CONFIG__*` overrides. `enabled_types_count` is the
+    /// length of the comma-separated `DREAM_ENABLED_TYPES` (default 1).
+    pub fn from_pairs<I, K, V>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        use crate::deriver::settings::{collect_env, parse_bool_or};
+        let values = collect_env(pairs);
+        let defaults = Self::default();
+
+        let enabled_types_count = values
+            .get("DREAM_ENABLED_TYPES")
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .count() as i64
+            })
+            .filter(|count| *count > 0)
+            .unwrap_or(defaults.enabled_types_count);
+
+        Self {
+            deduction_model_config: defaults
+                .deduction_model_config
+                .with_env_overrides(&values, "DREAM_DEDUCTION_MODEL_CONFIG"),
+            induction_model_config: defaults
+                .induction_model_config
+                .with_env_overrides(&values, "DREAM_INDUCTION_MODEL_CONFIG"),
+            enabled: parse_bool_or(&values, "DREAM_ENABLED", defaults.enabled),
+            enabled_types_count,
+            deduplicate: parse_bool_or(&values, "DERIVER_DEDUPLICATE", defaults.deduplicate),
+        }
+    }
+}
+
 /// Aggregate outcome of a dream cycle (port of `DreamResult`).
 #[derive(Debug, Clone)]
 pub struct DreamRunOutcome {
@@ -261,5 +306,33 @@ pub async fn process_dream<H, E>(
                 tracing::error!(?error, "dream guard-pair write failed");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod model_settings_tests {
+    use super::*;
+
+    #[test]
+    fn from_pairs_defaults_and_overrides() {
+        let s = DreamModelSettings::from_pairs(Vec::<(String, String)>::new());
+        assert!(s.enabled);
+        assert_eq!(s.enabled_types_count, 1);
+        assert!(s.deduplicate);
+        assert_eq!(s.deduction_model_config.model, "gpt-5.4-mini");
+        assert_eq!(s.induction_model_config.model, "gpt-5.4-mini");
+
+        let s = DreamModelSettings::from_pairs([
+            ("DREAM_ENABLED", "false"),
+            ("DREAM_ENABLED_TYPES", "omni, focus"),
+            ("DREAM_DEDUCTION_MODEL_CONFIG__MODEL", "ded-model"),
+            ("DREAM_INDUCTION_MODEL_CONFIG__MAX_OUTPUT_TOKENS", "9000"),
+            ("DERIVER_DEDUPLICATE", "0"),
+        ]);
+        assert!(!s.enabled);
+        assert_eq!(s.enabled_types_count, 2);
+        assert!(!s.deduplicate);
+        assert_eq!(s.deduction_model_config.model, "ded-model");
+        assert_eq!(s.induction_model_config.max_output_tokens, Some(9000));
     }
 }

@@ -54,6 +54,46 @@ impl Default for DeriverModelSettings {
     }
 }
 
+impl DeriverModelSettings {
+    /// Read from the process environment (Python `DERIVER_*` / `LLM_*`).
+    pub fn from_env() -> Self {
+        Self::from_pairs(std::env::vars())
+    }
+
+    /// Read from an arbitrary key/value source (testable). `model_config` honors
+    /// nested `DERIVER_MODEL_CONFIG__*` overrides; missing/unparseable scalars
+    /// fall back to the Python defaults.
+    pub fn from_pairs<I, K, V>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let values = super::settings::collect_env(pairs);
+        let defaults = Self::default();
+        Self {
+            model_config: defaults
+                .model_config
+                .with_env_overrides(&values, "DERIVER_MODEL_CONFIG"),
+            default_max_tokens: super::settings::parse_or(
+                &values,
+                "LLM_DEFAULT_MAX_TOKENS",
+                defaults.default_max_tokens,
+            ),
+            max_input_tokens: super::settings::parse_or(
+                &values,
+                "DERIVER_MAX_INPUT_TOKENS",
+                defaults.max_input_tokens,
+            ),
+            deduplicate: super::settings::parse_bool_or(
+                &values,
+                "DERIVER_DEDUPLICATE",
+                defaults.deduplicate,
+            ),
+        }
+    }
+}
+
 /// The collaborators [`process_representation_tasks_batch`] needs: a DB pool, the
 /// LLM transport + per-transport API keys, an embedder for the write path, the
 /// model settings, and the telemetry emitter. Bundled so the orchestrator's
@@ -335,6 +375,26 @@ pub fn compute_token_breakdown(
 mod tests {
     use super::*;
     use chrono::{DateTime, Utc};
+
+    #[test]
+    fn model_settings_from_pairs_defaults_and_overrides() {
+        let s = DeriverModelSettings::from_pairs(Vec::<(String, String)>::new());
+        assert_eq!(s.default_max_tokens, 2500);
+        assert_eq!(s.max_input_tokens, 25000);
+        assert!(s.deduplicate);
+        assert_eq!(s.model_config.model, "gpt-5.4-mini");
+
+        let s = DeriverModelSettings::from_pairs([
+            ("DERIVER_MODEL_CONFIG__MODEL", "gpt-5.4"),
+            ("DERIVER_MAX_INPUT_TOKENS", "12000"),
+            ("LLM_DEFAULT_MAX_TOKENS", "3000"),
+            ("DERIVER_DEDUPLICATE", "false"),
+        ]);
+        assert_eq!(s.model_config.model, "gpt-5.4");
+        assert_eq!(s.max_input_tokens, 12000);
+        assert_eq!(s.default_max_tokens, 3000);
+        assert!(!s.deduplicate);
+    }
 
     fn msg(id: i64, token_count: i32) -> BatchMessage {
         BatchMessage {

@@ -10,6 +10,45 @@
 //! Python default (matching how `AppConfig::from_pairs` treats numeric vars).
 
 use std::collections::HashMap;
+use std::str::FromStr;
+
+/// Collect an env-pair iterator into an owned `HashMap` (the shape the
+/// `*Settings::from_pairs` parsers and [`crate::llm::ModelConfig::with_env_overrides`]
+/// read).
+pub fn collect_env<I, K, V>(pairs: I) -> HashMap<String, String>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    pairs
+        .into_iter()
+        .map(|(key, value)| (key.as_ref().to_string(), value.as_ref().to_string()))
+        .collect()
+}
+
+/// Parse `key` as `T`, falling back to `default` when absent or unparseable
+/// (matching how the worker settings treat out-of-range / malformed env vars).
+pub fn parse_or<T: FromStr>(values: &HashMap<String, String>, key: &str, default: T) -> T {
+    values
+        .get(key)
+        .map(String::as_str)
+        .map(str::trim)
+        .and_then(|value| value.parse::<T>().ok())
+        .unwrap_or(default)
+}
+
+/// Parse `key` as a boolean (`1`/`true`/`yes`/`on`, case-insensitive), falling
+/// back to `default` when absent or blank.
+pub fn parse_bool_or(values: &HashMap<String, String>, key: &str, default: bool) -> bool {
+    values
+        .get(key)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(default)
+}
 
 /// Scheduling + batching configuration for the deriver queue manager.
 #[derive(Debug, Clone, PartialEq)]
