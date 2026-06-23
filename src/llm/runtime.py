@@ -81,6 +81,10 @@ def annotate_current_langfuse_trace(
             trace_metadata: dict[str, str] = dict(gen_metadata)
             if telemetry is None:
                 trace_metadata.setdefault("namespace", str(settings.NAMESPACE))
+            # Empty body is intentional: propagate_attributes stamps the active
+            # @observe generation (this trace root, for single-shot callers) at
+            # __enter__; there are no child spans to scope here. Don't delete as
+            # dead code — the enter-time side effect is the point.
             with propagate_attributes(
                 user_id=str(settings.NAMESPACE),
                 session_id=run_id,
