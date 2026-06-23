@@ -20,7 +20,7 @@ use honcho_api_rs::deriver::settings::DeriverSettings;
 use honcho_api_rs::dialectic::OwnedOpenAiEmbedder;
 use honcho_api_rs::llm::http::{Credentials, ReqwestHttp};
 use honcho_api_rs::reconciler::scheduler::{
-    DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS, default_reconciler_tasks, run_reconciler_scheduler,
+    default_reconciler_tasks, run_reconciler_scheduler, sync_vectors_interval_from_env,
 };
 use honcho_api_rs::summarizer::SummaryGlobalSettings;
 use honcho_api_rs::telemetry::NoopEmitter;
@@ -99,10 +99,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Host the reconciler scheduler in-process alongside the queue loop (Python
     // starts it from the deriver). It enqueues `reconciler:*` tasks on their
-    // intervals; the worker then drains them. The sync_vectors interval source
-    // (VECTOR_STORE.RECONCILIATION_INTERVAL_SECONDS) is not yet in AppConfig, so
-    // the default (5 min) is used.
-    let scheduler_tasks = default_reconciler_tasks(DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS);
+    // intervals; the worker then drains them. The sync_vectors interval comes from
+    // VECTOR_STORE_RECONCILIATION_INTERVAL_SECONDS (default 5 min).
+    let scheduler_tasks = default_reconciler_tasks(sync_vectors_interval_from_env());
     let scheduler_handle = tokio::spawn(run_reconciler_scheduler(
         scheduler_pool,
         scheduler_tasks,

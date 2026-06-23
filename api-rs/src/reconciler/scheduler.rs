@@ -31,6 +31,30 @@ pub struct ReconcilerScheduledTask {
     pub interval_seconds: u64,
 }
 
+/// Resolve the sync_vectors interval from the process environment, reading
+/// `VECTOR_STORE_RECONCILIATION_INTERVAL_SECONDS` (pydantic `env_prefix="VECTOR_STORE_"`).
+/// Falls back to [`DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS`] when absent, unparseable,
+/// or out of range — Python enforces `gt=0`, so a non-positive value is rejected
+/// in favor of the default (matching how the worker settings treat invalid env vars).
+pub fn sync_vectors_interval_from_env() -> u64 {
+    sync_vectors_interval_from_pairs(std::env::vars())
+}
+
+/// [`sync_vectors_interval_from_env`] over an arbitrary key/value source (testable).
+pub fn sync_vectors_interval_from_pairs<I, K, V>(pairs: I) -> u64
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
+    pairs
+        .into_iter()
+        .find(|(key, _)| key.as_ref() == "VECTOR_STORE_RECONCILIATION_INTERVAL_SECONDS")
+        .and_then(|(_, value)| value.as_ref().trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS)
+}
+
 /// The default registry: `sync_vectors` (configurable interval) + `cleanup_queue`
 /// (12h). Mirrors `RECONCILER_TASKS`.
 pub fn default_reconciler_tasks(sync_vectors_interval_seconds: u64) -> Vec<ReconcilerScheduledTask> {
@@ -139,6 +163,38 @@ mod tests {
 
     fn tasks() -> Vec<ReconcilerScheduledTask> {
         default_reconciler_tasks(300)
+    }
+
+    #[test]
+    fn sync_vectors_interval_env_parsing() {
+        // Absent → default.
+        assert_eq!(
+            sync_vectors_interval_from_pairs(Vec::<(String, String)>::new()),
+            DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS
+        );
+        // Valid override.
+        assert_eq!(
+            sync_vectors_interval_from_pairs([(
+                "VECTOR_STORE_RECONCILIATION_INTERVAL_SECONDS",
+                "600"
+            )]),
+            600
+        );
+        // Non-positive (Python `gt=0`) and unparseable → default.
+        assert_eq!(
+            sync_vectors_interval_from_pairs([(
+                "VECTOR_STORE_RECONCILIATION_INTERVAL_SECONDS",
+                "0"
+            )]),
+            DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS
+        );
+        assert_eq!(
+            sync_vectors_interval_from_pairs([(
+                "VECTOR_STORE_RECONCILIATION_INTERVAL_SECONDS",
+                "not-a-number"
+            )]),
+            DEFAULT_SYNC_VECTORS_INTERVAL_SECONDS
+        );
     }
 
     #[test]
