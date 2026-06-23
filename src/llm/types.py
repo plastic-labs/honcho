@@ -223,9 +223,6 @@ class StreamingResponseWithMetadata:
                 self._langfuse_run_handle = None
                 handle.end(output="".join(accumulated_text) or None)
 
-    async def __anext__(self) -> HonchoLLMCallStreamChunk:
-        return await self._stream.__anext__()
-
 
 __all__ = [
     "HonchoLLMCallResponse",
