@@ -82,6 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
         honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
+        honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
         poll_settings,
         Arc::new(ReqwestWebhookSender::new()),
         webhook_secret,

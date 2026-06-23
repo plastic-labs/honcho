@@ -50,6 +50,7 @@ where
     model_settings: DeriverModelSettings,
     summary_settings: SummaryGlobalSettings,
     dream_settings: crate::dreamer::orchestrator::DreamModelSettings,
+    dream_schedule_settings: crate::dreamer::scheduler::DreamScheduleSettings,
     poll_settings: DeriverSettings,
     webhook_sender: Arc<dyn WebhookSender>,
     /// `settings.WEBHOOK.SECRET` — required to sign deliveries; `None` skips them.
@@ -71,6 +72,7 @@ where
         model_settings: DeriverModelSettings,
         summary_settings: SummaryGlobalSettings,
         dream_settings: crate::dreamer::orchestrator::DreamModelSettings,
+        dream_schedule_settings: crate::dreamer::scheduler::DreamScheduleSettings,
         poll_settings: DeriverSettings,
         webhook_sender: Arc<dyn WebhookSender>,
         webhook_secret: Option<String>,
@@ -84,6 +86,7 @@ where
             model_settings,
             summary_settings,
             dream_settings,
+            dream_schedule_settings,
             poll_settings,
             webhook_sender,
             webhook_secret,
@@ -100,6 +103,7 @@ where
             embedder: &self.embedder,
             settings: self.model_settings.clone(),
             emitter: self.emitter.as_ref(),
+            dream_schedule_settings: self.dream_schedule_settings.clone(),
         }
     }
 

@@ -65,6 +65,9 @@ pub struct DeriverBatchContext<'a, H: LlmHttp + Sync, E: Embedder + Sync> {
     pub embedder: &'a E,
     pub settings: DeriverModelSettings,
     pub emitter: &'a dyn Emitter,
+    /// Global `DREAM.*` scheduling knobs for `check_and_schedule_dream` (run from
+    /// `save_representation` when the resolved configuration enables dreams).
+    pub dream_schedule_settings: crate::dreamer::scheduler::DreamScheduleSettings,
 }
 
 /// Port of `process_representation_tasks_batch`: format the batch into the
@@ -82,7 +85,9 @@ pub struct DeriverBatchContext<'a, H: LlmHttp + Sync, E: Embedder + Sync> {
 ///   the worker always supplies the resolved configuration via the queue payload.
 /// - `accumulate_metric` / `log_performance_metrics` / Prometheus token tracking
 ///   / `LOG_OBSERVATIONS` blob logging are skipped (pure observability).
-/// - `check_and_schedule_dream` is deferred (see [`save_representation`]).
+/// - `check_and_schedule_dream` runs inside [`save_representation`] when the
+///   resolved configuration enables dreams (no idle-timeout debounce — see
+///   [`crate::dreamer::scheduler`]).
 #[allow(clippy::too_many_arguments)]
 pub async fn process_representation_tasks_batch<H, E>(
     ctx: &DeriverBatchContext<'_, H, E>,
@@ -203,6 +208,11 @@ where
                 &latest.session_name,
                 latest.created_at,
                 ctx.settings.deduplicate,
+                if configuration.dream_enabled {
+                    Some(&ctx.dream_schedule_settings)
+                } else {
+                    None
+                },
             )
             .await
             {

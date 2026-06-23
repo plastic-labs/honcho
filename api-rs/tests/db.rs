@@ -3604,6 +3604,8 @@ async fn process_representation_work_unit_once_drives_batch_and_marks_processed(
         embedder: &IndexedEmbedder,
         settings,
         emitter: &emitter,
+        dream_schedule_settings:
+            honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
     };
 
     let work_unit = parse_work_unit_key(key).expect("parse key");
@@ -3699,6 +3701,7 @@ async fn deriver_worker_poll_once_claims_processes_and_releases() {
         model_settings,
         SummaryGlobalSettings::default(),
         honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
+        honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
         poll_settings,
         Arc::new(ReqwestWebhookSender::new()),
         None,
@@ -3782,6 +3785,7 @@ async fn seed_deletion_fixture(pool: &PgPool) {
         "sess",
         created,
         true,
+        None,
     )
     .await
     .expect("save docs");
@@ -4346,6 +4350,7 @@ async fn deriver_worker_processes_a_deletion_work_unit() {
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
         honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
+        honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4441,6 +4446,7 @@ async fn deriver_worker_processes_a_summary_work_unit_with_public_id_fallback() 
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
         honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
+        honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4521,6 +4527,7 @@ async fn deriver_worker_processes_a_reconciler_sync_vectors_work_unit() {
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
         honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
+        honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4635,6 +4642,7 @@ async fn deriver_worker_processes_a_webhook_work_unit() {
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
         honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
+        honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4748,6 +4756,7 @@ async fn deriver_worker_processes_a_dream_work_unit() {
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
         honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
+        honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -5526,6 +5535,7 @@ async fn save_representation_writes_documents() {
         "sess",
         created,
         true,
+        None,
     )
     .await
     .expect("save representation");
@@ -5556,6 +5566,70 @@ async fn save_representation_writes_documents() {
 }
 
 #[tokio::test]
+async fn save_representation_schedules_dream_when_enabled() {
+    use honcho_api_rs::dreamer::scheduler::DreamScheduleSettings;
+    use honcho_api_rs::representation::{ExplicitObservation, Representation};
+    use honcho_api_rs::representation_manager::save_representation;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::create_messages(&test_db.pool, "ws", "sess", &[message("bob", "hi")], false, 8192)
+        .await
+        .expect("seed session");
+    db::get_or_create_peer(&test_db.pool, "ws", "alice", None, None)
+        .await
+        .expect("peer alice");
+
+    let created = Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0).unwrap();
+    let mk = |content: &str| ExplicitObservation {
+        id: String::new(),
+        created_at: created,
+        message_ids: vec![1],
+        session_name: Some("sess".to_string()),
+        content: content.to_string(),
+    };
+    let rep = Representation {
+        explicit: vec![mk("bob likes coffee"), mk("bob lives in Berlin")],
+        ..Representation::default()
+    };
+
+    // threshold = 1 → the two explicit docs trip the gate.
+    let dream_settings = DreamScheduleSettings {
+        document_threshold: 1,
+        ..DreamScheduleSettings::default()
+    };
+    let count = save_representation(
+        &test_db.pool,
+        &IndexedEmbedder,
+        "ws",
+        "alice",
+        "bob",
+        &rep,
+        &[1],
+        "sess",
+        created,
+        true,
+        Some(&dream_settings),
+    )
+    .await
+    .expect("save representation");
+    assert_eq!(count, 2);
+
+    // A dream was scheduled for (alice, bob).
+    let dream_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queue WHERE task_type = 'dream' \
+         AND work_unit_key = 'dream:omni:ws:alice:bob'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("dream count");
+    assert_eq!(dream_count, 1);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn save_representation_empty_writes_nothing() {
     use honcho_api_rs::representation::Representation;
     use honcho_api_rs::representation_manager::save_representation;
@@ -5579,6 +5653,7 @@ async fn save_representation_empty_writes_nothing() {
         "sess",
         created,
         true,
+        None,
     )
     .await
     .expect("save empty");
@@ -5666,6 +5741,8 @@ async fn process_representation_tasks_batch_saves_and_emits() {
         embedder: &IndexedEmbedder,
         settings,
         emitter: &emitter,
+        dream_schedule_settings:
+            honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
     };
 
     let created = Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0).unwrap();
@@ -5752,6 +5829,8 @@ async fn process_representation_tasks_batch_skips_when_reasoning_disabled() {
         embedder: &IndexedEmbedder,
         settings: DeriverModelSettings::default(),
         emitter: &emitter,
+        dream_schedule_settings:
+            honcho_api_rs::dreamer::scheduler::DreamScheduleSettings::default(),
     };
 
     let created = Utc.with_ymd_and_hms(2025, 3, 4, 12, 0, 0).unwrap();
