@@ -75,6 +75,12 @@ class LLMTelemetryContext:
     # agent — dialectic/deduction/induction. Used by agent iteration
     # event and tool call event.
     agent_type: str | None = None
+    # Human-readable name for the Langfuse trace + per-call generation
+    # (e.g. "Dialectic Agent", "Minimal Deriver"). Sole home for this name —
+    # callers set it here; `honcho_llm_call` no longer takes a separate kwarg.
+    # Also used to label the sentry `ai_track` decorator and as the source for
+    # the run-level `langfuse_agent_run` label.
+    track_name: str | None = None
 
 
 IterationCallback = Callable[[IterationData], None]
@@ -134,6 +140,13 @@ class StreamingResponseWithMetadata:
     reflects tool-loop output + final-stream output. Callers that read
     `output_tokens` AFTER fully iterating the stream get the true total;
     callers that read it before drain see only the tool-loop portion.
+
+    `langfuse_run_handle` (optional) is the run-level Langfuse span handle
+    transferred from `honcho_llm_call` when streaming. The wrapper owns it
+    after construction: on drain, the accumulated streamed text is stamped
+    as the run span's output and the span is closed. Without this transfer,
+    streaming traces would show blank output because the synchronous return
+    happens before any chunks arrive.
     """
 
     _stream: AsyncIterator[HonchoLLMCallStreamChunk]
@@ -145,6 +158,7 @@ class StreamingResponseWithMetadata:
     thinking_content: str | None
     iterations: int
     hit_input_token_cap: bool
+    _langfuse_run_handle: Any | None
 
     def __init__(
         self,
@@ -157,6 +171,7 @@ class StreamingResponseWithMetadata:
         thinking_content: str | None = None,
         iterations: int = 0,
         hit_input_token_cap: bool = False,
+        langfuse_run_handle: Any | None = None,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -167,6 +182,7 @@ class StreamingResponseWithMetadata:
         self.thinking_content = thinking_content
         self.iterations = iterations
         self.hit_input_token_cap = hit_input_token_cap
+        self._langfuse_run_handle = langfuse_run_handle
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
         # Wrap the underlying iterator to capture final-stream output_tokens
@@ -180,20 +196,32 @@ class StreamingResponseWithMetadata:
         self,
     ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
         final_stream_output_tokens = 0
-        async for chunk in self._stream:
-            if chunk.output_tokens is not None:
-                # Take the LATEST value, not the sum — providers report
-                # the cumulative usage in the final chunk, not deltas.
-                final_stream_output_tokens = chunk.output_tokens
-            yield chunk
-        # Stream drained — fold the final-stream output tokens into the
-        # tool-loop totals so DialecticCompletedEvent / downstream readers
-        # see the true cost.
-        if final_stream_output_tokens > 0:
-            self.output_tokens += final_stream_output_tokens
-
-    async def __anext__(self) -> HonchoLLMCallStreamChunk:
-        return await self._stream.__anext__()
+        # Only accumulate when a Langfuse run handle is attached — for non-
+        # traced streams the buffer is dead weight.
+        accumulate = self._langfuse_run_handle is not None
+        accumulated_text: list[str] = []
+        try:
+            async for chunk in self._stream:
+                if chunk.output_tokens is not None:
+                    # Take the LATEST value, not the sum — providers report
+                    # the cumulative usage in the final chunk, not deltas.
+                    final_stream_output_tokens = chunk.output_tokens
+                if accumulate and chunk.content:
+                    accumulated_text.append(chunk.content)
+                yield chunk
+            # Stream drained — fold the final-stream output tokens into the
+            # tool-loop totals so DialecticCompletedEvent / downstream readers
+            # see the true cost.
+            if final_stream_output_tokens > 0:
+                self.output_tokens += final_stream_output_tokens
+        finally:
+            # Close the run span once, stamping the streamed text as its
+            # output. In `finally` so an early-exit caller still closes
+            # the span rather than leaking it.
+            handle = self._langfuse_run_handle
+            if handle is not None:
+                self._langfuse_run_handle = None
+                handle.end(output="".join(accumulated_text) or None)
 
 
 __all__ = [

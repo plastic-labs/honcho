@@ -5,9 +5,10 @@ and a conditional observe decorator that only applies when Langfuse is configure
 """
 
 import datetime
+import logging
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import ParamSpec, TypeVar, overload
+from typing import Literal, ParamSpec, TypeVar, overload
 
 from fastapi import Request
 from langfuse import observe
@@ -24,6 +25,8 @@ from src.utils.representation import (
     Representation,
 )
 
+logger = logging.getLogger(__name__)
+
 # Global console instance for consistent formatting
 console = Console(markup=True)
 
@@ -31,6 +34,21 @@ COLLECT_METRICS_LOCAL = settings.COLLECT_METRICS_LOCAL
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+# Langfuse observation types accepted by `@observe(as_type=...)`. Mirrors the
+# literal union the SDK exposes; kept local so callers don't import langfuse
+# internals just to name an observation type.
+ObserveAsType = Literal[
+    "generation",
+    "embedding",
+    "span",
+    "agent",
+    "tool",
+    "chain",
+    "retriever",
+    "evaluator",
+    "guardrail",
+]
 
 
 @overload
@@ -42,7 +60,8 @@ def conditional_observe(
 @overload
 def conditional_observe(
     *,
-    name: str,
+    name: str | None = None,
+    as_type: ObserveAsType | None = None,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
 
 
@@ -50,17 +69,20 @@ def conditional_observe(
     func: Callable[P, R] | None = None,
     *,
     name: str | None = None,
+    as_type: ObserveAsType | None = None,
 ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Conditionally apply the @observe decorator only when LANGFUSE_PUBLIC_KEY is present.
 
     Can be used in two ways:
     1. As a decorator: @conditional_observe
-    2. As a decorator factory: @conditional_observe(name="...")
+    2. As a decorator factory: @conditional_observe(name="...", as_type="generation")
 
     Args:
         func: The function to potentially decorate (when used as @conditional_observe)
         name: Optional name for the observation (when used as @conditional_observe(name="..."))
+        as_type: Optional Langfuse observation type (e.g. "generation", "tool"). When
+            omitted, Langfuse infers a default span.
 
     Returns:
         The decorated function if Langfuse is configured, otherwise the original function
@@ -69,6 +91,8 @@ def conditional_observe(
     def decorator(f: Callable[P, R]) -> Callable[P, R]:
         if settings.LANGFUSE_PUBLIC_KEY:
             observe_name = name if name is not None else f.__name__
+            if as_type is not None:
+                return observe(name=observe_name, as_type=as_type)(f)
             return observe(name=observe_name)(f)
         else:
             return f
@@ -79,6 +103,22 @@ def conditional_observe(
     else:
         # Used as @conditional_observe(name="...") (with parentheses and keyword args)
         return decorator
+
+
+def flush_langfuse() -> None:
+    """Flush buffered Langfuse spans on shutdown.
+
+    The SDK's background timer/atexit hook don't fire reliably on SIGTERM, so
+    the final batch is dropped without this. No-op when Langfuse is unconfigured.
+    """
+    if not settings.LANGFUSE_PUBLIC_KEY:
+        return
+    try:
+        from langfuse import get_client
+
+        get_client().flush()
+    except Exception:
+        logger.debug("Failed to flush Langfuse on shutdown", exc_info=True)
 
 
 # Bounded OrderedDict for accumulated metrics to prevent memory leaks.
