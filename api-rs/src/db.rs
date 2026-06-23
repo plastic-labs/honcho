@@ -4031,26 +4031,6 @@ pub async fn enqueue_dream(
 ) -> Result<(), sqlx::Error> {
     let work_unit_key = format!("dream:{dream_type}:{workspace_name}:{observer}:{observed}");
 
-    let in_progress: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM active_queue_sessions WHERE work_unit_key = $1)",
-    )
-    .bind(&work_unit_key)
-    .fetch_one(pool)
-    .await?;
-    if in_progress {
-        return Ok(());
-    }
-
-    let pending: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM queue WHERE work_unit_key = $1 AND processed = false)",
-    )
-    .bind(&work_unit_key)
-    .fetch_one(pool)
-    .await?;
-    if pending {
-        return Ok(());
-    }
-
     let mut payload = serde_json::Map::from_iter([
         ("task_type".to_string(), Value::String("dream".to_string())),
         ("dream_type".to_string(), Value::String(dream_type.to_string())),
@@ -4063,17 +4043,134 @@ pub async fn enqueue_dream(
     payload.insert("trigger_reason".to_string(), Value::String("manual".to_string()));
     payload.insert("delay_reason".to_string(), Value::String("immediate".to_string()));
 
+    insert_dream_if_absent(pool, workspace_name, &work_unit_key, Value::Object(payload)).await?;
+    Ok(())
+}
+
+/// Port of `check_and_schedule_dream`'s threshold-triggered enqueue (the body of
+/// `DreamScheduler.execute_dream`). Like [`enqueue_dream`] but carries the
+/// scheduling-attribution payload fields (`trigger_reason="document_threshold"`,
+/// the resolved `delay_reason`, and the count snapshots) so `DreamRunEvent` can
+/// attribute the dream back to its trigger. `session_name` is required here (the
+/// caller knows it from the save context). Returns whether a row was inserted.
+#[allow(clippy::too_many_arguments)]
+pub async fn enqueue_scheduled_dream(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+    dream_type: &str,
+    session_name: &str,
+    trigger_reason: &str,
+    delay_reason: &str,
+    documents_since_last_dream_at_schedule: i64,
+    document_threshold: i64,
+) -> Result<bool, sqlx::Error> {
+    let work_unit_key = format!("dream:{dream_type}:{workspace_name}:{observer}:{observed}");
+
+    // `model_dump(mode="json", exclude_none=True)` — session_name is always set here.
+    let payload = serde_json::Map::from_iter([
+        ("task_type".to_string(), Value::String("dream".to_string())),
+        ("dream_type".to_string(), Value::String(dream_type.to_string())),
+        ("observer".to_string(), Value::String(observer.to_string())),
+        ("observed".to_string(), Value::String(observed.to_string())),
+        ("session_name".to_string(), Value::String(session_name.to_string())),
+        ("trigger_reason".to_string(), Value::String(trigger_reason.to_string())),
+        ("delay_reason".to_string(), Value::String(delay_reason.to_string())),
+        (
+            "documents_since_last_dream_at_schedule".to_string(),
+            Value::from(documents_since_last_dream_at_schedule),
+        ),
+        ("document_threshold".to_string(), Value::from(document_threshold)),
+    ]);
+
+    insert_dream_if_absent(pool, workspace_name, &work_unit_key, Value::Object(payload)).await
+}
+
+/// Insert a `dream` queue item unless one is already in-progress (an
+/// `active_queue_sessions` row) or pending (`processed = false`) for the same
+/// `work_unit_key` — the dedup shared by [`enqueue_dream`] and
+/// [`enqueue_scheduled_dream`], mirroring Python's `enqueue_dream`. Returns
+/// whether a row was inserted.
+async fn insert_dream_if_absent(
+    pool: &PgPool,
+    workspace_name: &str,
+    work_unit_key: &str,
+    payload: Value,
+) -> Result<bool, sqlx::Error> {
+    let in_progress: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM active_queue_sessions WHERE work_unit_key = $1)",
+    )
+    .bind(work_unit_key)
+    .fetch_one(pool)
+    .await?;
+    if in_progress {
+        return Ok(false);
+    }
+
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM queue WHERE work_unit_key = $1 AND processed = false)",
+    )
+    .bind(work_unit_key)
+    .fetch_one(pool)
+    .await?;
+    if pending {
+        return Ok(false);
+    }
+
     sqlx::query(
         "INSERT INTO queue \
          (work_unit_key, payload, session_id, task_type, workspace_name, message_id) \
          VALUES ($1, $2, NULL, 'dream', $3, NULL)",
     )
-    .bind(&work_unit_key)
-    .bind(Value::Object(payload))
+    .bind(work_unit_key)
+    .bind(payload)
     .bind(workspace_name)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(true)
+}
+
+/// Count live-or-deleted `explicit`-level documents for `(workspace, observer,
+/// observed)` — the threshold input for `check_and_schedule_dream`. Matches
+/// [`record_dream_guard`]'s count exactly (no `deleted_at` filter) so the
+/// schedule baseline and the guard baseline stay consistent.
+pub async fn count_explicit_documents(
+    pool: &PgPool,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM documents \
+         WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+           AND level = 'explicit'",
+    )
+    .bind(workspace_name)
+    .bind(observer)
+    .bind(observed)
+    .fetch_one(pool)
+    .await
+}
+
+/// Whether any unprocessed `dream` queue item exists for one of `work_unit_keys`
+/// — the in-flight check of `check_and_schedule_dream` (mirrors
+/// `uq_queue_dream_pending_work_unit_key`). `false` for an empty key list.
+pub async fn any_dream_pending(
+    pool: &PgPool,
+    work_unit_keys: &[String],
+) -> Result<bool, sqlx::Error> {
+    if work_unit_keys.is_empty() {
+        return Ok(false);
+    }
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM queue \
+         WHERE task_type = 'dream' AND processed = false \
+           AND work_unit_key = ANY($1))",
+    )
+    .bind(work_unit_keys)
+    .fetch_one(pool)
+    .await
 }
 
 /// Port of `reconciler.scheduler.ReconcilerScheduler._try_enqueue_task`: enqueue a

@@ -4778,6 +4778,114 @@ async fn deriver_worker_processes_a_dream_work_unit() {
 }
 
 #[tokio::test]
+async fn check_and_schedule_dream_enqueues_then_dedups() {
+    use honcho_api_rs::dreamer::scheduler::{check_and_schedule_dream, DreamScheduleSettings};
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::get_or_create_collection(&test_db.pool, "ws", "obs", "obsd")
+        .await
+        .expect("collection");
+
+    // Two explicit documents — meets a threshold of 2.
+    for (i, content) in ["fact one", "fact two"].iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO documents (id, content, workspace_name, observer, observed, level) \
+             VALUES ($1, $2, 'ws', 'obs', 'obsd', 'explicit')",
+        )
+        .bind(format!("dreamdoc{i:013}"))
+        .bind(content)
+        .execute(&test_db.pool)
+        .await
+        .expect("seed document");
+    }
+
+    let settings = DreamScheduleSettings {
+        document_threshold: 2,
+        ..DreamScheduleSettings::default()
+    };
+    let now = Utc::now();
+
+    // First call: threshold met, no pending dream → schedule one.
+    let scheduled = check_and_schedule_dream(
+        &test_db.pool,
+        &settings,
+        "ws",
+        "obs",
+        "obsd",
+        &json!({}),
+        "sess",
+        now,
+    )
+    .await
+    .expect("schedule");
+    assert!(scheduled);
+
+    // Exactly one dream queue item, carrying the scheduling-attribution payload.
+    let row: (String, Value) = sqlx::query_as(
+        "SELECT work_unit_key, payload FROM queue WHERE task_type = 'dream'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("dream queue item");
+    assert_eq!(row.0, "dream:omni:ws:obs:obsd");
+    assert_eq!(row.1["dream_type"], json!("omni"));
+    assert_eq!(row.1["trigger_reason"], json!("document_threshold"));
+    assert_eq!(row.1["delay_reason"], json!("idle_timeout"));
+    assert_eq!(row.1["documents_since_last_dream_at_schedule"], json!(2));
+    assert_eq!(row.1["document_threshold"], json!(2));
+    assert_eq!(row.1["session_name"], json!("sess"));
+
+    // Second call: an unprocessed dream is already pending → no duplicate.
+    let again = check_and_schedule_dream(
+        &test_db.pool,
+        &settings,
+        "ws",
+        "obs",
+        "obsd",
+        &json!({}),
+        "sess",
+        now,
+    )
+    .await
+    .expect("schedule again");
+    assert!(!again);
+
+    let dream_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE task_type = 'dream'")
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("count");
+    assert_eq!(dream_count, 1);
+
+    // Below threshold (count unchanged but baseline now equals it) → no schedule.
+    let below = check_and_schedule_dream(
+        &test_db.pool,
+        &settings,
+        "ws",
+        "obs",
+        "obsd",
+        &json!({"dream": {"last_dream_document_count": 2}}),
+        "sess",
+        now,
+    )
+    .await
+    .expect("below threshold");
+    assert!(!below);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn get_or_create_collection_creates_then_reuses() {
     let Some(test_db) = TestDb::setup().await else {
         return;
