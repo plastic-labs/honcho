@@ -6,6 +6,10 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+  # TEMPORARY: run on PRs to test tag-based secret resolution. REVERT before merging.
+  # No `paths` filter on purpose so a workflow-only PR still triggers this.
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
@@ -40,15 +44,65 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::444554165670:role/GitHubActionsS3Role
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
           aws-region: us-east-1
           role-duration-seconds: 43200 # 12 hours
+
+      - name: Resolve secret id from latest git tag
+        id: resolve-secret
+        env:
+          SECRET_PREFIX: ${{ secrets.STAGING_SECRET_PREFIX }}
+        run: |
+          set -euo pipefail
+          : "${SECRET_PREFIX:?STAGING_SECRET_PREFIX secret is not set for this environment}"
+          # Keep the secret-name prefix out of public CI logs.
+          echo "::add-mask::${SECRET_PREFIX}"
+
+          # Two newest v<major.minor.patch> tags, highest first.
+          versions="$(git ls-remote --tags origin 'v*' \
+            | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
+            | sort -t. -k1,1nr -k2,2nr -k3,3nr -u)"
+          latest="$(printf '%s\n' "$versions" | sed -n '1p')"
+          second="$(printf '%s\n' "$versions" | sed -n '2p')"
+          if [ -z "${latest:-}" ]; then
+            echo "::error::No v<semver> git tags found to resolve a secret version"
+            exit 1
+          fi
+
+          # Try the latest tag's secret; on a genuine NotFound, fall back to the second-latest.
+          secret_id=""
+          for ver in "$latest" "$second"; do
+            [ -z "$ver" ] && continue
+            candidate="${SECRET_PREFIX}${ver}"
+            if err="$(aws secretsmanager get-secret-value \
+              --secret-id "$candidate" --query SecretString --output text 2>&1 >/dev/null)"; then
+              secret_id="$candidate"
+              echo "Using secret for version ${ver}"
+              break
+            elif printf '%s' "$err" | grep -q 'ResourceNotFoundException'; then
+              echo "::warning::No secret published for version ${ver}; trying next"
+              continue
+            else
+              # Log only the AWS error code (e.g. AccessDeniedException) — never the
+              # raw message, which embeds the account id, role ARN, and secret ARN.
+              code="$(printf '%s' "$err" | sed -n 's/.*An error occurred (\([^)]*\)).*/\1/p' | head -n1)"
+              echo "::error::Failed to read secret for version ${ver}: ${code:-unknown error}"
+              exit 1
+            fi
+          done
+
+          if [ -z "$secret_id" ]; then
+            echo "::error::No secret found for the latest or second-latest tag"
+            exit 1
+          fi
+          echo "::add-mask::${secret_id}"
+          echo "secret-id=${secret_id}" >> "$GITHUB_OUTPUT"
 
       - name: Fetch secrets from AWS Secrets Manager
         uses: aws-actions/aws-secretsmanager-get-secrets@v2
         with:
           secret-ids: |
-            ,testing/unified/tests
+            ,${{ steps.resolve-secret.outputs.secret-id }}
           parse-json-secrets: true
 
       - name: Verify Docker is available
