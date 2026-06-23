@@ -48,7 +48,7 @@ jobs:
           aws-region: us-east-1
           role-duration-seconds: 43200 # 12 hours
 
-      - name: Resolve secret id from latest git tag
+      - name: Resolve secret ids from latest git tags
         id: resolve-secret
         env:
           SECRET_PREFIX: ${{ secrets.STAGING_SECRET_PREFIX }}
@@ -58,7 +58,7 @@ jobs:
           # Keep the secret-name prefix out of public CI logs.
           echo "::add-mask::${SECRET_PREFIX}"
 
-          # Two newest v<major.minor.patch> tags, highest first.
+          # Two newest v<major.minor.patch> tags, highest first (tags are public).
           versions="$(git ls-remote --tags origin 'v*' \
             | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
             | sort -t. -k1,1nr -k2,2nr -k3,3nr -u)"
@@ -69,40 +69,36 @@ jobs:
             exit 1
           fi
 
-          # Try the latest tag's secret; on a genuine NotFound, fall back to the second-latest.
-          secret_id=""
-          for ver in "$latest" "$second"; do
-            [ -z "$ver" ] && continue
-            candidate="${SECRET_PREFIX}${ver}"
-            if err="$(aws secretsmanager get-secret-value \
-              --secret-id "$candidate" --query SecretString --output text 2>&1 >/dev/null)"; then
-              secret_id="$candidate"
-              echo "Using secret for version ${ver}"
-              break
-            elif printf '%s' "$err" | grep -q 'ResourceNotFoundException'; then
-              echo "::warning::No secret published for version ${ver}; trying next"
-              continue
-            else
-              # Log only the AWS error code (e.g. AccessDeniedException) — never the
-              # raw message, which embeds the account id, role ARN, and secret ARN.
-              code="$(printf '%s' "$err" | sed -n 's/.*An error occurred (\([^)]*\)).*/\1/p' | head -n1)"
-              echo "::error::Failed to read secret for version ${ver}: ${code:-unknown error}"
-              exit 1
-            fi
-          done
-
-          if [ -z "$secret_id" ]; then
-            echo "::error::No secret found for the latest or second-latest tag"
-            exit 1
+          latest_id="${SECRET_PREFIX}${latest}"
+          echo "::add-mask::${latest_id}"
+          echo "latest-id=${latest_id}" >> "$GITHUB_OUTPUT"
+          echo "Latest version: ${latest}"
+          if [ -n "${second:-}" ]; then
+            second_id="${SECRET_PREFIX}${second}"
+            echo "::add-mask::${second_id}"
+            echo "second-id=${second_id}" >> "$GITHUB_OUTPUT"
+            echo "Fallback version: ${second}"
           fi
-          echo "::add-mask::${secret_id}"
-          echo "secret-id=${secret_id}" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch secrets from AWS Secrets Manager
+      # Fetch the latest tag's secret. continue-on-error so a not-yet-published
+      # latest falls through to the second-latest instead of failing the job.
+      - name: Fetch staging secret (latest)
+        id: fetch-latest
+        continue-on-error: true
         uses: aws-actions/aws-secretsmanager-get-secrets@v2
         with:
           secret-ids: |
-            ,${{ steps.resolve-secret.outputs.secret-id }}
+            ,${{ steps.resolve-secret.outputs.latest-id }}
+          parse-json-secrets: true
+
+      # Runs only if the latest fetch failed; this one is NOT continue-on-error,
+      # so if the fallback also fails the job fails loudly.
+      - name: Fetch staging secret (fallback to second-latest)
+        if: steps.fetch-latest.outcome == 'failure' && steps.resolve-secret.outputs.second-id != ''
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            ,${{ steps.resolve-secret.outputs.second-id }}
           parse-json-secrets: true
 
       - name: Verify Docker is available
