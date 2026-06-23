@@ -101,12 +101,17 @@ jobs:
             ,${{ steps.resolve-secret.outputs.second-id }}
           parse-json-secrets: true
 
-      # Override values pulled from Secrets Manager: tests run without real auth or
-      # Sentry. Written after the fetch steps so the last $GITHUB_ENV write wins.
-      - name: Disable auth and Sentry for tests
+      # Configure the test environment. Disables auth/Sentry/CloudEvents telemetry
+      # (their endpoints aren't reachable from CI), and points REASONING_TRACES_FILE
+      # at a shared path so the API + deriver record full LLM I/O for auditing — the
+      # runner uploads it to S3. Written after the fetch steps so these win over the
+      # values loaded from Secrets Manager (last $GITHUB_ENV write wins).
+      - name: Configure test environment
         run: |
           echo "AUTH_USE_AUTH=false" >> "$GITHUB_ENV"
           echo "SENTRY_ENABLED=false" >> "$GITHUB_ENV"
+          echo "TELEMETRY_ENABLED=false" >> "$GITHUB_ENV"
+          echo "REASONING_TRACES_FILE=unified-reasoning-traces.jsonl" >> "$GITHUB_ENV"
 
       - name: Verify Docker is available
         run: docker info
