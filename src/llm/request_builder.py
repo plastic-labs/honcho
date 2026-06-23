@@ -90,6 +90,8 @@ def build_config_extra_params(config: ModelConfig) -> dict[str, Any]:
         extra_params["presence_penalty"] = config.presence_penalty
     if config.seed is not None:
         extra_params["seed"] = config.seed
+    if config.structured_output_mode is not None:
+        extra_params["structured_output_mode"] = config.structured_output_mode
 
     if config.provider_params:
         extra_params.update(config.provider_params)

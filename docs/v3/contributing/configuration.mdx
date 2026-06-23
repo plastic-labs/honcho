@@ -60,6 +60,12 @@ You can mix providers freely — for example, use Gemini for the deriver and Cla
 
 For OpenAI-compatible proxies (OpenRouter, vLLM, Ollama, etc.), use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature to point at your endpoint.
 
+<Note>
+Some OpenAI-compatible providers don't support OpenAI Structured Outputs (`json_schema`). Set `DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object` to request loose JSON mode and inject the schema into the prompt instead.
+
+This setting only applies to the **deriver** on the **`openai`** transport — it is the only feature that uses structured output. The dialectic, summarizer, and dreamer don't request structured output, so the setting has no effect there, and the anthropic/gemini transports reject it.
+</Note>
+
 ### Tiered Model Setup
 
 Once you're past initial setup, you can assign different models per feature for better cost/quality tradeoffs. This example uses OpenRouter with light/medium/heavy tiers:
@@ -373,6 +379,7 @@ DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000
 # DERIVER_MODEL_CONFIG__THINKING_EFFORT=minimal
 # DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 # DERIVER_MODEL_CONFIG__TEMPERATURE=0.7  # Optional temperature override
+# DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object  # for providers without json_schema support
 
 # Backup model (optional)
 # DERIVER_MODEL_CONFIG__FALLBACK__MODEL=claude-haiku-4-5

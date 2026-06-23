@@ -61,6 +61,10 @@ ThinkingEffortLevel = Literal[
     "none", "minimal", "low", "medium", "high", "xhigh", "max"
 ]
 
+# "json_object" injects the schema into the prompt for OpenAI-compatible
+# providers that don't support json_schema (Structured Outputs).
+StructuredOutputMode = Literal["json_schema", "json_object"]
+
 
 class ModelOverrideSettings(BaseModel):
     """Advanced module-level transport overrides."""
@@ -133,6 +137,23 @@ def _validate_thinking_constraints(
         raise ValueError("thinking_budget_tokens must be >= 1024 for Anthropic models")
 
 
+def _validate_structured_output_mode(
+    transport: ModelTransport, structured_output_mode: StructuredOutputMode | None
+) -> None:
+    """Reject ``structured_output_mode`` on transports that ignore it.
+
+    Only the OpenAI backend honors this setting (it controls the json_schema vs
+    json_object structured-output path). On the anthropic/gemini transports it is
+    a silent no-op, so a value set there is a misconfiguration — fail fast at
+    startup rather than letting the operator wonder why it has no effect.
+    """
+    if structured_output_mode is not None and transport != "openai":
+        raise ValueError(
+            "structured_output_mode is only supported on the 'openai' transport; "
+            + f"remove it from the '{transport}' model config"
+        )
+
+
 class FallbackModelSettings(BaseModel):
     """Independent fallback model configuration. No inheritance from primary."""
 
@@ -151,6 +172,8 @@ class FallbackModelSettings(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+
+    structured_output_mode: StructuredOutputMode | None = None
 
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
@@ -171,6 +194,7 @@ class FallbackModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "FallbackModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
 
 
@@ -195,6 +219,8 @@ class ConfiguredModelSettings(BaseModel):
     )
     thinking_budget_tokens: int | None = None
 
+    structured_output_mode: StructuredOutputMode | None = None
+
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
@@ -215,6 +241,7 @@ class ConfiguredModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
 
 
@@ -239,6 +266,7 @@ class ResolvedFallbackConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+    structured_output_mode: StructuredOutputMode | None = None
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -274,6 +302,7 @@ class ModelConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+    structured_output_mode: StructuredOutputMode | None = None
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -410,6 +439,7 @@ def _resolve_fallback_config(
         seed=fallback.seed,
         thinking_effort=fallback.thinking_effort,
         thinking_budget_tokens=fallback.thinking_budget_tokens,
+        structured_output_mode=fallback.structured_output_mode,
         provider_params=fallback.overrides.provider_params,
         max_output_tokens=fallback.max_output_tokens,
         stop_sequences=fallback.stop_sequences,
@@ -443,6 +473,7 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
         seed=configured.seed,
         thinking_effort=configured.thinking_effort,
         thinking_budget_tokens=configured.thinking_budget_tokens,
+        structured_output_mode=configured.structured_output_mode,
         provider_params=configured.overrides.provider_params,
         max_output_tokens=configured.max_output_tokens,
         stop_sequences=configured.stop_sequences,
