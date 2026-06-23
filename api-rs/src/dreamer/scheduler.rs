@@ -47,6 +47,83 @@ impl Default for DreamScheduleSettings {
     }
 }
 
+impl DreamScheduleSettings {
+    /// Read the scheduling knobs from the process environment (Python
+    /// `env_prefix="DREAM_"`). Out-of-range values are not rejected — a missing
+    /// or unparseable var falls back to the default, like [`super::super::deriver::settings::DeriverSettings::from_env`].
+    pub fn from_env() -> Self {
+        Self::from_pairs(std::env::vars())
+    }
+
+    /// Read from an arbitrary key/value source (testable).
+    ///
+    /// `DREAM_ENABLED_TYPES` is parsed as a comma-separated list (trimmed,
+    /// empties dropped); an empty/absent value keeps the default `["omni"]`.
+    /// Deviation: pydantic-settings parses `list[str]` env vars as JSON — the
+    /// comma form is the conventional shell shape and the only override anyone
+    /// realistically sets here.
+    pub fn from_pairs<I, K, V>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let values = pairs
+            .into_iter()
+            .map(|(key, value)| (key.as_ref().to_string(), value.as_ref().to_string()))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        let defaults = Self::default();
+
+        let parse_i64 = |key: &str, default: i64| -> i64 {
+            values
+                .get(key)
+                .map(String::as_str)
+                .and_then(|value| value.trim().parse::<i64>().ok())
+                .unwrap_or(default)
+        };
+        let parse_bool = |key: &str, default: bool| -> bool {
+            values
+                .get(key)
+                .map(String::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| {
+                    matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
+                .unwrap_or(default)
+        };
+
+        let enabled_types = values
+            .get("DREAM_ENABLED_TYPES")
+            .map(|raw| {
+                raw.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|types| !types.is_empty())
+            .unwrap_or(defaults.enabled_types);
+
+        Self {
+            enabled: parse_bool("DREAM_ENABLED", defaults.enabled),
+            document_threshold: parse_i64("DREAM_DOCUMENT_THRESHOLD", defaults.document_threshold),
+            idle_timeout_minutes: parse_i64(
+                "DREAM_IDLE_TIMEOUT_MINUTES",
+                defaults.idle_timeout_minutes,
+            ),
+            min_hours_between_dreams: parse_i64(
+                "DREAM_MIN_HOURS_BETWEEN_DREAMS",
+                defaults.min_hours_between_dreams,
+            ),
+            enabled_types,
+        }
+    }
+}
+
 /// The `collection.internal_metadata["dream"]` guard fields (written by
 /// `record_dream_guard` on a completed dream).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -260,6 +337,38 @@ mod tests {
         assert_eq!(s.document_threshold, 50);
         assert_eq!(s.idle_timeout_minutes, 60);
         assert_eq!(s.min_hours_between_dreams, 8);
+        assert_eq!(s.enabled_types, vec!["omni".to_string()]);
+    }
+
+    #[test]
+    fn empty_env_yields_defaults() {
+        let s = DreamScheduleSettings::from_pairs(Vec::<(String, String)>::new());
+        assert_eq!(s, DreamScheduleSettings::default());
+    }
+
+    #[test]
+    fn env_overrides_are_parsed() {
+        let s = DreamScheduleSettings::from_pairs([
+            ("DREAM_ENABLED", "false"),
+            ("DREAM_DOCUMENT_THRESHOLD", "100"),
+            ("DREAM_IDLE_TIMEOUT_MINUTES", "0"),
+            ("DREAM_MIN_HOURS_BETWEEN_DREAMS", "24"),
+            ("DREAM_ENABLED_TYPES", "omni, focus ,, "),
+        ]);
+        assert!(!s.enabled);
+        assert_eq!(s.document_threshold, 100);
+        assert_eq!(s.idle_timeout_minutes, 0);
+        assert_eq!(s.min_hours_between_dreams, 24);
+        assert_eq!(s.enabled_types, vec!["omni".to_string(), "focus".to_string()]);
+    }
+
+    #[test]
+    fn unparseable_or_empty_falls_back() {
+        let s = DreamScheduleSettings::from_pairs([
+            ("DREAM_DOCUMENT_THRESHOLD", "not-a-number"),
+            ("DREAM_ENABLED_TYPES", "   "),
+        ]);
+        assert_eq!(s.document_threshold, 50);
         assert_eq!(s.enabled_types, vec!["omni".to_string()]);
     }
 
