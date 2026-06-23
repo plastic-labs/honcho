@@ -87,63 +87,115 @@ impl ModelConfig {
     /// (alias `REASONING_EFFORT`), `BASE_URL`, `API_KEY`. Blank or unparseable
     /// values leave the existing value untouched.
     ///
-    /// Deviation: fallback chains (`…__FALLBACK__*`), `STOP_SEQUENCES`,
-    /// `CACHE_POLICY`, and free-form provider params are not parsed here —
-    /// `fallback` and `stop_sequences` keep their existing values.
+    /// Fallback chains are parsed: `{prefix}__FALLBACK__MODEL` +
+    /// `{prefix}__FALLBACK__TRANSPORT` (both required to form a fallback) plus the
+    /// same tuning knobs and `{prefix}__FALLBACK__OVERRIDES__{API_KEY,BASE_URL}`
+    /// (Python's `FallbackModelSettings.overrides`). `{prefix}__STOP_SEQUENCES`
+    /// (and the fallback's) is a JSON array of strings, matching pydantic-settings'
+    /// JSON decoding of complex env fields. `CACHE_POLICY` and free-form provider
+    /// params are still not parsed here.
     pub fn with_env_overrides(
         mut self,
         values: &std::collections::HashMap<String, String>,
         prefix: &str,
     ) -> Self {
-        let get = |field: &str| -> Option<String> {
-            values
-                .get(&format!("{prefix}__{field}"))
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-        };
+        apply_model_knobs(&mut self, values, prefix);
 
-        if let Some(transport) = get("TRANSPORT").and_then(|t| Provider::from_transport(&t)) {
-            self.transport = transport;
-        }
-        if let Some(model) = get("MODEL") {
-            self.model = model;
-        }
-        if let Some(base_url) = get("BASE_URL") {
-            self.base_url = Some(base_url);
-        }
-        if let Some(api_key) = get("API_KEY") {
+        // The primary's credential overrides live directly under the prefix
+        // (the worker settings' historical shape), unlike the fallback's, which
+        // sit under an `OVERRIDES__` segment (Python `ModelOverrideSettings`).
+        if let Some(api_key) = env_get(values, prefix, "API_KEY") {
             self.api_key = Some(api_key);
         }
-        if let Some(effort) = get("THINKING_EFFORT").or_else(|| get("REASONING_EFFORT")) {
-            self.thinking_effort = Some(effort);
+        if let Some(base_url) = env_get(values, prefix, "BASE_URL") {
+            self.base_url = Some(base_url);
         }
-        if let Some(value) = get("MAX_OUTPUT_TOKENS").and_then(|v| v.parse::<i64>().ok()) {
-            self.max_output_tokens = Some(value);
-        }
-        if let Some(value) = get("THINKING_BUDGET_TOKENS").and_then(|v| v.parse::<i64>().ok()) {
-            self.thinking_budget_tokens = Some(value);
-        }
-        if let Some(value) = get("TEMPERATURE").and_then(|v| v.parse::<f64>().ok()) {
-            self.temperature = Some(value);
-        }
-        if let Some(value) = get("TOP_P").and_then(|v| v.parse::<f64>().ok()) {
-            self.top_p = Some(value);
-        }
-        if let Some(value) = get("TOP_K").and_then(|v| v.parse::<i64>().ok()) {
-            self.top_k = Some(value);
-        }
-        if let Some(value) = get("FREQUENCY_PENALTY").and_then(|v| v.parse::<f64>().ok()) {
-            self.frequency_penalty = Some(value);
-        }
-        if let Some(value) = get("PRESENCE_PENALTY").and_then(|v| v.parse::<f64>().ok()) {
-            self.presence_penalty = Some(value);
-        }
-        if let Some(value) = get("SEED").and_then(|v| v.parse::<i64>().ok()) {
-            self.seed = Some(value);
+
+        // A fallback is built only when both MODEL and a valid TRANSPORT are
+        // present (Python requires both); a partial spec leaves `fallback`
+        // untouched, matching the blank/unparseable leniency elsewhere here.
+        let fallback_prefix = format!("{prefix}__FALLBACK");
+        if let (Some(model), Some(transport)) = (
+            env_get(values, &fallback_prefix, "MODEL"),
+            env_get(values, &fallback_prefix, "TRANSPORT")
+                .and_then(|t| Provider::from_transport(&t)),
+        ) {
+            let mut fallback = ModelConfig::new(model, transport);
+            apply_model_knobs(&mut fallback, values, &fallback_prefix);
+            let overrides_prefix = format!("{fallback_prefix}__OVERRIDES");
+            fallback.api_key = env_get(values, &overrides_prefix, "API_KEY");
+            fallback.base_url = env_get(values, &overrides_prefix, "BASE_URL");
+            fallback.fallback = None; // single-level, matching Python
+            self.fallback = Some(Box::new(fallback));
         }
 
         self
+    }
+}
+
+/// Read `{prefix}__{field}`, trimmed, treating blank as absent.
+fn env_get(
+    values: &std::collections::HashMap<String, String>,
+    prefix: &str,
+    field: &str,
+) -> Option<String> {
+    values
+        .get(&format!("{prefix}__{field}"))
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// Apply the tuning knobs (model/transport/effort/numeric params/stop_sequences)
+/// under `prefix` onto `config`. Shared by the primary config and its fallback;
+/// credential overrides (api_key/base_url) are handled by the caller because the
+/// primary and fallback read them from different sub-keys.
+fn apply_model_knobs(
+    config: &mut ModelConfig,
+    values: &std::collections::HashMap<String, String>,
+    prefix: &str,
+) {
+    let get = |field: &str| env_get(values, prefix, field);
+
+    if let Some(transport) = get("TRANSPORT").and_then(|t| Provider::from_transport(&t)) {
+        config.transport = transport;
+    }
+    if let Some(model) = get("MODEL") {
+        config.model = model;
+    }
+    if let Some(effort) = get("THINKING_EFFORT").or_else(|| get("REASONING_EFFORT")) {
+        config.thinking_effort = Some(effort);
+    }
+    if let Some(value) = get("MAX_OUTPUT_TOKENS").and_then(|v| v.parse::<i64>().ok()) {
+        config.max_output_tokens = Some(value);
+    }
+    if let Some(value) = get("THINKING_BUDGET_TOKENS").and_then(|v| v.parse::<i64>().ok()) {
+        config.thinking_budget_tokens = Some(value);
+    }
+    if let Some(value) = get("TEMPERATURE").and_then(|v| v.parse::<f64>().ok()) {
+        config.temperature = Some(value);
+    }
+    if let Some(value) = get("TOP_P").and_then(|v| v.parse::<f64>().ok()) {
+        config.top_p = Some(value);
+    }
+    if let Some(value) = get("TOP_K").and_then(|v| v.parse::<i64>().ok()) {
+        config.top_k = Some(value);
+    }
+    if let Some(value) = get("FREQUENCY_PENALTY").and_then(|v| v.parse::<f64>().ok()) {
+        config.frequency_penalty = Some(value);
+    }
+    if let Some(value) = get("PRESENCE_PENALTY").and_then(|v| v.parse::<f64>().ok()) {
+        config.presence_penalty = Some(value);
+    }
+    if let Some(value) = get("SEED").and_then(|v| v.parse::<i64>().ok()) {
+        config.seed = Some(value);
+    }
+    // pydantic-settings decodes a `list[str]` env field as JSON; mirror that
+    // (an invalid value leaves the existing stop sequences untouched).
+    if let Some(raw) = get("STOP_SEQUENCES")
+        && let Ok(sequences) = serde_json::from_str::<Vec<String>>(&raw)
+    {
+        config.stop_sequences = Some(sequences);
     }
 }
 
@@ -288,5 +340,59 @@ mod env_override_tests {
             .with_env_overrides(&HashMap::new(), "DERIVER_MODEL_CONFIG");
         assert_eq!(config.model, "base-model");
         assert_eq!(config.transport, Provider::Openai);
+        assert!(config.fallback.is_none());
+        assert!(config.stop_sequences.is_none());
+    }
+
+    #[test]
+    fn stop_sequences_parsed_as_json_array() {
+        let values = map(&[("X__STOP_SEQUENCES", r#"["\n\n", "STOP"]"#)]);
+        let config =
+            ModelConfig::new("base-model", Provider::Openai).with_env_overrides(&values, "X");
+        assert_eq!(
+            config.stop_sequences,
+            Some(vec!["\n\n".to_string(), "STOP".to_string()])
+        );
+    }
+
+    #[test]
+    fn stop_sequences_invalid_json_is_ignored() {
+        let values = map(&[("X__STOP_SEQUENCES", "not-json")]);
+        let config =
+            ModelConfig::new("base-model", Provider::Openai).with_env_overrides(&values, "X");
+        assert!(config.stop_sequences.is_none());
+    }
+
+    #[test]
+    fn fallback_chain_parsed_with_overrides() {
+        let values = map(&[
+            ("X__MODEL", "gpt-primary"),
+            ("X__FALLBACK__MODEL", "claude-backup"),
+            ("X__FALLBACK__TRANSPORT", "anthropic"),
+            ("X__FALLBACK__MAX_OUTPUT_TOKENS", "2048"),
+            ("X__FALLBACK__THINKING_EFFORT", "low"),
+            ("X__FALLBACK__OVERRIDES__API_KEY", "sk-fallback"),
+            ("X__FALLBACK__OVERRIDES__BASE_URL", "https://relay.example/v1"),
+        ]);
+        let config =
+            ModelConfig::new("base-model", Provider::Openai).with_env_overrides(&values, "X");
+        assert_eq!(config.model, "gpt-primary");
+        let fallback = config.fallback.expect("fallback built");
+        assert_eq!(fallback.model, "claude-backup");
+        assert_eq!(fallback.transport, Provider::Anthropic);
+        assert_eq!(fallback.max_output_tokens, Some(2048));
+        assert_eq!(fallback.thinking_effort.as_deref(), Some("low"));
+        assert_eq!(fallback.api_key.as_deref(), Some("sk-fallback"));
+        assert_eq!(fallback.base_url.as_deref(), Some("https://relay.example/v1"));
+        assert!(fallback.fallback.is_none()); // single-level
+    }
+
+    #[test]
+    fn partial_fallback_spec_builds_nothing() {
+        // MODEL present but TRANSPORT missing → no fallback (Python requires both).
+        let values = map(&[("X__FALLBACK__MODEL", "claude-backup")]);
+        let config =
+            ModelConfig::new("base-model", Provider::Openai).with_env_overrides(&values, "X");
+        assert!(config.fallback.is_none());
     }
 }
