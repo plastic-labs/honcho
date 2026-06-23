@@ -10,9 +10,12 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
+use futures::Stream;
+
 use super::backends::{anthropic, gemini, openai};
 use super::credentials::{TransportApiKeys, resolve_credentials};
-use super::http::{Credentials, LlmHttp, LlmHttpError};
+use super::http::{Credentials, LlmHttp, LlmHttpError, LlmStreamHttp};
+use super::streaming::{StreamChunk, decode_stream};
 use super::request_builder::{build_config_extra_params, effective_max_tokens};
 use super::runtime::{effective_config_for_call, effective_temperature, plan_attempt};
 use super::tool_loop::ToolLoopCaller;
@@ -119,6 +122,91 @@ pub async fn execute_completion<H: LlmHttp>(
             Ok(gemini::complete(http, credentials, &params).await?)
         }
     }
+}
+
+/// A boxed stream of decoded [`StreamChunk`]s. Boxing erases the transport type
+/// param so the returned stream is `'static` and self-contained (it owns the
+/// response body), independent of the borrowed transport/config/messages.
+pub type ChunkStream =
+    std::pin::Pin<Box<dyn Stream<Item = Result<StreamChunk, LlmHttpError>> + Send>>;
+
+/// The streaming counterpart of [`execute_completion`]: open a provider stream for
+/// the given config + inputs and return a stream of decoded [`StreamChunk`]s. Used
+/// for the dialectic's final-response streaming (`tool_loop.py` `stream_final`);
+/// the tool-calling rounds run non-streaming through [`execute_completion`]. The
+/// initial connect error surfaces as [`ExecutorError`]; per-chunk transport errors
+/// surface in the returned stream.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_stream<H: LlmStreamHttp>(
+    http: &H,
+    credentials: &Credentials,
+    config: &ModelConfig,
+    messages: &[Value],
+    max_tokens: i64,
+    tools: Option<&[Value]>,
+    tool_choice: Option<&Value>,
+    stop: Option<&[String]>,
+    extra_params: Option<&Map<String, Value>>,
+) -> Result<ChunkStream, ExecutorError> {
+    let max_tokens = effective_max_tokens(config, max_tokens);
+
+    let mut merged_extra_params = build_config_extra_params(config);
+    if let Some(extra) = extra_params {
+        for (key, value) in extra {
+            merged_extra_params.insert(key.clone(), value.clone());
+        }
+    }
+    let effective_stop: Option<&[String]> = stop.or(config.stop_sequences.as_deref());
+
+    let provider = config.transport;
+    let text_stream = match provider {
+        Provider::Anthropic => {
+            let params = anthropic::RequestParams {
+                model: &config.model,
+                messages,
+                max_tokens,
+                temperature: config.temperature,
+                stop: effective_stop,
+                tools,
+                tool_choice,
+                thinking_budget_tokens: config.thinking_budget_tokens,
+                extra_params: &merged_extra_params,
+            };
+            anthropic::stream(http, credentials, &params).await?
+        }
+        Provider::Openai => {
+            let params = openai::RequestParams {
+                model: &config.model,
+                messages,
+                max_tokens,
+                temperature: config.temperature,
+                stop: effective_stop,
+                tools,
+                tool_choice,
+                thinking_effort: config.thinking_effort.as_deref(),
+                thinking_budget_tokens: config.thinking_budget_tokens,
+                extra_params: &merged_extra_params,
+            };
+            openai::stream(http, credentials, &params).await?
+        }
+        Provider::Gemini => {
+            let params = gemini::RequestParams {
+                model: &config.model,
+                messages,
+                max_tokens,
+                temperature: config.temperature,
+                stop: effective_stop,
+                tools,
+                tool_choice,
+                thinking_effort: config.thinking_effort.as_deref(),
+                thinking_budget_tokens: config.thinking_budget_tokens,
+                extra_params: &merged_extra_params,
+            };
+            gemini::stream(http, credentials, &params).await?
+        }
+    };
+
+    Ok(Box::pin(decode_stream(provider, text_stream)))
 }
 
 /// One backend call returning the public response, porting the non-stream path
@@ -668,5 +756,68 @@ mod tests {
         assert_eq!(policy.backoff_for(1), Duration::from_secs(4));
         assert_eq!(policy.backoff_for(2), Duration::from_secs(8));
         assert_eq!(policy.backoff_for(3), Duration::from_secs(10)); // 16 capped to 10
+    }
+
+    #[tokio::test]
+    async fn execute_stream_openai_sets_stream_flags_and_decodes_chunks() {
+        use crate::llm::http::mock::MockStreamHttp;
+        use futures::StreamExt;
+
+        // Two network chunks with the event boundary mid-frame, then usage + [DONE].
+        let http = MockStreamHttp::new(vec![
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\ndata: {\"choi".to_string(),
+            "ces\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"completion_tokens\":4}}\n\ndata: [DONE]\n\n".to_string(),
+        ]);
+        let creds = Credentials::new("key");
+        let config = ModelConfig::new("gpt-x", Provider::Openai);
+        let stream = execute_stream(
+            &http, &creds, &config, &messages(), 256, None, None, None, None,
+        )
+        .await
+        .expect("stream opens");
+        let chunks: Vec<_> = stream.map(|result| result.unwrap()).collect().await;
+
+        // The request was a streaming POST with usage opted in.
+        assert!(http.last_url().ends_with("/chat/completions"));
+        let body = http.last_body();
+        assert_eq!(body["stream"], json!(true));
+        assert_eq!(body["stream_options"]["include_usage"], json!(true));
+        assert_eq!(body["max_tokens"], json!(256));
+        // The SSE body decoded into content deltas + the terminal usage chunk.
+        assert_eq!(
+            chunks,
+            vec![
+                StreamChunk::content("Hel"),
+                StreamChunk::content("lo"),
+                StreamChunk::done(Some("stop".to_string()), Some(4)),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_stream_dispatches_to_anthropic_and_decodes() {
+        use crate::llm::http::mock::MockStreamHttp;
+        use futures::StreamExt;
+
+        let http = MockStreamHttp::new(vec![
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n".to_string(),
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\ndata: {\"type\":\"message_stop\"}\n\n".to_string(),
+        ]);
+        let creds = Credentials::new("key");
+        let config = ModelConfig::new("claude-x", Provider::Anthropic);
+        let stream = execute_stream(
+            &http, &creds, &config, &messages(), 256, None, None, None, None,
+        )
+        .await
+        .expect("stream opens");
+        let chunks: Vec<_> = stream.map(|result| result.unwrap()).collect().await;
+
+        assert!(http.last_url().ends_with("/v1/messages"));
+        assert_eq!(http.last_body()["stream"], json!(true));
+        let headers = http.last_headers();
+        assert!(headers.iter().any(|(name, value)| name == "x-api-key" && value == "key"));
+        assert!(headers.iter().any(|(name, _)| name == "anthropic-version"));
+        assert_eq!(chunks.first(), Some(&StreamChunk::content("Hi")));
+        assert!(chunks.last().map(|chunk| chunk.is_done).unwrap_or(false));
     }
 }

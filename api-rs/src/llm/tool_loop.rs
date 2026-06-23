@@ -114,6 +114,10 @@ pub struct ToolLoopResponse {
     pub tool_calls_made: Vec<ToolCallRecord>,
     pub iterations: usize,
     pub hit_input_token_cap: bool,
+    /// The conversation that produced the final (no-tool-call) response — the
+    /// messages to re-issue for `stream_final` streaming (`tool_loop.py`
+    /// `stream_final_response`, which re-runs them with `tools=None`).
+    pub final_conversation: Vec<Value>,
 }
 
 /// Errors from [`execute_tool_loop`]. Only the iteration-bound check is a
@@ -230,6 +234,7 @@ pub async fn execute_tool_loop<C: ToolLoopCaller, E: ToolExecutor>(
                 tool_calls_made: all_tool_calls,
                 iterations: iteration + 1,
                 hit_input_token_cap,
+                final_conversation: conversation.clone(),
             });
         }
 
@@ -313,6 +318,7 @@ pub async fn execute_tool_loop<C: ToolLoopCaller, E: ToolExecutor>(
         tool_calls_made: all_tool_calls,
         iterations: iteration + 1,
         hit_input_token_cap,
+        final_conversation: conversation.clone(),
     })
 }
 

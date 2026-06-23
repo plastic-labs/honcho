@@ -20,7 +20,13 @@
 //! `stream_final_response`), and the axum SSE route are the remaining wiring;
 //! Gemini streaming is not ported (non-default provider).
 
+use std::collections::VecDeque;
+
+use futures::Stream;
 use serde_json::Value;
+
+use super::Provider;
+use super::http::LlmHttpError;
 
 /// One streamed delta, mirroring `backend.StreamChunk`. A content chunk carries
 /// text; the terminal chunk has `is_done = true` and the final reason/usage.
@@ -170,6 +176,12 @@ impl AnthropicStreamDecoder {
         }
         Vec::new()
     }
+
+    /// Anthropic emits its terminal chunk on `message_stop`, so end-of-stream
+    /// adds nothing.
+    pub fn finalize(&mut self) -> Vec<StreamChunk> {
+        Vec::new()
+    }
 }
 
 /// Decodes OpenAI Chat-Completions stream chunks, porting the `stream()` handler:
@@ -211,6 +223,181 @@ impl OpenAiStreamDecoder {
         }
         out
     }
+
+    /// OpenAI emits its terminal chunk on the trailing usage chunk, so
+    /// end-of-stream adds nothing.
+    pub fn finalize(&mut self) -> Vec<StreamChunk> {
+        Vec::new()
+    }
+}
+
+/// Decodes Gemini `streamGenerateContent` chunks, porting the `stream()` handler:
+/// each chunk yields its joined candidate text; the terminal `finish_reason` +
+/// `candidates_token_count` come from the *last* chunk and are emitted at
+/// end-of-stream (Gemini has no explicit done event), via [`finalize`](Self::finalize).
+#[derive(Debug, Default)]
+pub struct GeminiStreamDecoder {
+    finish_reason: Option<String>,
+    output_tokens: Option<i64>,
+}
+
+impl GeminiStreamDecoder {
+    pub fn push(&mut self, data: &Value) -> Vec<StreamChunk> {
+        let candidate = data
+            .get("candidates")
+            .and_then(Value::as_array)
+            .and_then(|candidates| candidates.first());
+
+        // Join this chunk's text parts (the SDK's `chunk.text` convenience).
+        let mut text = String::new();
+        if let Some(parts) = candidate
+            .and_then(|candidate| candidate.get("content"))
+            .and_then(|content| content.get("parts"))
+            .and_then(Value::as_array)
+        {
+            for part in parts {
+                if let Some(piece) = part.get("text").and_then(Value::as_str) {
+                    text.push_str(piece);
+                }
+            }
+        }
+
+        // Accumulate the terminal info (last writer wins).
+        if let Some(reason) = candidate
+            .and_then(|candidate| dual_field(candidate, "finish_reason", "finishReason"))
+            .and_then(Value::as_str)
+        {
+            self.finish_reason = Some(reason.to_string());
+        }
+        if let Some(tokens) = dual_field(data, "usage_metadata", "usageMetadata")
+            .and_then(|usage| dual_field(usage, "candidates_token_count", "candidatesTokenCount"))
+            .and_then(Value::as_i64)
+        {
+            self.output_tokens = Some(tokens);
+        }
+
+        if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![StreamChunk::content(text)]
+        }
+    }
+
+    /// Emit the terminal chunk from the accumulated last-chunk metadata.
+    pub fn finalize(&mut self) -> Vec<StreamChunk> {
+        vec![StreamChunk::done(
+            self.finish_reason.clone().or(Some("stop".to_string())),
+            self.output_tokens,
+        )]
+    }
+}
+
+/// Read a field under its proto snake_case or camelCase name (Gemini REST
+/// responses are camelCase; SDK-shaped fixtures are snake_case).
+fn dual_field<'a>(value: &'a Value, snake: &str, camel: &str) -> Option<&'a Value> {
+    value.get(snake).or_else(|| value.get(camel))
+}
+
+/// Provider-dispatched stream decoder, selected by transport.
+enum StreamDecoder {
+    Anthropic(AnthropicStreamDecoder),
+    OpenAi(OpenAiStreamDecoder),
+    Gemini(GeminiStreamDecoder),
+}
+
+impl StreamDecoder {
+    fn for_provider(provider: Provider) -> Self {
+        match provider {
+            Provider::Anthropic => StreamDecoder::Anthropic(AnthropicStreamDecoder::default()),
+            Provider::Openai => StreamDecoder::OpenAi(OpenAiStreamDecoder::default()),
+            Provider::Gemini => StreamDecoder::Gemini(GeminiStreamDecoder::default()),
+        }
+    }
+
+    fn push(&mut self, data: &Value) -> Vec<StreamChunk> {
+        match self {
+            StreamDecoder::Anthropic(decoder) => decoder.push(data),
+            StreamDecoder::OpenAi(decoder) => decoder.push(data),
+            StreamDecoder::Gemini(decoder) => decoder.push(data),
+        }
+    }
+
+    fn finalize(&mut self) -> Vec<StreamChunk> {
+        match self {
+            StreamDecoder::Anthropic(decoder) => decoder.finalize(),
+            StreamDecoder::OpenAi(decoder) => decoder.finalize(),
+            StreamDecoder::Gemini(decoder) => decoder.finalize(),
+        }
+    }
+}
+
+/// Turn a raw text-chunk transport stream (the SSE body, arriving in arbitrary
+/// network chunks) into a stream of [`StreamChunk`]s for `provider`: frame events
+/// with [`SseBuffer`], parse each `data:` payload as JSON, and run the matching
+/// decoder. A transport error ends the stream after surfacing it; a `[DONE]`
+/// sentinel or end-of-stream triggers the decoder's [`finalize`](StreamDecoder::finalize).
+pub fn decode_stream<S>(
+    provider: Provider,
+    text_stream: S,
+) -> impl Stream<Item = Result<StreamChunk, LlmHttpError>>
+where
+    S: Stream<Item = Result<String, LlmHttpError>> + Unpin + Send,
+{
+    use futures::StreamExt;
+
+    struct State<S> {
+        text_stream: S,
+        buffer: SseBuffer,
+        decoder: StreamDecoder,
+        pending: VecDeque<StreamChunk>,
+        ended: bool,
+    }
+
+    let state = State {
+        text_stream,
+        buffer: SseBuffer::new(),
+        decoder: StreamDecoder::for_provider(provider),
+        pending: VecDeque::new(),
+        ended: false,
+    };
+
+    futures::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(chunk) = state.pending.pop_front() {
+                return Some((Ok(chunk), state));
+            }
+            if state.ended {
+                return None;
+            }
+            match state.text_stream.next().await {
+                Some(Ok(text)) => {
+                    for payload in state.buffer.push(&text) {
+                        match payload {
+                            SsePayload::Data(data) => {
+                                if let Ok(value) = serde_json::from_str::<Value>(&data) {
+                                    state.pending.extend(state.decoder.push(&value));
+                                }
+                            }
+                            SsePayload::Done => {
+                                state.ended = true;
+                                state.pending.extend(state.decoder.finalize());
+                            }
+                        }
+                    }
+                }
+                Some(Err(error)) => {
+                    state.ended = true;
+                    return Some((Err(error), state));
+                }
+                None => {
+                    // End-of-stream without a sentinel (e.g. Anthropic/Gemini):
+                    // let the decoder emit any terminal chunk it accumulated.
+                    state.ended = true;
+                    state.pending.extend(state.decoder.finalize());
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]
@@ -279,6 +466,54 @@ mod tests {
         assert_eq!(
             decoder.push(&json!({"type": "message_stop"})),
             vec![StreamChunk::done(Some("end_turn".to_string()), Some(7))]
+        );
+    }
+
+    #[test]
+    fn gemini_decoder_emits_terminal_on_finalize() {
+        let mut decoder = GeminiStreamDecoder::default();
+        assert_eq!(
+            decoder.push(&json!({"candidates": [{"content": {"parts": [{"text": "Hi"}]}}]})),
+            vec![StreamChunk::content("Hi")]
+        );
+        // Last chunk carries finishReason + usage; no content.
+        assert!(
+            decoder
+                .push(&json!({
+                    "candidates": [{"content": {"parts": []}, "finishReason": "STOP"}],
+                    "usageMetadata": {"candidatesTokenCount": 9}
+                }))
+                .is_empty()
+        );
+        assert_eq!(
+            decoder.finalize(),
+            vec![StreamChunk::done(Some("STOP".to_string()), Some(9))]
+        );
+    }
+
+    #[tokio::test]
+    async fn decode_stream_frames_openai_sse_into_chunks() {
+        use futures::StreamExt;
+
+        // Two network chunks; the event boundary falls mid-frame.
+        let text_chunks = vec![
+            Ok("data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\ndata: {\"choi".to_string()),
+            Ok(
+                "ces\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: {\"choices\":[],\"usage\":{\"completion_tokens\":4}}\n\ndata: [DONE]\n\n"
+                    .to_string(),
+            ),
+        ];
+        let chunks: Vec<_> = decode_stream(Provider::Openai, futures::stream::iter(text_chunks))
+            .map(|result| result.unwrap())
+            .collect()
+            .await;
+        assert_eq!(
+            chunks,
+            vec![
+                StreamChunk::content("Hel"),
+                StreamChunk::content("lo"),
+                StreamChunk::done(Some("stop".to_string()), Some(4)),
+            ]
         );
     }
 

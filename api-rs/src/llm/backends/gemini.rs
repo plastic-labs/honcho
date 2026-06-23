@@ -20,7 +20,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::llm::http::{Credentials, LlmHttp, LlmHttpError};
+use crate::llm::http::{Credentials, LlmHttp, LlmHttpError, LlmStreamHttp, TextStream};
 use crate::llm::{CompletionResult, ToolCallResult};
 
 /// The google-genai default API base (no version segment — `complete` appends
@@ -104,6 +104,32 @@ pub async fn complete<H: LlmHttp>(
     let headers = [("x-goog-api-key".to_string(), credentials.api_key.clone())];
     let response = http.post_json(&url, &headers, &body).await?;
     Ok(parse_response(&response))
+}
+
+/// Open a streaming `streamGenerateContent` request (SSE via `?alt=sse`),
+/// returning the raw [`TextStream`]. Gemini carries no `stream` body flag — the
+/// endpoint + query param select streaming.
+pub async fn stream<H: LlmStreamHttp>(
+    http: &H,
+    credentials: &Credentials,
+    params: &RequestParams<'_>,
+) -> Result<TextStream, LlmHttpError> {
+    let body = build_request(params).map_err(|_| {
+        LlmHttpError::Transport(
+            "gemini request cannot set both thinking_budget_tokens and thinking_effort".to_string(),
+        )
+    })?;
+    let model_path = if params.model.starts_with("models/") {
+        params.model.to_string()
+    } else {
+        format!("models/{}", params.model)
+    };
+    let url = format!(
+        "{}/v1beta/{model_path}:streamGenerateContent?alt=sse",
+        credentials.effective_base_url(DEFAULT_BASE_URL),
+    );
+    let headers = [("x-goog-api-key".to_string(), credentials.api_key.clone())];
+    http.post_json_stream(&url, &headers, &body).await
 }
 
 /// Build the `GenerateContentRequest` REST body: split the canonical messages

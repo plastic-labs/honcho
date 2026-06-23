@@ -1101,11 +1101,6 @@ async fn chat(
         None,
     )?;
 
-    if body.stream {
-        return Err(ApiError::NotImplemented(
-            "Streaming dialectic chat is not yet supported in the Rust sidecar".to_string(),
-        ));
-    }
     if body.query.trim().is_empty() {
         return Err(ApiError::Validation("query is required".to_string()));
     }
@@ -1165,6 +1160,35 @@ async fn chat(
         max_tokens: state.embedding.max_tokens,
     };
 
+    let to_api_error = |error| match error {
+        crate::dialectic_agent::DialecticError::Db(err) => ApiError::Database(err),
+        crate::dialectic_agent::DialecticError::ToolLoop(err) => ApiError::Llm(err.to_string()),
+    };
+
+    if body.stream {
+        // SSE: the tool loop runs non-streaming, then the final response streams.
+        // The returned stream owns the response body (it is `'static`), so it
+        // outlives the local `http`/`embedder` borrowed during setup.
+        let chunks = crate::dialectic_agent::answer_stream(
+            pool,
+            &http,
+            state.llm_keys.clone(),
+            embedder,
+            &state.dialectic,
+            &workspace_id,
+            body.session_id.as_deref(),
+            &peer_id,
+            &observed,
+            observer_card.as_deref(),
+            observed_card.as_deref(),
+            &body.query,
+            level,
+        )
+        .await
+        .map_err(to_api_error)?;
+        return Ok(dialectic_sse_response(chunks));
+    }
+
     let answer = crate::dialectic_agent::answer(
         pool,
         &http,
@@ -1181,10 +1205,7 @@ async fn chat(
         level,
     )
     .await
-    .map_err(|error| match error {
-        crate::dialectic_agent::DialecticError::Db(err) => ApiError::Database(err),
-        crate::dialectic_agent::DialecticError::ToolLoop(err) => ApiError::Llm(err.to_string()),
-    })?;
+    .map_err(to_api_error)?;
 
     let content = if answer.is_empty() {
         Value::Null
@@ -1192,6 +1213,28 @@ async fn chat(
         Value::String(answer)
     };
     Ok(Json(json!({ "content": content })).into_response())
+}
+
+/// Wrap a stream of answer-text chunks in an SSE response, porting the
+/// `format_sse_stream` helper from Python's `chat`: each chunk becomes
+/// `data: {"delta": {"content": ...}, "done": false}` and the stream closes with
+/// `data: {"done": true}`.
+fn dialectic_sse_response<S>(chunks: S) -> Response
+where
+    S: futures::Stream<Item = String> + Send + 'static,
+{
+    use axum::response::sse::{Event, Sse};
+    use futures::StreamExt;
+
+    let deltas = chunks.map(|chunk| {
+        Ok::<Event, std::convert::Infallible>(
+            Event::default().data(json!({"delta": {"content": chunk}, "done": false}).to_string()),
+        )
+    });
+    let done = futures::stream::once(async {
+        Ok::<Event, std::convert::Infallible>(Event::default().data(json!({"done": true}).to_string()))
+    });
+    Sse::new(deltas.chain(done)).into_response()
 }
 
 async fn set_peer_card(

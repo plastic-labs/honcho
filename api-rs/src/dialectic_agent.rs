@@ -18,10 +18,11 @@ use crate::dialectic::{
     prefetch_observations, session_history_section,
 };
 use crate::dialectic_config::{DialecticSettings, ReasoningLevel};
-use crate::llm::credentials::TransportApiKeys;
-use crate::llm::executor::HonchoCaller;
-use crate::llm::http::LlmHttp;
+use crate::llm::credentials::{TransportApiKeys, resolve_credentials};
+use crate::llm::executor::{HonchoCaller, execute_stream};
+use crate::llm::http::{LlmHttp, LlmStreamHttp};
 use crate::llm::tool_loop::{ToolLoopError, execute_tool_loop};
+use futures::{Stream, StreamExt};
 
 /// An error answering a dialectic query.
 #[derive(Debug)]
@@ -185,4 +186,154 @@ where
         Value::String(text) => text,
         other => other.to_string(),
     })
+}
+
+/// A boxed `'static` stream of answer-text chunks (boxing erases the transport +
+/// embedder type params so the stream — which owns the response body — is
+/// independent of the borrows used during setup).
+pub type AnswerStream = std::pin::Pin<Box<dyn Stream<Item = String> + Send>>;
+
+/// Streaming counterpart of [`answer`], porting `DialecticAgent.answer_stream` +
+/// `tool_loop.py` `stream_final`: the agentic tool loop runs non-streaming to
+/// settle the conversation, then the final no-tool-call turn is re-issued as a
+/// streaming call and its text deltas are yielded.
+///
+/// Deviation: Python pins the streaming retry to the tool loop's "winning" attempt
+/// plan (so a fallback that settled the loop also serves the stream). Here the
+/// streaming call uses the level's primary `ModelConfig` and has no retry/fallback
+/// (the non-streaming loop already succeeded); a connect failure ends the stream.
+#[allow(clippy::too_many_arguments)]
+pub async fn answer_stream<H, E>(
+    pool: &PgPool,
+    llm_http: &H,
+    keys: TransportApiKeys,
+    embedder: E,
+    settings: &DialecticSettings,
+    workspace_name: &str,
+    session_name: Option<&str>,
+    observer: &str,
+    observed: &str,
+    observer_card: Option<&[String]>,
+    observed_card: Option<&[String]>,
+    query: &str,
+    level: ReasoningLevel,
+) -> Result<AnswerStream, DialecticError>
+where
+    H: LlmHttp + LlmStreamHttp + Sync,
+    E: Embedder + Sync,
+{
+    let level_settings = settings.level(level);
+
+    // 1. System prompt (+ session history), identical to `answer`.
+    let mut system = agent_system_prompt(observer, observed, observer_card, observed_card);
+    if settings.session_history_max_tokens > 0
+        && let Some(session) = session_name
+    {
+        let messages = db::get_session_messages_within_token_limit(
+            pool,
+            workspace_name,
+            session,
+            settings.session_history_max_tokens,
+        )
+        .await
+        .map_err(DialecticError::Db)?;
+        let formatted: Vec<String> = messages
+            .iter()
+            .map(|message| {
+                format_new_turn_with_timestamp(
+                    message.get("content").and_then(Value::as_str).unwrap_or(""),
+                    message_created_at(message),
+                    message.get("peer_id").and_then(Value::as_str).unwrap_or(""),
+                )
+            })
+            .collect();
+        if let Some(section) = session_history_section(&formatted) {
+            system.push_str(&section);
+        }
+    }
+
+    // 2. Prefetch observations into the user message (degrades to none on error).
+    let prefetch_limit = if matches!(level, ReasoningLevel::Minimal) {
+        10
+    } else {
+        25
+    };
+    let prefetch: Option<String> = match embedder.embed(query).await {
+        Ok(embedding) => {
+            prefetch_observations(pool, workspace_name, observer, observed, &embedding, prefetch_limit)
+                .await
+                .unwrap_or(None)
+        }
+        Err(_) => None,
+    };
+    let user_content = build_user_content(query, prefetch.as_deref());
+    let messages = vec![
+        json!({"role": "system", "content": system}),
+        json!({"role": "user", "content": user_content}),
+    ];
+
+    // 3. Resolve the streaming credentials/config up front (before `keys` moves
+    //    into the non-streaming caller).
+    let stream_config = level_settings.model_config.clone();
+    let credentials = resolve_credentials(&stream_config, &keys);
+    let max_tokens = settings.effective_max_output_tokens(level);
+
+    let caller = HonchoCaller::new(llm_http, keys, level_settings.model_config.clone(), max_tokens);
+    let tool_choice = level_settings
+        .tool_choice
+        .as_ref()
+        .map(|choice| Value::String(choice.clone()));
+    let tools = if matches!(level, ReasoningLevel::Minimal) {
+        dialectic_tools_minimal()
+    } else {
+        dialectic_tools()
+    };
+    let executor = DialecticToolExecutor {
+        pool,
+        ctx: ToolContext {
+            workspace_name: workspace_name.to_string(),
+            observer: observer.to_string(),
+            observed: observed.to_string(),
+            session_name: session_name.map(str::to_string),
+        },
+        embedder,
+    };
+
+    // 4. Run the non-streaming loop to settle the conversation.
+    let response = execute_tool_loop(
+        &caller,
+        &executor,
+        &user_content,
+        Some(&messages),
+        &tools,
+        tool_choice.as_ref(),
+        level_settings.max_tool_iterations as usize,
+        Some(settings.max_input_tokens as usize),
+    )
+    .await
+    .map_err(DialecticError::ToolLoop)?;
+
+    // 5. Re-issue the settled conversation as a streaming, tool-free call.
+    let stream = execute_stream(
+        llm_http,
+        &credentials,
+        &stream_config,
+        &response.final_conversation,
+        max_tokens,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .map_err(|error| DialecticError::ToolLoop(ToolLoopError::Caller(error.to_string())))?;
+
+    // Yield only the text content of each chunk; transport errors mid-stream end
+    // it (the content gathered so far is preserved client-side).
+    Ok(Box::pin(stream.filter_map(|chunk| async move {
+        match chunk {
+            Ok(chunk) if !chunk.content.is_empty() => Some(chunk.content),
+            _ => None,
+        }
+    })))
 }

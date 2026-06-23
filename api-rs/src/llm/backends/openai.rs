@@ -7,7 +7,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::llm::http::{Credentials, LlmHttp, LlmHttpError};
+use crate::llm::http::{Credentials, LlmHttp, LlmHttpError, LlmStreamHttp, TextStream};
 use crate::llm::{CompletionResult, ToolCallResult};
 
 /// The OpenAI SDK's default API base. Unlike Anthropic this already includes the
@@ -32,6 +32,33 @@ pub async fn complete<H: LlmHttp>(
     )];
     let response = http.post_json(&url, &headers, &body).await?;
     Ok(parse_response(&response))
+}
+
+/// Open a streaming Chat Completions request: the same body as [`complete`] with
+/// `stream: true` and `stream_options.include_usage` (so the terminal chunk
+/// carries usage), returning the raw SSE [`TextStream`].
+pub async fn stream<H: LlmStreamHttp>(
+    http: &H,
+    credentials: &Credentials,
+    params: &RequestParams<'_>,
+) -> Result<TextStream, LlmHttpError> {
+    let mut body = build_request(params);
+    if let Some(object) = body.as_object_mut() {
+        object.insert("stream".to_string(), json!(true));
+        object.insert(
+            "stream_options".to_string(),
+            json!({"include_usage": true}),
+        );
+    }
+    let url = format!(
+        "{}/chat/completions",
+        credentials.effective_base_url(DEFAULT_BASE_URL)
+    );
+    let headers = [(
+        "Authorization".to_string(),
+        format!("Bearer {}", credentials.api_key),
+    )];
+    http.post_json_stream(&url, &headers, &body).await
 }
 
 /// Whether the model uses `max_completion_tokens` instead of `max_tokens`,

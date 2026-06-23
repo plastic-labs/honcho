@@ -10,7 +10,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::llm::http::{Credentials, LlmHttp, LlmHttpError};
+use crate::llm::http::{Credentials, LlmHttp, LlmHttpError, LlmStreamHttp, TextStream};
 use crate::llm::{CompletionResult, ToolCallResult};
 
 /// The Anthropic SDK's default API host, used when no `base_url` override is set.
@@ -36,6 +36,26 @@ pub async fn complete<H: LlmHttp>(
     ];
     let response = http.post_json(&url, &headers, &body).await?;
     Ok(parse_response(&response))
+}
+
+/// Open a streaming Messages API completion: the same request as [`complete`]
+/// with `stream: true`, returning the raw SSE [`TextStream`] (decoded by
+/// [`crate::llm::streaming::decode_stream`]).
+pub async fn stream<H: LlmStreamHttp>(
+    http: &H,
+    credentials: &Credentials,
+    params: &RequestParams<'_>,
+) -> Result<TextStream, LlmHttpError> {
+    let mut body = build_request(params);
+    if let Some(object) = body.as_object_mut() {
+        object.insert("stream".to_string(), json!(true));
+    }
+    let url = format!("{}/v1/messages", credentials.effective_base_url(DEFAULT_BASE_URL));
+    let headers = [
+        ("x-api-key".to_string(), credentials.api_key.clone()),
+        ("anthropic-version".to_string(), ANTHROPIC_VERSION.to_string()),
+    ];
+    http.post_json_stream(&url, &headers, &body).await
 }
 
 /// Inputs for [`build_request`], mirroring the portable subset of the
