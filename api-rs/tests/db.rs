@@ -3719,12 +3719,28 @@ async fn deriver_worker_poll_once_claims_processes_and_releases() {
     .expect("doc count");
     assert_eq!(docs, 2);
 
-    let unprocessed: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE processed = false")
-            .fetch_one(&test_db.pool)
-            .await
-            .expect("unprocessed");
-    assert_eq!(unprocessed, 0);
+    // The two representation items are processed. Draining them enqueues a
+    // `queue.empty` webhook item (Python's process_work_unit finally), which is
+    // the only thing left unprocessed.
+    let unprocessed_repr: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM queue WHERE processed = false AND task_type = 'representation'",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("unprocessed repr");
+    assert_eq!(unprocessed_repr, 0);
+
+    let queue_empty: (i64, serde_json::Value) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(MIN(payload::text)::jsonb, 'null'::jsonb) \
+         FROM queue WHERE task_type = 'webhook' AND processed = false",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("queue.empty row");
+    assert_eq!(queue_empty.0, 1);
+    assert_eq!(queue_empty.1["event_type"], json!("queue.empty"));
+    assert_eq!(queue_empty.1["data"]["queue_type"], json!("representation"));
+    assert_eq!(queue_empty.1["data"]["observed"], json!("bob"));
 
     let claims: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM active_queue_sessions")
         .fetch_one(&test_db.pool)
@@ -3732,9 +3748,16 @@ async fn deriver_worker_poll_once_claims_processes_and_releases() {
         .expect("claims");
     assert_eq!(claims, 0); // released by cleanup_work_unit
 
-    // A second poll finds nothing.
+    // A second poll drains the queue.empty webhook (no endpoints registered, so
+    // delivery is a best-effort no-op) and finds nothing further afterward.
     let again = worker.poll_once().await.expect("poll again");
-    assert_eq!(again, 0);
+    assert_eq!(again, 1);
+    let unprocessed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE processed = false")
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("unprocessed");
+    assert_eq!(unprocessed, 0);
 
     test_db.teardown().await;
 }

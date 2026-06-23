@@ -11,9 +11,9 @@
 //! graceful-shutdown drain.
 //!
 //! Scope note: all task types — `representation`, `deletion`, `summary`,
-//! `reconciler`, `webhook`, and `dream` — are processed by the worker. The
-//! `queue.empty` webhook emitted in Python's `process_work_unit` finally is still
-//! deferred.
+//! `reconciler`, `webhook`, and `dream` — are processed by the worker, and the
+//! `queue.empty` webhook from Python's `process_work_unit` finally is emitted
+//! (representation/summary work units, after a successful drain).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,6 +34,32 @@ use crate::llm::http::LlmHttp;
 use crate::producer::parse_work_unit_key;
 use crate::summarizer::{SummaryGlobalSettings, SummaryModelSettings, summarize_if_needed};
 use crate::webhooks::{WebhookSender, deliver_webhook};
+
+/// Build the `queue.empty` webhook queue-item payload, mirroring Python's
+/// `publish_webhook_event(QueueEmptyEvent(...))` → `create_webhook_payload`. The
+/// stored shape is `{event_type, data}` where `data` carries the event fields
+/// (`workspace_id`, `queue_type`, `session_id`, `observer`, `observed`).
+///
+/// Parity notes: Python's `event.model_dump(exclude={"type"})` does NOT exclude
+/// `None`, so genuinely-absent `observer`/`observed` serialize as JSON `null`.
+/// And `parse_work_unit_key` keeps the literal `"None"` string for an absent
+/// session segment (both languages), so `session_id` is the string `"None"` —
+/// not `null` — for a session-less representation/summary work unit.
+fn build_queue_empty_payload(
+    workspace_name: &str,
+    work_unit: &crate::producer::ParsedWorkUnit,
+) -> serde_json::Value {
+    serde_json::json!({
+        "event_type": "queue.empty",
+        "data": {
+            "workspace_id": workspace_name,
+            "queue_type": work_unit.task_type,
+            "session_id": work_unit.session_name,
+            "observer": work_unit.observer,
+            "observed": work_unit.observed,
+        },
+    })
+}
 
 /// The deriver worker: owns the collaborators behind `Arc` so per-work-unit
 /// tasks can be spawned, and drives the claim → process → release cycle.
@@ -137,9 +163,30 @@ where
             }
         };
 
-        // Release the claim (Python's finally `_cleanup_work_unit`). The
-        // queue.empty webhook is deferred.
-        let _ = db::cleanup_work_unit(&self.pool, &aqs_id, &work_unit_key).await;
+        // Release the claim (Python's finally `_cleanup_work_unit`).
+        let removed = db::cleanup_work_unit(&self.pool, &aqs_id, &work_unit_key)
+            .await
+            .unwrap_or(false);
+
+        // Publish a `queue.empty` webhook event when this worker actually removed
+        // the active session and drained at least one item (Python's finally
+        // block: `if removed and queue_item_count > 0`). Only representation and
+        // summary work units notify, and only when scoped to a workspace.
+        if removed
+            && processed > 0
+            && matches!(work_unit.task_type.as_str(), "representation" | "summary")
+            && let Some(workspace_name) = work_unit.workspace_name.as_deref()
+        {
+            let payload = build_queue_empty_payload(workspace_name, &work_unit);
+            if let Err(error) =
+                db::enqueue_webhook_event(&self.pool, workspace_name, &payload).await
+            {
+                tracing::error!(
+                    work_unit_key = %work_unit_key,
+                    "error triggering queue_empty webhook: {error}"
+                );
+            }
+        }
         processed
     }
 
@@ -499,5 +546,63 @@ where
         // Graceful drain.
         tracing::info!("deriver worker shutting down; draining in-flight work units");
         while tasks.join_next().await.is_some() {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_queue_empty_payload;
+    use crate::producer::parse_work_unit_key;
+    use serde_json::json;
+
+    #[test]
+    fn queue_empty_payload_for_summary_carries_all_fields() {
+        // summary:{ws}:{session}:{observer}:{observed}
+        let work_unit = parse_work_unit_key("summary:ws1:sess1:alice:bob").unwrap();
+        let payload = build_queue_empty_payload("ws1", &work_unit);
+        assert_eq!(
+            payload,
+            json!({
+                "event_type": "queue.empty",
+                "data": {
+                    "workspace_id": "ws1",
+                    "queue_type": "summary",
+                    "session_id": "sess1",
+                    "observer": "alice",
+                    "observed": "bob",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn queue_empty_payload_for_representation_nulls_absent_observer() {
+        // New 4-segment representation: representation:{ws}:{session}:{observed}.
+        // observer is genuinely None → JSON null (Python `exclude={"type"}` keeps
+        // None); session keeps its literal value.
+        let work_unit = parse_work_unit_key("representation:ws1:sess1:bob").unwrap();
+        let payload = build_queue_empty_payload("ws1", &work_unit);
+        assert_eq!(
+            payload,
+            json!({
+                "event_type": "queue.empty",
+                "data": {
+                    "workspace_id": "ws1",
+                    "queue_type": "representation",
+                    "session_id": "sess1",
+                    "observer": null,
+                    "observed": "bob",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn queue_empty_payload_keeps_literal_none_session() {
+        // A session-less representation serializes its session segment as the
+        // literal "None" string (parse keeps it), so session_id is "None", not null.
+        let work_unit = parse_work_unit_key("representation:ws1:None:bob").unwrap();
+        let payload = build_queue_empty_payload("ws1", &work_unit);
+        assert_eq!(payload["data"]["session_id"], json!("None"));
     }
 }

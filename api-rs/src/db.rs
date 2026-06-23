@@ -4217,6 +4217,30 @@ pub async fn try_enqueue_reconciler_task(
     Ok(true)
 }
 
+/// Enqueue a `webhook` queue item carrying a pre-built webhook payload (Python
+/// `webhooks.events.publish_webhook_event`). Used by the worker's `queue.empty`
+/// notification. Unconditional insert (no dedup, matching Python — it just adds a
+/// row); `work_unit_key` is the `webhook:{workspace}` form, session_id/message_id
+/// are NULL.
+pub async fn enqueue_webhook_event(
+    pool: &PgPool,
+    workspace_name: &str,
+    payload: &Value,
+) -> Result<(), sqlx::Error> {
+    let work_unit_key = format!("webhook:{workspace_name}");
+    sqlx::query(
+        "INSERT INTO queue \
+         (work_unit_key, payload, session_id, task_type, workspace_name, message_id) \
+         VALUES ($1, $2, NULL, 'webhook', $3, NULL)",
+    )
+    .bind(&work_unit_key)
+    .bind(payload)
+    .bind(workspace_name)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Failure modes of `enqueue_workspace_deletion`, mapped to the same HTTP
 /// statuses Python's `delete_workspace` produces.
 #[derive(Debug)]
