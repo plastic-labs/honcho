@@ -292,9 +292,9 @@ def log_performance_metrics(
         if unit == "blob":
             blob_metrics.append((metric, value, unit))
             continue
-        if unit == "ms":
+        if unit == "ms" and isinstance(value, int | float):
             formatted_value = f"{value:.0f}ms"
-        elif unit == "s":
+        elif unit == "s" and isinstance(value, int | float):
             formatted_value = f"{value:.3f}s"
         elif unit in ("", "tokens", "count", "id"):
             formatted_value = str(value)
@@ -332,9 +332,9 @@ def _log_performance_metrics_rich(
     table.add_column("Unit", style="dim", width=8)
 
     for metric, value, unit in non_blob_metrics:
-        if unit == "ms":
+        if unit == "ms" and isinstance(value, int | float):
             formatted_value = f"{value:.0f}"
-        elif unit == "s":
+        elif unit == "s" and isinstance(value, int | float):
             formatted_value = f"{value:.3f}"
         else:
             formatted_value = str(value)
