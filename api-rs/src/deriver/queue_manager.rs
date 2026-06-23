@@ -10,12 +10,10 @@
 //! drives them to completion, concurrency-capped at `DERIVER_WORKERS`, with a
 //! graceful-shutdown drain.
 //!
-//! Scope note: `representation`, `deletion`, `summary`, `reconciler`, and
-//! `webhook` work units are fully processed today. Only `dream` remains unported
-//! — a claimed dream work unit is released via `cleanup_work_unit` (its queue
-//! items are left intact for when that arm lands) so the worker neither spins nor
-//! drops data. The `queue.empty` webhook emitted in Python's `process_work_unit`
-//! finally is likewise deferred.
+//! Scope note: all task types — `representation`, `deletion`, `summary`,
+//! `reconciler`, `webhook`, and `dream` — are processed by the worker. The
+//! `queue.empty` webhook emitted in Python's `process_work_unit` finally is still
+//! deferred.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,6 +49,7 @@ where
     keys: TransportApiKeys,
     model_settings: DeriverModelSettings,
     summary_settings: SummaryGlobalSettings,
+    dream_settings: crate::dreamer::orchestrator::DreamModelSettings,
     poll_settings: DeriverSettings,
     webhook_sender: Arc<dyn WebhookSender>,
     /// `settings.WEBHOOK.SECRET` — required to sign deliveries; `None` skips them.
@@ -71,6 +70,7 @@ where
         keys: TransportApiKeys,
         model_settings: DeriverModelSettings,
         summary_settings: SummaryGlobalSettings,
+        dream_settings: crate::dreamer::orchestrator::DreamModelSettings,
         poll_settings: DeriverSettings,
         webhook_sender: Arc<dyn WebhookSender>,
         webhook_secret: Option<String>,
@@ -83,6 +83,7 @@ where
             keys,
             model_settings,
             summary_settings,
+            dream_settings,
             poll_settings,
             webhook_sender,
             webhook_secret,
@@ -119,7 +120,7 @@ where
 
         let processed = match work_unit.task_type.as_str() {
             "representation" => self.drain_representation(&work_unit, &work_unit_key, &aqs_id).await,
-            "deletion" | "summary" | "reconciler" | "webhook" => {
+            "deletion" | "summary" | "reconciler" | "webhook" | "dream" => {
                 self.drain_via_process_item(&work_unit_key, &aqs_id).await
             }
             other => {
@@ -193,6 +194,7 @@ where
                 "summary" => self.process_summary_item(&item).await,
                 "reconciler" => self.process_reconciler_item(&item).await,
                 "webhook" => self.process_webhook_item(&item).await,
+                "dream" => self.process_dream_item(&item).await,
                 _ => process_item(&self.pool, self.emitter.as_ref(), &item)
                     .await
                     .map_err(|error| error.to_string()),
@@ -325,6 +327,42 @@ where
             &payload,
             workspace,
             self.webhook_secret.as_deref(),
+            &now_iso,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// Handle a `dream` queue item (Python `process_item` dream arm →
+    /// `process_dream`): run the OMNI dream cycle (deduction + induction) and the
+    /// guard-pair collection write, using the worker's LLM + embedding + emitter
+    /// collaborators. `process_dream` swallows its own errors (Python's
+    /// non-re-raising `except`), so this returns `Ok(())` once the payload validates.
+    ///
+    /// Deviation: per-resource configuration overrides are not threaded — the
+    /// dream payload carries no configuration, and the worker does not refetch the
+    /// session/workspace config here, so `ResolvedConfiguration::default()` is used
+    /// (deploy-global `DREAM.ENABLED` still gates via `dream_settings.enabled`).
+    async fn process_dream_item(&self, item: &db::QueueItem) -> Result<(), String> {
+        let workspace = item
+            .workspace_name
+            .as_deref()
+            .ok_or_else(|| "dream task requires a workspace_name".to_string())?;
+        let payload = crate::deriver::payload::DreamPayload::from_value(&item.payload)
+            .map_err(|error| error.to_string())?;
+        let configuration = crate::producer::ResolvedConfiguration::default();
+        let now_iso = crate::telemetry::python_isoformat_utc(chrono::Utc::now());
+        crate::dreamer::orchestrator::process_dream(
+            &self.pool,
+            self.http.as_ref(),
+            self.keys.clone(),
+            self.embedder.as_ref(),
+            &payload,
+            workspace,
+            &configuration,
+            &self.dream_settings,
+            self.emitter.as_ref(),
+            None,
             &now_iso,
         )
         .await;

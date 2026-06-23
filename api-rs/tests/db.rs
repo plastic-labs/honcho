@@ -3698,6 +3698,7 @@ async fn deriver_worker_poll_once_claims_processes_and_releases() {
         },
         model_settings,
         SummaryGlobalSettings::default(),
+        honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
         poll_settings,
         Arc::new(ReqwestWebhookSender::new()),
         None,
@@ -4344,6 +4345,7 @@ async fn deriver_worker_processes_a_deletion_work_unit() {
         TransportApiKeys::default(),
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
+        honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4438,6 +4440,7 @@ async fn deriver_worker_processes_a_summary_work_unit_with_public_id_fallback() 
         },
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
+        honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4517,6 +4520,7 @@ async fn deriver_worker_processes_a_reconciler_sync_vectors_work_unit() {
         TransportApiKeys::default(),
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
+        honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4630,6 +4634,7 @@ async fn deriver_worker_processes_a_webhook_work_unit() {
         TransportApiKeys::default(),
         DeriverModelSettings::default(),
         SummaryGlobalSettings::default(),
+        honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
         DeriverSettings {
             workers: 1,
             ..DeriverSettings::default()
@@ -4671,6 +4676,99 @@ async fn deriver_worker_processes_a_webhook_work_unit() {
     // The queue item is marked processed.
     let unprocessed: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE task_type = 'webhook' AND processed = false")
+            .fetch_one(&test_db.pool)
+            .await
+            .expect("unprocessed count");
+    assert_eq!(unprocessed, 0);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn deriver_worker_processes_a_dream_work_unit() {
+    use honcho_api_rs::deriver::deriver::DeriverModelSettings;
+    use honcho_api_rs::deriver::queue_manager::DeriverWorker;
+    use honcho_api_rs::deriver::settings::DeriverSettings;
+    use honcho_api_rs::llm::credentials::TransportApiKeys;
+    use honcho_api_rs::summarizer::SummaryGlobalSettings;
+    use honcho_api_rs::telemetry::Emitter;
+    use honcho_api_rs::webhooks::ReqwestWebhookSender;
+    use std::sync::Arc;
+
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["obs", "obsd"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::get_or_create_collection(&test_db.pool, "ws", "obs", "obsd")
+        .await
+        .expect("collection");
+
+    // Enqueue a dream work unit (key `dream:{dream_type}:{ws}:{observer}:{observed}`).
+    sqlx::query(
+        "INSERT INTO queue (work_unit_key, payload, task_type, workspace_name, message_id, processed) \
+         VALUES ($1, $2, 'dream', $3, NULL, false)",
+    )
+    .bind("dream:omni:ws:obs:obsd")
+    .bind(json!({
+        "task_type": "dream",
+        "dream_type": "omni",
+        "observer": "obs",
+        "observed": "obsd",
+    }))
+    .bind("ws")
+    .execute(&test_db.pool)
+    .await
+    .expect("enqueue dream");
+
+    // Specialists answer immediately (no tool calls).
+    let http = CannedLlmHttp(json!({
+        "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1}
+    }));
+    let emitter = Arc::new(CapturingEmitter {
+        events: std::sync::Mutex::new(Vec::new()),
+    });
+    let worker = Arc::new(DeriverWorker::new(
+        test_db.pool.clone(),
+        Arc::new(http),
+        Arc::new(IndexedEmbedder),
+        Arc::clone(&emitter) as Arc<dyn Emitter>,
+        TransportApiKeys {
+            anthropic: None,
+            openai: Some("k".to_string()),
+            gemini: None,
+        },
+        DeriverModelSettings::default(),
+        SummaryGlobalSettings::default(),
+        honcho_api_rs::dreamer::orchestrator::DreamModelSettings::default(),
+        DeriverSettings {
+            workers: 1,
+            ..DeriverSettings::default()
+        },
+        Arc::new(ReqwestWebhookSender::new()),
+        None,
+    ));
+
+    let processed = worker.poll_once().await.expect("poll once");
+    assert_eq!(processed, 1);
+
+    // The dream ran: a dream.run event was emitted.
+    let run_events = {
+        let events = emitter.events.lock().unwrap();
+        events.iter().filter(|(t, _)| t == "dream.run").count()
+    };
+    assert_eq!(run_events, 1);
+
+    // The dream queue item is marked processed.
+    let unprocessed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM queue WHERE task_type = 'dream' AND processed = false")
             .fetch_one(&test_db.pool)
             .await
             .expect("unprocessed count");
