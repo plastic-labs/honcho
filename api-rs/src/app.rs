@@ -1082,9 +1082,10 @@ struct DialecticBody {
 /// `DialecticResponse{content}` (null when the answer is empty).
 ///
 /// Peer cards are injected when the resolved configuration enables them
-/// (`peer_card.use`), mirroring the Python preflight. Not yet ported: SSE
-/// streaming (`stream: true` → 501) and the get-or-create-peer write the Python
-/// endpoint performs first (the read-only sidecar assumes the peer exists).
+/// (`peer_card.use`), mirroring the Python preflight. The observer peer is
+/// get-or-created when writes are enabled (Python does this unconditionally; the
+/// read-only sidecar skips it and assumes the peer exists). Not yet ported: SSE
+/// streaming (`stream: true` → 501).
 async fn chat(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1107,6 +1108,13 @@ async fn chat(
     }
     if body.query.trim().is_empty() {
         return Err(ApiError::Validation("query is required".to_string()));
+    }
+
+    // Ensure the observer peer exists (Python's chat `get_or_create_peers`,
+    // observer only). This is a write, so it runs only when writes are enabled;
+    // the read-only sidecar assumes the peer already exists.
+    if state.write_enabled {
+        db::get_or_create_peer(state.pool()?, &workspace_id, &peer_id, None, None).await?;
     }
 
     let level = body
