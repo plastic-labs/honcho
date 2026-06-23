@@ -17,7 +17,6 @@ from rich.console import Console, Group, RenderableType
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
-from rich.tree import Tree
 
 from src.config import settings
 from src.telemetry.metrics_collector import append_metrics_to_file
@@ -176,28 +175,6 @@ def format_reasoning_inputs_as_markdown(
     return "\n".join(parts)
 
 
-def log_representation(
-    representation: Representation,
-) -> None:
-    """
-    Log representation in a tree structure.
-    Args:
-        representation: Representation to log
-    """
-    tree = Tree("📊 REPRESENTATION")
-
-    type_branch = tree.add(f"[bold cyan]EXPLICIT[/] ({len(representation.explicit)})")
-    for i, obs in enumerate(representation.explicit, 1):
-        type_branch.add(f"[dim]{i}.[/] {obs}")
-
-    type_branch = tree.add(f"[bold cyan]DEDUCTIVE[/] ({len(representation.deductive)})")
-    for i, obs in enumerate(representation.deductive, 1):
-        type_branch.add(f"[dim]{i}.[/] {obs}")
-
-    console.print(tree)
-    console.print()
-
-
 def accumulate_metric(
     task_name: str,
     label: str,
@@ -276,16 +253,20 @@ def log_performance_metrics(
     task_slug: str,
     task_name: str,
     metrics: list[tuple[str, str | int | float, str]] | None = None,
-    title: str = "⚡ PERFORMANCE",
+    title: str = "PERFORMANCE",
 ) -> None:
     """
-    Log performance metrics in a clean table and optionally send to global collector.
+    Log performance metrics and optionally send them to the global collector.
+
+    PERFORMANCE_LOG_FORMAT=compact emits numeric metrics on one INFO line and
+    keeps large "blob" metrics at DEBUG. PERFORMANCE_LOG_FORMAT=rich prints the
+    local Rich panel, including blob metrics, for interactive readability.
 
     Args:
         task_slug: Slug of the task that generated these metrics
         task_name: Name of the task that generated these metrics
-        metrics: Dictionary of metric names and (value, unit) tuples
-        title: Table title
+        metrics: List of (metric_name, value, unit) tuples
+        title: Prefix for the log line
     """
     task_name = f"{task_slug}_{task_name}"
     # No-op if metrics were evicted (due to MAX_ACCUMULATED_TASKS limit) and no
@@ -300,7 +281,41 @@ def log_performance_metrics(
     if COLLECT_METRICS_LOCAL:
         append_metrics_to_file(task_slug, task_name, metrics)
 
-    # Remove metrics with "blob" unit type. They get printed separately below the table.
+    if settings.PERFORMANCE_LOG_FORMAT == "rich":
+        _log_performance_metrics_rich(task_name, metrics, title)
+        return
+
+    # Keep large text payloads out of the compact INFO summary.
+    blob_metrics: list[tuple[str, str | int | float, str]] = []
+    summary_parts: list[str] = []
+    for metric, value, unit in metrics:
+        if unit == "blob":
+            blob_metrics.append((metric, value, unit))
+            continue
+        if unit == "ms" and isinstance(value, int | float):
+            formatted_value = f"{value:.0f}ms"
+        elif unit == "s" and isinstance(value, int | float):
+            formatted_value = f"{value:.3f}s"
+        elif unit in ("", "tokens", "count", "id"):
+            formatted_value = str(value)
+        else:
+            formatted_value = f"{value}{unit}"
+        summary_parts.append(f"{metric}={formatted_value}")
+
+    if summary_parts:
+        logger.info("%s %s | %s", title, task_name, " | ".join(summary_parts))
+    else:
+        logger.info("%s %s", title, task_name)
+
+    for metric, value, _unit in blob_metrics:
+        logger.debug("%s %s :: %s\n%s", title, task_name, metric, value)
+
+
+def _log_performance_metrics_rich(
+    task_name: str,
+    metrics: list[tuple[str, str | int | float, str]],
+    title: str,
+) -> None:
     blob_metrics: list[tuple[str, str | int | float, str]] = []
     non_blob_metrics: list[tuple[str, str | int | float, str]] = []
     for metric in metrics:
@@ -317,24 +332,20 @@ def log_performance_metrics(
     table.add_column("Unit", style="dim", width=8)
 
     for metric, value, unit in non_blob_metrics:
-        if unit == "ms":
+        if unit == "ms" and isinstance(value, int | float):
             formatted_value = f"{value:.0f}"
-        elif unit == "s":
+        elif unit == "s" and isinstance(value, int | float):
             formatted_value = f"{value:.3f}"
         else:
             formatted_value = str(value)
 
         table.add_row(metric.replace("_", " ").title(), formatted_value, unit)
 
-    # Build content for the panel
     content_items: list[RenderableType] = [table]
 
-    if blob_metrics:
-        for metric, value, _unit in blob_metrics:
-            content_items.append(
-                Text.assemble("    ", (f"\n{metric}:", "bold"), "     ")
-            )
-            content_items.append(Text(str(value)))
+    for metric, value, _unit in blob_metrics:
+        content_items.append(Text.assemble("    ", (f"\n{metric}:", "bold"), "     "))
+        content_items.append(Text(str(value)))
 
     panel = Panel(
         Group(*content_items),

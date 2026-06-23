@@ -728,7 +728,7 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
 
             if not (embs_work or cleanup_work):
                 break
-        logger.info("Vector reconciliation cycle completed (pgvector mode)")
+        logger.debug("Vector reconciliation cycle completed (pgvector mode)")
         return metrics
 
     # External vector store mode - reconcile documents, embeddings, and cleanup
@@ -755,5 +755,5 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             logger.debug("No work done, breaking reconciliation loop")
             break
 
-    logger.info("Vector reconciliation cycle completed")
+    logger.debug("Vector reconciliation cycle completed")
     return metrics

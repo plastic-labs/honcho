@@ -1353,6 +1353,7 @@ class AppSettings(HonchoSettings):
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
+    PERFORMANCE_LOG_FORMAT: str = "compact"
     SESSION_OBSERVERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
     GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
@@ -1400,6 +1401,13 @@ class AppSettings(HonchoSettings):
         if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             raise ValueError(f"Invalid log level: {v}")
         return log_level
+
+    @field_validator("PERFORMANCE_LOG_FORMAT")
+    def validate_performance_log_format(cls, v: str) -> str:
+        log_format = v.lower()
+        if log_format not in ["compact", "rich"]:
+            raise ValueError(f"Invalid performance log format: {v}")
+        return log_format
 
     @model_validator(mode="after")
     def propagate_namespace(self) -> "AppSettings":
