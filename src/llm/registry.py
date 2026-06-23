@@ -32,20 +32,25 @@ from .history_adapters import (
 )
 from .types import ProviderClient
 
-_OPENROUTER_BASE_URL = "https://openrouter.ai"
-
-# Identifies Honcho to OpenRouter (https://openrouter.ai/docs/app-attribution)
-# for per-app usage analytics and the app icon/name shown in its dashboard.
-OPENROUTER_ATTRIBUTION_HEADERS = {
-    "HTTP-Referer": "https://honcho.dev",
-    "X-Openrouter-Title": "Honcho",
+# Client-level ``default_headers`` applied to OpenAI-compatible clients, keyed by
+# base-URL prefix. Currently only OpenRouter, which uses them for app attribution
+# (https://openrouter.ai/docs/app-attribution); add a prefix here to tag another
+# provider. Other OpenAI-compatible backends ignore unrecognized headers.
+_DEFAULT_HEADERS_BY_BASE_URL: dict[str, dict[str, str]] = {
+    "https://openrouter.ai": {
+        "HTTP-Referer": "https://honcho.dev",
+        "X-Openrouter-Title": "Honcho",
+    },
 }
 
 
-def _openrouter_headers(base_url: str | None) -> dict[str, str]:
-    """Return OpenRouter attribution headers iff base_url targets OpenRouter."""
-    if base_url and base_url.startswith(_OPENROUTER_BASE_URL):
-        return OPENROUTER_ATTRIBUTION_HEADERS
+def _default_headers_for(base_url: str | None) -> dict[str, str]:
+    """Default headers for ``base_url`` (prefix match); these merge under any
+    per-request ``extra_headers`` passthrough, which wins on key collision."""
+    if base_url:
+        for prefix, headers in _DEFAULT_HEADERS_BY_BASE_URL.items():
+            if base_url.startswith(prefix):
+                return headers
     return {}
 
 
@@ -65,7 +70,7 @@ def get_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
-        default_headers=_openrouter_headers(settings.LLM.OPENAI_BASE_URL),
+        default_headers=_default_headers_for(settings.LLM.OPENAI_BASE_URL),
     )
 
 
@@ -90,7 +95,7 @@ def get_openai_override_client(
     return AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,
-        default_headers=_openrouter_headers(base_url),
+        default_headers=_default_headers_for(base_url),
     )
 
 
@@ -127,7 +132,7 @@ if settings.LLM.OPENAI_API_KEY:
     CLIENTS["openai"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
-        default_headers=_openrouter_headers(settings.LLM.OPENAI_BASE_URL),
+        default_headers=_default_headers_for(settings.LLM.OPENAI_BASE_URL),
     )
 
 if settings.LLM.GEMINI_API_KEY:
@@ -209,7 +214,6 @@ def get_backend(config: ModelConfig) -> ProviderBackend:
 
 __all__ = [
     "CLIENTS",
-    "OPENROUTER_ATTRIBUTION_HEADERS",
     "backend_for_provider",
     "client_for_model_config",
     "get_anthropic_client",
