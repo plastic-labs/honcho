@@ -36,7 +36,7 @@ from src.crud.graph_memory import (
     verify_observation as crud_verify_observation,
 )
 from src.cache.client import cache as _cache, safe_cache_delete as _safe_cache_delete
-from src.dependencies import db, read_db
+from src.dependencies import get_db, get_read_db
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.schemas.graph_memory import (
     AccessLogEntryCreate,
@@ -103,7 +103,7 @@ def _check_pin_quota(created_by: str, max_pins: int = 100) -> None:
 async def create_edge_endpoint(
     workspace_id: str = Path(...),
     body: EdgeCreate = Body(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> models.Edge:
     """Create an edge between two observations (convergence-upsert)."""
@@ -127,7 +127,7 @@ async def create_edge_endpoint(
 async def list_edges_endpoint(
     workspace_id: str = Path(...),
     filter_body: EdgeListFilter | None = Body(None),
-    session: AsyncSession = read_db,
+    session: AsyncSession = Depends(get_read_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> Sequence[models.Edge]:
     """List edges with optional filters."""
@@ -145,7 +145,7 @@ async def list_edges_endpoint(
 async def delete_edge_endpoint(
     workspace_id: str = Path(...),
     edge_id: int = Path(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> None:
     """Delete an edge."""
@@ -160,7 +160,7 @@ async def delete_edge_endpoint(
 async def recall_endpoint(
     workspace_id: str = Path(...),
     body: RecallRequest = Body(...),
-    session: AsyncSession = read_db,
+    session: AsyncSession = Depends(get_read_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
     """Spreading-activation recall using SQL recursive CTE."""
@@ -296,7 +296,7 @@ async def recall_endpoint(
 async def create_context_endpoint(
     workspace_id: str = Path(...),
     body: ContextCreate = Body(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
     """Create a named context."""
@@ -323,7 +323,7 @@ async def add_context_member_endpoint(
     workspace_id: str = Path(...),
     context_name: str = Path(...),
     body: ContextMemberAdd = Body(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
     """Add an observation to a context."""
@@ -345,7 +345,7 @@ async def remove_context_member_endpoint(
     workspace_id: str = Path(...),
     context_name: str = Path(...),
     obs_id: str = Path(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> None:
     """Remove an observation from a context."""
@@ -362,7 +362,7 @@ async def remove_context_member_endpoint(
 async def list_context_members_endpoint(
     workspace_id: str = Path(...),
     context_name: str = Path(...),
-    session: AsyncSession = read_db,
+    session: AsyncSession = Depends(get_read_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> list[dict]:
     """List all members of a context."""
@@ -449,7 +449,7 @@ async def context_evict_endpoint(
 async def create_thread_binding_endpoint(
     workspace_id: str = Path(...),
     body: ThreadBindingCreate = Body(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> models.ThreadBinding:
     """Bind a thread to a context. Rebinding is denied."""
@@ -469,7 +469,7 @@ async def create_thread_binding_endpoint(
 async def resolve_thread_endpoint(
     workspace_id: str = Path(...),
     thread_id: str = Path(...),
-    session: AsyncSession = read_db,
+    session: AsyncSession = Depends(get_read_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> models.ThreadBinding | None:
     """Resolve a thread to its bound context."""
@@ -485,7 +485,7 @@ async def pin_observation_endpoint(
     workspace_id: str = Path(...),
     obs_id: str = Path(...),
     body: PinRequest = Body(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
     """Pin an observation. Per-persona quota: 100 pins."""
@@ -511,7 +511,7 @@ async def pin_observation_endpoint(
 async def unpin_observation_endpoint(
     workspace_id: str = Path(...),
     obs_id: str = Path(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
     """Unpin an observation."""
@@ -527,7 +527,7 @@ async def unpin_observation_endpoint(
 async def verify_observation_endpoint(
     workspace_id: str = Path(...),
     obs_id: str = Path(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
     """Record a verification event for an observation."""
@@ -543,7 +543,7 @@ async def verify_observation_endpoint(
 async def get_verify_due_endpoint(
     workspace_id: str = Path(...),
     limit: int = Query(default=100, ge=1, le=1000),
-    session: AsyncSession = read_db,
+    session: AsyncSession = Depends(get_read_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> list[dict]:
     """List observations needing verification."""
@@ -558,7 +558,7 @@ async def get_verify_due_endpoint(
 async def create_access_log_entry_endpoint(
     workspace_id: str = Path(...),
     body: AccessLogEntryCreate = Body(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> models.AccessLogEntry:
     """Append an event to the access log."""
@@ -580,7 +580,7 @@ async def create_access_log_entry_endpoint(
 @router.post("/access-log/compact", response_model=dict)
 async def compact_access_log_endpoint(
     workspace_id: str = Path(...),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
     """Compact the access log (prune events older than 5 half-lives).
@@ -603,7 +603,7 @@ async def compact_access_log_endpoint(
 async def evict_stale_endpoint(
     workspace_id: str = Path(...),
     threshold: float = Query(default=0.12, ge=0.0, le=1.0),
-    session: AsyncSession = db,
+    session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
     """Evict stale unpinned observations below activation threshold."""
