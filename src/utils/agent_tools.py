@@ -1329,12 +1329,11 @@ async def _handle_create_observations_impl(
         # normalize so provenance links reference real document IDs.
         source_ids = obs.get("source_ids")
         if isinstance(source_ids, list):
-            obs["source_ids"] = [
-                _normalize_observation_id(s)
-                for s in cast("list[object]", source_ids)
-                if isinstance(s, str)
-            ]
-
+            normalized_source_ids: list[str] = []
+            for source_id in cast(list[Any], source_ids):
+                if isinstance(source_id, str):
+                    normalized_source_ids.append(_normalize_observation_id(source_id))
+            obs["source_ids"] = normalized_source_ids
     # Validate observations individually so valid ones are still processed
     observations: list[schemas.ObservationInput] = []
     validation_failures: list[ObservationFailure] = []
