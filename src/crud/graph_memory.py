@@ -181,7 +181,7 @@ async def create_edge(
     target_obs_id: str,
     edge_type: EdgeType,
     created_by: str,
-    metadata: dict | None = None,
+    edge_metadata: dict | None = None,
 ) -> models.Edge:
     """Create an edge with convergence-upsert (INSERT ... ON CONFLICT).
     
@@ -220,7 +220,7 @@ async def create_edge(
         "target_obs_id": target_obs_id,
         "edge_type": edge_type,
         "created_by": created_by,
-        "metadata": metadata or {},
+        "metadata": edge_metadata or {},
     })
     edge_id = result.scalar_one()
     await db.commit()

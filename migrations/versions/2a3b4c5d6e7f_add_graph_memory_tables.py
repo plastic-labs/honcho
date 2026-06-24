@@ -14,7 +14,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
 
 revision: str = "2a3b4c5d6e7f"
-down_revision: str | None = "b765d82110bd"
+down_revision: str | None = "e4eba9cfaa6f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -33,7 +33,7 @@ def upgrade() -> None:
         sa.Column("edge_type", sa.Text(), nullable=False),
         sa.Column("created_by", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("metadata", sa.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
+        sa.Column("metadata", JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
         sa.ForeignKeyConstraint(["source_obs_id"], ["documents.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["target_obs_id"], ["documents.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["workspace_name"], ["workspaces.name"], ondelete="CASCADE"),

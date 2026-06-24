@@ -118,7 +118,7 @@ async def create_edge_endpoint(
         target_obs_id=body.target_obs_id,
         edge_type=body.edge_type,
         created_by=created_by,
-        metadata=body.metadata,
+        edge_metadata=body.metadata,
     )
     return edge
 
