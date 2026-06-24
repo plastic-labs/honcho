@@ -89,12 +89,18 @@ def _parse_promotion_response(raw: str | None) -> bool | None:
     """
     if raw is None:
         return None
-    token = raw.strip().splitlines()[0].strip().upper() if raw.strip() else ""
-    # Accept "YES" / "Y" and "NO" / "N" leniently; reject anything else as
-    # unparseable (the caller will fall back to the heuristic per spec §7.4a).
-    if token.startswith("YES"):
+    if not raw.strip():
+        return None
+    # Take the first non-empty line, strip whitespace, normalize to upper case,
+    # and strip trailing punctuation that some providers append ("YES.", "No,").
+    # Then require an exact match against one of the four accepted tokens —
+    # this rejects lookalikes like "nope" / "yep" / "yes, but..." rather than
+    # letting `startswith` silently classify them (spec §7.4a: unparseable
+    # responses fall back to the heuristic, they are not silently NO).
+    token = raw.strip().splitlines()[0].strip().upper().rstrip(".!?,:;-")
+    if token in ("YES", "Y"):
         return True
-    if token.startswith("NO"):
+    if token in ("NO", "N"):
         return False
     return None
 
