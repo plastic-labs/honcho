@@ -29,6 +29,8 @@ import {
   HonchoConfigSchema,
   LimitSchema,
   normalizeListOptions,
+  type PeerAddition,
+  PeerAdditionToApiSchema,
   type PeerConfig,
   PeerConfigSchema,
   PeerIdSchema,
@@ -238,6 +240,7 @@ export class Honcho {
     filters?: Record<string, unknown>
     page?: number
     size?: number
+    reverse?: boolean
   }): Promise<PageResponse<WorkspaceResponse>> {
     return this._http.post<PageResponse<WorkspaceResponse>>(
       `/${API_VERSION}/workspaces/list`,
@@ -248,6 +251,7 @@ export class Honcho {
         query: {
           page: params?.page,
           size: params?.size,
+          reverse: params?.reverse ? 'true' : undefined,
         },
       }
     )
@@ -346,6 +350,10 @@ export class Honcho {
       id: string
       metadata?: Record<string, unknown>
       configuration?: SessionConfig
+      peers?: Record<
+        string,
+        { observe_me?: boolean | null; observe_others?: boolean | null }
+      >
     }
   ): Promise<SessionResponse> {
     return this._http.post<SessionResponse>(
@@ -355,6 +363,7 @@ export class Honcho {
           id: params.id,
           metadata: params.metadata,
           configuration: sessionConfigToApi(params.configuration),
+          peers: params.peers,
         },
       }
     )
@@ -496,10 +505,13 @@ export class Honcho {
    * @param id - Unique identifier for the session within the workspace. Should be a
    *             stable identifier that can be used consistently to reference the
    *             same conversation
-   * @param metadata - Optional metadata dictionary to associate with this session.
+   * @param options.metadata - Optional metadata dictionary to associate with this session.
    *                   If set, will get/create session immediately with metadata.
-   * @param configuration - Optional configuration to set for this session.
+   * @param options.configuration - Optional configuration to set for this session.
    *                        If set, will get/create session immediately with flags.
+   * @param options.peers - Optional peers to attach to the session at creation.
+   *                Accepts the same shape as `session.addPeers()` (peer ID strings,
+   *                Peer objects, arrays of either, or a record with per-peer config).
    * @returns Promise resolving to a Session object that can be used to add peers,
    *          send messages, and manage conversation context
    * @throws Error if the session ID is empty or invalid
@@ -509,6 +521,7 @@ export class Honcho {
     options?: {
       metadata?: SessionMetadata
       configuration?: SessionConfig
+      peers?: PeerAddition
     }
   ): Promise<Session> {
     await this._ensureWorkspace()
@@ -519,11 +532,16 @@ export class Honcho {
     const validatedConfiguration = options?.configuration
       ? SessionConfigSchema.parse(options.configuration)
       : undefined
+    const validatedPeers =
+      options?.peers !== undefined
+        ? PeerAdditionToApiSchema.parse(options.peers)
+        : undefined
 
     const sessionData = await this._getOrCreateSession(this.workspaceId, {
       id: validatedId,
       configuration: validatedConfiguration,
       metadata: validatedMetadata,
+      peers: validatedPeers,
     })
     return new Session(
       validatedId,
@@ -699,7 +717,7 @@ export class Honcho {
    * user has access to.
    *
    * @param options - Either a legacy raw filter object or an options object with
-   *                  `filters`, `page`, and `size`. See
+   *                  `filters`, `page`, `size`, and `reverse`. See
    *                  [search filters documentation](https://honcho.dev/docs/v3/documentation/core-concepts/features/using-filters).
    * @returns Promise resolving to a Page of workspace ID strings. Returns an empty
    *          page if no workspaces are accessible or none exist
@@ -711,20 +729,24 @@ export class Honcho {
           filters?: Filters
           page?: number
           size?: number
+          reverse?: boolean
         }
   ): Promise<Page<string, WorkspaceResponse>> {
     const normalizedOptions = normalizeListOptions(options, [
       'filters',
       'page',
       'size',
+      'reverse',
     ])
     const validatedFilter = normalizedOptions.filters
       ? FilterSchema.parse(normalizedOptions.filters)
       : undefined
+    const reverse = normalizedOptions.reverse
     const workspacesPage = await this._listWorkspaces({
       filters: validatedFilter,
       page: normalizedOptions.page,
       size: normalizedOptions.size,
+      reverse,
     })
 
     const fetchNextPage = async (
@@ -735,6 +757,7 @@ export class Honcho {
         filters: validatedFilter,
         page,
         size,
+        reverse,
       })
     }
 

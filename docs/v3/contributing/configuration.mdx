@@ -60,6 +60,12 @@ You can mix providers freely — for example, use Gemini for the deriver and Cla
 
 For OpenAI-compatible proxies (OpenRouter, vLLM, Ollama, etc.), use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature to point at your endpoint.
 
+<Note>
+Some OpenAI-compatible providers don't support OpenAI Structured Outputs (`json_schema`). Set `DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object` to request loose JSON mode and inject the schema into the prompt instead.
+
+This setting only applies to the **deriver** on the **`openai`** transport — it is the only feature that uses structured output. The dialectic, summarizer, and dreamer don't request structured output, so the setting has no effect there, and the anthropic/gemini transports reject it.
+</Note>
+
 ### Tiered Model Setup
 
 Once you're past initial setup, you can assign different models per feature for better cost/quality tradeoffs. This example uses OpenRouter with light/medium/heavy tiers:
@@ -183,6 +189,33 @@ Each model config supports an `overrides.provider_params` dict for passing arbit
 [deriver.model_config.overrides.provider_params]
 # These are passed directly to the provider SDK
 verbosity = "low"
+```
+
+#### Transport passthrough keys
+
+Three keys inside `provider_params` are recognized as request-level escape hatches and forwarded to the underlying transport. Where a transport actually validates and merges one of these keys, its value must be a mapping — a non-mapping value raises a configuration error (see the per-transport behavior below; a key a transport ignores is not validated):
+
+- **`extra_body`** — merged into the request body
+- **`extra_headers`** — extra HTTP headers
+- **`extra_query`** — extra URL query parameters
+
+How each transport forwards them differs:
+
+- **OpenAI and Anthropic** forward all three as identically-named SDK kwargs (`extra_body`, `extra_headers`, `extra_query`).
+- **Gemini** has no SDK kwargs for these. It merges `extra_body` into the `GenerateContentConfig` dict and folds `extra_headers` into `http_options.headers`; `extra_query` is **unsupported and silently ignored**.
+
+The merge is shallow and **operator-wins**: if Honcho and your config both set the same top-level key inside `extra_body`, your value replaces Honcho's. You are responsible for choosing a coherent combination — e.g. unset `thinking_budget_tokens` when supplying an `extra_body.thinking` for Anthropic-via-proxy, since Honcho will not translate between the two shapes.
+
+Because Gemini merges `extra_body` directly into `GenerateContentConfig` (rather than a nested request body), an `extra_body` written for OpenAI/Anthropic generally will not transfer to Gemini unchanged — and a key collision there can overwrite a field Honcho manages (`thinking_config`, `response_schema`, `tools`, …).
+
+```toml
+# Example: route an OpenAI-compatible proxy and tag requests for tracing
+[deriver.model_config.overrides.provider_params.extra_headers]
+X-Proxy-Route = "vertex"
+
+[deriver.model_config.overrides.provider_params.extra_body]
+# Provider-native body fields the standard config doesn't expose
+anthropic_beta = ["context-1m-2025-01-15"]
 ```
 
 ### Changing Transport
@@ -346,6 +379,7 @@ DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000
 # DERIVER_MODEL_CONFIG__THINKING_EFFORT=minimal
 # DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 # DERIVER_MODEL_CONFIG__TEMPERATURE=0.7  # Optional temperature override
+# DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object  # for providers without json_schema support
 
 # Backup model (optional)
 # DERIVER_MODEL_CONFIG__FALLBACK__MODEL=claude-haiku-4-5
@@ -354,6 +388,17 @@ DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000
 # Worker settings
 DERIVER_WORKERS=1  # Increase for higher throughput
 DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0
+# Adaptive polling: when idle/erroring, the sleep interval grows from the base
+# toward DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS by the multiplier each cycle,
+# then snaps back to base when work is found. Cuts steady-state query load.
+DERIVER_POLLING_BACKOFF_ENABLED=true
+DERIVER_POLLING_SLEEP_MAX_INTERVAL_SECONDS=30.0
+DERIVER_POLLING_BACKOFF_MULTIPLIER=2.0
+# Jitter so instances that start together don't poll in lockstep. Startup: sleep
+# a random delay in [0, value] before the first poll (0.0 disables). Per-cycle:
+# multiply every poll sleep by a random factor in [1-ratio, 1+ratio] (0.0 disables).
+DERIVER_POLLING_STARTUP_JITTER_SECONDS=30.0
+DERIVER_POLLING_JITTER_RATIO=0.5
 DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5
 
 # Queue management
@@ -364,6 +409,7 @@ DERIVER_DEDUPLICATE=true
 DERIVER_LOG_OBSERVATIONS=false
 DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS=100
 DERIVER_REPRESENTATION_BATCH_MAX_TOKENS=1024
+DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS=1800
 ```
 
 **Peer Card:**
@@ -459,10 +505,13 @@ DB_SCHEMA=public
 DB_POOL_PRE_PING=true
 DB_POOL_SIZE=10
 DB_MAX_OVERFLOW=20
-DB_POOL_TIMEOUT=30
+DB_POOL_TIMEOUT=5
 DB_POOL_RECYCLE=300
 DB_POOL_USE_LIFO=true
 DB_SQL_DEBUG=false
+# Per-connection establish timeout (seconds) so a single connection attempt
+# fails fast instead of hanging when the server/pooler is unreachable.
+DB_CONNECT_TIMEOUT_SECONDS=2
 ```
 
 ### Authentication

@@ -1,5 +1,8 @@
+"""FastAPI routes for session resources and session-scoped operations."""
+
 import logging
 from contextlib import suppress
+from time import perf_counter
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
@@ -9,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import config, crud, schemas
 from src.cache.client import safe_cache_delete
 from src.crud.session import session_cache_key
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion
 from src.embedding_client import embedding_client
 from src.exceptions import (
@@ -18,10 +21,12 @@ from src.exceptions import (
     ValidationException,
 )
 from src.security import JWTParams, require_auth
+from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
 from src.utils.representation import Representation
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
+from src.utils.types import embedding_call_purpose
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +83,8 @@ async def _get_working_representation_task(
         max_observations=max_observations
         if max_observations is not None
         else config.settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+        parent_category="api",
+        embedding_purpose=EmbeddingCallPurpose.SESSION_CONTEXT_SEARCH,
     )
 
 
@@ -243,7 +250,8 @@ async def get_sessions(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
-    db: AsyncSession = db,
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    db: AsyncSession = read_db,
 ):
     """Get all Sessions for a Workspace, paginated with optional filters."""
     filter_param = None
@@ -254,7 +262,12 @@ async def get_sessions(
             filter_param = None
 
     return await apaginate(
-        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
+        db,
+        await crud.get_sessions(
+            workspace_name=workspace_id,
+            filters=filter_param,
+            reverse=reverse,
+        ),
     )
 
 
@@ -523,17 +536,28 @@ async def remove_peers_from_session(
 @router.get(
     "/{session_id}/peers/{peer_id}/config",
     response_model=schemas.SessionPeerConfig,
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
-    ],
 )
 async def get_peer_config(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     peer_id: str = Path(...),
-    db: AsyncSession = db,
+    jwt_params: JWTParams = Depends(
+        require_auth(
+            workspace_name="workspace_id",
+            session_name="session_id",
+            allow_member_read=True,
+        )
+    ),
+    db: AsyncSession = read_db,
 ):
-    """Get the configuration for a Peer in a Session."""
+    """Get the configuration for a Peer in a Session.
+
+    Member-read lets a peer-scoped key reach this route, but a peer may only
+    read its own per-session config — not a co-member's. Workspace/admin and
+    session-scoped tokens (which already span the whole session) are unaffected.
+    """
+    if jwt_params.p is not None and jwt_params.p != peer_id:
+        raise AuthenticationException("JWT not permissioned for this resource")
     return await crud.get_peer_config(
         db,
         workspace_name=workspace_id,
@@ -580,13 +604,19 @@ async def set_peer_config(
     "/{session_id}/peers",
     response_model=Page[schemas.Peer],
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_peers(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Peers in a Session. Results are paginated."""
     try:
@@ -603,13 +633,19 @@ async def get_session_peers(
     "/{session_id}/context",
     response_model=schemas.SessionContext,
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_context(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
     tokens: int | None = Query(
         None,
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
@@ -669,6 +705,7 @@ async def get_session_context(
     token_limit = (
         tokens if tokens is not None else config.settings.GET_CONTEXT_MAX_TOKENS
     )
+    context_started = perf_counter()
 
     if peer_perspective and not peer_target:
         raise ValidationException(
@@ -680,11 +717,30 @@ async def get_session_context(
         summary, messages = await _get_session_context_task(
             db, workspace_id, session_id, token_limit, include_summary
         )
-        return schemas.SessionContext(
+        response = schemas.SessionContext(
             name=session_id,
             messages=messages,
             summary=summary,
         )
+        emit(
+            GetContextEvent(
+                workspace_name=workspace_id,
+                context_scope="session",
+                session_name=session_id,
+                tokens_requested=tokens,
+                message_count=len(messages),
+                has_summary=summary is not None,
+                search_query_provided=search_query is not None,
+                search_top_k=search_top_k,
+                search_max_distance=search_max_distance,
+                include_most_frequent=include_most_frequent,
+                max_conclusions=max_conclusions,
+                include_summary=include_summary,
+                limit_to_session=limit_to_session,
+                total_duration_ms=(perf_counter() - context_started) * 1000,
+            )
+        )
+        return response
 
     observer = peer_perspective or peer_target
     observed = peer_target
@@ -692,7 +748,14 @@ async def get_session_context(
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
-        with suppress(Exception):
+        with (
+            suppress(Exception),
+            embedding_call_purpose(
+                EmbeddingCallPurpose.SESSION_CONTEXT_SEARCH.value,
+                workspace_name=workspace_id,
+                parent_category="api",
+            ),
+        ):
             embedding = await embedding_client.embed(search_query)
 
     # Sequential calls on shared DB session
@@ -731,26 +794,56 @@ async def get_session_context(
         db, workspace_id, session_id, messages_start_id, messages_budget
     )
 
-    return schemas.SessionContext(
+    response = schemas.SessionContext(
         name=session_id,
         messages=messages,
         summary=summary,
         peer_representation=representation.format_as_markdown(),
         peer_card=card,
     )
+    emit(
+        GetContextEvent(
+            workspace_name=workspace_id,
+            context_scope="session",
+            session_name=session_id,
+            peer_name=observer,
+            target_name=observed,
+            tokens_requested=tokens,
+            message_count=len(messages),
+            has_summary=summary is not None,
+            has_representation=bool(response.peer_representation),
+            has_peer_card=card is not None,
+            search_query_provided=search_query is not None,
+            search_top_k=search_top_k,
+            search_max_distance=search_max_distance,
+            include_most_frequent=include_most_frequent,
+            max_conclusions=max_conclusions,
+            include_summary=include_summary,
+            limit_to_session=limit_to_session,
+            peer_perspective_provided=peer_perspective is not None,
+            total_duration_ms=(perf_counter() - context_started) * 1000,
+        )
+    )
+    return response
 
 
 @router.get(
     "/{session_id}/summaries",
     response_model=schemas.SessionSummaries,
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_summaries(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ) -> schemas.SessionSummaries:
     """
     Get available summaries for a Session.
@@ -785,7 +878,13 @@ async def get_session_summaries(
     "/{session_id}/search",
     response_model=list[schemas.Message],
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def search_session(

@@ -61,6 +61,10 @@ ThinkingEffortLevel = Literal[
     "none", "minimal", "low", "medium", "high", "xhigh", "max"
 ]
 
+# "json_object" injects the schema into the prompt for OpenAI-compatible
+# providers that don't support json_schema (Structured Outputs).
+StructuredOutputMode = Literal["json_schema", "json_object"]
+
 
 class ModelOverrideSettings(BaseModel):
     """Advanced module-level transport overrides."""
@@ -69,7 +73,23 @@ class ModelOverrideSettings(BaseModel):
     api_key_env: str | None = None
     base_url: str | None = None
 
-    provider_params: dict[str, Any] = Field(default_factory=dict)
+    provider_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Operator escape hatch for provider-specific request fields. "
+            "Three recognized keys: `extra_body` (merged into the request body), "
+            "`extra_headers` (HTTP headers), `extra_query` (URL query params). "
+            "OpenAI and Anthropic transports forward these as identically-named "
+            "SDK kwargs. The Gemini transport merges `extra_body` into the "
+            "GenerateContentConfig dict and folds `extra_headers` into "
+            "`http_options.headers`; `extra_query` is unsupported. Shallow merge "
+            "with operator-wins — if Honcho and the operator both set the same "
+            "key inside `extra_body`, the operator's value replaces Honcho's. "
+            "Operators are responsible for picking a coherent combination of "
+            "this and other config (e.g. unset `thinking_budget_tokens` when "
+            "supplying an `extra_body.thinking` for Anthropic-via-proxy)."
+        ),
+    )
 
 
 class PromptCachePolicy(BaseModel):
@@ -117,6 +137,23 @@ def _validate_thinking_constraints(
         raise ValueError("thinking_budget_tokens must be >= 1024 for Anthropic models")
 
 
+def _validate_structured_output_mode(
+    transport: ModelTransport, structured_output_mode: StructuredOutputMode | None
+) -> None:
+    """Reject ``structured_output_mode`` on transports that ignore it.
+
+    Only the OpenAI backend honors this setting (it controls the json_schema vs
+    json_object structured-output path). On the anthropic/gemini transports it is
+    a silent no-op, so a value set there is a misconfiguration — fail fast at
+    startup rather than letting the operator wonder why it has no effect.
+    """
+    if structured_output_mode is not None and transport != "openai":
+        raise ValueError(
+            "structured_output_mode is only supported on the 'openai' transport; "
+            + f"remove it from the '{transport}' model config"
+        )
+
+
 class FallbackModelSettings(BaseModel):
     """Independent fallback model configuration. No inheritance from primary."""
 
@@ -135,6 +172,8 @@ class FallbackModelSettings(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+
+    structured_output_mode: StructuredOutputMode | None = None
 
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
@@ -155,6 +194,7 @@ class FallbackModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "FallbackModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
 
 
@@ -179,6 +219,8 @@ class ConfiguredModelSettings(BaseModel):
     )
     thinking_budget_tokens: int | None = None
 
+    structured_output_mode: StructuredOutputMode | None = None
+
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
@@ -199,6 +241,7 @@ class ConfiguredModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
 
 
@@ -223,6 +266,7 @@ class ResolvedFallbackConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+    structured_output_mode: StructuredOutputMode | None = None
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -258,6 +302,7 @@ class ModelConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+    structured_output_mode: StructuredOutputMode | None = None
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -394,6 +439,7 @@ def _resolve_fallback_config(
         seed=fallback.seed,
         thinking_effort=fallback.thinking_effort,
         thinking_budget_tokens=fallback.thinking_budget_tokens,
+        structured_output_mode=fallback.structured_output_mode,
         provider_params=fallback.overrides.provider_params,
         max_output_tokens=fallback.max_output_tokens,
         stop_sequences=fallback.stop_sequences,
@@ -427,6 +473,7 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
         seed=configured.seed,
         thinking_effort=configured.thinking_effort,
         thinking_budget_tokens=configured.thinking_budget_tokens,
+        structured_output_mode=configured.structured_output_mode,
         provider_params=configured.overrides.provider_params,
         max_output_tokens=configured.max_output_tokens,
         stop_sequences=configured.stop_sequences,
@@ -612,8 +659,9 @@ class DBSettings(HonchoSettings):
     POOL_PRE_PING: bool = True
     POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
     MAX_OVERFLOW: Annotated[int, Field(default=20, ge=0, le=1000)] = 20
-    POOL_TIMEOUT: Annotated[int, Field(default=30, gt=0, le=300)] = (
-        30  # seconds (max 5 minutes)
+    POOL_TIMEOUT: Annotated[int, Field(default=5, gt=0, le=300)] = (
+        5  # seconds a pooled checkout may wait for a free connection (QueuePool
+        # only; NullPool has no local queue wait)
     )
     POOL_RECYCLE: Annotated[int, Field(default=300, gt=0, le=7200)] = (
         300  # seconds (max 2 hours)
@@ -621,6 +669,13 @@ class DBSettings(HonchoSettings):
     POOL_USE_LIFO: bool = True
     SQL_DEBUG: bool = False
     TRACING: bool = False
+
+    # Per-connection establish timeout (seconds) passed to the driver, so a
+    # single connection attempt fails fast instead of hanging when the server or
+    # pooler is unreachable or stalled. Connection acquisition is a single
+    # attempt with no retry; callers handle failure (the API surfaces it, the
+    # deriver backs off and retries on a later poll).
+    CONNECT_TIMEOUT_SECONDS: Annotated[int, Field(default=2, gt=0, le=60)] = 2
 
 
 class AuthSettings(HonchoSettings):
@@ -696,6 +751,9 @@ class EmbeddingSettings(HonchoSettings):
     VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
+    # Caps concurrent message-embedding fan-out on the API request path (the
+    # immediate-embed background task). The reconciler is unaffected.
+    MAX_CONCURRENT_EMBEDDINGS: Annotated[int, Field(default=10, gt=0, le=100)] = 10
 
     @model_validator(mode="before")
     @classmethod
@@ -737,7 +795,34 @@ class DeriverSettings(HonchoSettings):
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
         float, Field(default=1.0, gt=0.0, le=60.0)
     ] = 1.0
+    # Adaptive polling: when the queue is idle (or the loop is erroring) the
+    # sleep interval grows from POLLING_SLEEP_INTERVAL_SECONDS toward
+    # POLLING_SLEEP_MAX_INTERVAL_SECONDS by POLLING_BACKOFF_MULTIPLIER each
+    # cycle, then snaps back to the base interval as soon as work is found.
+    # Reduces steady-state query load against the (shared) DB/pooler.
+    POLLING_BACKOFF_ENABLED: bool = True
+    POLLING_SLEEP_MAX_INTERVAL_SECONDS: Annotated[
+        float, Field(default=30.0, gt=0.0, le=300.0)
+    ] = 30.0
+    POLLING_BACKOFF_MULTIPLIER: Annotated[
+        float, Field(default=2.0, ge=1.0, le=10.0)
+    ] = 2.0
+    # Sleep a uniform-random delay in [0, POLLING_STARTUP_JITTER_SECONDS] before
+    # the first poll so instances that start together don't poll in lockstep.
+    # Set to 0.0 to disable.
+    POLLING_STARTUP_JITTER_SECONDS: Annotated[
+        float, Field(default=30.0, ge=0.0, le=300.0)
+    ] = 30.0
+    # Multiply every poll sleep by a random factor in [1 - ratio, 1 + ratio]
+    # (0.5 -> [0.5x, 1.5x]) so poll loops don't re-converge over time. The
+    # backoff schedule is unchanged; only the returned sleep is scattered. Set
+    # to 0.0 to disable.
+    POLLING_JITTER_RATIO: Annotated[float, Field(default=0.5, ge=0.0, le=1.0)] = 0.5
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
+    # Minimum (jittered) spacing between stale-work-unit cleanup runs
+    STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS: Annotated[
+        float, Field(default=60.0, ge=0.0, le=3600.0)
+    ] = 60.0
 
     # Retention window (seconds) for keeping errored items in the queue
     QUEUE_ERROR_RETENTION_SECONDS: Annotated[
@@ -776,6 +861,11 @@ class DeriverSettings(HonchoSettings):
         int,
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
+    # Sub-threshold work units become eligible once their oldest unprocessed
+    # item exceeds this age. 0 disables age-based flushing.
+    REPRESENTATION_BATCH_MAX_AGE_SECONDS: Annotated[int, Field(default=1800, ge=0)] = (
+        1800
+    )
 
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
@@ -1071,6 +1161,21 @@ class TelemetrySettings(HonchoSettings):
     # Namespace for instance identification (propagated from top-level NAMESPACE if not set)
     NAMESPACE: str | None = None
 
+    # Sample rate for high-volume events: llm.call.completed, embedding.call.completed,
+    # agent.iteration, agent.tool.call.completed. Deterministic on run_id so traces
+    # remain coherent end-to-end. Aggregate envelopes (RepresentationCompleted,
+    # DialecticCompleted, DreamRun, etc.) are NEVER sampled — they're calibration
+    # ground truth.
+    #
+    # Design trade-off: at rate < 1.0, aggregate events still emit but their
+    # high-volume children get dropped. Downstream `JOIN ... ON run_id` queries
+    # will see parents without complete children — this is intentional (the
+    # aggregates carry totals; detail events are best-effort), but consumers
+    # MUST NOT rebuild per-call analytics from the sampled children alone or
+    # they'll undercount. If you tune this below 1.0, audit dashboards/queries
+    # that join high-volume events to aggregate envelopes first.
+    HIGH_VOLUME_SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
+
 
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
@@ -1248,6 +1353,7 @@ class AppSettings(HonchoSettings):
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
+    PERFORMANCE_LOG_FORMAT: str = "compact"
     SESSION_OBSERVERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
     GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
@@ -1258,6 +1364,13 @@ class AppSettings(HonchoSettings):
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
+
+    # Origins allowed by the FastAPI CORSMiddleware
+    CORS_ORIGINS: list[str] = [
+        "http://localhost",
+        "http://127.0.0.1:8000",
+        "https://api.honcho.dev",
+    ]
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
@@ -1288,6 +1401,13 @@ class AppSettings(HonchoSettings):
         if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             raise ValueError(f"Invalid log level: {v}")
         return log_level
+
+    @field_validator("PERFORMANCE_LOG_FORMAT")
+    def validate_performance_log_format(cls, v: str) -> str:
+        log_format = v.lower()
+        if log_format not in ["compact", "rich"]:
+            raise ValueError(f"Invalid performance log format: {v}")
+        return log_format
 
     @model_validator(mode="after")
     def propagate_namespace(self) -> "AppSettings":

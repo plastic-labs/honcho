@@ -6,6 +6,7 @@ message embeddings to the vector store, handling failures and retries.
 """
 
 import datetime
+from contextlib import asynccontextmanager
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,9 +21,12 @@ from src.reconciler.sync_vectors import (
     ReconciliationMetrics,
     _get_documents_needing_sync,  # pyright: ignore[reportPrivateUsage]
     _get_message_embeddings_needing_sync,  # pyright: ignore[reportPrivateUsage]
+    _reconcile_documents_batch,  # pyright: ignore[reportPrivateUsage]
     _reconcile_message_embeddings_batch,  # pyright: ignore[reportPrivateUsage]
     _sync_documents,  # pyright: ignore[reportPrivateUsage]
     _sync_message_embeddings,  # pyright: ignore[reportPrivateUsage]
+    build_message_vector_record,
+    compute_chunk_positions,
     run_vector_reconciliation_cycle,
 )
 from src.vector_store import (
@@ -873,6 +877,82 @@ class TestMessageEmbeddings:
         assert pending_emb.sync_attempts == 0
         assert pending_emb.last_sync_at is None
 
+    async def test_pgvector_only_mode_embeds_and_marks_synced(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """In pgvector-only mode, the reconciler must still embed pending rows."""
+        workspace, peer = sample_data
+        pending_emb = await self._create_pending_message_embedding(
+            db_session, workspace, peer
+        )
+
+        # external_vector_store=None == pgvector-only mode. The reconciler should
+        # re-embed the pending row, write the vector to postgres, and mark synced.
+        synced, failed = await _sync_message_embeddings(db_session, [pending_emb], None)
+
+        await db_session.commit()
+        await db_session.refresh(pending_emb)
+
+        assert synced == 1
+        assert failed == 0
+        assert pending_emb.sync_state == "synced"
+        assert pending_emb.sync_attempts == 0
+        assert pending_emb.embedding is not None
+
+    async def test_all_chunks_of_a_message_claimed_together(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """A single message's chunks must always be claimed in one batch.
+
+        Selecting by message_id (not row) keeps `{message_id}_{chunk_index}`
+        vector IDs stable across reconciler cycles.
+        """
+        workspace, peer = sample_data
+
+        # Create one message with 5 chunks.
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        message_id = str(generate_nanoid())
+        message = models.Message(
+            public_id=message_id,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            peer_name=peer.name,
+            content="full message content",
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+
+        chunk_count = 5
+        for i in range(chunk_count):
+            db_session.add(
+                models.MessageEmbedding(
+                    content=f"chunk-{i}",
+                    message_id=message_id,
+                    workspace_name=workspace.name,
+                    session_name=session.name,
+                    peer_name=peer.name,
+                    sync_state="pending",
+                    embedding=None,
+                )
+            )
+        await db_session.commit()
+
+        # Even with batch_size=1, all 5 chunks for the message should be claimed
+        # together because the query selects by distinct message_id first.
+        claimed = await _get_message_embeddings_needing_sync(db_session, batch_size=1)
+        assert len(claimed) == chunk_count
+        assert all(emb.message_id == message_id for emb in claimed)
+
 
 @pytest.mark.asyncio
 class TestEndToEndReconciliation:
@@ -913,3 +993,176 @@ class TestEndToEndReconciliation:
         mock_reconcile_docs.assert_awaited_once()
         mock_reconcile_embs.assert_awaited_once()
         mock_cleanup_docs.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+class TestReconcilerTracing:
+    """A Sentry transaction is started only when a sync batch finds real work.
+
+    Reconciler tasks poll on a fixed interval and usually find nothing; an idle
+    cycle must create zero transactions so it doesn't drain Sentry quota.
+    """
+
+    @staticmethod
+    def _fake_tracked_db(db: AsyncMock):
+        @asynccontextmanager
+        async def _cm(*_args: object, **_kwargs: object):
+            yield db
+
+        return _cm
+
+    async def test_no_transaction_when_no_embeddings_to_sync(self) -> None:
+        """The no-work path returns before starting a transaction."""
+        metrics = ReconciliationMetrics()
+        with (
+            patch(
+                "src.reconciler.sync_vectors.tracked_db",
+                self._fake_tracked_db(AsyncMock()),
+            ),
+            patch(
+                "src.reconciler.sync_vectors._get_message_embeddings_needing_sync",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("src.reconciler.sync_vectors.sentry_sdk.start_transaction") as txn,
+        ):
+            worked = await _reconcile_message_embeddings_batch(None, metrics)
+
+        assert worked is False
+        txn.assert_not_called()
+
+    async def test_transaction_started_when_embeddings_present(self) -> None:
+        """A batch with real work starts its own named transaction."""
+        metrics = ReconciliationMetrics()
+        with (
+            patch(
+                "src.reconciler.sync_vectors.tracked_db",
+                self._fake_tracked_db(AsyncMock()),
+            ),
+            patch(
+                "src.reconciler.sync_vectors._get_message_embeddings_needing_sync",
+                new_callable=AsyncMock,
+                return_value=[MagicMock()],
+            ),
+            patch(
+                "src.reconciler.sync_vectors._sync_message_embeddings",
+                new_callable=AsyncMock,
+                return_value=(1, 0),
+            ),
+            patch("src.reconciler.sync_vectors.sentry_sdk.start_transaction") as txn,
+        ):
+            worked = await _reconcile_message_embeddings_batch(None, metrics)
+
+        assert worked is True
+        assert metrics.message_embeddings_synced == 1
+        txn.assert_called_once()
+        assert txn.call_args.kwargs.get("name") == "reconcile_message_embeddings_batch"
+
+    async def test_no_transaction_when_no_documents_to_sync(self) -> None:
+        """The document batch also skips tracing when there is nothing to sync."""
+        metrics = ReconciliationMetrics()
+        with (
+            patch(
+                "src.reconciler.sync_vectors.tracked_db",
+                self._fake_tracked_db(AsyncMock()),
+            ),
+            patch(
+                "src.reconciler.sync_vectors._get_documents_needing_sync",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("src.reconciler.sync_vectors.sentry_sdk.start_transaction") as txn,
+        ):
+            worked = await _reconcile_documents_batch(
+                MagicMock(spec=VectorStore), metrics
+            )
+
+        assert worked is False
+        txn.assert_not_called()
+
+
+def test_build_message_vector_record() -> None:
+    """The shared vector-id/metadata builder: id is {message_id}_{position},
+    embeddings are coerced to float, metadata shape is fixed."""
+    record = build_message_vector_record(
+        message_id="msg_abc",
+        chunk_position=2,
+        session_name="sess",
+        peer_name="peer",
+        embedding=[1, 2, 3],  # ints, must be coerced
+    )
+    assert record.id == "msg_abc_2"
+    assert record.embedding == [1.0, 2.0, 3.0]
+    assert all(isinstance(x, float) for x in record.embedding)
+    assert record.metadata == {
+        "message_id": "msg_abc",
+        "session_name": "sess",
+        "peer_name": "peer",
+    }
+
+
+@pytest.mark.asyncio
+class TestComputeChunkPositions:
+    """Direct coverage for compute_chunk_positions, the source of truth for
+    {message_id}_{position} vector ids shared by the reconciler and embed_now."""
+
+    async def test_empty_input_returns_empty(self, db_session: AsyncSession) -> None:
+        assert await compute_chunk_positions(db_session, []) == {}
+
+    async def test_positions_are_per_message_zero_indexed(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        """Each message's rows are numbered from 0 in (message_id, id) order,
+        independent of how rows from other messages interleave."""
+        workspace, peer = sample_data
+        session = models.Session(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        db_session.add(session)
+        await db_session.commit()
+
+        # msg_a has 2 chunks, msg_b has 1 chunk.
+        msg_a = str(generate_nanoid())
+        msg_b = str(generate_nanoid())
+        for seq, mid in enumerate((msg_a, msg_b), start=1):
+            db_session.add(
+                models.Message(
+                    public_id=mid,
+                    session_name=session.name,
+                    workspace_name=workspace.name,
+                    peer_name=peer.name,
+                    content="content",
+                    seq_in_session=seq,
+                )
+            )
+        await db_session.commit()
+
+        rows = [
+            models.MessageEmbedding(
+                content=content,
+                message_id=mid,
+                workspace_name=workspace.name,
+                session_name=session.name,
+                peer_name=peer.name,
+                sync_state="pending",
+                embedding=None,
+            )
+            for mid, content in (
+                (msg_a, "a0"),
+                (msg_a, "a1"),
+                (msg_b, "b0"),
+            )
+        ]
+        db_session.add_all(rows)
+        await db_session.commit()
+        for row in rows:
+            await db_session.refresh(row)
+        a0, a1, b0 = (row.id for row in rows)
+
+        positions = await compute_chunk_positions(db_session, [msg_a, msg_b])
+
+        assert positions[a0] == 0
+        assert positions[a1] == 1
+        assert positions[b0] == 0

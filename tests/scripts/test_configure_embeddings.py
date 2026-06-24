@@ -1,4 +1,4 @@
-"""Phase 3: configure_embeddings script tests."""
+"""Tests for the configure_embeddings script."""
 
 from __future__ import annotations
 

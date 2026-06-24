@@ -9,6 +9,7 @@ from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel, ValidationError
 
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
+from src.llm.request_builder import apply_sdk_passthroughs
 from src.llm.structured_output import repair_response_model_json
 
 
@@ -34,11 +35,7 @@ class AnthropicBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
-        del max_output_tokens
-        if thinking_effort is not None:
-            raise ValueError(
-                "Anthropic backend does not support thinking_effort; use thinking_budget_tokens instead"
-            )
+        del max_output_tokens, thinking_effort
 
         request_messages, system_messages = self._extract_system(messages)
         params: dict[str, Any] = {
@@ -73,6 +70,9 @@ class AnthropicBackend:
             for key in ("top_p", "top_k"):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            # Operator escape hatch: forward Anthropic SDK passthrough kwargs
+            # from ModelConfig.provider_params. Shallow merge with operator-wins.
+            apply_sdk_passthroughs(params, extra_params)
 
         use_json_prefill = (
             bool(response_format or self._json_mode(extra_params))
@@ -123,11 +123,7 @@ class AnthropicBackend:
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         is_json_mode = self._json_mode(extra_params)
-        del max_output_tokens
-        if thinking_effort is not None:
-            raise ValueError(
-                "Anthropic backend does not support thinking_effort; use thinking_budget_tokens instead"
-            )
+        del max_output_tokens, thinking_effort
 
         request_messages, system_messages = self._extract_system(messages)
         params: dict[str, Any] = {
@@ -156,6 +152,9 @@ class AnthropicBackend:
             for key in ("top_p", "top_k"):
                 if key in extra_params:
                     params[key] = extra_params[key]
+            # Operator escape hatch: forward Anthropic SDK passthrough kwargs
+            # from ModelConfig.provider_params. Shallow merge with operator-wins.
+            apply_sdk_passthroughs(params, extra_params)
         use_json_prefill = (
             bool(response_format or is_json_mode)
             and not thinking_budget_tokens

@@ -9,8 +9,9 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
+import sentry_sdk
 from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
@@ -22,6 +23,8 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
+from src.telemetry.events import EmbeddingCallPurpose
+from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -107,28 +110,55 @@ async def _get_message_embeddings_needing_sync(
     """
     Get pending message embeddings that need to be synced to the vector store.
 
-    Returns only pending embeddings (with full data including embedding vectors).
-    The batch_size limits the number of embeddings returned.
+    Claims up to `batch_size` distinct message_ids that have at least one
+    eligible pending row, then loads ALL pending rows for those message_ids.
+    This guarantees a single message's chunks are always processed together in
+    one batch, which keeps vector-ID assignment (`{message_id}_{chunk_index}`,
+    derived from row-id ordering) stable across reconciler cycles.
 
-    Uses FOR UPDATE SKIP LOCKED to prevent concurrent processing and
-    orders by last_sync_at (nulls first) to prioritize never-synced records.
+    Uses FOR UPDATE SKIP LOCKED on the per-row claim so concurrent reconcilers
+    don't double-process the same chunks.
 
     Note: "synced" = done forever, "failed" = permanent failure (manual intervention)
     """
-    stmt = (
-        select(models.MessageEmbedding)
+    # Step 1: pick distinct message_ids with at least one eligible pending row,
+    # prioritizing those with the oldest last_sync_at.
+    msg_id_stmt = (
+        select(
+            models.MessageEmbedding.message_id,
+            func.min(models.MessageEmbedding.last_sync_at).label("oldest_attempt"),
+        )
         .where(
             and_(
                 models.MessageEmbedding.sync_state == "pending",
                 _backoff_eligible(models.MessageEmbedding.last_sync_at),
             )
         )
-        .order_by(models.MessageEmbedding.last_sync_at.asc().nullsfirst())
+        .group_by(models.MessageEmbedding.message_id)
+        .order_by(func.min(models.MessageEmbedding.last_sync_at).asc().nullsfirst())
         .limit(batch_size)
+    )
+    msg_id_rows = (await db.execute(msg_id_stmt)).all()
+    message_ids = [row[0] for row in msg_id_rows]
+    if not message_ids:
+        return []
+
+    # Step 2: claim all pending rows for those messages. Skip rows another
+    # reconciler holds; if we can't claim every chunk of a message right now,
+    # the message will be retried next cycle.
+    rows_stmt = (
+        select(models.MessageEmbedding)
+        .where(
+            and_(
+                models.MessageEmbedding.message_id.in_(message_ids),
+                models.MessageEmbedding.sync_state == "pending",
+                _backoff_eligible(models.MessageEmbedding.last_sync_at),
+            )
+        )
+        .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
         .with_for_update(skip_locked=True)
     )
-
-    result = await db.execute(stmt)
+    result = await db.execute(rows_stmt)
     return list(result.scalars().all())
 
 
@@ -175,6 +205,63 @@ async def _bump_message_embedding_sync_attempts(
         )
 
 
+async def compute_chunk_positions(
+    db: AsyncSession, message_ids: list[str]
+) -> dict[int, int]:
+    """Map each MessageEmbedding row id to its 0-indexed chunk position within
+    its message.
+
+    Positions are derived from the full set of sibling rows for each message,
+    ordered by ``(message_id, id)`` — never from a partial subset — so the
+    ``{message_id}_{chunk_position}`` vector id stays stable no matter which
+    rows a given caller claimed. Shared by the reconciler and the immediate
+    embed path so the two writers always agree on vector ids.
+    """
+    if not message_ids:
+        return {}
+
+    sibling_stmt = (
+        select(models.MessageEmbedding.id, models.MessageEmbedding.message_id)
+        .where(models.MessageEmbedding.message_id.in_(message_ids))
+        .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
+    )
+    sibling_rows = (await db.execute(sibling_stmt)).all()
+
+    embs_by_message: dict[str, list[int]] = {}
+    for emb_id, msg_id in sibling_rows:
+        embs_by_message.setdefault(msg_id, []).append(emb_id)
+
+    chunk_position: dict[int, int] = {}
+    for emb_ids in embs_by_message.values():
+        for pos, emb_id in enumerate(emb_ids):
+            chunk_position[emb_id] = pos
+    return chunk_position
+
+
+def build_message_vector_record(
+    *,
+    message_id: str,
+    chunk_position: int,
+    session_name: str | None,
+    peer_name: str | None,
+    embedding: list[float],
+) -> VectorRecord:
+    """Build the external-store record for one message-embedding chunk.
+
+    Single source of the ``{message_id}_{chunk_position}`` vector id and the
+    metadata shape, shared by the reconciler and the immediate embed path.
+    """
+    return VectorRecord(
+        id=f"{message_id}_{chunk_position}",
+        embedding=[float(x) for x in embedding],
+        metadata={
+            "message_id": message_id,
+            "session_name": session_name,
+            "peer_name": peer_name,
+        },
+    )
+
+
 async def _sync_documents(
     db: AsyncSession,
     documents: list[models.Document],
@@ -210,7 +297,11 @@ async def _sync_documents(
     if docs_needing_embed:
         try:
             contents = [doc.content for doc in docs_needing_embed]
-            new_embeddings = await embedding_client.simple_batch_embed(contents)
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.VECTOR_SYNC.value,
+                parent_category="reconciliation",
+            ):
+                new_embeddings = await embedding_client.simple_batch_embed(contents)
 
             if len(new_embeddings) != len(docs_needing_embed):
                 logger.warning(
@@ -300,15 +391,19 @@ async def _sync_documents(
 async def _sync_message_embeddings(
     db: AsyncSession,
     embeddings: list[models.MessageEmbedding],
-    external_vector_store: VectorStore,
+    external_vector_store: VectorStore | None,
 ) -> tuple[int, int]:
     """
-    Sync a batch of pending message embeddings to the external vector store.
+    Sync a batch of pending message embeddings.
 
-    Handles three cases for each embedding:
+    When `external_vector_store` is provided, handles three cases per embedding:
     1. Embedding exists in postgres → use it for external upsert
     2. Embedding missing + need postgres storage → re-embed, write to both stores
     3. Embedding missing + external-only mode → re-embed, write to external only
+
+    When `external_vector_store` is None (pgvector-only mode), re-embeds any
+    pending row missing a vector, writes the vector to postgres, and marks
+    sync_state='synced'. No external upsert is performed.
 
     Returns (synced_count, failed_count).
     """
@@ -332,7 +427,15 @@ async def _sync_message_embeddings(
     if embs_needing_embed:
         try:
             contents = [emb.content for emb in embs_needing_embed]
-            new_embeddings = await embedding_client.simple_batch_embed(contents)
+            # MESSAGE_CREATE (not VECTOR_SYNC): these rows come from create_messages
+            # as pending chunks; document re-embeds stay on VECTOR_SYNC below.
+            workspaces = {emb.workspace_name for emb in embs_needing_embed}
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.MESSAGE_CREATE.value,
+                workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
+                parent_category="reconciliation",
+            ):
+                new_embeddings = await embedding_client.simple_batch_embed(contents)
 
             if len(new_embeddings) != len(embs_needing_embed):
                 logger.warning(
@@ -358,6 +461,32 @@ async def _sync_message_embeddings(
         await _bump_message_embedding_sync_attempts(db, failed_to_embed)
         failed_count += len(failed_to_embed)
 
+    # pgvector-only mode: no external store to upsert to. Any row that now
+    # has an embedding (either pre-existing or freshly embedded) is fully
+    # synced. Write embeddings via per-row UPDATE so the vector is persisted
+    # alongside sync_state in a single statement (session has autoflush=False,
+    # so the ORM mutation above isn't enough on its own).
+    if external_vector_store is None:
+        embs_done: list[models.MessageEmbedding] = []
+        for emb in embeddings:
+            new_emb = freshly_embedded.get(emb.id)
+            existing = emb.embedding
+            if new_emb is None and existing is None:
+                continue
+            await db.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id == emb.id)
+                .values(
+                    sync_state="synced",
+                    last_sync_at=func.now(),
+                    sync_attempts=0,
+                    **({"embedding": new_emb} if new_emb is not None else {}),
+                )
+            )
+            embs_done.append(emb)
+        synced_count += len(embs_done)
+        return synced_count, failed_count
+
     # Step 2: Compute chunk positions for vector IDs
     # Messages can be split into multiple chunks; we need {message_id}_{chunk_position}
     #
@@ -370,21 +499,7 @@ async def _sync_message_embeddings(
     # 2. Removing MessageEmbedding table entirely if it becomes unnecessary
     # See: https://github.com/plastic-labs/honcho/issues/XXX
     message_ids = list({emb.message_id for emb in embeddings})
-    sibling_stmt = (
-        select(models.MessageEmbedding.id, models.MessageEmbedding.message_id)
-        .where(models.MessageEmbedding.message_id.in_(message_ids))
-        .order_by(models.MessageEmbedding.message_id, models.MessageEmbedding.id)
-    )
-    sibling_rows = (await db.execute(sibling_stmt)).all()
-
-    embs_by_message: dict[str, list[int]] = {}
-    for emb_id, msg_id in sibling_rows:
-        embs_by_message.setdefault(msg_id, []).append(emb_id)
-
-    chunk_position: dict[int, int] = {}
-    for emb_ids in embs_by_message.values():
-        for pos, emb_id in enumerate(emb_ids):
-            chunk_position[emb_id] = pos
+    chunk_position = await compute_chunk_positions(db, message_ids)
 
     # Step 3: Build vector records and upsert to external store (all cases)
     by_namespace: dict[str, list[models.MessageEmbedding]] = {}
@@ -406,14 +521,12 @@ async def _sync_message_embeddings(
                 continue
 
             vector_records.append(
-                VectorRecord(
-                    id=f"{emb.message_id}_{chunk_position[emb.id]}",
-                    embedding=[float(x) for x in embedding],
-                    metadata={
-                        "message_id": emb.message_id,
-                        "session_name": emb.session_name,
-                        "peer_name": emb.peer_name,
-                    },
+                build_message_vector_record(
+                    message_id=emb.message_id,
+                    chunk_position=chunk_position[emb.id],
+                    session_name=emb.session_name,
+                    peer_name=emb.peer_name,
+                    embedding=embedding,
                 )
             )
             embs_to_sync.append(emb)
@@ -423,11 +536,23 @@ async def _sync_message_embeddings(
 
         try:
             await external_vector_store.upsert_many(namespace, vector_records)
-            await db.execute(
-                update(models.MessageEmbedding)
-                .where(models.MessageEmbedding.id.in_([e.id for e in embs_to_sync]))
-                .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
-            )
+            # Per-row UPDATEs so freshly-embedded rows persist the vector
+            # alongside sync_state. Session has autoflush=False so the ORM
+            # mutation above isn't sufficient on its own.
+            for emb in embs_to_sync:
+                new_emb = freshly_embedded.get(emb.id)
+                values: dict[str, Any] = {
+                    "sync_state": "synced",
+                    "last_sync_at": func.now(),
+                    "sync_attempts": 0,
+                }
+                if new_emb is not None and store_in_postgres:
+                    values["embedding"] = new_emb
+                await db.execute(
+                    update(models.MessageEmbedding)
+                    .where(models.MessageEmbedding.id == emb.id)
+                    .values(**values)
+                )
             synced_count += len(embs_to_sync)
         except VectorStoreError:
             logger.warning(
@@ -494,15 +619,18 @@ async def _reconcile_documents_batch(
         if not docs:
             return False
 
-        synced, failed = await _sync_documents(db, docs, external_vector_store)
-        metrics.documents_synced += synced
-        metrics.documents_failed += failed
-        await db.commit()
+        with sentry_sdk.start_transaction(
+            name="reconcile_documents_batch", op="reconciler"
+        ):
+            synced, failed = await _sync_documents(db, docs, external_vector_store)
+            metrics.documents_synced += synced
+            metrics.documents_failed += failed
+            await db.commit()
         return True
 
 
 async def _reconcile_message_embeddings_batch(
-    external_vector_store: VectorStore,
+    external_vector_store: VectorStore | None,
     metrics: ReconciliationMetrics,
 ) -> bool:
     """
@@ -515,10 +643,15 @@ async def _reconcile_message_embeddings_batch(
         if not embs:
             return False
 
-        synced, failed = await _sync_message_embeddings(db, embs, external_vector_store)
-        metrics.message_embeddings_synced += synced
-        metrics.message_embeddings_failed += failed
-        await db.commit()
+        with sentry_sdk.start_transaction(
+            name="reconcile_message_embeddings_batch", op="reconciler"
+        ):
+            synced, failed = await _sync_message_embeddings(
+                db, embs, external_vector_store
+            )
+            metrics.message_embeddings_synced += synced
+            metrics.message_embeddings_failed += failed
+            await db.commit()
         return True
 
 
@@ -582,13 +715,20 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     external_vector_store = get_external_vector_store()
     deadline = time.monotonic() + RECONCILIATION_TIME_BUDGET_SECONDS
 
-    # If no external vector store (pgvector mode), only clean up soft-deleted documents
+    # pgvector-only mode: still need to embed pending MessageEmbedding rows
+    # (create_messages defers embedding to the reconciler), then clean up.
     if external_vector_store is None:
         while time.monotonic() < deadline:
-            did_work = await _cleanup_pgvector_batch(metrics)
-            if not did_work:
+            embs_work = await _reconcile_message_embeddings_batch(None, metrics)
+
+            if time.monotonic() >= deadline:
                 break
-        logger.info("Vector reconciliation cycle completed (pgvector mode)")
+
+            cleanup_work = await _cleanup_pgvector_batch(metrics)
+
+            if not (embs_work or cleanup_work):
+                break
+        logger.debug("Vector reconciliation cycle completed (pgvector mode)")
         return metrics
 
     # External vector store mode - reconcile documents, embeddings, and cleanup
@@ -615,5 +755,5 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             logger.debug("No work done, breaking reconciliation loop")
             break
 
-    logger.info("Vector reconciliation cycle completed")
+    logger.debug("Vector reconciliation cycle completed")
     return metrics

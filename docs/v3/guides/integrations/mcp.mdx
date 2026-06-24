@@ -224,6 +224,32 @@ Add to `~/.config/zed/settings.json`:
 Zed uses `context_servers` instead of `mcpServers`. Native HTTP support requires Zed v0.214.5 or later.
 </Note>
 
+### Goose
+
+[Goose](https://goose-docs.ai/) supports remote MCP servers natively over Streamable HTTP.
+
+The easiest way is to run `goose configure`, choose **Add Extension → Remote Extension (Streamable HTTP)**, and enter the name `honcho`, the URI `https://mcp.honcho.dev`, and the headers `Authorization: Bearer hch-your-key-here` and `X-Honcho-User-Name: YourName`.
+
+Or edit your `config.yaml` directly (on Linux, `~/.config/goose/config.yaml`):
+
+```yaml
+extensions:
+  honcho:
+    enabled: true
+    type: streamable_http
+    name: honcho
+    description: Honcho persistent memory & personalization
+    uri: https://mcp.honcho.dev
+    headers:
+      Authorization: "Bearer hch-your-key-here"
+      X-Honcho-User-Name: "YourName"
+    timeout: 60
+```
+
+<Tip>
+To teach Goose the recommended memory flow, save the [instructions](https://raw.githubusercontent.com/plastic-labs/honcho/refs/heads/main/mcp/instructions.md) into a `.goosehints` file in your Goose config directory (or a project root). This is Goose's equivalent of Claude Desktop's "Project Instructions". Not sure of your config path? Run `goose info`.
+</Tip>
+
 ---
 
 ## Optional Configuration

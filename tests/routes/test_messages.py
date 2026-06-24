@@ -1,5 +1,5 @@
 import datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -7,7 +7,9 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.models import Peer, Workspace
+from src.security import JWTParams, create_jwt
 
 
 @pytest.mark.asyncio
@@ -44,6 +46,92 @@ async def test_create_message(
     assert message["session_id"] == test_session.name
     assert message["metadata"] == {"message_key": "message_value"}
     assert "id" in message
+
+
+@pytest.mark.asyncio
+async def test_create_message_schedules_immediate_embed(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Creating messages should schedule the immediate-embed background task with
+    the created messages' public ids."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    with (
+        patch("src.config.settings.EMBED_MESSAGES", True),
+        patch(
+            "src.routers.messages.embed_messages_now", new=AsyncMock()
+        ) as mock_embed_now,
+    ):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+            json={"messages": [{"content": "hello", "peer_id": test_peer.name}]},
+        )
+    assert response.status_code == 201
+    public_id = response.json()[0]["id"]
+    mock_embed_now.assert_awaited_once_with([public_id])
+
+
+@pytest.mark.asyncio
+async def test_create_message_skips_embed_when_disabled(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """When EMBED_MESSAGES is disabled, the immediate-embed task is not scheduled."""
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    with (
+        patch("src.config.settings.EMBED_MESSAGES", False),
+        patch(
+            "src.routers.messages.embed_messages_now", new=AsyncMock()
+        ) as mock_embed_now,
+    ):
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+            json={"messages": [{"content": "hello", "peer_id": test_peer.name}]},
+        )
+    assert response.status_code == 201
+    mock_embed_now.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_file_upload_schedules_immediate_embed(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """The file-upload path schedules the immediate-embed task with the created
+    messages' public ids, mirroring the session-message path."""
+    import io
+
+    test_workspace, test_peer = sample_data
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    with (
+        patch("src.config.settings.EMBED_MESSAGES", True),
+        patch(
+            "src.routers.messages.embed_messages_now", new=AsyncMock()
+        ) as mock_embed_now,
+    ):
+        files = {"file": ("note.txt", io.BytesIO(b"hello world"), "text/plain")}
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+            files=files,
+            data={"peer_id": test_peer.name},
+        )
+    assert response.status_code == 201
+    expected_ids = [m["id"] for m in response.json()]
+    mock_embed_now.assert_awaited_once_with(expected_ids)
 
 
 @pytest.mark.asyncio
@@ -190,6 +278,96 @@ async def test_get_messages(
     assert data["items"][0]["peer_id"] == test_peer.name
     assert data["items"][0]["session_id"] == test_session.name
     assert data["items"][0]["metadata"] == {}
+
+
+@pytest.mark.asyncio
+async def test_member_peer_key_reads_session_but_cannot_write(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A peer-scoped key may read sessions its peer belongs to (membership-based
+    cross-scope read), but not write to them. Non-member peer keys and session
+    keys on peer routes are denied. Exercises the real session_peers lookup."""
+    test_workspace, alice = sample_data
+    session_name = str(generate_nanoid())
+    base = f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}"
+
+    # Setup with auth disabled: create the session with alice as an active
+    # member, then commit so the independent tracked_db session in auth() (which
+    # only sees committed rows) can resolve membership.
+    client.post(f"{base}/peers", json={alice.name: {}})
+    await db_session.commit()
+
+    # Enforce auth for the assertions below.
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+
+    # Member peer key: reads allowed.
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=alice.name))}"
+    )
+    assert client.post(f"{base}/messages/list", json={}).status_code == 200
+    assert client.get(f"{base}/context").status_code == 200
+
+    # Member peer key: writes denied (write routes don't opt into member read).
+    assert (
+        client.post(
+            f"{base}/messages",
+            json={"messages": [{"content": "nope", "peer_id": alice.name}]},
+        ).status_code
+        == 401
+    )
+
+    # Non-member peer key: even reads denied.
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p='not-a-member'))}"
+    )
+    assert client.post(f"{base}/messages/list", json={}).status_code == 401
+
+    # Session key: no cross-scope access to peer routes.
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, s=session_name))}"
+    )
+    assert (
+        client.get(
+            f"/v3/workspaces/{test_workspace.name}/peers/{alice.name}/card"
+        ).status_code
+        == 401
+    )
+
+
+@pytest.mark.asyncio
+async def test_member_peer_key_reads_only_own_session_peer_config(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A member peer key may read its OWN per-session config but not a
+    co-member's. The route opts into member read, so without the in-handler
+    self-check alice could read bob's config."""
+    test_workspace, alice = sample_data
+    bob_name = str(generate_nanoid())
+    session_name = str(generate_nanoid())
+    base = f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}"
+
+    # Create the session with alice and bob as active members; commit so the
+    # independent read-only tracked_db in auth() can resolve membership.
+    client.post(f"{base}/peers", json={alice.name: {}, bob_name: {}})
+    await db_session.commit()
+
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=alice.name))}"
+    )
+    # Own config: allowed.
+    assert client.get(f"{base}/peers/{alice.name}/config").status_code == 200
+    # Co-member's config: denied even though alice is a session member.
+    assert client.get(f"{base}/peers/{bob_name}/config").status_code == 401
 
 
 @pytest.mark.asyncio

@@ -117,6 +117,12 @@ cd sdks/typescript && bun run tsc --noEmit
 - Explicit error handling with appropriate exception types
 - Docstrings: Use Google style docstrings
 - **Never hold a DB session during external calls** (LLM, embedding, HTTP). If a function needs both a DB session and an external call result, compute the external result first and pass it as a parameter. This avoids tying up DB connections during slow network I/O. Use `tracked_db` for short-lived, DB-only operations; pass a shared session when multiple DB-only calls can reuse one connection.
+- **Never write through a read-only session** (`tracked_db(..., read_only=True)`, `get_read_db`, `ReadSessionLocal`). These run in AUTOCOMMIT mode with no transaction: writes are NOT blocked by the database — they silently commit immediately, and `begin_nested()` savepoints break. There is no runtime guard; this is enforced by convention only. Use `read_only=True` strictly for SELECT-only windows; anything that mutates (including get-or-create paths) must use a regular write session.
+
+#### Auth scoping
+
+- **`allow_member_read=True` (in `require_auth(...)`) is read-only — NEVER set it on a route that mutates state.** It lets a peer-scoped key reach a session route when its peer is an active member of the session, so on a mutating route it would hand any session member write access (message injection, config mutation, deletion). HTTP method is not a reliable read/write signal here (some read routes use POST for a richer body), so this is enforced by an explicit allowlist in `tests/routes/test_auth_route_policy.py` — adding the flag to a new route fails that test until you consciously add the route to `EXPECTED_MEMBER_READ_ROUTES`, and you must never add a mutating method there.
+- **When a member-read route is keyed by another sub-resource** (e.g. `peers/{peer_id}/config`), the handler must additionally confirm a peer-scoped caller only reads its OWN resource (`jwt_params.p == peer_id`, else raise `AuthenticationException`). Membership grants session access, not access to a co-member's data. See `get_peer_config` in `src/routers/sessions.py`.
 
 ### Runtime Architecture
 
@@ -141,6 +147,7 @@ The Deriver processes batches of incoming messages and extracts conclusions abou
 - **Output**: Explicit conclusions (direct facts) and deductive conclusions (inferences) saved to `(observer, observed)` collections.
 - **Entry point**: `src/deriver/__main__.py` → `queue_manager.main()`.
 - **Prompts**: `src/deriver/prompts.py` (`minimal_deriver_prompt`).
+- **Custom instructions**: per-workspace/peer guidance can be threaded into the prompt via reasoning configuration; `DERIVER__MAX_CUSTOM_INSTRUCTIONS_TOKENS` caps the addition (default 2000) and `DERIVER__MAX_INPUT_TOKENS` defaults to 25000 to make room.
 
 #### 2. Dialectic (`src/dialectic/`)
 
@@ -178,8 +185,9 @@ The Dreamer is an orchestrated multi-specialist system that runs during schedule
 #### Shared Agent Infrastructure
 
 - **Tool definitions** (`src/utils/agent_tools.py`): unified `TOOLS` dict; per-agent lists (`DIALECTIC_TOOLS`, `DIALECTIC_TOOLS_MINIMAL`, `DREAMER_TOOLS`, `DEDUCTION_SPECIALIST_TOOLS`, `INDUCTION_SPECIALIST_TOOLS`).
-- **LLM subsystem** (`src/llm/`): provider-agnostic `honcho_llm_call()`. Backends in `src/llm/backends/` (`anthropic.py`, `gemini.py`, `openai.py`). Includes prompt caching (`caching.py`), structured output (`structured_output.py`), tool loop (`tool_loop.py`), history adapters for cross-provider message formats, and a model registry.
+- **LLM subsystem** (`src/llm/`): provider-agnostic `honcho_llm_call()`. Backends in `src/llm/backends/` (`anthropic.py`, `gemini.py`, `openai.py`). Includes prompt caching (`caching.py`), structured output (`structured_output.py`), tool loop (`tool_loop.py`), history adapters for cross-provider message formats, and a model registry. Per-retry provider selection is pinned via an `AttemptPlan` so stream-final retries don't bounce back to primary after the tool loop has settled on fallback.
 - **Per-agent model config**: each agent has its own `MODEL_CONFIG` in `src/config.py` with fallback chains (see `ConfiguredModelSettings`, `FallbackModelSettings`).
+- **Telemetry**: cloudevents in `src/telemetry/events/` cover API routes, dialectic, dream, deletion, reconciliation, representation, and per-call LLM accounting (`llm.py` — `LLMCallCompletedEvent` fires once per provider hit with full cost-attribution context). High-volume events are sampled deterministically per `run_id` via `TelemetrySettings.HIGH_VOLUME_SAMPLE_RATE`.
 
 ### Project Structure
 
@@ -193,7 +201,8 @@ src/
 ├── dependencies.py      # FastAPI DI (tracked_db, etc.)
 ├── exceptions.py        # Custom exception types (HonchoException + subclasses)
 ├── security.py          # JWT authentication
-├── embedding_client.py  # Embedding provider client
+├── embedding_client.py  # Embedding provider client (configurable dimensions
+│                        #   via EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE)
 ├── schemas/             # Pydantic schemas
 │   ├── api.py            # Public API request/response schemas
 │   ├── configuration.py  # Per-resource configuration schemas

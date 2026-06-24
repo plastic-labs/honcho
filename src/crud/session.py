@@ -1,3 +1,5 @@
+"""CRUD helpers for sessions and session-related relationship data."""
+
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
@@ -114,9 +116,18 @@ def count_observers_in_config(
 async def get_sessions(
     workspace_name: str,
     filters: dict[str, Any] | None = None,
+    reverse: bool = False,
 ) -> Select[tuple[models.Session]]:
     """
     Get all active sessions in a workspace.
+
+    Args:
+        workspace_name: Name of the workspace
+        filters: Optional filters to apply to the query
+        reverse: If True, order by created_at descending; if False, ascending
+
+    Returns:
+        Select statement for Session objects
     """
     stmt = (
         select(models.Session)
@@ -126,7 +137,9 @@ async def get_sessions(
 
     stmt = apply_filter(stmt, models.Session, filters)
 
-    return stmt.order_by(models.Session.created_at)
+    if reverse:
+        return stmt.order_by(models.Session.created_at.desc(), models.Session.id.desc())
+    return stmt.order_by(models.Session.created_at.asc(), models.Session.id.asc())
 
 
 async def get_or_create_session(
@@ -819,6 +832,38 @@ async def get_peers_from_session(
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
     )
+
+
+async def is_peer_in_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+) -> bool:
+    """Return whether a peer is an active member of a session.
+
+    Active membership means a `SessionPeer` row exists with `left_at IS NULL`.
+    Used by the auth layer to grant a peer-scoped key read access to the
+    sessions that peer belongs to.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        peer_name: Name of the peer
+
+    Returns:
+        True if the peer is currently a member of the session.
+    """
+    result = await db.scalar(
+        select(models.SessionPeer.peer_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.session_name == session_name)
+        .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.SessionPeer.left_at.is_(None))
+        .limit(1)
+    )
+    return result is not None
 
 
 async def get_session_peer_configuration(

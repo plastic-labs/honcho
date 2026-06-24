@@ -32,11 +32,18 @@ from src import models
 from src.cache.client import cache
 from src.config import settings
 from src.db import Base
-from src.dependencies import get_db
+from src.dependencies import get_db, get_read_db
 from src.exceptions import HonchoException
-from src.main import app
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_admin_jwt, create_jwt
+
+# Disable Langfuse for the whole suite before importing src.main: @conditional_observe
+# binds to settings.LANGFUSE_PUBLIC_KEY at import time, so blanking it here keeps mocked
+# test calls from emitting traces to a configured Langfuse backend. Tests that exercise
+# Langfuse patch settings.LANGFUSE_PUBLIC_KEY themselves.
+settings.LANGFUSE_PUBLIC_KEY = None
+
+from src.main import app  # noqa: E402
 
 
 # Create a custom handler that doesn't get closed prematurely
@@ -78,6 +85,9 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     # LLM transport tests mock providers directly and don't need database/runtime setup.
     "tests/utils/test_length_finish_reason.py",
     "tests/utils/test_clients.py",
+    # Pure JWT scope tests — operate on src.security directly, no DB needed.
+    "tests/test_security.py",
+    "tests/test_generate_jwt_script.py",
 )
 
 _LIVE_LLM_MARKER = "live_llm"
@@ -339,6 +349,10 @@ async def client(
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
+    # Read-only routes use get_read_db (AUTOCOMMIT engine) in production; in
+    # tests they must see the same per-test database/session as writes, both
+    # for isolation and so data written by a test is visible to its reads.
+    app.dependency_overrides[get_read_db] = override_get_db
 
     # No-op the startup embedding-schema validator inside the lifespan. The
     # global `engine` it would inspect points to a DB that isn't migrated in
@@ -479,6 +493,9 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
         patch(
             "src.embedding_client.embedding_client.simple_batch_embed"
         ) as mock_simple_batch_embed,
+        patch(
+            "src.embedding_client.embedding_client.prepare_chunks"
+        ) as mock_prepare_chunks,
         patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
     ):
         # Mock the embed method to return content-dependent embedding
@@ -491,6 +508,14 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
             return [_content_to_embedding(text) for text in texts]
 
         mock_simple_batch_embed.side_effect = mock_simple_batch_embed_func
+
+        def mock_prepare_chunks_func(
+            id_resource_dict: dict[str, str],
+        ) -> dict[str, list[str]]:
+            # No real tokenizer in mocks: treat each input as a single chunk.
+            return {text_id: [text] for text_id, text in id_resource_dict.items()}
+
+        mock_prepare_chunks.side_effect = mock_prepare_chunks_func
 
         # Mock the batch_embed method to return content-dependent embeddings
         async def mock_batch_embed_func(
@@ -506,6 +531,7 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
         yield {
             "embed": mock_embed,
             "simple_batch_embed": mock_simple_batch_embed,
+            "prepare_chunks": mock_prepare_chunks,
             "batch_embed": mock_batch_embed,
         }
 
@@ -785,38 +811,48 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         yield
         return
 
-    from contextlib import asynccontextmanager
+    from contextlib import ExitStack, asynccontextmanager
 
     db_engine = request.getfixturevalue("db_engine")
     session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     @asynccontextmanager
-    async def mock_tracked_db_context(_: str | None = None):
+    async def mock_tracked_db_context(_: str | None = None, *, read_only: bool = False):
+        # read_only is accepted (and ignored): in tests both engines resolve to
+        # the same per-test database session.
+        del read_only
         async with session_factory() as session:
             yield session
 
-    with (
-        patch("src.dependencies.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.consumer.tracked_db", mock_tracked_db_context),
-        patch("src.deriver.enqueue.tracked_db", mock_tracked_db_context),
-        patch("src.routers.peers.tracked_db", mock_tracked_db_context),
-        patch("src.crud.representation.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.orchestrator.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.dream_scheduler.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.chat.tracked_db", mock_tracked_db_context),
-        patch("src.utils.summarizer.tracked_db", mock_tracked_db_context),
-        patch("src.webhooks.events.tracked_db", mock_tracked_db_context),
-        patch("src.webhooks.webhook_delivery.tracked_db", mock_tracked_db_context),
-        patch("src.utils.agent_tools.tracked_db", mock_tracked_db_context),
-        patch("src.utils.search.tracked_db", mock_tracked_db_context),
-        patch("src.crud.document.tracked_db", mock_tracked_db_context),
-        patch("src.crud.message.tracked_db", mock_tracked_db_context),
-        patch("src.reconciler.sync_vectors.tracked_db", mock_tracked_db_context),
-        patch("src.dialectic.core.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.specialists.tracked_db", mock_tracked_db_context),
-        patch("src.dreamer.surprisal.tracked_db", mock_tracked_db_context),
-    ):
+    # Each module imports tracked_db by name, so patch every import site.
+    # Use ExitStack (not a parenthesized `with`) to stay under CPython's
+    # 20-statically-nested-block limit as this list grows.
+    tracked_db_targets = [
+        "src.dependencies.tracked_db",
+        "src.deriver.queue_manager.tracked_db",
+        "src.deriver.consumer.tracked_db",
+        "src.deriver.enqueue.tracked_db",
+        "src.routers.peers.tracked_db",
+        "src.crud.representation.tracked_db",
+        "src.dreamer.orchestrator.tracked_db",
+        "src.dreamer.dream_scheduler.tracked_db",
+        "src.dialectic.chat.tracked_db",
+        "src.utils.summarizer.tracked_db",
+        "src.webhooks.events.tracked_db",
+        "src.webhooks.webhook_delivery.tracked_db",
+        "src.utils.agent_tools.tracked_db",
+        "src.utils.search.tracked_db",
+        "src.crud.document.tracked_db",
+        "src.crud.message.tracked_db",
+        "src.reconciler.sync_vectors.tracked_db",
+        "src.reconciler.embed_now.tracked_db",
+        "src.dialectic.core.tracked_db",
+        "src.dreamer.specialists.tracked_db",
+        "src.dreamer.surprisal.tracked_db",
+    ]
+    with ExitStack() as stack:
+        for target in tracked_db_targets:
+            stack.enter_context(patch(target, mock_tracked_db_context))
         yield
 
 

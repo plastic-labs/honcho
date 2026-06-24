@@ -14,7 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.utils.agent_tools import (
+    MAX_PEER_CARD_ENTRY_LENGTH,
     MAX_PEER_CARD_FACTS,
+    PEER_CARD_ALLOWED_PREFIXES,
     ObservationsCreatedResult,
     ToolContext,
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
@@ -32,6 +34,8 @@ from src.utils.agent_tools import (
     _handle_search_messages,  # pyright: ignore[reportPrivateUsage]
     _handle_search_messages_temporal,  # pyright: ignore[reportPrivateUsage]
     _handle_update_peer_card,  # pyright: ignore[reportPrivateUsage]
+    _normalize_observation_id,  # pyright: ignore[reportPrivateUsage]
+    _validate_peer_card_entry,  # pyright: ignore[reportPrivateUsage]
     create_observations,
     create_tool_executor,
     extract_preferences,
@@ -244,6 +248,40 @@ class TestCreateObservations:
         assert doc.level == "deductive"
         assert doc.source_ids == ["premise1", "premise2"]
 
+    async def test_source_ids_display_prefix_is_stripped(
+        self,
+        db_session: AsyncSession,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Models sometimes copy the '[id:xxx]' display format into source_ids;
+        the prefix must be stripped so provenance links reference real IDs."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Inferred preference for early mornings",
+                        "source_ids": ["id:premise1", "ID:premise2"],
+                        "premises": [
+                            "User schedules meetings before 9am",
+                            "User mentions waking at 5:30",
+                        ],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in result
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Inferred preference for early mornings"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert doc.source_ids == ["premise1", "premise2"]
+
     async def test_empty_observations_list_returns_error(
         self, make_tool_context: Callable[..., ToolContext]
     ):
@@ -253,7 +291,8 @@ class TestCreateObservations:
         result = await _handle_create_observations(ctx, {"observations": []})
 
         assert "ERROR" in result
-        assert "empty" in result.lower()
+        # Handlers may return ToolResult (); str() returns .content.
+        assert "empty" in str(result).lower()
 
     async def test_batch_embedding_failure_falls_back_to_individual_embeds(
         self,
@@ -415,7 +454,9 @@ class TestCreateObservations:
         result = await create_observations(
             observations=[
                 schemas.ObservationInput(content="   ", level="explicit"),
-                schemas.ObservationInput(content=" trimmed observation ", level="explicit"),
+                schemas.ObservationInput(
+                    content=" trimmed observation ", level="explicit"
+                ),
             ],
             observer=peer1.name,
             observed=peer2.name,
@@ -467,6 +508,27 @@ class TestCreateObservations:
         assert len(result.failed) == 0
         batch_embed.assert_not_awaited()
         create_documents.assert_not_awaited()
+
+
+class TestNormalizeObservationId:
+    """Unit tests for _normalize_observation_id."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("doc_abc123", "doc_abc123"),
+            ("id:doc_abc123", "doc_abc123"),
+            ("ID:doc_abc123", "doc_abc123"),
+            ("  id:doc_abc123  ", "doc_abc123"),
+            ("id: doc_abc123", "doc_abc123"),
+            # nanoid alphabet includes '-' and '_'; these must survive untouched
+            ("3-bwp1hxCRkRbUh_nrqn0", "3-bwp1hxCRkRbUh_nrqn0"),
+            ("id:3-bwp1hxCRkRbUh_nrqn0", "3-bwp1hxCRkRbUh_nrqn0"),
+            ("_leading_underscore", "_leading_underscore"),
+        ],
+    )
+    def test_normalization(self, raw: str, expected: str):
+        assert _normalize_observation_id(raw) == expected
 
 
 @pytest.mark.asyncio
@@ -753,8 +815,12 @@ class TestSearchMessages:
 
         result = await _handle_search_messages(ctx, {"query": "test message"})
 
-        # Should return some result (may be empty if semantic search doesn't match)
-        assert isinstance(result, str)
+        # handler may return ToolResult (with search metadata) or
+        # a plain str. Both carry the result text; just check it's
+        # introspectable as string content.
+        from src.utils.types import ToolResult
+
+        assert isinstance(result, str | ToolResult)
 
 
 @pytest.mark.asyncio
@@ -895,7 +961,7 @@ class TestGetRecentHistory:
         result = await _handle_get_recent_history(ctx, {})
 
         assert "Conversation history" in result
-        assert "messages" in result.lower()
+        assert "messages" in str(result).lower()
 
     async def test_without_session_uses_observed(
         self,
@@ -1016,7 +1082,14 @@ class TestUpdatePeerCard:
         ctx = make_tool_context()
 
         result = await _handle_update_peer_card(
-            ctx, {"content": ["Name: John", "Location: NYC", "Occupation: Engineer"]}
+            ctx,
+            {
+                "content": [
+                    "IDENTITY: Name: John",
+                    "ATTRIBUTE: Location: NYC",
+                    "ATTRIBUTE: Occupation: Engineer",
+                ]
+            },
         )
 
         assert "Updated peer card" in result
@@ -1031,7 +1104,7 @@ class TestUpdatePeerCard:
             observed=peer2.name,
         )
         assert peer_card is not None
-        assert "Name: John" in peer_card
+        assert "IDENTITY: Name: John" in peer_card
 
     async def test_deduplicates_and_caps_peer_card(
         self,
@@ -1043,8 +1116,15 @@ class TestUpdatePeerCard:
         workspace, peer1, peer2, _, _, _ = tool_test_data
         ctx = make_tool_context()
 
-        oversized = ["Name: John", "  Name:  John  ", "", "   "]
-        oversized.extend([f"Fact {i}" for i in range(MAX_PEER_CARD_FACTS + 5)])
+        oversized = [
+            "IDENTITY: Name: John",
+            "  IDENTITY: Name: John  ",
+            "",
+            "   ",
+        ]
+        oversized.extend(
+            [f"IDENTITY: Aliases: alias-{i}" for i in range(MAX_PEER_CARD_FACTS + 5)]
+        )
 
         await _handle_update_peer_card(ctx, {"content": oversized})
 
@@ -1059,7 +1139,7 @@ class TestUpdatePeerCard:
         assert peer_card is not None
         assert len(peer_card) == MAX_PEER_CARD_FACTS
         assert all(line.strip() for line in peer_card)
-        assert peer_card.count("Name: John") == 1
+        assert peer_card.count("IDENTITY: Name: John") == 1
 
     async def test_none_content_preserves_existing_card(
         self,
@@ -1073,12 +1153,13 @@ class TestUpdatePeerCard:
 
         # First, create a valid peer card
         await _handle_update_peer_card(
-            ctx, {"content": ["Name: Alice", "Location: NYC"]}
+            ctx,
+            {"content": ["IDENTITY: Name: Alice", "ATTRIBUTE: Location: NYC"]},
         )
 
         # Now attempt to update with None — should be a no-op
         result = await _handle_update_peer_card(ctx, {"content": None})
-        assert "empty" in result.lower()
+        assert "empty" in str(result).lower()
 
         # Refresh the observer so the identity map picks up the committed update
         await db_session.refresh(peer1)
@@ -1090,7 +1171,7 @@ class TestUpdatePeerCard:
             observed=peer2.name,
         )
         assert peer_card is not None
-        assert "Name: Alice" in peer_card
+        assert "IDENTITY: Name: Alice" in peer_card
 
     async def test_empty_list_preserves_existing_card(
         self,
@@ -1103,11 +1184,14 @@ class TestUpdatePeerCard:
         ctx = make_tool_context()
 
         # First, create a valid peer card
-        await _handle_update_peer_card(ctx, {"content": ["Name: Bob", "Age: 30"]})
+        await _handle_update_peer_card(
+            ctx,
+            {"content": ["IDENTITY: Name: Bob", "ATTRIBUTE: Age: 30"]},
+        )
 
         # Now attempt to update with empty list — should be a no-op
         result = await _handle_update_peer_card(ctx, {"content": []})
-        assert "empty" in result.lower()
+        assert "empty" in str(result).lower()
 
         # Refresh the observer so the identity map picks up the committed update
         await db_session.refresh(peer1)
@@ -1119,7 +1203,151 @@ class TestUpdatePeerCard:
             observed=peer2.name,
         )
         assert peer_card is not None
-        assert "Name: Bob" in peer_card
+        assert "IDENTITY: Name: Bob" in peer_card
+
+    async def test_rejects_entries_without_allowed_prefix(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Entries without an allowed prefix are dropped; valid entries pass through."""
+        from src.utils.types import ToolResult
+
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        result = await _handle_update_peer_card(
+            ctx,
+            {
+                "content": [
+                    "IDENTITY: Name: Carol",
+                    "Age: 39+",  # rejected: no prefix
+                    "Daughter: Keyan",  # rejected: no prefix
+                    "TRAIT: Methodical",  # rejected: TRAIT not allowed
+                    "PREFERENCE: Tea",  # rejected: bare PREFERENCE not allowed
+                    "ATTRIBUTE: Location: Germantown, TN",
+                ]
+            },
+        )
+
+        # Partial-reject success path must surface the rejection in the tool
+        # response so the model can re-emit the dropped entries (with correct
+        # prefixes) on a retry instead of silently losing them.
+        assert isinstance(result, ToolResult)
+        content_lower = str(result).lower()
+        assert "updated peer card" in content_lower
+        assert "rejected 4 of 6" in content_lower
+        # At least one rejected sample should appear so the model knows what
+        # to fix.
+        assert "age: 39+" in content_lower or "trait: methodical" in content_lower
+        assert result.metadata is not None
+        assert result.metadata["peer_card_updated"] is True
+        assert result.metadata["facts_count"] == 2
+        assert result.metadata["rejected_count"] == 4
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card is not None
+        assert peer_card == [
+            "IDENTITY: Name: Carol",
+            "ATTRIBUTE: Location: Germantown, TN",
+        ]
+
+    async def test_all_entries_rejected_preserves_existing_card(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """When every entry fails validation, the existing card is preserved."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        ctx = make_tool_context()
+
+        await _handle_update_peer_card(ctx, {"content": ["IDENTITY: Name: Dana"]})
+
+        result = await _handle_update_peer_card(
+            ctx,
+            {
+                "content": [
+                    "TRAIT: Detail-oriented",
+                    "PREFERENCE: Coffee",
+                    "Random unprefixed line",
+                ]
+            },
+        )
+        assert "rejected" in str(result).lower()
+
+        await db_session.refresh(peer1)
+        peer_card = await crud.get_peer_card(
+            db_session,
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+        )
+        assert peer_card == ["IDENTITY: Name: Dana"]
+
+
+class TestPeerCardEntryValidator:
+    """Unit tests for the pure structural validator."""
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "IDENTITY: Name: Alice",
+            "ATTRIBUTE: Location: NYC",
+            "ATTRIBUTE: Prefers tea",
+            "RELATIONSHIP: Spouse: Bob",
+            "RELATIONSHIP: Maintainer: vineeth",
+            "INSTRUCTION: Call me Vee",
+            "INSTRUCTION: Never push to main without review",
+        ],
+    )
+    def test_accepts_well_formed_entries(self, entry: str):
+        assert _validate_peer_card_entry(entry) is True
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "",
+            "   ",
+            "Name: Alice",  # missing prefix
+            "Age: 39+",  # missing prefix
+            "Daughter: Keyan",  # missing prefix
+            "TRAIT: Methodical",  # disallowed kind
+            "PREFERENCE: Tea",  # disallowed kind
+            "identity: name: alice",  # wrong case
+            "IDENTITY:Name: Alice",  # missing space after colon
+            "IDENTITY: ",  # empty body
+            "IDENTITY:    ",  # whitespace-only body
+        ],
+    )
+    def test_rejects_malformed_entries(self, entry: str):
+        assert _validate_peer_card_entry(entry) is False
+
+    def test_rejects_over_length_cap(self):
+        long_value = "x" * (MAX_PEER_CARD_ENTRY_LENGTH + 1)
+        assert _validate_peer_card_entry(f"IDENTITY: Name: {long_value}") is False
+
+    def test_accepts_at_length_cap(self):
+        # Build an entry exactly at the cap.
+        prefix = "IDENTITY: "
+        body = "x" * (MAX_PEER_CARD_ENTRY_LENGTH - len(prefix))
+        assert _validate_peer_card_entry(prefix + body) is True
+
+    def test_allowed_prefixes_constant_is_complete(self):
+        # Guard against silent drift between the prompt and the validator.
+        assert PEER_CARD_ALLOWED_PREFIXES == (
+            "IDENTITY:",
+            "ATTRIBUTE:",
+            "RELATIONSHIP:",
+            "INSTRUCTION:",
+        )
 
 
 @pytest.mark.asyncio

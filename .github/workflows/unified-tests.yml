@@ -40,16 +40,74 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::444554165670:role/GitHubActionsS3Role
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
           aws-region: us-east-1
           role-duration-seconds: 43200 # 12 hours
 
-      - name: Fetch secrets from AWS Secrets Manager
+      - name: Resolve secret ids from latest git tags
+        id: resolve-secret
+        env:
+          SECRET_PREFIX: ${{ secrets.STAGING_SECRET_PREFIX }}
+        run: |
+          set -euo pipefail
+          : "${SECRET_PREFIX:?STAGING_SECRET_PREFIX secret is not set for this environment}"
+          # Keep the secret-name prefix out of public CI logs.
+          echo "::add-mask::${SECRET_PREFIX}"
+
+          # Two newest v<major.minor.patch> tags, highest first (tags are public).
+          versions="$(git ls-remote --tags origin 'v*' \
+            | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
+            | sort -t. -k1,1nr -k2,2nr -k3,3nr -u)"
+          latest="$(printf '%s\n' "$versions" | sed -n '1p')"
+          second="$(printf '%s\n' "$versions" | sed -n '2p')"
+          if [ -z "${latest:-}" ]; then
+            echo "::error::No v<semver> git tags found to resolve a secret version"
+            exit 1
+          fi
+
+          latest_id="${SECRET_PREFIX}${latest}"
+          echo "::add-mask::${latest_id}"
+          echo "latest-id=${latest_id}" >> "$GITHUB_OUTPUT"
+          echo "Latest version: ${latest}"
+          if [ -n "${second:-}" ]; then
+            second_id="${SECRET_PREFIX}${second}"
+            echo "::add-mask::${second_id}"
+            echo "second-id=${second_id}" >> "$GITHUB_OUTPUT"
+            echo "Fallback version: ${second}"
+          fi
+
+      # Fetch the latest tag's secret. continue-on-error so a not-yet-published
+      # latest falls through to the second-latest instead of failing the job.
+      - name: Fetch staging secret (latest)
+        id: fetch-latest
+        continue-on-error: true
         uses: aws-actions/aws-secretsmanager-get-secrets@v2
         with:
           secret-ids: |
-            ,testing/unified/tests
+            ,${{ steps.resolve-secret.outputs.latest-id }}
           parse-json-secrets: true
+
+      # Runs only if the latest fetch failed; this one is NOT continue-on-error,
+      # so if the fallback also fails the job fails loudly.
+      - name: Fetch staging secret (fallback to second-latest)
+        if: steps.fetch-latest.outcome == 'failure' && steps.resolve-secret.outputs.second-id != ''
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            ,${{ steps.resolve-secret.outputs.second-id }}
+          parse-json-secrets: true
+
+      # Configure the test environment. Disables auth/Sentry/CloudEvents telemetry
+      # (their endpoints aren't reachable from CI), and points REASONING_TRACES_FILE
+      # at a shared path so the API + deriver record full LLM I/O for auditing — the
+      # runner uploads it to S3. Written after the fetch steps so these win over the
+      # values loaded from Secrets Manager (last $GITHUB_ENV write wins).
+      - name: Configure test environment
+        run: |
+          echo "AUTH_USE_AUTH=false" >> "$GITHUB_ENV"
+          echo "SENTRY_ENABLED=false" >> "$GITHUB_ENV"
+          echo "TELEMETRY_ENABLED=false" >> "$GITHUB_ENV"
+          echo "REASONING_TRACES_FILE=unified-reasoning-traces.jsonl" >> "$GITHUB_ENV"
 
       - name: Verify Docker is available
         run: docker info

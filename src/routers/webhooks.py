@@ -31,7 +31,7 @@ async def get_or_create_webhook_endpoint(
     webhook: schemas.WebhookEndpointCreate = Body(
         ..., description="Webhook endpoint parameters"
     ),
-    jwt_params: JWTParams = Depends(require_auth()),
+    jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
     db: AsyncSession = db,
 ) -> schemas.WebhookEndpoint:
     """
@@ -55,7 +55,7 @@ async def get_or_create_webhook_endpoint(
 @router.get("", response_model=Page[schemas.WebhookEndpoint])
 async def list_webhook_endpoints(
     workspace_id: str = Path(..., description="Workspace ID"),
-    jwt_params: JWTParams = Depends(require_auth()),
+    jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
     db: AsyncSession = db,
 ) -> Page[schemas.WebhookEndpoint]:
     """
@@ -72,7 +72,7 @@ async def list_webhook_endpoints(
 async def delete_webhook_endpoint(
     workspace_id: str = Path(..., description="Workspace ID"),
     endpoint_id: str = Path(..., description="Webhook endpoint ID"),
-    jwt_params: JWTParams = Depends(require_auth()),
+    jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
     db: AsyncSession = db,
 ) -> None:
     """
@@ -88,7 +88,7 @@ async def delete_webhook_endpoint(
 @router.get("/test")
 async def test_emit(
     workspace_id: str = Path(..., description="Workspace ID"),
-    jwt_params: JWTParams = Depends(require_auth()),
+    jwt_params: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> None:
     """
     Test publishing a webhook event.

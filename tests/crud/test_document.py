@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.crud.document import is_rejected_duplicate
 from src.exceptions import ResourceNotFoundException
 
 
@@ -273,6 +274,196 @@ class TestDocumentCRUD:
 
         assert len(results) == 1
         assert results[0].id == times_derived_map[2]
+
+    @pytest.mark.asyncio
+    async def test_most_derived_orders_by_recency_when_reinforcement_ties(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Regression: when times_derived ties, most-derived must fall back to
+        recency, not insertion order. Otherwise stale conclusions stick to the
+        front of the injected representation (the mid-Jan stickiness bug)."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        # Three conclusions, all reinforced once -- the real-world steady state
+        # before the fix -- inserted oldest-first.
+        for i in range(3):
+            db_session.add(
+                models.Document(
+                    workspace_name=test_workspace.name,
+                    observer=test_peer.name,
+                    observed=test_peer2.name,
+                    content=f"tie {i}",
+                    session_name=test_session.name,
+                    times_derived=1,
+                    created_at=base + datetime.timedelta(days=i),
+                )
+            )
+        # A genuinely reinforced conclusion that is also the oldest of all.
+        db_session.add(
+            models.Document(
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                content="hot",
+                session_name=test_session.name,
+                times_derived=5,
+                created_at=base - datetime.timedelta(days=10),
+            )
+        )
+        await db_session.flush()
+
+        docs = await crud.query_documents_most_derived(
+            db_session,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            limit=10,
+        )
+        contents = [d.content for d in docs]
+        # Primary sort still wins: the actually-reinforced conclusion leads.
+        assert contents[0] == "hot"
+        # Ties break toward most-recent, not oldest-inserted.
+        assert contents[1:] == ["tie 2", "tie 1", "tie 0"]
+
+    @pytest.mark.asyncio
+    async def test_duplicate_rejection_reinforces_existing(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Rejecting a new duplicate must bump the surviving doc's times_derived."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="eri loves cats and dogs and birds and snakes",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        # Fewer unique tokens -> existing wins -> new doc is rejected.
+        new_doc = schemas.DocumentCreate(
+            content="eri loves cats",
+            embedding=[0.5] * 1536,
+            session_name=test_session.name,
+            times_derived=1,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[2],
+                message_created_at="2026-01-02T00:00:00Z",
+            ),
+        )
+        rejected = await is_rejected_duplicate(
+            db_session,
+            new_doc,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        assert rejected is True
+        surviving = (
+            await db_session.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == test_workspace.name,
+                    models.Document.observer == test_peer.name,
+                    models.Document.observed == test_peer2.name,
+                    models.Document.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one()
+        assert surviving.times_derived == 2
+
+    @pytest.mark.asyncio
+    async def test_duplicate_replacement_carries_count_forward(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """When a new duplicate wins, it must inherit the replaced doc's count + 1
+        rather than resetting reinforcement to 1."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="eri loves cats",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=3,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        # More information -> new wins -> existing is soft-deleted.
+        new_doc = schemas.DocumentCreate(
+            content="eri loves cats and dogs",
+            embedding=[0.5] * 1536,
+            session_name=test_session.name,
+            times_derived=1,
+            metadata=schemas.DocumentMetadata(
+                message_ids=[2],
+                message_created_at="2026-01-02T00:00:00Z",
+            ),
+        )
+        rejected = await is_rejected_duplicate(
+            db_session,
+            new_doc,
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        assert rejected is False
+        # Count carried forward onto the replacement (3 -> 4), not reset to 1.
+        assert new_doc.times_derived == 4
+        live = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == test_workspace.name,
+                        models.Document.observer == test_peer.name,
+                        models.Document.observed == test_peer2.name,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Original is soft-deleted; replacement isn't inserted until create_documents runs.
+        assert len(live) == 0
 
     @pytest.mark.asyncio
     async def test_delete_document_success(

@@ -18,11 +18,13 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
+from src.reconciler.embed_now import embed_messages_now
 from src.security import require_auth
 from src.telemetry import prometheus_metrics
+from src.telemetry.events import FileUploadedEvent, MessageCreatedEvent, emit
 from src.utils.files import process_file_uploads_for_messages
 
 logger = logging.getLogger(__name__)
@@ -30,9 +32,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/sessions/{session_id}/messages",
     tags=["messages"],
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
-    ],
+)
+
+# Read routes additionally allow a peer-scoped key whose peer is a member of the
+# session; write routes stay session-scoped only. Applied per-route rather than
+# on the router so the two policies can differ.
+require_session_read = require_auth(
+    workspace_name="workspace_id",
+    session_name="session_id",
+    allow_member_read=True,
+)
+require_session_write = require_auth(
+    workspace_name="workspace_id",
+    session_name="session_id",
 )
 
 
@@ -80,9 +92,18 @@ async def parse_upload_form(
     )
 
 
-@router.post("", response_model=list[schemas.Message], status_code=201)
 @router.post(
-    "/", response_model=list[schemas.Message], status_code=201, include_in_schema=False
+    "",
+    response_model=list[schemas.Message],
+    status_code=201,
+    dependencies=[Depends(require_session_write)],
+)
+@router.post(
+    "/",
+    response_model=list[schemas.Message],
+    status_code=201,
+    include_in_schema=False,
+    dependencies=[Depends(require_session_write)],
 )  # backwards compatibility with pre-2.6.0 faulty route endpoint
 async def create_messages_for_session(
     background_tasks: BackgroundTasks,
@@ -107,6 +128,17 @@ async def create_messages_for_session(
                 workspace_name=workspace_id,
             )
 
+        emit(
+            MessageCreatedEvent(
+                workspace_name=workspace_id,
+                session_name=session_id,
+                message_count=len(created_messages),
+                total_tokens=sum(message.token_count for message in created_messages),
+                source="api",
+                last_message_id=created_messages[-1].public_id,
+            )
+        )
+
         # Enqueue for processing (existing logic)
         payloads = [
             {
@@ -128,13 +160,25 @@ async def create_messages_for_session(
         # Enqueue all messages in one call
         background_tasks.add_task(enqueue, payloads)
 
+        # Embed immediately so messages are searchable within seconds; the
+        # reconciler is the fallback for anything left pending.
+        if settings.EMBED_MESSAGES and created_messages:
+            background_tasks.add_task(
+                embed_messages_now, [m.public_id for m in created_messages]
+            )
+
         return created_messages
     except ValueError as e:
         logger.warning(f"Failed to create messages for session {session_id}: {str(e)}")
         raise
 
 
-@router.post("/upload", response_model=list[schemas.Message], status_code=201)
+@router.post(
+    "/upload",
+    response_model=list[schemas.Message],
+    status_code=201,
+    dependencies=[Depends(require_session_write)],
+)
 async def create_messages_with_file(
     background_tasks: BackgroundTasks,
     workspace_id: str = Path(...),
@@ -194,6 +238,14 @@ async def create_messages_with_file(
     ]
 
     background_tasks.add_task(enqueue, payloads)
+
+    # Embed immediately so messages are searchable within seconds; the
+    # reconciler is the fallback for anything left pending.
+    if settings.EMBED_MESSAGES and created_messages:
+        background_tasks.add_task(
+            embed_messages_now, [m.public_id for m in created_messages]
+        )
+
     logger.debug(
         "Batch of %s messages created from file uploads and queued for processing",
         len(created_messages),
@@ -206,10 +258,43 @@ async def create_messages_with_file(
             workspace_name=workspace_id,
         )
 
+    # An empty extracted file (no chunks) leaves both lists empty. Skip the
+    # telemetry in that case rather than indexing into [].
+    if all_message_data and created_messages:
+        file_metadata = all_message_data[0]["file_metadata"]
+        total_tokens = sum(message.token_count for message in created_messages)
+        emit(
+            FileUploadedEvent(
+                workspace_name=workspace_id,
+                session_name=session_id,
+                peer_name=form_data.peer_id,
+                file_id=str(file_metadata["file_id"]),
+                filename=file.filename,
+                content_type=file.content_type,
+                file_size_bytes=file.size,
+                message_count=len(created_messages),
+                total_tokens=total_tokens,
+            )
+        )
+        emit(
+            MessageCreatedEvent(
+                workspace_name=workspace_id,
+                session_name=session_id,
+                message_count=len(created_messages),
+                total_tokens=total_tokens,
+                source="file_upload",
+                last_message_id=created_messages[-1].public_id,
+            )
+        )
+
     return created_messages
 
 
-@router.post("/list", response_model=Page[schemas.Message])
+@router.post(
+    "/list",
+    response_model=Page[schemas.Message],
+    dependencies=[Depends(require_session_read)],
+)
 async def get_messages(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
@@ -219,7 +304,7 @@ async def get_messages(
     reverse: bool | None = Query(
         False, description="Whether to reverse the order of results"
     ),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all messages for a Session with optional filters. Results are paginated."""
     try:
@@ -242,12 +327,16 @@ async def get_messages(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.get("/{message_id}", response_model=schemas.Message)
+@router.get(
+    "/{message_id}",
+    response_model=schemas.Message,
+    dependencies=[Depends(require_session_read)],
+)
 async def get_message(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     message_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get a single message by ID from a Session."""
     honcho_message = await crud.get_message(
@@ -259,7 +348,11 @@ async def get_message(
     return honcho_message
 
 
-@router.put("/{message_id}", response_model=schemas.Message)
+@router.put(
+    "/{message_id}",
+    response_model=schemas.Message,
+    dependencies=[Depends(require_session_write)],
+)
 async def update_message(
     workspace_id: str = Path(...),
     session_id: str = Path(...),

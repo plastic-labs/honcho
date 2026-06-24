@@ -2,7 +2,7 @@
 """Fixtures for telemetry unit tests.
 
 This module provides:
-- Sample event fixtures for all 12 event types
+- Sample event fixtures for all telemetry event types
 - Mock settings fixtures for controlling telemetry configuration
 - Mock HTTP client fixtures for testing the emitter without network calls
 """
@@ -19,10 +19,16 @@ from src.telemetry.events.agent import (
     AgentToolPeerCardUpdatedEvent,
     AgentToolSummaryCreatedEvent,
 )
+from src.telemetry.events.api import (
+    FileUploadedEvent,
+    GetContextEvent,
+    MessageCreatedEvent,
+)
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.events.deletion import DeletionCompletedEvent
 from src.telemetry.events.dialectic import DialecticCompletedEvent
 from src.telemetry.events.dream import DreamRunEvent, DreamSpecialistEvent
+from src.telemetry.events.llm import CallPurpose, LLMCallCompletedEvent
 from src.telemetry.events.reconciliation import (
     CleanupStaleItemsCompletedEvent,
     SyncVectorsCompletedEvent,
@@ -64,7 +70,101 @@ def sample_representation_event(
         llm_call_ms=1200.0,
         total_duration_ms=1300.0,
         input_tokens=5000,
+        total_input_tokens=7500,
         output_tokens=500,
+        # additive fields
+        queued_message_count=3,
+        prompt_message_count=10,
+        prompt_message_tokens=7000,
+        extra_context_message_count=7,
+        extra_context_tokens=2000,
+        prompt_scaffold_tokens=500,
+        batch_max_tokens=20_000,
+        max_input_tokens=23_000,
+        was_flush_enabled=False,
+        hit_batch_token_cap=False,
+        hit_input_token_cap=False,
+        observer_count=1,
+    )
+
+
+@pytest.fixture
+def sample_message_created_event(fixed_timestamp: datetime) -> MessageCreatedEvent:
+    """Create a sample MessageCreatedEvent for testing."""
+    return MessageCreatedEvent(
+        timestamp=fixed_timestamp,
+        workspace_name="test_workspace",
+        session_name="test_session",
+        message_count=2,
+        total_tokens=250,
+        last_message_id="msg_abc123_fixture_____",
+    )
+
+
+@pytest.fixture
+def sample_file_uploaded_event(fixed_timestamp: datetime) -> FileUploadedEvent:
+    """Create a sample FileUploadedEvent for testing."""
+    return FileUploadedEvent(
+        timestamp=fixed_timestamp,
+        workspace_name="test_workspace",
+        session_name="test_session",
+        peer_name="user_peer",
+        file_id="file_123",
+        filename="notes.txt",
+        content_type="text/plain",
+        file_size_bytes=1024,
+        message_count=2,
+        total_tokens=250,
+    )
+
+
+@pytest.fixture
+def sample_llm_call_event(fixed_timestamp: datetime) -> LLMCallCompletedEvent:
+    """Sample LLMCallCompletedEvent ()."""
+    return LLMCallCompletedEvent(
+        timestamp=fixed_timestamp,
+        workspace_name="test_workspace",
+        call_purpose=CallPurpose.DIALECTIC_ANSWER,
+        parent_category="dialectic",
+        transport="anthropic",
+        provider_label=None,
+        model="claude-sonnet-4-5",
+        effective_max_output_tokens=4096,
+        provider_input_tokens=1234,
+        provider_output_tokens=567,
+        cache_read_tokens=100,
+        cache_creation_tokens=50,
+        finish_reason="stop",
+        outcome="success",
+        is_final_attempt=False,
+        attempt=1,
+        retry_attempts=3,
+        was_fallback=False,
+        duration_ms=1100.5,
+        has_tools=True,
+        tool_call_count=2,
+        run_id="abc12345",
+        iteration=1,
+    )
+
+
+@pytest.fixture
+def sample_get_context_event(fixed_timestamp: datetime) -> GetContextEvent:
+    """Create a sample GetContextEvent for testing."""
+    return GetContextEvent(
+        timestamp=fixed_timestamp,
+        workspace_name="test_workspace",
+        context_scope="session",
+        session_name="test_session",
+        tokens_requested=4000,
+        message_count=10,
+        has_summary=True,
+        has_representation=False,
+        has_peer_card=False,
+        search_query_provided=False,
+        include_summary=True,
+        peer_perspective_provided=False,
+        total_duration_ms=25.0,
     )
 
 
@@ -87,6 +187,13 @@ def sample_dream_run_event(fixed_timestamp: datetime) -> DreamRunEvent:
         total_input_tokens=25000,
         total_output_tokens=3000,
         total_duration_ms=45000.0,
+        # additive fields
+        dream_type="omni",
+        enabled_types_count=1,
+        trigger_reason="document_threshold",
+        delay_reason="idle_timeout",
+        documents_since_last_dream_at_schedule=55,
+        document_threshold=50,
     )
 
 
@@ -106,6 +213,11 @@ def sample_dream_specialist_event(fixed_timestamp: datetime) -> DreamSpecialistE
         output_tokens=2000,
         duration_ms=25000.0,
         success=True,
+        # additive rollups
+        created_observation_count=7,
+        deleted_observation_count=2,
+        peer_card_updated=True,
+        search_tool_calls_count=4,
     )
 
 
@@ -225,6 +337,10 @@ def sample_summary_created_event(
         summary_type="short",
         input_tokens=4000,
         output_tokens=300,
+        # additive token breakdown
+        previous_summary_tokens=200,
+        message_tokens=3500,
+        prompt_scaffold_tokens=300,
     )
 
 
@@ -276,6 +392,9 @@ def sample_cleanup_event(fixed_timestamp: datetime) -> CleanupStaleItemsComplete
 @pytest.fixture
 def all_sample_events(
     sample_representation_event: RepresentationCompletedEvent,
+    sample_message_created_event: MessageCreatedEvent,
+    sample_file_uploaded_event: FileUploadedEvent,
+    sample_get_context_event: GetContextEvent,
     sample_dream_run_event: DreamRunEvent,
     sample_dream_specialist_event: DreamSpecialistEvent,
     sample_dialectic_event: DialecticCompletedEvent,
@@ -287,10 +406,14 @@ def all_sample_events(
     sample_deletion_event: DeletionCompletedEvent,
     sample_sync_vectors_event: SyncVectorsCompletedEvent,
     sample_cleanup_event: CleanupStaleItemsCompletedEvent,
+    sample_llm_call_event: LLMCallCompletedEvent,
 ) -> list[BaseEvent]:
     """Return all sample events as a list for parametrized tests."""
     return [
         sample_representation_event,
+        sample_message_created_event,
+        sample_file_uploaded_event,
+        sample_get_context_event,
         sample_dream_run_event,
         sample_dream_specialist_event,
         sample_dialectic_event,
@@ -302,6 +425,7 @@ def all_sample_events(
         sample_deletion_event,
         sample_sync_vectors_event,
         sample_cleanup_event,
+        sample_llm_call_event,
     ]
 
 

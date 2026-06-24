@@ -8,7 +8,7 @@
 
 ---
 
-![Static Badge](https://img.shields.io/badge/Server-3.0.6-blue)
+![Static Badge](https://img.shields.io/badge/Server-3.0.9-blue)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/honcho)
@@ -43,21 +43,21 @@ The Honcho project is split between several repositories, with this one hosting 
 
 ## Start Here
 
-| I want to... | Path | Get started |
-|---|---|---|
+| I want to...                           | Path                                                       | Get started                   |
+| -------------------------------------- | ---------------------------------------------------------- | ----------------------------- |
 | Give my coding agent persistent memory | Claude Code, OpenCode, OpenClaw, Hermes, or any MCP client | [Integrations](#integrations) |
-| Add memory to my product | Python or TypeScript SDK | [Quickstart](#quickstart) |
-| Self-host Honcho | Docker / local development | [Self-hosting](#self-hosting) |
+| Add memory to my product               | Python or TypeScript SDK                                   | [Quickstart](#quickstart)     |
+| Self-host Honcho                       | Docker / local development                                 | [Self-hosting](#self-hosting) |
 
 ## Why Honcho
 
-| Capability | What it means |
-|---|---|
-| Reasoning-first memory | Extracts conclusions from conversations and events, not just matching chunks. |
-| Peer-centric model | Tracks users, agents, groups, projects, and ideas as entities that change over time. |
-| Multi-peer perspective | Models what one peer knows about another when configured. |
-| Managed or self-hosted | Use `api.honcho.dev` or run the FastAPI server yourself. |
-| Agent-tool integrations | MCP, Claude Code, OpenCode, OpenClaw, Hermes, Cursor-compatible clients. |
+| Capability              | What it means                                                                        |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| Reasoning-first memory  | Extracts conclusions from conversations and events, not just matching chunks.        |
+| Peer-centric model      | Tracks users, agents, groups, projects, and ideas as entities that change over time. |
+| Multi-peer perspective  | Models what one peer knows about another when configured.                            |
+| Managed or self-hosted  | Use `api.honcho.dev` or run the FastAPI server yourself.                             |
+| Agent-tool integrations | MCP, Claude Code, OpenCode, OpenClaw, Hermes, Cursor-compatible clients.             |
 
 ## The Honcho Loop
 
@@ -139,7 +139,9 @@ await session.addMessages([
   tutor.message("Absolutely. Send me your first problem!"),
 ]);
 
-const answer = await alice.chat("What learning styles does the user respond to best?");
+const answer = await alice.chat(
+  "What learning styles does the user respond to best?",
+);
 const context = await session.context({ summary: true, tokens: 10_000 });
 
 const openai = new OpenAI();
@@ -153,15 +155,15 @@ const completion = await openai.chat.completions.create({
 
 ## What Honcho Gives You
 
-| Need | API |
-|---|---|
-| Save interaction history | `session.add_messages(...)` |
-| Ask what Honcho knows about a peer | `peer.chat(...)` |
-| Get prompt-ready context | `session.context(...).to_openai(...)` / `.to_anthropic(...)` |
-| Hybrid search (BM25 + vector) | `peer.search(...)`, `session.search(...)`, `honcho.search(...)` |
-| Low-latency static representations | `peer.representation(...)`, `session.representation(...)` |
-| Import documents | `session.upload_file(...)` |
-| Inspect background processing | `honcho.queue_status(...)` |
+| Need                               | API                                                             |
+| ---------------------------------- | --------------------------------------------------------------- |
+| Save interaction history           | `session.add_messages(...)`                                     |
+| Ask what Honcho knows about a peer | `peer.chat(...)`                                                |
+| Get prompt-ready context           | `session.context(...).to_openai(...)` / `.to_anthropic(...)`    |
+| Hybrid search (BM25 + vector)      | `peer.search(...)`, `session.search(...)`, `honcho.search(...)` |
+| Low-latency static representations | `peer.representation(...)`, `session.representation(...)`       |
+| Import documents                   | `session.upload_file(...)`                                      |
+| Inspect background processing      | `honcho.queue_status(...)`                                      |
 
 See the full [SDK Reference](https://honcho.dev/docs/v3/documentation/reference/sdk) and [API Reference](https://honcho.dev/docs/v3/api-reference/introduction).
 
@@ -391,6 +393,26 @@ the `AUTH_JWT_SECRET` environment variable. This is required for `AUTH_USE_AUTH`
 ```env
 AUTH_JWT_SECRET=<generated_secret>
 ```
+
+Once auth is enabled, use `scripts/generate_jwt.py` to mint tokens for local
+development and scripting:
+
+```bash
+# Admin token (full access, no expiry)
+uv run python scripts/generate_jwt.py --admin
+
+# Admin token expiring in 24 hours
+uv run python scripts/generate_jwt.py --admin --expires 24h
+
+# Workspace-scoped token
+uv run python scripts/generate_jwt.py --workspace my-workspace --expires 30d
+
+# Capture a token for use in curl/scripts
+TOKEN=$(uv run python scripts/generate_jwt.py --admin --print-only)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/v3/workspaces
+```
+
+Duration units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks), `y` (years).
 
 5. **Run database migrations**
 

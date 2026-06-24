@@ -14,7 +14,7 @@
       "identifier": "AGPL-3.0-only",
       "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE"
     },
-    "version": "3.0.6"
+    "version": "3.0.10"
   },
   "servers": [
     {
@@ -83,6 +83,25 @@
         "summary": "Get All Workspaces",
         "description": "Get all Workspaces, paginated with optional filters.",
         "operationId": "get_all_workspaces_v3_workspaces_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -95,8 +114,8 @@
                     "type": "null"
                   }
                 ],
-                "title": "Options",
-                "description": "Filtering and pagination options for the workspaces list"
+                "description": "Filtering and pagination options for the workspaces list",
+                "title": "Options"
               }
             }
           }
@@ -122,12 +141,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ]
+        }
       }
     },
     "/v3/workspaces/{workspace_id}": {
@@ -574,6 +588,18 @@
               "type": "string",
               "title": "Workspace Id"
             }
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
           }
         ],
         "requestBody": {
@@ -776,6 +802,18 @@
               "type": "string",
               "title": "Peer Id"
             }
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
           }
         ],
         "requestBody": {
@@ -1397,6 +1435,18 @@
               "type": "string",
               "title": "Workspace Id"
             }
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
           }
         ],
         "requestBody": {
@@ -1969,7 +2019,7 @@
           "sessions"
         ],
         "summary": "Get Peer Config",
-        "description": "Get the configuration for a Peer in a Session.",
+        "description": "Get the configuration for a Peer in a Session.\n\nMember-read lets a peer-scoped key reach this route, but a peer may only\nread its own per-session config \u2014 not a co-member's. Workspace/admin and\nsession-scoped tokens (which already span the whole session) are unaffected.",
         "operationId": "get_peer_config_v3_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_get",
         "security": [
           {
