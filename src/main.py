@@ -24,6 +24,7 @@ from src.db import engine, register_db_query_instrumentation, request_context
 from src.exceptions import HonchoException
 from src.routers import (
     conclusions,
+    graph_memory,
     keys,
     messages,
     peers,
@@ -202,6 +203,7 @@ app.include_router(messages.router, prefix="/v3")
 app.include_router(conclusions.router, prefix="/v3")
 app.include_router(keys.router, prefix="/v3")
 app.include_router(webhooks.router, prefix="/v3")
+app.include_router(graph_memory.router, prefix="/v3")
 
 # Prometheus metrics endpoint
 app.add_route("/metrics", metrics_endpoint, methods=["GET"])

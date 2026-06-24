@@ -238,3 +238,5 @@ TaskType = Literal[
 ]
 VectorSyncState = Literal["synced", "pending", "failed"]
 DocumentLevel = Literal["explicit", "deductive", "inductive", "contradiction"]
+EdgeType = Literal["related", "composes-with", "see-also", "refines", "supersedes", "contradicts"]
+AccessLogEventType = Literal["access", "verify", "promote", "recall", "evict", "rehydrate"]
