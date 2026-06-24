@@ -163,7 +163,7 @@ async def save_results_to_s3(
             Body=json.dumps(comprehensive_results, indent=2).encode("utf-8"),
             ContentType="application/json",
         )
-        logger.info(f"Saved test results to s3://{s3_bucket}/{results_key}")
+        logger.info(f"Saved test results to S3 key {results_key}")
 
         # Upload the reasoning traces (full LLM/deriver I/O) captured this run. The
         # API and deriver both append to REASONING_TRACES_FILE (file-locked). Use
@@ -180,9 +180,7 @@ async def save_results_to_s3(
                         traces_key,
                         ExtraArgs={"ContentType": "application/x-ndjson"},
                     )
-                    logger.info(
-                        f"Saved reasoning traces to s3://{s3_bucket}/{traces_key}"
-                    )
+                    logger.info(f"Saved reasoning traces to S3 key {traces_key}")
                 except Exception as e:
                     logger.error(
                         f"Failed to upload reasoning traces: {e}", exc_info=True
