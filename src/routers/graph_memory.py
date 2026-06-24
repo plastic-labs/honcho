@@ -28,8 +28,10 @@ from src.crud.graph_memory import (
     get_context_members,
     get_verify_due as crud_get_verify_due,
     is_verify_due,
+    list_cold_observations,
     list_edges,
     pin_observation,
+    rehydrate_observation,
     remove_context_member,
     resolve_thread,
     unpin_observation,
@@ -606,8 +608,48 @@ async def evict_stale_endpoint(
     session: AsyncSession = Depends(get_db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
-    """Evict stale unpinned observations below activation threshold."""
-    evicted = await evict_stale(
+    """Evict stale unpinned observations below activation threshold to cold storage.
+    
+    For each stale observation:
+    1. Snapshots its edges and access log tail
+    2. Writes to documents_cold table
+    3. Deletes from active documents table (edges cascade)
+    4. Logs evict event
+    
+    Returns a report with evicted count, skipped counts, and threshold.
+    """
+    report = await evict_stale(
         db=session, workspace_name=workspace_id, threshold=threshold
     )
-    return {"evicted_count": len(evicted), "evicted_ids": evicted}
+    return report
+
+
+@router.post("/rehydrate/{obs_id}", response_model=dict)
+async def rehydrate_observation_endpoint(
+    workspace_id: str = Path(...),
+    obs_id: str = Path(...),
+    session: AsyncSession = Depends(get_db),
+    auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
+) -> dict:
+    """Rehydrate a cold observation back to the active documents table.
+    
+    Restores with activation = 0.60 (hysteresis gap).
+    Re-creates edges from the snapshot taken at eviction time.
+    """
+    result = await rehydrate_observation(
+        db=session, workspace_name=workspace_id, obs_id=obs_id
+    )
+    return result
+
+
+@router.get("/cold", response_model=list[dict])
+async def list_cold_observations_endpoint(
+    workspace_id: str = Path(...),
+    limit: int = Query(default=100, ge=1, le=1000),
+    session: AsyncSession = Depends(get_read_db),
+    auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
+) -> list[dict]:
+    """List cold-stored observations for a workspace."""
+    return await list_cold_observations(
+        db=session, workspace_name=workspace_id, limit=limit
+    )

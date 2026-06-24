@@ -630,17 +630,69 @@ async def get_verify_due(
 
 # ── Eviction ───────────────────────────────────────────────────────────────
 
+async def _snapshot_edges(
+    db: AsyncSession,
+    obs_id: str,
+    workspace_name: str,
+) -> list[dict]:
+    """Snapshot all edges for an observation before eviction."""
+    result = await db.execute(
+        select(models.Edge).where(
+            models.Edge.workspace_name == workspace_name,
+            (models.Edge.source_obs_id == obs_id) | (models.Edge.target_obs_id == obs_id),
+        )
+    )
+    edges = result.scalars().all()
+    return [
+        {
+            "source_obs_id": e.source_obs_id,
+            "target_obs_id": e.target_obs_id,
+            "edge_type": e.edge_type,
+            "created_by": e.created_by,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in edges
+    ]
+
+
+async def _snapshot_access_log(
+    db: AsyncSession,
+    obs_id: str,
+    workspace_name: str,
+    tail_count: int = 20,
+) -> list[dict]:
+    """Snapshot the last N access log events for an observation before eviction."""
+    result = await db.execute(
+        select(models.AccessLogEntry).where(
+            models.AccessLogEntry.obs_id == obs_id,
+            models.AccessLogEntry.workspace_name == workspace_name,
+        ).order_by(models.AccessLogEntry.created_at.desc()).limit(tail_count)
+    )
+    return [
+        {
+            "event_type": e.event_type,
+            "created_by": e.created_by,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in result.scalars().all()
+    ]
+
+
 async def evict_stale(
     db: AsyncSession,
     workspace_name: str,
     threshold: float = EVICTION_THRESHOLD,
-) -> list[str]:
-    """Evict unpinned observations below activation threshold.
+) -> dict:
+    """Evict unpinned observations below activation threshold to cold storage.
     
-    Returns list of evicted observation IDs.
+    For each stale observation:
+    1. Snapshot its edges and access log tail
+    2. Write to documents_cold table
+    3. Delete from active documents table (edges cascade, access log pruned by retention)
+    4. Log evict event
+    
+    Returns dict with eviction report.
     """
-    from src.crud.document import get_documents_with_filters
-    
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
         models.Document.deleted_at.is_(None),
@@ -650,21 +702,168 @@ async def evict_stale(
     
     now = datetime.datetime.now(datetime.timezone.utc)
     evicted: list[str] = []
+    skipped_pinned = 0
+    skipped_active = 0
     
     for doc in docs:
         metadata = doc.internal_metadata or {}
         if metadata.get("is_pinned", False):
+            skipped_pinned += 1
             continue
         
         activation = await compute_activation(db, doc.id, workspace_name, now)
-        if activation < threshold:
-            # Log evict event
-            await create_access_log_entry(
-                db, workspace_name, "", doc.id, "evict", "system"
-            )
-            # Soft-delete the document
-            doc.deleted_at = now
-            evicted.append(doc.id)
+        if activation >= threshold:
+            skipped_active += 1
+            continue
+        
+        # Step 1: Snapshot edges and access log
+        edge_snapshot = await _snapshot_edges(db, doc.id, workspace_name)
+        log_snapshot = await _snapshot_access_log(db, doc.id, workspace_name)
+        
+        # Step 2: Write to cold storage
+        cold = models.DocumentCold(
+            id=doc.id,
+            workspace_name=doc.workspace_name,
+            collection_name=doc.collection_name,
+            content=doc.content,
+            level=doc.level,
+            doc_metadata=doc.internal_metadata,
+            internal_metadata=doc.internal_metadata,
+            embedding=doc.embedding,
+            evicted_at=now,
+            edge_snapshot=edge_snapshot,
+            access_log_tail=log_snapshot,
+        )
+        db.add(cold)
+        
+        # Step 3: Delete from active tables (edges cascade via FK)
+        await db.execute(
+            sa_delete(models.Document).where(models.Document.id == doc.id)
+        )
+        
+        # Step 4: Log evict event
+        await create_access_log_entry(
+            db, workspace_name, doc.collection_name, doc.id, "evict", "system"
+        )
+        
+        evicted.append(doc.id)
     
     await db.commit()
-    return evicted
+    
+    return {
+        "evicted_count": len(evicted),
+        "evicted_ids": evicted,
+        "skipped_pinned": skipped_pinned,
+        "skipped_active": skipped_active,
+        "threshold": threshold,
+        "note": (
+            f"Evicted {len(evicted)} observations to cold storage. "
+            f"{skipped_pinned} pinned observations skipped. "
+            f"{skipped_active} observations above activation threshold {threshold}."
+        ),
+    }
+
+
+async def rehydrate_observation(
+    db: AsyncSession,
+    workspace_name: str,
+    obs_id: str,
+) -> dict:
+    """Rehydrate a cold observation back to the active documents table.
+    
+    Restores with activation = REHYDRATE_RESTORE (hysteresis gap).
+    Returns dict with rehydration result.
+    """
+    # Find the cold document
+    result = await db.execute(
+        select(models.DocumentCold).where(
+            models.DocumentCold.id == obs_id,
+            models.DocumentCold.workspace_name == workspace_name,
+        )
+    )
+    cold = result.scalar_one_or_none()
+    if not cold:
+        raise ResourceNotFoundException(f"Cold observation {obs_id} not found")
+    
+    now = datetime.datetime.now(datetime.timezone.utc)
+    
+    # Re-create the document in the active table
+    doc = models.Document(
+        id=cold.id,
+        workspace_name=cold.workspace_name,
+        collection_name=cold.collection_name,
+        content=cold.content,
+        level=cold.level,
+        metadata=cold.doc_metadata or {},
+        internal_metadata=cold.internal_metadata or {},
+        embedding=cold.embedding,
+        created_at=now,
+    )
+    db.add(doc)
+    await db.flush()  # Get the ID assigned
+    
+    # Re-create edges from snapshot
+    edge_count = 0
+    if cold.edge_snapshot:
+        for edge_data in cold.edge_snapshot:
+            try:
+                await create_edge(
+                    db=db,
+                    workspace_name=workspace_name,
+                    collection_name=cold.collection_name,
+                    source_obs_id=edge_data["source_obs_id"],
+                    target_obs_id=edge_data["target_obs_id"],
+                    edge_type=edge_data["edge_type"],
+                    created_by="rehydration-worker",
+                )
+                edge_count += 1
+            except Exception as e:
+                logger.debug("Edge re-creation skipped for %s: %s", obs_id, e)
+    
+    # Log rehydrate event
+    await create_access_log_entry(
+        db, workspace_name, cold.collection_name, obs_id, "rehydrate", "system"
+    )
+    
+    # Mark the cold record as rehydrated
+    cold.rehydrated_at = now
+    
+    # Delete the cold record
+    await db.execute(
+        sa_delete(models.DocumentCold).where(
+            models.DocumentCold.id == obs_id,
+            models.DocumentCold.workspace_name == workspace_name,
+        )
+    )
+    
+    await db.commit()
+    
+    return {
+        "obs_id": obs_id,
+        "rehydrated": True,
+        "edges_restored": edge_count,
+        "restored_activation": REHYDRATE_RESTORE,
+    }
+
+
+async def list_cold_observations(
+    db: AsyncSession,
+    workspace_name: str,
+    limit: int = 100,
+) -> list[dict]:
+    """List cold-stored observations for a workspace."""
+    result = await db.execute(
+        select(models.DocumentCold).where(
+            models.DocumentCold.workspace_name == workspace_name,
+        ).order_by(models.DocumentCold.evicted_at.desc()).limit(limit)
+    )
+    return [
+        {
+            "id": c.id,
+            "content": c.content[:100],
+            "evicted_at": c.evicted_at.isoformat() if c.evicted_at else None,
+            "rehydrated_at": c.rehydrated_at.isoformat() if c.rehydrated_at else None,
+            "edge_count": len(c.edge_snapshot) if c.edge_snapshot else 0,
+        }
+        for c in result.scalars().all()
+    ]

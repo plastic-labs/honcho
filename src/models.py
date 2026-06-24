@@ -474,6 +474,49 @@ class Document(Base):
 
 
 @final
+class DocumentCold(Base):
+    """Cold storage for evicted observations.
+    
+    When an unpinned observation's activation drops below threshold, it is
+    moved here with its edges and access log tail. It can be rehydrated
+    back to the active documents table if re-queried.
+    """
+    __tablename__: str = "documents_cold"
+    id: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
+    collection_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    content: Mapped[str] = mapped_column(TEXT)
+    level: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    doc_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True, server_default=text("NULL")
+    )
+    internal_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
+    evicted_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    edge_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    access_log_tail: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    rehydrated_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        Index("ix_documents_cold_workspace", "workspace_name"),
+        Index("ix_documents_cold_evicted_at", "evicted_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"DocumentCold(id={self.id}, workspace={self.workspace_name}, evicted={self.evicted_at})"
+
+
+@final
 class Edge(Base):
     """A typed edge between two observations in the semantic graph.
     
