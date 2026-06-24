@@ -1330,7 +1330,9 @@ async def _handle_create_observations_impl(
         source_ids = obs.get("source_ids")
         if isinstance(source_ids, list):
             obs["source_ids"] = [
-                _normalize_observation_id(s) for s in source_ids if isinstance(s, str)
+                _normalize_observation_id(s)
+                for s in cast(list[Any], source_ids)
+                if isinstance(s, str)
             ]
 
     # Validate observations individually so valid ones are still processed
