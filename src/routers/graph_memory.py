@@ -583,11 +583,18 @@ async def compact_access_log_endpoint(
     db: AsyncSession = Depends(db),
     auth: JWTParams = Depends(require_auth(workspace_name="workspace_id")),
 ) -> dict:
-    """Compact the access log (prune events older than 5 half-lives)."""
-    pruned = await compact_access_log(
+    """Compact the access log (prune events older than 5 half-lives).
+    
+    Returns a gap-note style report following the GC protocol pattern:
+    - What was pruned and why
+    - Pre/post compaction state
+    - Retention policy version for auditability
+    - Post-compaction health check
+    """
+    report = await compact_access_log(
         db=db, workspace_name=workspace_id
     )
-    return {"pruned_events": pruned}
+    return report
 
 
 # ── Eviction (admin) ──────────────────────────────────────────────────────

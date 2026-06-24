@@ -6,8 +6,12 @@ observation is assigned to the active context.
 
 This runs as a background task (sibling to the Deriver), not inline.
 
-V1 uses a heuristic-based promotion test (keyword matching).
-V2 will upgrade to LLM-based classification.
+v1 used a heuristic-based promotion test (keyword matching).
+v2 (kanban t_3dec782c) upgrades to LLM-based classification: a cheap
+model returns a single YES/NO token. The heuristic is retained as a
+fallback for when the LLM call fails after all retries — per spec §7.4a,
+"on persistent failure, promote conservatively (safe but noisy) rather
+than dropping."
 """
 
 from __future__ import annotations
@@ -15,18 +19,22 @@ from __future__ import annotations
 import logging
 import re
 import time
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src.config import ConfiguredModelSettings, settings
 from src.crud.graph_memory import (
     add_context_member,
     create_access_log_entry,
     create_edge,
 )
 from src.dependencies import tracked_db
+from src.llm import HonchoLLMCallResponse, honcho_llm_call
+from src.llm.types import LLMTelemetryContext
 from src.models import Document
+from src.telemetry.events.llm import CallPurpose
 from src.utils.types import EdgeType
 
 logger = logging.getLogger(__name__)
@@ -40,7 +48,136 @@ LEVEL_TO_EDGE_TYPE: dict[str, EdgeType] = {
     "contradiction": "contradicts",
 }
 
-# ── Heuristic promotion test (v1) ──────────────────────────────────────────
+# ── LLM-based promotion test (v2) ──────────────────────────────────────────
+
+# Single-token YES/NO classification prompt (spec §7.4a). The model is
+# expected to return exactly "YES" or "NO" (case-insensitive match below).
+# Kept deliberately small so a cheap classifier model is sufficient.
+PROMOTION_TEST_PROMPT = """You are a memory-promotion classifier for a long-running AI agent system.
+
+You will be given a single extracted observation (a "fact") that the system derived from a conversation. Your job is to decide whether this fact should be PROMOTED into the agent's durable L2 memory, where it will be available to future sessions and connected to related observations.
+
+A fact should be promoted (answer YES) if it is BOTH:
+1. Non-obvious: NOT trivially derivable from reading the codebase, repo, logs, or standard documentation alone. Things like `import os`, function definitions, file paths, or `print(...)` statements are obvious-from-code and should NOT be promoted.
+2. Durable: will still be true and useful in a future session. Ephemeral state ("currently we are doing X", "today's plan is Y", "let me check Z", "maybe we should W") is NOT durable.
+
+A fact should NOT be promoted (answer NO) if it is:
+- Obvious from code (imports, def/class signatures, return statements, print/TODO/FIXME)
+- Temporary or hedged ("today", "right now", "for now", "maybe", "perhaps", "might be")
+- A verbatim transcription of a tool output or error message with no insight attached
+- Very short / content-free (< 20 characters of substance)
+
+Answer with EXACTLY one token, either YES or NO. Do not add any explanation, punctuation, or other text.
+
+<observation>
+{content}
+</observation>
+
+Answer:"""
+
+
+def _promotion_test_prompt(content: str) -> str:
+    """Build the promotion-test prompt for a single observation."""
+    return PROMOTION_TEST_PROMPT.format(content=content)
+
+
+def _parse_promotion_response(raw: str | None) -> bool | None:
+    """Parse the model's single-token YES/NO response.
+
+    Returns True (promote), False (don't promote), or None if the response
+    could not be classified (caller decides the fallback).
+    """
+    if raw is None:
+        return None
+    token = raw.strip().splitlines()[0].strip().upper() if raw.strip() else ""
+    # Accept "YES" / "Y" and "NO" / "N" leniently; reject anything else as
+    # unparseable (the caller will fall back to the heuristic per spec §7.4a).
+    if token.startswith("YES"):
+        return True
+    if token.startswith("NO"):
+        return False
+    return None
+
+
+async def _llm_promotion_test(
+    content: str,
+    *,
+    workspace_name: str | None = None,
+    observer: str | None = None,
+    observed: str | None = None,
+) -> bool:
+    """LLM-based promotion test (v2).
+
+    Asks a cheap model to return a single YES/NO token classifying whether
+    `content` is non-obvious AND durable. On any failure (LLM error after
+    retries exhausted, unparseable response), falls back to the v1
+    heuristic test — per spec §7.4a, "promote conservatively (safe but
+    noisy) rather than dropping."
+
+    Args:
+        content: The observation content to classify.
+        workspace_name: Optional, for telemetry attribution.
+        observer / observed: Optional peer context for telemetry.
+
+    Returns:
+        True if the fact should be promoted, False otherwise.
+    """
+    model_config = _get_promotion_model_config()
+    max_tokens = settings.PROMOTION.MAX_TOKENS
+    max_input_tokens = settings.PROMOTION.MAX_INPUT_TOKENS
+    retry_attempts = settings.PROMOTION.MAX_OUTER_RETRIES
+
+    prompt = _promotion_test_prompt(content)
+
+    try:
+        response: HonchoLLMCallResponse[str] = await honcho_llm_call(
+            model_config=model_config,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            max_input_tokens=max_input_tokens,
+            enable_retry=True,
+            retry_attempts=retry_attempts,
+            temperature=0.0,
+            telemetry=LLMTelemetryContext(
+                workspace_name=workspace_name,
+                call_purpose=CallPurpose.PROMOTION_TEST.value,
+                parent_category="promotion",
+                observer=observer,
+                observed=observed,
+                track_name="Promotion Test",
+            ),
+        )
+    except Exception as exc:
+        # Spec §7.4a: persistent failure → fall back to the heuristic rather
+        # than dropping the observation. Logged at WARNING so operators see
+        # the LLM degradation but the pipeline keeps moving.
+        logger.warning(
+            "Promotion-test LLM call failed after %d retries; falling back "
+            "to heuristic test. Error: %s",
+            retry_attempts,
+            exc,
+        )
+        return _heuristic_promotion_test(content)
+
+    raw = cast(str | None, response.content)
+    parsed = _parse_promotion_response(raw)
+    if parsed is None:
+        logger.warning(
+            "Promotion-test returned an unparseable response (%r); falling "
+            "back to heuristic test.",
+            raw,
+        )
+        return _heuristic_promotion_test(content)
+
+    return parsed
+
+
+def _get_promotion_model_config() -> ConfiguredModelSettings:
+    """Return the promotion-worker model config from settings."""
+    return settings.PROMOTION.MODEL_CONFIG
+
+
+# ── Heuristic promotion test (v1, retained as fallback) ────────────────────
 
 # Patterns that indicate a fact is obvious-from-code (should NOT promote)
 OBVIOUS_PATTERNS = [
@@ -51,6 +188,8 @@ OBVIOUS_PATTERNS = [
     r"\bprint\s*\(",
     r"\bTODO\b",
     r"\bFIXME\b",
+    r"\bHACK\b",
+    r"\bXXX\b",
     r"^let me check",
     r"^i'll look",
     r"^one moment",
@@ -98,13 +237,10 @@ TEMPORARY_PATTERNS = [
 
 
 def _heuristic_promotion_test(content: str) -> bool:
-    """Heuristic promotion test (v1).
-    
-    TODO: Upgrade to LLM-based classification (kanban: t_3dec782c).
-    The prompt template PROMOTION_TEST_PROMPT is ready for use.
-    
+    """Heuristic promotion test (v1, retained as the LLM fallback).
+
     Returns True if the fact should be promoted (non-obvious AND durable).
-    
+
     Rules:
     1. If content matches an OBVIOUS pattern → NOT promoted
     2. If content matches a TEMPORARY pattern → NOT promoted
@@ -113,26 +249,26 @@ def _heuristic_promotion_test(content: str) -> bool:
     5. Otherwise → promoted (conservative default)
     """
     content_lower = content.lower().strip()
-    
+
     # Rule 4: Very short facts are unlikely to be durable
     if len(content_lower) < 20:
         return False
-    
+
     # Rule 1: Obvious-from-code patterns
     for pattern in OBVIOUS_PATTERNS:
         if re.search(pattern, content_lower):
             return False
-    
+
     # Rule 2: Temporary patterns
     for pattern in TEMPORARY_PATTERNS:
         if re.search(pattern, content_lower):
             return False
-    
+
     # Rule 3: Durable patterns → promote
     for pattern in DURABLE_PATTERNS:
         if re.search(pattern, content_lower):
             return True
-    
+
     # Rule 5: Conservative default
     return True
 
@@ -148,8 +284,8 @@ async def process_promotion(
     session_name: str | None = None,
 ) -> None:
     """Run the promotion pipeline for a single observation.
-    
-    1. Run promotion test (heuristic for v1)
+
+    1. Run promotion test (LLM-based for v2, heuristic fallback on failure)
     2. If promoted: create edges to related observations
     3. If promoted: assign to active context
     4. Log promote event in access log
@@ -159,40 +295,50 @@ async def process_promotion(
         "Processing promotion for observation %s in workspace %s",
         obs_id, workspace_name,
     )
-    
+
     async with tracked_db("promotion.fetch") as db:
         # Fetch the observation
         doc = await _get_document(db, obs_id, workspace_name)
         if doc is None:
             logger.warning("Observation %s not found, skipping promotion", obs_id)
             return
-        
+
         content = doc.content
         level = doc.level or "explicit"
-        
+
         # Fetch related observations in the same collection
         related_docs = await _get_related_documents(
             db, workspace_name, collection_name, obs_id, limit=20
         )
-    
-    # Step 1: Run promotion test
-    is_promoted = _heuristic_promotion_test(content)
-    
+
+    # Step 1: Run promotion test. Skip the LLM call entirely if the worker
+    # is disabled — this makes PROMOTION.ENABLED=False a real off-switch
+    # (no model calls, no spend) rather than just a flag that's ignored.
+    if settings.PROMOTION.ENABLED:
+        is_promoted = await _llm_promotion_test(
+            content,
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+        )
+    else:
+        is_promoted = _heuristic_promotion_test(content)
+
     if not is_promoted:
         logger.debug("Observation %s did not pass promotion test", obs_id)
         return
-    
+
     logger.info("Observation %s promoted to L2", obs_id)
-    
+
     # Step 2: Create edges to related observations
     async with tracked_db("promotion.edges") as db:
         edge_type = LEVEL_TO_EDGE_TYPE.get(level, "related")
         edges_created = 0
-        
+
         for related in related_docs:
             if related.id == obs_id:
                 continue
-            
+
             try:
                 await create_edge(
                     db=db,
@@ -209,9 +355,9 @@ async def process_promotion(
                     "Edge creation skipped for %s -> %s: %s",
                     obs_id, related.id, e,
                 )
-        
+
         logger.info("Created %d edges for observation %s", edges_created, obs_id)
-    
+
     # Step 3: Assign to active context (if session has one)
     if session_name:
         async with tracked_db("promotion.context") as db:
@@ -219,7 +365,7 @@ async def process_promotion(
                 from src.cache.client import cache as _cache
                 key = f"active_context:{workspace_name}:{session_name}"
                 context_name = await _cache.get(key)
-                
+
                 if context_name:
                     await add_context_member(
                         db=db,
@@ -234,7 +380,7 @@ async def process_promotion(
                     )
             except Exception as e:
                 logger.debug("Context assignment skipped: %s", e)
-    
+
     # Step 4: Log promote event
     async with tracked_db("promotion.log") as db:
         await create_access_log_entry(
@@ -246,7 +392,7 @@ async def process_promotion(
             created_by="promotion-worker",
             session_id=session_name,
         )
-    
+
     duration_ms = (time.perf_counter() - start_time) * 1000
     logger.info(
         "Promotion complete for %s in %.0fms", obs_id, duration_ms,

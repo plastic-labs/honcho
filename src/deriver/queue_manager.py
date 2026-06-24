@@ -25,6 +25,11 @@ from src import models
 from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
+from src.deriver.compaction_scheduler import (
+    CompactionScheduler,
+    get_compaction_scheduler,
+    set_compaction_scheduler,
+)
 from src.deriver.consumer import (
     process_item,
     process_representation_batch,
@@ -178,6 +183,14 @@ class QueueManager:
         else:
             self.promotion_scheduler = existing_promotion
 
+        # Get or create the singleton compaction scheduler
+        existing_compaction = get_compaction_scheduler()
+        if existing_compaction is None:
+            self.compaction_scheduler: CompactionScheduler = CompactionScheduler()
+            set_compaction_scheduler(self.compaction_scheduler)
+        else:
+            self.compaction_scheduler = existing_compaction
+
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
             initialize_sentry(
@@ -234,6 +247,12 @@ class QueueManager:
         except Exception:
             logger.exception("Failed to start promotion scheduler")
 
+        # Start the compaction scheduler
+        try:
+            await self.compaction_scheduler.start()
+        except Exception:
+            logger.exception("Failed to start compaction scheduler")
+
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
         try:
@@ -255,6 +274,9 @@ class QueueManager:
 
         # Stop the promotion scheduler
         await self.promotion_scheduler.stop()
+
+        # Stop the compaction scheduler
+        await self.compaction_scheduler.stop()
 
         if self.active_tasks:
             logger.info(

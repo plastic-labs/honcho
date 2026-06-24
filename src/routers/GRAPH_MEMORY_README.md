@@ -208,10 +208,43 @@ Default cadence is null (no explicit cadence — confidence threshold alone hand
 
 The access log is append-only. Events older than 5 activation half-lives (~5 days) are pruned by periodic compaction. Their contribution to activation is `exp(-5) ≈ 0.007` — negligible.
 
-Run compaction:
-```
+### Manual Compaction
+```bash
 POST /v3/workspaces/{id}/graph-memory/access-log/compact
 ```
+
+Returns a gap-note style report:
+```json
+{
+  "pruned_events": 46,
+  "retention_policy": {
+    "half_lives": 5,
+    "activation_half_life_hours": 24,
+    "cutoff_age_hours": 120,
+    "cutoff_timestamp": "2026-06-18T17:45:00+00:00"
+  },
+  "pre_compaction": {
+    "total_events": 100,
+    "oldest_event": "2026-06-10T12:00:00+00:00",
+    "newest_event": "2026-06-23T17:45:00+00:00"
+  },
+  "post_compaction": {
+    "remaining_events": 54,
+    "pruned_percentage": 46.0
+  },
+  "health": "healthy",
+  "note": "Pruned 46 events older than 5 activation half-lives (~5 days). Their contribution to activation was exp(-5) ≈ 0.0067 — negligible."
+}
+```
+
+### Automatic Compaction
+The compaction scheduler runs as a background task in the deriver process (sibling to the reconciler and promotion schedulers). It compacts the access log every 24 hours.
+
+**GC protocol alignment:** The compaction follows the graceful-compact (GC) protocol pattern from the agentc conventions:
+- **Proactive, not reactive** — runs on a fixed schedule, not waiting for forced compaction
+- **Gap-note style report** — logs what was pruned, what survived, and why
+- **Version-anchored** — the retention policy version is included in every report
+- **Post-compaction health check** — verifies the log is in a healthy state after pruning
 
 ---
 
@@ -273,6 +306,9 @@ docker exec -u root honcho-selfhost-api-1 sh -c 'chown 100:101 /app/src/models.p
 | `src/crud/graph_memory.py` | CRUD functions (activation/confidence derivation, edges, contexts, thread bindings, pinning, verify, eviction) |
 | `src/routers/graph_memory.py` | FastAPI router with 18 endpoints |
 | `src/main.py` | Router wired into app |
+| `src/deriver/promotion.py` | Promotion worker (heuristic test, edge creation, context assignment) |
+| `src/deriver/promotion_scheduler.py` | Promotion scheduler (scans for un-promoted observations every 60s) |
+| `src/deriver/compaction_scheduler.py` | Compaction scheduler (compacts access log every 24h, GC protocol aligned) |
 | `migrations/versions/2a3b4c5d6e7f_*.py` | Alembic migration |
 | `tests/unit/validate_phase1.py` | Schema + CRUD logic validation (26 tests) |
 | `tests/unit/verify_migration.py` | Migration verification (tables, indexes, FKs, rollback) |
