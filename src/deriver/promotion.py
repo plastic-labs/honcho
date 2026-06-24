@@ -255,24 +255,24 @@ def _heuristic_promotion_test(content: str) -> bool:
     5. Otherwise → promoted (conservative default)
     """
     content_lower = content.lower().strip()
-
+    
     # Rule 4: Very short facts are unlikely to be durable
     if len(content_lower) < 20:
         return False
-
-    # Rule 1: Obvious-from-code patterns
+    
+    # Rule 1: Obvious-from-code patterns (case-insensitive)
     for pattern in OBVIOUS_PATTERNS:
-        if re.search(pattern, content_lower):
+        if re.search(pattern, content_lower, re.IGNORECASE):
             return False
-
-    # Rule 2: Temporary patterns
+    
+    # Rule 2: Temporary patterns (case-insensitive)
     for pattern in TEMPORARY_PATTERNS:
-        if re.search(pattern, content_lower):
+        if re.search(pattern, content_lower, re.IGNORECASE):
             return False
-
-    # Rule 3: Durable patterns → promote
+    
+    # Rule 3: Durable patterns (case-insensitive) → promote
     for pattern in DURABLE_PATTERNS:
-        if re.search(pattern, content_lower):
+        if re.search(pattern, content_lower, re.IGNORECASE):
             return True
 
     # Rule 5: Conservative default
