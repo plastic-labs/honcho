@@ -22,7 +22,7 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "nous"]
 EmbeddingTransport = Literal["openai", "gemini"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 
@@ -115,7 +115,7 @@ def _normalize_model_transport(data: Any) -> Any:
     transport_value = update.get("transport")
     if isinstance(model_value, str) and "/" in model_value and transport_value is None:
         prefix, bare_model = model_value.split("/", 1)
-        if prefix in {"anthropic", "openai", "gemini"}:
+        if prefix in {"anthropic", "openai", "gemini", "nous", "lmstudio"}:
             update["transport"] = prefix
             update["model"] = bare_model
     return update
@@ -709,6 +709,8 @@ class LLMSettings(HonchoSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
+    NOUS_API_KEY: str | None = None
+    NOUS_BASE_URL: str | None = "https://inference-api.nousresearch.com/v1"
 
     # Base URLs for LLM providers (for OpenAI-compatible proxies like
     # OpenRouter, vLLM, Together, Anyscale, self-hosted, etc.)
