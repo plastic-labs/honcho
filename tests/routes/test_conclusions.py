@@ -63,6 +63,8 @@ class TestConclusionRoutes:
             observed=test_peer2.name,
             content="User prefers dark mode",
             session_name=test_session.name,
+            level="deductive",
+            source_ids=["source-dark-mode"],
         )
         doc2 = models.Document(
             workspace_name=test_workspace.name,
@@ -70,6 +72,8 @@ class TestConclusionRoutes:
             observed=test_peer2.name,
             content="User works late at night",
             session_name=test_session.name,
+            level="inductive",
+            source_ids=["source-work-hours"],
         )
         db_session.add_all([doc1, doc2])
         await db_session.commit()
@@ -92,12 +96,29 @@ class TestConclusionRoutes:
         assert "observer_id" in conclusion
         assert "observed_id" in conclusion
         assert "session_id" in conclusion
+        assert "conclusion_type" in conclusion
+        assert "premises" in conclusion
         assert "created_at" in conclusion
 
         # Verify content
         contents = [item["content"] for item in data["items"]]
         assert "User prefers dark mode" in contents
         assert "User works late at night" in contents
+
+        conclusions_by_content = {item["content"]: item for item in data["items"]}
+        assert conclusions_by_content["User prefers dark mode"]["conclusion_type"] == (
+            "deductive"
+        )
+        assert conclusions_by_content["User prefers dark mode"]["premises"] == [
+            "source-dark-mode"
+        ]
+        assert (
+            conclusions_by_content["User works late at night"]["conclusion_type"]
+            == "inductive"
+        )
+        assert conclusions_by_content["User works late at night"]["premises"] == [
+            "source-work-hours"
+        ]
 
     @pytest.mark.asyncio
     async def test_list_conclusions_empty_session(
