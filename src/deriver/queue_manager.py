@@ -29,6 +29,11 @@ from src.deriver.consumer import (
     process_item,
     process_representation_batch,
 )
+from src.deriver.promotion_scheduler import (
+    PromotionScheduler,
+    get_promotion_scheduler,
+    set_promotion_scheduler,
+)
 from src.dreamer.dream_scheduler import (
     DreamScheduler,
     get_dream_scheduler,
@@ -165,6 +170,14 @@ class QueueManager:
         else:
             self.reconciler_scheduler = existing_reconciler
 
+        # Get or create the singleton promotion scheduler
+        existing_promotion = get_promotion_scheduler()
+        if existing_promotion is None:
+            self.promotion_scheduler: PromotionScheduler = PromotionScheduler()
+            set_promotion_scheduler(self.promotion_scheduler)
+        else:
+            self.promotion_scheduler = existing_promotion
+
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
             initialize_sentry(
@@ -215,6 +228,12 @@ class QueueManager:
         except Exception:
             logger.exception("Failed to start reconciler scheduler")
 
+        # Start the promotion scheduler
+        try:
+            await self.promotion_scheduler.start()
+        except Exception:
+            logger.exception("Failed to start promotion scheduler")
+
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
         try:
@@ -233,6 +252,9 @@ class QueueManager:
 
         # Stop the reconciler scheduler
         await self.reconciler_scheduler.shutdown()
+
+        # Stop the promotion scheduler
+        await self.promotion_scheduler.stop()
 
         if self.active_tasks:
             logger.info(
