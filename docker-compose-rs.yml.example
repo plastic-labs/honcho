@@ -1,20 +1,52 @@
-# Honcho Docker Compose
+# Honcho — full Rust stack (Docker Compose)
+#
+# This brings up the Rust port end to end: the API server (honcho-api-rs) and
+# the queue worker (honcho-deriver), both built from ./api-rs, plus the Rust
+# MCP server, Postgres (pgvector) and Redis. There is NO Python service here —
+# for the Python stack use docker-compose.yml.example instead.
 #
 # Usage:
-#   cp docker-compose.yml.example docker-compose.yml
-#   cp .env.template .env  # edit with your provider config
-#   docker compose up -d --build
+#   cp docker-compose-rs.yml.example docker-compose-rs.yml
+#   cp .env.template .env  # set DB / provider / LLM keys
+#   docker compose -f docker-compose-rs.yml up -d --build
 #
 # By default, ports are bound to 127.0.0.1 (localhost only).
-# For development, uncomment the source mounts and monitoring services below.
+#
+# NOTE: the API server and the worker are the SAME image (./api-rs builds both
+# the honcho-api-rs and honcho-deriver binaries); the worker just overrides the
+# command. Run exactly ONE deriver against a given database queue — do not run
+# this worker alongside the Python deriver on the same DB.
 
 services:
-  api:
+  # One-shot schema provisioning. The Rust stack does NOT run migrations; it
+  # reuses the Python alembic migrations via this short-lived job so the schema
+  # is byte-identical to the Python deployment. It runs, applies migrations,
+  # and exits; api/deriver wait for it to complete successfully. This is the
+  # one piece of Python in the otherwise all-Rust stack.
+  migrate:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: ["sh", "docker/entrypoint.sh"]
+    command: ["/app/.venv/bin/python", "scripts/provision_db.py"]
     depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - DB_SCHEMA=${DB_SCHEMA:-public}
+    env_file:
+      - path: .env
+        required: false
+    restart: "no"
+
+  api:
+    build:
+      context: ./api-rs
+      dockerfile: Dockerfile
+    command: ["honcho-api-rs"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       database:
         condition: service_healthy
       redis:
@@ -23,24 +55,29 @@ services:
       - "127.0.0.1:8000:8000"
     healthcheck:
       test:
-        [
-          "CMD",
-          "/app/.venv/bin/python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
-        ]
+        ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 10s
-    # -- Development: mount source for live reload --
-    # volumes:
-    #   - .:/app
-    #   - venv:/app/.venv
     environment:
+      - RUST_API_BIND_ADDRESS=0.0.0.0:8000
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - CACHE_URL=redis://redis:6379/0?suppress=true
-      - CACHE_ENABLED=true
+      - DB_SCHEMA=${DB_SCHEMA:-public}
+      - AUTH_USE_AUTH=${AUTH_USE_AUTH:-false}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
+      # The Rust API defaults to read-only; flip to true to enable write routes.
+      - RUST_API_ENABLE_WRITES=${RUST_API_ENABLE_WRITES:-true}
+      - NAMESPACE=${NAMESPACE:-honcho}
+      - CACHE_ENABLED=${CACHE_ENABLED:-true}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
+      - CACHE_NAMESPACE=${CACHE_NAMESPACE:-}
+      # Providers (chat completion + embedding). Set the keys for whatever you use.
+      - LLM_ANTHROPIC_API_KEY=${LLM_ANTHROPIC_API_KEY:-}
+      - LLM_OPENAI_API_KEY=${LLM_OPENAI_API_KEY:-}
+      - LLM_GEMINI_API_KEY=${LLM_GEMINI_API_KEY:-}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
     env_file:
       - path: .env
         required: false
@@ -48,24 +85,34 @@ services:
 
   deriver:
     build:
-      context: .
+      context: ./api-rs
       dockerfile: Dockerfile
-    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    # Same image as `api`, different binary — the background queue worker
+    # (porting `python -m src.deriver`). Processes representation, deletion,
+    # summary, reconciler, webhook and dream work units.
+    command: ["honcho-deriver"]
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
       database:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # -- Development: mount source for live reload --
-    # volumes:
-    #   - .:/app
-    #   - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - CACHE_URL=redis://redis:6379/0?suppress=true
-      - CACHE_ENABLED=true
+      - DB_SCHEMA=${DB_SCHEMA:-public}
+      - CACHE_ENABLED=${CACHE_ENABLED:-true}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
+      - CACHE_NAMESPACE=${CACHE_NAMESPACE:-}
+      - LLM_ANTHROPIC_API_KEY=${LLM_ANTHROPIC_API_KEY:-}
+      - LLM_OPENAI_API_KEY=${LLM_OPENAI_API_KEY:-}
+      - LLM_GEMINI_API_KEY=${LLM_GEMINI_API_KEY:-}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - DREAM_ENABLED=${DREAM_ENABLED:-true}
+      - RUST_LOG=${RUST_LOG:-info}
     env_file:
       - path: .env
         required: false
@@ -83,57 +130,6 @@ services:
     environment:
       - HONCHO_API_URL=http://api:8000
       - MCP_BIND_ADDRESS=0.0.0.0:8787
-    restart: unless-stopped
-
-  # Experimental Rust API sidecar. This does not receive traffic from the
-  # Python API and is intended for compatibility validation only. Write routes
-  # are disabled by default unless RUST_API_ENABLE_WRITES=true is set.
-  api-rs:
-    profiles: ["rust-api"]
-    build:
-      context: ./api-rs
-      dockerfile: Dockerfile
-    depends_on:
-      database:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:8001:8001"
-    environment:
-      - RUST_API_BIND_ADDRESS=0.0.0.0:8001
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - AUTH_USE_AUTH=${AUTH_USE_AUTH:-false}
-      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
-      - DB_SCHEMA=${DB_SCHEMA:-public}
-      - RUST_API_ENABLE_WRITES=${RUST_API_ENABLE_WRITES:-false}
-      - NAMESPACE=${NAMESPACE:-honcho}
-      - CACHE_ENABLED=${CACHE_ENABLED:-false}
-      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
-      - CACHE_NAMESPACE=${CACHE_NAMESPACE:-}
-    restart: unless-stopped
-
-  # Experimental Rust queue worker (no-op consumer milestone).
-  #
-  # !!! SAFETY: this consumer CLAIMS and COMPLETES real queue items WITHOUT
-  # doing the actual work (it just marks them processed). Running it against a
-  # shared queue alongside the Python deriver will SILENTLY DROP memory-formation
-  # work (representation/summary/etc.). It is for ISOLATED state-machine
-  # validation only. Do NOT enable it in any environment whose queue you care
-  # about, and never run it at the same time as the Python deriver on the same
-  # database. It is opt-in via the "rust-worker" profile and off by default.
-  worker-rs:
-    profiles: ["rust-worker"]
-    build:
-      context: ./worker-rs
-      dockerfile: Dockerfile
-    depends_on:
-      database:
-        condition: service_healthy
-    environment:
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - DB_SCHEMA=${DB_SCHEMA:-public}
-      - DERIVER__WORKERS=${DERIVER__WORKERS:-1}
-      - DERIVER__STALE_SESSION_TIMEOUT_MINUTES=${DERIVER__STALE_SESSION_TIMEOUT_MINUTES:-5}
-      - RUST_LOG=${RUST_LOG:-info}
     restart: unless-stopped
 
   database:
@@ -173,36 +169,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # -- Development: monitoring stack (uncomment to enable) --
-  # prometheus:
-  #   image: prom/prometheus:v3.2.1
-  #   ports:
-  #     - "127.0.0.1:9090:9090"
-  #   volumes:
-  #     - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-  #     - prometheus-data:/prometheus
-  #   depends_on:
-  #     api:
-  #       condition: service_started
-  # grafana:
-  #   image: grafana/grafana:11.4.0
-  #   ports:
-  #     - "127.0.0.1:3000:3000"
-  #   environment:
-  #     - GF_SECURITY_ADMIN_USER=admin
-  #     - GF_SECURITY_ADMIN_PASSWORD=admin
-  #     - GF_AUTH_ANONYMOUS_ENABLED=true
-  #     - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-  #   volumes:
-  #     - ./docker/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
-  #   depends_on:
-  #     prometheus:
-  #       condition: service_started
-
 volumes:
   pgdata:
   redis-data:
-  mcp-typescript-node-modules:
-  # -- Development: uncomment if using source mounts --
-  # venv:
-  # prometheus-data:
