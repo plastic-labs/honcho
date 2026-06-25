@@ -68,6 +68,22 @@ impl OrderedObj {
 
 /// Port of `parse_object`.
 pub fn parse_object(p: &mut JsonParser) -> Value {
+    // Depth guard: `parse_object` is re-entered directly by `complete_object_parse`
+    // (and via `parse_json`), so bounding it here (not just in `parse_json`) caps
+    // every nesting path. On overflow, stop parsing (cursor to end) and return an
+    // empty object so the stack unwinds cleanly.
+    p.depth += 1;
+    if p.depth > super::parser::MAX_PARSE_DEPTH {
+        p.depth -= 1;
+        p.index = p.len();
+        return Value::Object(serde_json::Map::new());
+    }
+    let result = parse_object_inner(p);
+    p.depth -= 1;
+    result
+}
+
+fn parse_object_inner(p: &mut JsonParser) -> Value {
     let mut obj = OrderedObj::new();
     let start_index = p.index;
     let parsing_object_value = p.context.current == Some(ContextValues::ObjectValue);

@@ -514,6 +514,19 @@ mod tests {
     }
 
     #[test]
+    fn repair_bounds_recursion_on_direct_object_array_paths() {
+        // These trigger the recursion that re-enters parse_object / parse_array
+        // *directly* (complete_object_parse's trailing key/value pairs, and the
+        // object→array continuation), bypassing the parse_json guard. They were
+        // the actual deriver crash: a stack overflow on real LLM content. The
+        // object/array guards must bound them.
+        let trailing = format!("{{}}{}", ",\"k\":1".repeat(50_000));
+        assert!(validate_and_repair_json(&trailing).is_ok());
+        let continuation = format!("{{\"a\":[{}", "[1],".repeat(50_000));
+        assert!(validate_and_repair_json(&continuation).is_ok());
+    }
+
+    #[test]
     fn escape_unescaped_quotes_matches_python_lookaround() {
         assert_eq!(escape_unescaped_quotes("[1, 2, 3]"), "[1, 2, 3]");
         assert_eq!(escape_unescaped_quotes("{\"a\": 1}"), "{\\\"a\": 1}");

@@ -31,19 +31,26 @@ pub struct JsonParser {
     pub deferred_contexts: Vec<ContextValues>,
     pub stream_stable: bool,
     pub strict: bool,
-    /// Current recursion depth of `parse_json`. Python relies on `RecursionError`
-    /// to bound the recursive-descent repair; Rust has no such guard, so a
-    /// pathological / runaway-bracket LLM response would overflow the (2 MB)
-    /// worker thread stack and abort the process. This caps the depth instead.
+    /// Count of recursive parse frames (`parse_json` / `parse_object` /
+    /// `parse_array`) currently live on the stack. Python relies on
+    /// `RecursionError` to bound the recursive-descent repair; Rust has no such
+    /// guard, so a pathological LLM response (deep nesting, or the
+    /// `complete_object_parse`/`merge_object_array_continuation` paths that
+    /// re-enter `parse_object`/`parse_array` *directly*, bypassing `parse_json`)
+    /// would overflow the (2 MB) worker thread stack and abort the process. Every
+    /// nesting choke point increments this so the cap below bounds the true frame
+    /// count.
     pub depth: i64,
 }
 
-/// Maximum nesting depth for the recursive repair parser. Real JSON is shallow,
-/// and any *valid* input up to serde_json's own limit (128) is parsed before
-/// repair is ever attempted — so anything deeper that still needs repair is
-/// pathological. Capping turns a worker-killing stack overflow into a graceful
-/// truncation, mirroring how Python surfaces a caught `RecursionError`.
-const MAX_PARSE_DEPTH: i64 = 1000;
+/// Maximum recursive parse-frame count. Real JSON is shallow, and any *valid*
+/// input up to serde_json's own limit (128) is parsed before repair is ever
+/// attempted — so anything deeper that still needs repair is pathological.
+/// 200 frames × a few KB each stays comfortably under the 2 MB worker stack,
+/// while being far above any legitimate nesting. Hitting the cap turns a
+/// worker-killing stack overflow into a graceful truncation, mirroring how
+/// Python surfaces a caught `RecursionError`.
+pub(crate) const MAX_PARSE_DEPTH: i64 = 200;
 
 impl JsonParser {
     pub fn new(json_str: &str) -> Self {

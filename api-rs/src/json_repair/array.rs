@@ -11,6 +11,22 @@ use super::string::parse_string;
 
 /// Port of `parse_array` with `closing_delimiter` (default `]`, `)` for tuples).
 pub fn parse_array(p: &mut JsonParser, closing_delimiter: char) -> Value {
+    // Depth guard: `parse_array` is re-entered directly by
+    // `merge_object_array_continuation` and the parenthesized-tuple path (and via
+    // `parse_json`), so bound it here too. On overflow, stop parsing and return an
+    // empty array so the stack unwinds cleanly.
+    p.depth += 1;
+    if p.depth > super::parser::MAX_PARSE_DEPTH {
+        p.depth -= 1;
+        p.index = p.len();
+        return Value::Array(Vec::new());
+    }
+    let result = parse_array_inner(p, closing_delimiter);
+    p.depth -= 1;
+    result
+}
+
+fn parse_array_inner(p: &mut JsonParser, closing_delimiter: char) -> Value {
     let mut arr: Vec<Value> = Vec::new();
     p.context.set(ContextValues::Array);
 
