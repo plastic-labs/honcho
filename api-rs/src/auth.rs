@@ -1,6 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -78,11 +78,16 @@ pub fn authorize(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or(AuthError::MissingToken)?;
+    // Mirror FastAPI's HTTPBearer(auto_error=False): split on the first
+    // whitespace, match the scheme case-insensitively, and treat the remainder
+    // as the credentials. A non-"bearer" scheme or empty credentials behaves
+    // exactly like "no token provided" (HTTPBearer returns None there).
     let token = header
-        .strip_prefix("Bearer ")
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or(AuthError::InvalidJwt)?;
+        .split_once(char::is_whitespace)
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        .map(|(_, rest)| rest.trim())
+        .filter(|rest| !rest.is_empty())
+        .ok_or(AuthError::MissingToken)?;
     let params = verify_hs256_token(
         token,
         config.jwt_secret.as_deref().ok_or(AuthError::InvalidJwt)?,
@@ -148,15 +153,52 @@ fn verify_hs256_token(token: &str, secret: &str) -> Result<JwtParams, AuthError>
     let params =
         serde_json::from_slice::<JwtParams>(&payload).map_err(|_| AuthError::InvalidJwt)?;
     if let Some(exp) = params.exp.as_deref() {
-        let exp_time = DateTime::parse_from_rfc3339(exp)
-            .map_err(|_| AuthError::InvalidJwt)?
-            .with_timezone(&Utc);
+        let exp_time = parse_iso_datetime_lenient(exp)?;
         if exp_time < Utc::now() {
             return Err(AuthError::Expired);
         }
     }
 
     Ok(params)
+}
+
+/// Parse an ISO 8601 timestamp the way Python's
+/// `src/utils/formatting.py:parse_datetime_iso` does: reject null bytes /
+/// line breaks / non-printable characters, accept a `Z`/`z` suffix and explicit
+/// offsets, and fall back to treating a naive (timezone-less) timestamp as UTC.
+/// This keeps `exp` validation byte-for-byte compatible with the Python issuer,
+/// which stores `exp` as an ISO string rather than a numeric epoch.
+fn parse_iso_datetime_lenient(value: &str) -> Result<DateTime<Utc>, AuthError> {
+    if value.contains('\0') || value.contains('\r') || value.contains('\n') {
+        return Err(AuthError::InvalidJwt);
+    }
+    if value.chars().any(|c| (c as u32) < 32 && c != '\t') {
+        return Err(AuthError::InvalidJwt);
+    }
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(AuthError::InvalidJwt);
+    }
+    let normalized = match trimmed.strip_suffix(['Z', 'z']) {
+        Some(prefix) => format!("{prefix}+00:00"),
+        None => trimmed.to_string(),
+    };
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(&normalized) {
+        return Ok(parsed.with_timezone(&Utc));
+    }
+    // No timezone present: assume UTC, matching Python's `fromisoformat` +
+    // "if result.tzinfo is None: replace(tzinfo=utc)" fallback.
+    for format in [
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+    ] {
+        if let Ok(naive) = NaiveDateTime::parse_from_str(trimmed, format) {
+            return Ok(DateTime::from_naive_utc_and_offset(naive, Utc));
+        }
+    }
+    Err(AuthError::InvalidJwt)
 }
 
 fn sign_hs256(input: &[u8], secret: &str) -> Vec<u8> {
@@ -171,9 +213,7 @@ pub fn create_scoped_key(mut params: JwtParams, secret: &str) -> Result<String, 
         params.timestamp = format_datetime_utc(Utc::now());
     }
     if let Some(exp) = params.exp.as_deref() {
-        let exp_time = DateTime::parse_from_rfc3339(exp)
-            .map_err(|_| AuthError::InvalidJwt)?
-            .with_timezone(&Utc);
+        let exp_time = parse_iso_datetime_lenient(exp)?;
         params.exp = Some(format_datetime_utc(exp_time));
     }
     let mut payload = serde_json::Map::new();
@@ -208,4 +248,79 @@ fn create_hs256_token(payload: &Value, secret: &str) -> String {
 
 pub fn create_hs256_token_for_test(payload: &Value, secret: &str) -> String {
     create_hs256_token(payload, secret)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> AuthConfig {
+        AuthConfig {
+            use_auth: true,
+            jwt_secret: Some("secret".to_string()),
+        }
+    }
+
+    fn workspace_token(extra: Value) -> String {
+        let mut payload = serde_json::Map::new();
+        payload.insert("t".to_string(), Value::String(String::new()));
+        payload.insert("w".to_string(), Value::String("ws".to_string()));
+        if let Value::Object(map) = extra {
+            payload.extend(map);
+        }
+        create_hs256_token(&Value::Object(payload), "secret")
+    }
+
+    fn authorize_ws(header: &str) -> Result<JwtParams, AuthError> {
+        authorize(&config(), Some(header), false, Some("ws"), None, None)
+    }
+
+    #[test]
+    fn bearer_scheme_is_case_insensitive() {
+        let token = workspace_token(json!({}));
+        for scheme in ["Bearer", "bearer", "BEARER", "BeArEr"] {
+            let header = format!("{scheme} {token}");
+            let params = authorize_ws(&header).expect("scheme must be accepted case-insensitively");
+            assert_eq!(params.workspace.as_deref(), Some("ws"));
+        }
+    }
+
+    #[test]
+    fn non_bearer_scheme_is_missing_token() {
+        let header = format!("Basic {}", workspace_token(json!({})));
+        assert_eq!(authorize_ws(&header), Err(AuthError::MissingToken));
+    }
+
+    #[test]
+    fn empty_or_schemeless_credentials_are_missing_token() {
+        assert_eq!(authorize_ws("Bearer   "), Err(AuthError::MissingToken));
+        assert_eq!(authorize_ws("Bearer"), Err(AuthError::MissingToken));
+    }
+
+    #[test]
+    fn exp_with_z_suffix_is_enforced() {
+        let valid = format!("Bearer {}", workspace_token(json!({"exp": "2999-01-01T00:00:00Z"})));
+        assert!(authorize_ws(&valid).is_ok());
+        let expired = format!("Bearer {}", workspace_token(json!({"exp": "2000-01-01T00:00:00Z"})));
+        assert_eq!(authorize_ws(&expired), Err(AuthError::Expired));
+    }
+
+    #[test]
+    fn exp_naive_timestamp_is_treated_as_utc() {
+        let valid = format!("Bearer {}", workspace_token(json!({"exp": "2999-01-01T00:00:00"})));
+        assert!(authorize_ws(&valid).is_ok());
+        let expired = format!("Bearer {}", workspace_token(json!({"exp": "2000-01-01 00:00:00"})));
+        assert_eq!(authorize_ws(&expired), Err(AuthError::Expired));
+    }
+
+    #[test]
+    fn no_auth_mode_yields_admin() {
+        let config = AuthConfig {
+            use_auth: false,
+            jwt_secret: None,
+        };
+        let params =
+            authorize(&config, None, true, None, None, None).expect("no-auth must yield admin");
+        assert!(params.is_admin());
+    }
 }
