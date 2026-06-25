@@ -28,8 +28,19 @@ use honcho_api_rs::webhooks::ReqwestWebhookSender;
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // STOPGAP: the json_repair recursion can run deep on pathological LLM output;
+    // the default 2 MB tokio worker stack overflows and aborts the process. A
+    // large worker stack lets bounded recursion complete while the precise guard
+    // is finished. (256 MB is reserved address space, not committed memory.)
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(256 * 1024 * 1024)
+        .build()?;
+    runtime.block_on(run())
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
@@ -109,7 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Arc::clone(&shutdown),
     ));
 
-    tracing::info!("deriver worker starting (build: depth-guard+itemtrace)");
+    tracing::info!("deriver worker starting (build: bigstack+rawdump)");
     Arc::clone(&worker).run(shutdown).await;
     // The worker returns once shutdown is set; the scheduler observes the same
     // flag, so just await its exit.

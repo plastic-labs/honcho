@@ -213,6 +213,9 @@ where
         content_len = response.content.to_string().len(),
         "deriver: parsing structured output"
     );
+    // DIAGNOSTIC: dump the exact LLM content reaching finalize so the crashing
+    // input can be reproduced byte-for-byte. Remove once the recursion is fixed.
+    tracing::warn!(raw_content = %response.content, "deriver: RAW content before finalize");
     let prompt_repr =
         finalize_structured_output(&response.content, FailurePolicy::RepairThenEmpty)
             .unwrap_or_default();
