@@ -1,0 +1,132 @@
+[
+  {
+    "description": "Get the most recent observations about the peer. Useful for understanding what's been learned recently.",
+    "input_schema": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "description": "Maximum number of observations to return (default: 10)",
+          "type": "integer"
+        },
+        "session_only": {
+          "default": false,
+          "description": "If true, only return observations from the current session (default: false)",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "get_recent_observations"
+  },
+  {
+    "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details.",
+    "input_schema": {
+      "properties": {
+        "query": {
+          "description": "Search query text",
+          "type": "string"
+        },
+        "top_k": {
+          "default": 20,
+          "description": "(Optional) number of results to return (default: 20, max: 40)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "search_memory"
+  },
+  {
+    "description": "Search for messages using semantic similarity and retrieve conversation snippets. Returns matching messages with surrounding context (2 messages before and after). Nearby matches within the same session are merged into a single snippet to avoid repetition.",
+    "input_schema": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "description": "Maximum number of matching messages to return (default: 10, max: 20)",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Search query text to find relevant messages",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "search_messages"
+  },
+  {
+    "description": "Create new inductive observations discovered while answering the query. Every observation must include source_ids, source text, pattern_type, and confidence. Use this only for patterns supported by multiple observations.",
+    "input_schema": {
+      "properties": {
+        "observations": {
+          "description": "List of new inductive observations to create",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "confidence": {
+                "description": "Required confidence level based on evidence count",
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "content": {
+                "description": "The inductive pattern or generalization as a self-contained statement",
+                "type": "string"
+              },
+              "pattern_type": {
+                "description": "Required pattern category",
+                "enum": [
+                  "preference",
+                  "behavior",
+                  "personality",
+                  "tendency",
+                  "correlation"
+                ],
+                "type": "string"
+              },
+              "source_ids": {
+                "description": "Required list of at least two source observation IDs supporting the pattern",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 2,
+                "type": "array"
+              },
+              "sources": {
+                "description": "Required human-readable evidence text matching the source observations",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 2,
+                "type": "array"
+              }
+            },
+            "required": [
+              "content",
+              "source_ids",
+              "sources",
+              "pattern_type",
+              "confidence"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "observations"
+      ],
+      "type": "object"
+    },
+    "name": "create_observations_inductive"
+  }
+]

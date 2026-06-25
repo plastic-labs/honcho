@@ -1,0 +1,148 @@
+[
+  {
+    "description": "Get the most recent observations about the peer. Useful for understanding what's been learned recently.",
+    "input_schema": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "description": "Maximum number of observations to return (default: 10)",
+          "type": "integer"
+        },
+        "session_only": {
+          "default": false,
+          "description": "If true, only return observations from the current session (default: false)",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "get_recent_observations"
+  },
+  {
+    "description": "Search for observations in memory using semantic similarity. Use this to find relevant information about the peer when you need to recall specific details.",
+    "input_schema": {
+      "properties": {
+        "query": {
+          "description": "Search query text",
+          "type": "string"
+        },
+        "top_k": {
+          "default": 20,
+          "description": "(Optional) number of results to return (default: 20, max: 40)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "search_memory"
+  },
+  {
+    "description": "Search for messages using semantic similarity and retrieve conversation snippets. Returns matching messages with surrounding context (2 messages before and after). Nearby matches within the same session are merged into a single snippet to avoid repetition.",
+    "input_schema": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "description": "Maximum number of matching messages to return (default: 10, max: 20)",
+          "type": "integer"
+        },
+        "query": {
+          "description": "Search query text to find relevant messages",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "name": "search_messages"
+  },
+  {
+    "description": "Create new deductive observations discovered while answering the query. Every observation must include non-empty source_ids and premise text. Use this only for novel deductions grounded in existing observations.",
+    "input_schema": {
+      "properties": {
+        "observations": {
+          "description": "List of new deductive observations to create",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "description": "The deductive conclusion as a self-contained statement",
+                "type": "string"
+              },
+              "premises": {
+                "description": "Required human-readable premise text matching the source observations",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              "source_ids": {
+                "description": "Required non-empty list of source observation IDs supporting the deduction",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "content",
+              "source_ids",
+              "premises"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "observations"
+      ],
+      "type": "object"
+    },
+    "name": "create_observations_deductive"
+  },
+  {
+    "description": "Delete observations by their IDs. Use the exact ID shown in [id:xxx] format from search results. Example: if observation shows '[id:abc123XYZ]', pass 'abc123XYZ' to delete it.",
+    "input_schema": {
+      "properties": {
+        "observation_ids": {
+          "description": "List of observation IDs to delete (use the exact ID from [id:xxx] in search results)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "observation_ids"
+      ],
+      "type": "object"
+    },
+    "name": "delete_observations"
+  },
+  {
+    "description": "Update the peer card with stable identity markers about the observed peer. An identity marker distinguishes the peer from others of its kind and persists across interactions. The peer may be any entity with identity that changes over time (human, agent, codebase, team, organization) \u2014 do not assume the peer is human. Each entry must start with one of four prefixes: `IDENTITY:` (canonical name, kind, aliases, IDs), `ATTRIBUTE:` (stable durable property, including explicitly stated standing preferences), `RELATIONSHIP:` (durable link to another entity), or `INSTRUCTION:` (standing rule of engagement the peer has explicitly stated). Do not write `TRAIT:` or behavioral `PREFERENCE:` entries, one-off observations, transient state, inferred facts not directly supported by evidence, evidence bundles / `e.g.` clauses, or entries about co-occurring peers. Entries without an allowed prefix or that exceed the per-entry length cap are rejected.",
+    "input_schema": {
+      "properties": {
+        "content": {
+          "description": "Complete deduplicated peer card list (max 40 entries). Each entry must start with one of the allowed prefixes (`IDENTITY: `, `ATTRIBUTE: `, `RELATIONSHIP: `, `INSTRUCTION: `) followed by one concise identity marker. Entries without an allowed prefix are rejected.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "name": "update_peer_card"
+  }
+]

@@ -1,0 +1,2310 @@
+[
+{
+"in": "",
+"out": "\"\""
+},
+{
+"in": "\t[1,  2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\n\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "\t{\"name\": \"alice\", \"age\": 30, \"tags\n\": [\"a\",\"b\"], \"meta\": ",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": \"\"}"
+},
+{
+"in": "  \n\n  {\"padded\": true}  \n\n  ",
+"out": "{\"padded\": true}"
+},
+{
+"in": "  {  \"a\"  :  1  }  ",
+"out": "{\"a\": 1}"
+},
+{
+"in": " {\"anme\"\": \"alice\", \"age\":30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\":  2.5}}",
+"out": "{\"anme\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": " {\"q\": \"hse said \\\"hi\\\"{ and left\"\t \"n\": -5.5}",
+"out": "{\"q\": \"hse said \\\"hi\\\"{ and left\", \"n\": -5.5}"
+},
+{
+"in": " {'a':1, ",
+"out": "{\"a\": 1}"
+},
+{
+"in": "\"\tneste,d\": {{",
+"out": "{}"
+},
+{
+"in": "\"\na\": 1, // c1\n \"b\": 2, /* c2 */ \"c\": 3}",
+"out": "\"\""
+},
+{
+"in": "\"\"",
+"out": "\"\""
+},
+{
+"in": "\"\"smart\":  \"curly quote}s\", \"palin\": 1}",
+"out": "\"\""
+},
+{
+"in": "\"a\": 1,",
+"out": "\"\""
+},
+{
+"in": "\"a\": 1, / / c1\n} \"b\": 2,, /* c2 */ \"c\": 3}",
+"out": "\"\""
+},
+{
+"in": "\"a\": 1, / c1\n \"b\"\": 2, /* \tc22 */ \"c\": 3}",
+"out": "\"\""
+},
+{
+"in": "\"a\": 1, // c1\n] \"b\": 2, /* c2 */ \"c\": 3}",
+"out": "\"\""
+},
+{
+"in": "\"a\": 1, // c11\n{ \"b[\": 2, /* c2 */ \"c\": 3",
+"out": "{\"b[\": 2, \"c\": 3}"
+},
+{
+"in": "\"a\": 1, :// c1\n \"bb\": 2,  /* c2 */ \"c\":  3}",
+"out": "\"\""
+},
+{
+"in": "\"a\":: 1, // c1\n \"b\": 2, /* c2 */ \"c\":3 ",
+"out": "\"\""
+},
+{
+"in": "\"aa\": 1, // cc1\n \"",
+"out": "\"\""
+},
+{
+"in": "\"deducti\nve\": [{\"connclusion\"{: \"c1\", \"p",
+"out": "[{\"connclusion\": \"c1\"}]"
+},
+{
+"in": "\"deductive",
+"out": "\"\""
+},
+{
+"in": "\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "[[{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], [\"e1\", \"e2\"]]"
+},
+{
+"in": "\"deductive\": [{conclusion\": \"c1\", \"preises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "[[{\"conclusion\": \"c1\", \"preises\": [\"p1\", \"p2\"]}], [\"e1\", \"e2\"]]"
+},
+{
+"in": "\"deductv",
+"out": "\"\""
+},
+{
+"in": "\"nested\": {\"a\": \"",
+"out": "{\"a\": \"\"}"
+},
+{
+"in": "\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"a\": {\"b\": {\"c\": 1}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "\"nested\": {a\": {\"b\": {\"c\": 1}}} \"arr\": [[1,2][3,\t4]]}",
+"out": "[{\"a\": {\"b\": {\"c\": 1}}}, [[1, 2], [3, 4]]]"
+},
+{
+"in": "\"q\": \"she said \"\\hi\\\" and left\", \"n\": -5.5",
+"out": "\"\""
+},
+{
+"in": "\"q\": \"she said \\\"\thi\\\"a nd left\", \"n",
+"out": "\"\""
+},
+{
+"in": "\"q\": \"she said \\\"h\ti\"\"\\ and left\", \"n\": -5.5}",
+"out": "\"\""
+},
+{
+"in": "\"q\": \"she said \\\"hi\\\" and left\"\", \"n\": -5.",
+"out": "\"\""
+},
+{
+"in": "\"q\": \"she said \\\"hi\\\" and left\", \"n\": -5.5}",
+"out": "\"\""
+},
+{
+"in": "\"q\": she said \\\"hi\\\" and left\", \"n\": \t-5.5}",
+"out": "\"\""
+},
+{
+"in": "\"q\": she said \\\"hi\\\" and left\", \"n\": -5.5}",
+"out": "\"\""
+},
+{
+"in": "\"q: \"she said \\\"hi\\ annd left,\" \"n\": -5.5}",
+"out": "\"\""
+},
+{
+"in": "\"s ",
+"out": "\"\""
+},
+{
+"in": "\"sart\": curly quotes\", \"p",
+"out": "\"\""
+},
+{
+"in": "\"smart\"\": \"curly quotes\" {,\"plain\": 1",
+"out": "{\"plain\": 1}"
+},
+{
+"in": "\"smart\": \"culy quotes\",, pl,ain\": 1}",
+"out": "\"\""
+},
+{
+"in": "\"smart\": \"curly quot:es, \"pl:ain\": 1}",
+"out": "\"\""
+},
+{
+"in": "\"smart\": \"curly quotes\", \"plain\": 1}",
+"out": "\"\""
+},
+{
+"in": "\"smart\": \"curly quotes\", \"plain\": }",
+"out": "\"\""
+},
+{
+"in": "\"smart\": \"curly quots\ne, \"plain: 1}",
+"out": "\"\""
+},
+{
+"in": "\"smart\":\" \"curly",
+"out": "\"\""
+},
+{
+"in": "\"s{",
+"out": "{}"
+},
+{
+"in": "\"{\"dedu,ctive\": [{\"co]nclusion\": \"c1\",",
+"out": "{\"dedu,ctive\": [{\"co]nclusion\": \"c1\"}]}"
+},
+{
+"in": "\"{mart\": curly quotes\", \"pl",
+"out": "{\"mart\": \"curly quotes\"}"
+},
+{
+"in": "\"{nnested\": {",
+"out": "{\"nnested\": {}}"
+},
+{
+"in": "\"{q\": \"she said \\\"hi\" and left\"",
+"out": "{\"q\": \"she said \\\"hi\\\" and left\\\"\"}"
+},
+{
+"in": "'a'",
+"out": "\"\""
+},
+{
+"in": "'a': 1,\n 'b': [2,3], 'c': {'d': 'e'}}",
+"out": "[[2, 3], {\"d\": \"e\"}]"
+},
+{
+"in": "'a': 1, \n'b': [2,3], 'c': {'d': ':'e}",
+"out": "[[2, 3], {\"d\": \":\"}]"
+},
+{
+"in": "'a':1, 'b': [2,3],  'c' {'d':\t 'e'}}",
+"out": "[[2, 3], {\"d\": \"e\"}]"
+},
+{
+"in": "'{a': 1, 'b': [2,], ''c: {'d': \t'e'}",
+"out": "{\"a'\": 1, \"b\": [2], \"c: {'d\": \"e\"}"
+},
+{
+"in": "'{a':, 1",
+"out": "{\"a'\": \"\"}"
+},
+{
+"in": ",\"",
+"out": "\"\""
+},
+{
+"in": "1, 2, 3, {\"k\": \"v\"\"}, [4, 5], true, null, \"str\"]",
+"out": "[{\"k\": \"v\"}, [4, 5]]"
+},
+{
+"in": "1, 2, 3, {\"k\": \"v}, [4, 5], true, null, \"str\"]",
+"out": "{\"k\": \"v}, [4, 5], true, null, \\\"str\\\"]\"}"
+},
+{
+"in": "1, 2, 3,\" {\"k\": \"v\"}, 4, 5], true, null, \"str\"]",
+"out": "{\"k\": \"v\"}"
+},
+{
+"in": "42",
+"out": "42"
+},
+{
+"in": ":[1, 2, 3, {\"k\": \"",
+"out": "[1, 2, 3, {\"k\": \"\"}]"
+},
+{
+"in": "Here is the json: {\"a\": 1}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "Sure! ```json\n{\"explicit\": [\"likes coffee\"], \"deductive\": []}\n``` Hope that helps",
+"out": "{\"explicit\": [\"likes coffee\"], \"deductive\": []}"
+},
+{
+"in": "['x', 'y']",
+"out": "[\"x\", \"y\"]"
+},
+{
+"in": "[, 2, 3, {\"k: \"v\"}, [4, 5], true,, null, \"str\"]",
+"out": "[2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1\t, 2, 3, {\"k\": \"",
+"out": "[1, 2, 3, {\"k\": \"\"}]"
+},
+{
+"in": "[1\n, 2, 3, {\"k:\" \"v\"}, [4, 5], true,, null, \"sstr\"",
+"out": "[1, 2, 3, {\"k:\": \"v\"}, [4, 5], true, null, \"sstr\"]"
+},
+{
+"in": "[1,",
+"out": "[1]"
+},
+{
+"in": "[1, \n2, 3, {\"k\": \"v\", [4, 5, true, null, str]",
+"out": "[1, 2, 3, {\"k\": \"v\", \"str\": \"\"}]"
+},
+{
+"in": "[1, ,2 3, {\"k\":\" \"v\"}, [4, 5], true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \" \\\"v\\\"}, [4, 5], true, null, \\\"str\\\"]\"}]"
+},
+{
+"in": "[1, 2 ,3,",
+"out": "[1, 2, 3]"
+},
+{
+"in": "[1, 2 3, {\"k\": \"v\"}, [4, 5],true, nll, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, \"nll\", \"str\"]"
+},
+{
+"in": "[1, 2\", 3,{\"k\": \"v\"}, [4, 5], true, nu",
+"out": "[[1, 2, \", 3,{\", \"k\\\": \\\"v\"], [4, 5]]"
+},
+{
+"in": "[1, 2,  3, {\"k\":  \"v}, [4, 5], true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v}, [4, 5], true, null, \\\"str\\\"]\"}]"
+},
+{
+"in": "[1, 2,  3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3",
+"out": "[1, 2, 3]"
+},
+{
+"in": "[1, 2, 3, \"k\": \"v\t}, [4, 5],  true, null,\t \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\\t}, [4, 5],  true, null,\\t \\\"str\\\"]\"}]"
+},
+{
+"in": "[1, 2, 3, \"k\": \"v\"}, [4, 5], treu, null, \t\",str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], \"treu\", null, \",str\"]"
+},
+{
+"in": "[1, 2, 3, \"k\": \"v\"}, [4, 5], true, null, \",s",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \",s\"]"
+},
+{
+"in": "[1, 2, 3, \"k\": \"v\"}, [4, 5],t rue, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], \"t rue\", null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, \"{k:\" \"v\"}, [4, 5], true, null, \"str\"]",
+"out": "[[1, 2, 3, \"{k:\", \"v\"], [4, 5]]"
+},
+{
+"in": "[1, 2, 3, k\": \"v\"}, 4,5 , true, null, \"str\"]",
+"out": "[1, 2, 3, \"k\\\": \\\"v\"]"
+},
+{
+"in": "[1, 2, 3, {\"\"k\": \"v\"},} [4,5 ",
+"out": "[[1, 2, 3, {\"k\": \"v\"}], [4, 5]]"
+},
+{
+"in": "[1, 2, 3, {\"k\"\": \"v\"}, [4, 5], true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\":  \"v\"}, [4, 5], true, null ,str\" ]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"",
+"out": "[1, 2, 3, {\"k\": \"v\"}]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"\"}, [4, 5, true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5, true, null, \"str\"]]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\", 4[, 5], rue, null, ",
+"out": "[1, 2, 3, {\"k\": \"v\", \"5\": \"\"}]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\", [4, 5], true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\", \"str\": \"\"}]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"}, [4, 5, true, null, \"st",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5, true, null, \"st\"]]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], :true, null s}tr\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"s}tr\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true,nul\"l, \"str\"",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, \"nul\", \"l\", \"str\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"}, [4,, 5], t\nrue, null, \"str\"",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], \"t\\nrue\", null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"},, [4, 5], true ,null \"str]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v\"},[4, 5], true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, {\"k\": \"v}, [4,, 5], true, null, \"]str]",
+"out": "[1, 2, 3, {\"k\": \"v}, [4,, 5], true, null, \"}]"
+},
+{
+"in": "[1, 2, 3, {{\"k:\"v\"}, [4, 5], true, null,, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3, {}k\": \"v\"}, 4, 5], true, n\null, \"str]",
+"out": "[1, 2, 3, \": \", \"v\"]"
+},
+{
+"in": "[1, 2, 3,]",
+"out": "[1, 2, 3]"
+},
+{
+"in": "[1, 2, 3,{\"k\": v\"}, [4, 5], true ,null, \"str\"",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2, 3:, {\"k\": \"v}, [4, 5], tue, null, str\"]",
+"out": "[1, 2, 3, {\"k\": \"v}, [4, 5], tue, null, str\"}]"
+},
+{
+"in": "[1, 2, 3:, {\"k\":{ \"v\"}, [4, 5], true, null, \"\"sttr]",
+"out": "[1, 2, 3, {\"k\": [\"v\", 4, 5], \"sttr\": \"\"}]"
+},
+{
+"in": "[1, 2, [3, \"k\": \"v\"}, [4, 5], true, null, \"str]",
+"out": "[1, 2, [3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]]"
+},
+{
+"in": "[1, 2,,",
+"out": "[1, 2]"
+},
+{
+"in": "[1, 2,3, {k\": \"v\"}, [4, 5], true, null, \"str\"]",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [4, 5], true, null, \"str\"]"
+},
+{
+"in": "[1, 2.5, -3, 4e2]",
+"out": "[1, 2.5, -3, 400.0]"
+},
+{
+"in": "[1, 22, 3, {k\"\": \"v\"}, [4, 5]], true, null, \"str\"]",
+"out": "[1, 22, 3, {\"k\": \"v\"}, [4, 5]]"
+},
+{
+"in": "[1,, 2, 3, ]{\"k\": \t\"v\"}, [4, 5]",
+"out": "[[1, 2, 3], {\"k\": \"v\"}, [4, 5]]"
+},
+{
+"in": "[1:, 2, 3, \"{k\": \"v\"}, [4, 5], true, ull,, \"str\"]",
+"out": "[1, 2, 3, {\"{k\": \"v\"}, [4, 5], true, \"ull\", \"str\"]"
+},
+{
+"in": "[1:, 2, 3, {\"k\": v\"}, [, 5], true, null, \"str\"",
+"out": "[1, 2, 3, {\"k\": \"v\"}, [5], true, null, \"str\"]"
+},
+{
+"in": "[1] [2]",
+"out": "[2]"
+},
+{
+"in": "[[1,2],[3,4],[5,6]]",
+"out": "[[1, 2], [3, 4], [5, 6]]"
+},
+{
+"in": "[]",
+"out": "[]"
+},
+{
+"in": "[true, false, null]",
+"out": "[true, false, null]"
+},
+{
+"in": "[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"},{\"id\":3}]",
+"out": "[{\"id\": 1, \"name\": \"a\"}, {\"id\": 2, \"name\": \"b\"}, {\"id\": 3}]"
+},
+{
+"in": "[{\"k\": \"v\"}, {\"k\":",
+"out": "[{\"k\": \"v\"}, {\"k\": \"\"}]"
+},
+{
+"in": "]{\"smaart\": \"curly quotes\", \"plain\": 1",
+"out": "{\"smaart\": \"curly quotes\", \"plain\": 1}"
+},
+{
+"in": "]{\"smar\": curly qoutes\", \"pl",
+"out": "{\"smar\": \"curly qoutes\"}"
+},
+{
+"in": "]{'a': 1,  '",
+"out": "{\"a\": 1}"
+},
+{
+"in": "`\t``json\n{\"x\": [1,2,3], \" y\": text\"}\n````",
+"out": "{\"x\": [1, 2, 3], \" y\": \"text\"}"
+},
+{
+"in": "`:``json\n{\"x\": 1,2,3], \"y\": \"txt\"}\n```:",
+"out": "{\"x\": \"1,2,3\", \"y\": \"txt\"}"
+},
+{
+"in": "``\"`json\n{\"x\": [1,2,3], \"y:\" \"text\"\n\"```",
+"out": "{\"x\": [1, 2, 3], \"y:\": \"text\"}"
+},
+{
+"in": "```\tjson\n{x",
+"out": "{}"
+},
+{
+"in": "```\n{\"no_lang\": 1}\n```",
+"out": "{\"no_lang\": 1}"
+},
+{
+"in": "````json\n\"x,\": [1,2:,3, \"y\": \"text\"}\n```",
+"out": "[1, 2, 3, {\"y\": \"text\"}]"
+},
+{
+"in": "````json \n\"x\": [1,2,",
+"out": "[1, 2]"
+},
+{
+"in": "```j\"son\n{x\":",
+"out": "{\"x\": \"\"}"
+},
+{
+"in": "```j,son\n\"x\": [1,2,3], \"y\": \"text\"}\n```",
+"out": "[1, 2, 3]"
+},
+{
+"in": "```jon\n{\"x\": [1,2, 3], \"y\": text\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```josn\n{\"x\": [1,2,3], \"y\": \"text\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```js\nn{\"x\": [1,2,3], \"y\": \"text\"\n\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```js,on\n\"x\": 1[,2,3], \"y\": \"text\"}\n```",
+"out": "[2, 3]"
+},
+{
+"in": "```jso\tn\n{x\": [1,2,3], \"y\": \"text\"\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```jso\nn\n\"x\"",
+"out": "\"\""
+},
+{
+"in": "```jso\nn\n{\"x\": [1,2,3], \"y\" : \"text\"\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```json\t\n{\"x\": 1,2,3], \"y",
+"out": "{\"x\": \"1,2,3\"}"
+},
+{
+"in": "```json\n",
+"out": "\"\""
+},
+{
+"in": "```json\n\"x\": [1,2,3], \"y\": \"text\"}\n```",
+"out": "[1, 2, 3]"
+},
+{
+"in": "```json\n\"x\": [1,2,3{],\"y\" \"text\"}\n```",
+"out": "[1, 2, 3, {\"y\": \"text\"}]"
+},
+{
+"in": "```json\n\"x: 1,2,3], \"y\":  \"text\"}\n```",
+"out": "\"\""
+},
+{
+"in": "```json\n\"x[\": [1,2,3], \"y\":  \"text\"}\n```",
+"out": "[\": [1,2,3], \", \"y\\\":  \\\"text\"]"
+},
+{
+"in": "```json\n{\"\"x: [1,2,3], \"y\": \"text\"}\n```",
+"out": "{\"x: [1,2,3], \\\"y\": \"text\"}"
+},
+{
+"in": "```json\n{\"a\": 1}\n```",
+"out": "{\"a\": 1}"
+},
+{
+"in": "```json\n{\"x\" :[1,2,3]",
+"out": "{\"x\": [1, 2, 3]}"
+},
+{
+"in": "```json\n{\"x\"\": [1,2,3], \"y\": \"text\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```json\n{\"x\"\": [1,23], \"y: \"\ttext\"}\n```",
+"out": "{\"x\": [1, 23], \"y\": \"\\ttext\"}"
+},
+{
+"in": "```json\n{\"x\": ",
+"out": "{\"x\": \"\"}"
+},
+{
+"in": "```json\n{\"x\": 1,2,3] \"y\": \"teext\"\n```",
+"out": "{\"x\": \"1,2,3\", \"y\": \"teext\"}"
+},
+{
+"in": "```json\n{\"x\": [1,,2,3], \"y\": \"text\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```json\n{\"x\": [1,,2,3], \"y\": \"ttex]t\"\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"ttex]t\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], \"y\":",
+"out": "{\"x\": [1, 2, 3], \"y\": \"\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], \"y\": \"text\"\n````",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], \"y\": \"text\"}\n\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], \"y\": \"text\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], \"y\": \"text}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], \"y\": \"ttext\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"ttext\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], \"y\": {\"text\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": [\"text\"]}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], \"y:\" \"texxt\"}",
+"out": "{\"x\": [1, 2, 3], \"y:\": \"texxt\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2,3], y\": \"text\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```json\n{\"x\": [1,2{,3",
+"out": "{\"x\": [1, 2, [3]]}"
+},
+{
+"in": "```json\n{\"x\":[ ,2,3],\"y\": teext\"}\n```",
+"out": "{\"x\": [2, 3], \"y\": \"teext\"}"
+},
+{
+"in": "```json\n{\"x: [1,2,3], \"y\": \"te",
+"out": "{\"x: [1,2,3], \\\"y\": \"te\"}"
+},
+{
+"in": "```json\n{x\": [1,2,3], \"y\": e\ttxt\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"e\\ttxt\"}"
+},
+{
+"in": "```json \n{\"x\": [1,2,3",
+"out": "{\"x\": [1, 2, 3]}"
+},
+{
+"in": "```json{\n\"x\": [1,2,3], y\": \"teext\"}\n``",
+"out": "{\"x\": [1, 2, 3], \"y\": \"teext\"}"
+},
+{
+"in": "```json{\nx: [1,2,3], \"y\": text\"\"}\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "```sjon\n{\"x\": [1,2,3], \"y\": text\"\n```",
+"out": "{\"x\": [1, 2, 3], \"y\": \"text\"}"
+},
+{
+"in": "``js:on\n{\"\"x: [1,2,3], \"y: \"tet\"}\n```",
+"out": "{\"x: [1,2,3], \": \"tet\"}"
+},
+{
+"in": "``json\n\n{\"\"x\": [1,23,], \"y\": \"text\"}\n```",
+"out": "{\"x\": [1, 23], \"y\": \"text\"}"
+},
+{
+"in": "a\": 1, // c1\n \"b\": 2, /* c2 */ \"c\": 3}",
+"out": "\"\""
+},
+{
+"in": "ext before {\"a\": 1} text  after {\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "just plain text no json",
+"out": "\"\""
+},
+{
+"in": "null",
+"out": "null"
+},
+{
+"in": "q\": \"seh said \\\"hi\\\" and left\", \"n: -5.5}",
+"out": "\"\""
+},
+{
+"in": "smart: \"c",
+"out": "\"\""
+},
+{
+"in": "te xt before \"a\":1} text after {\"b\": 2}",
+"out": "{\"b\": 2}"
+},
+{
+"in": "te[xt be fore {\"a\": 1}t extt after {\"b\": 2}",
+"out": "[\"xt be fore {\", \"a\\\": 1}t extt after {\\\"b\", 2]"
+},
+{
+"in": "tet beffore {\"aa\n\": 1} texxt after {\"b\": 2}",
+"out": "[{\"aa\": 1}, {\"b\": 2}]"
+},
+{
+"in": "tetx before ",
+"out": "\"\""
+},
+{
+"in": "tex",
+"out": "\"\""
+},
+{
+"in": "tex:t before {\"aa\": 1} teta fter {\"",
+"out": "{\"aa\": 1}"
+},
+{
+"in": "text",
+"out": "\"\""
+},
+{
+"in": "text \tbefore \"{a\": 1} text afeer {\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text \"before \"a\": 1} t",
+"out": "\"\""
+},
+{
+"in": "text b\neforee {\"a\" :1 text after {\"",
+"out": "{\"a\": 1}"
+},
+{
+"in": "text bef",
+"out": "\"\""
+},
+{
+"in": "text bef\toer {\"a: 1 text aafter {\"b\": 2}",
+"out": "{\"a: 1 text aafter {\\\"b\": 2}"
+},
+{
+"in": "text befoer {\"a\": 1} textafter \"b\": 2",
+"out": "{\"a\": 1}"
+},
+{
+"in": "text before ",
+"out": "\"\""
+},
+{
+"in": "text before \"a\":\t 1} t{ext aft",
+"out": "[\"ext aft\"]"
+},
+{
+"in": "text before \"a\": 1} text after {\n\"b\": 2}",
+"out": "{\"b\": 2}"
+},
+{
+"in": "text before \"a\": 1} text after {\"b\": 2}",
+"out": "{\"b\": 2}"
+},
+{
+"in": "text before \"a:\"  1 text after \"b\": 2}",
+"out": "\"\""
+},
+{
+"in": "text before \"{a\":  1} etxt after \"b\": 2\"}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "text before a\": 1 text after {\": 2}",
+"out": "[\": 2}\"]"
+},
+{
+"in": "text before a\": 1} text after {\"b\": 2}",
+"out": "{\"b\": 2}"
+},
+{
+"in": "text before {\"a\": 1 tetx after {\"b\": 2}",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "text before {\"a\": 1 text after {\"b\": 2}",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "text before {\"a\": 1} \ntext after {\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text before {\"a\": 1} text aafter {\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text before {\"a\": 1} text afte \"b\": 2}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "text before {\"a\": 1} text after \"b\": 2}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "text before {\"a\": 1} text after {\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text before {\"a\": 1} text after {\"b: 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text before {\"a\": 1} text after {\"b]\": 2}",
+"out": "[{\"a\": 1}, {\"b]\": 2}]"
+},
+{
+"in": "text before {\"a\": 1} text after }{\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text before {\"a\": }",
+"out": "{\"a\": \"\"}"
+},
+{
+"in": "text before {\"a\":: 1} te:xt after {\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text before {\"a:  1} texx tafter {\"\": 2}",
+"out": "{\"a:  1} texx tafter {\": 2}"
+},
+{
+"in": "text before {\"a[\": 1} text after {\"b\"",
+"out": "[{\"a[\": 1}, [\"b\"]]"
+},
+{
+"in": "text before {a\": 1} text af,ter \"}b\"[: 2}",
+"out": "[{\"a\": 1}, [2]]"
+},
+{
+"in": "text before {a\": 1} text after {b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text before {a\": 1} {text a",
+"out": "[{\"a\": 1}, [\"text a\"]]"
+},
+{
+"in": "text before {{\"a\": 1} text after {\"b\": 2",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "text before{ \"a: 1 text after {b: 2}",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "text befre {\"a\": 1} text after {\"b: 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "textb e\nfore {{\"a\":1 } text after {\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "textb efore {\"a\": 1} text after",
+"out": "{\"a\": 1}"
+},
+{
+"in": "textbefore {a\"\": 1} text after \"\t{b\": 2",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "textbefroe\"a\": 1} text a",
+"out": "\"\""
+},
+{
+"in": "textt before",
+"out": "\"\""
+},
+{
+"in": "texxt before {\"a\": 1} text after \"b\":\n 2}{",
+"out": "{\"a\": 1}"
+},
+{
+"in": "te}",
+"out": "\"\""
+},
+{
+"in": "true",
+"out": "true"
+},
+{
+"in": "ttext before {\"a\": 1} text after \"b\": 2}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{",
+"out": "{}"
+},
+{
+"in": "{\n",
+"out": "{}"
+},
+{
+"in": "{\n  /* block */\n  \"a\": 1\n}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\n\"a \": 1, // c1\n \"b\": 2, /* c2 */ \"c\": 3}",
+"out": "{\"a \": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\n\"a{",
+"out": "[\"a{\"]"
+},
+{
+"in": "{\n\"multi\": \"line\",\n\"json\": \"here\"\n}",
+"out": "{\"multi\": \"line\", \"json\": \"here\"}"
+},
+{
+"in": "{\"  a\": 1, // c1\n b\": 2, /* c2\n */ \"c\": 3}",
+"out": "{\"  a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"\": 1, // c1\n{ b\": 2, /* c2 */ \"c\": 3}",
+"out": "{\"\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"\"a\"\": 1}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\"\"deductive\": [{\"conclusion\": \"c1\", \"premises\" :[\"p1\",\"p2\"]}], \"epxlicit\": [\"\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"epxlicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\": 1, // c1\n \"b\": 2, /* c2 */ \"c\":  3}",
+"out": "{\": 1, // c1\\n \\\"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"[deduuctive\": [{\"concll",
+"out": "{\"[deduuctive\": [[\"concll\"]]}"
+},
+{
+"in": "{\"a\" 1, \"b\" 2}",
+"out": "{\"a\\\" 1, \\\"b\": \"\"}"
+},
+{
+"in": "{\"a\" :1, // c1 \n\"b\": 2, /* c2 */\" \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \" \\\"c\": 3}"
+},
+{
+"in": "{\"a\":",
+"out": "{\"a\": \"\"}"
+},
+{
+"in": "{\"a\": \"\"value\"\"}",
+"out": "{\"a\": \"value\"}"
+},
+{
+"in": "{\"a\": \"hello",
+"out": "{\"a\": \"hello\"}"
+},
+{
+"in": "{\"a\": \"unterminated string with } brace",
+"out": "{\"a\": \"unterminated string with } brace\"}"
+},
+{
+"in": "{\"a\": \"val1\", \"b\": \"val2\", \"c\": \"val3\"",
+"out": "{\"a\": \"val1\", \"b\": \"val2\", \"c\": \"val3\"}"
+},
+{
+"in": "{\"a\": \"value\", \"a\": \"duplicate\"}",
+"out": "{\"a\": \"duplicate\"}"
+},
+{
+"in": "{\"a\": \"x\"} trailing {\"b\": \"y\"}",
+"out": "[{\"a\": \"x\"}, {\"b\": \"y\"}]"
+},
+{
+"in": "{\"a\": , // c1\n \"b\": 2, /* c 2*/ \"c\": 3}",
+"out": "{\"a\": \"\", \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": , // c1\n \"b\": 2, /* c2 */ \"c\": 3}",
+"out": "{\"a\": \"\", \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": -1.5e-3, \"b\": +2}",
+"out": "{\"a\": -0.0015, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1\n\"b\": 2}",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1 # trailing\n}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\"a\": 1 , // c1\n \"b\": 2\", /* c2 */",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1 ,// c1\n \"b\": 2, /* c2 */ \"c\": 3\"",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1,",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\"a\": 1, \t//\t c1 \"\": 2, /\n* c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, \"b\": 2",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1, \"b\": 2,}",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1, / c1\n \"b\": 2, /* c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // 1c\n b\": 2, /*",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1, // c\n \"b\": 2, / *c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c\n \"b\": 2, /* c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\"a\": 1, // c1\n  \"\": 2, /* c2 */\"c\": 3}",
+"out": "{\"a\": 1, \"\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"\": 2, /* c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"b\": 2,",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"b\": 2, /* c2 *\t/ \"c\": 3",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"b\": 2, /* c2 */ \"\"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"b\": 2, /* c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"b\": 2, /* cc2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"b\": 2,, /* c2 */ c\":3 }",
+"out": "{\"a\": 1, \"b\": \"2,\", \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"b\": 2,/* c2 */ c\": 3}",
+"out": "{\"a\": 1, \"b\": \"2,\", \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n \"b\": }2, /* c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": \"\"}"
+},
+{
+"in": "{\"a\": 1, // c1\n b\"\": 2, /* c2 */ \"\"c: 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n b\"\": 2, /* c2 */ c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n b\": 2, /*  c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n\" b\"",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\"a\": 1, // c1\n] \"b\": 2, /* c\n2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // c1\n{ \"b\": 2 /* c2 */ \"c\": 3}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // cc1\n \"b\": 2, /* c2 */ c\": 3",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a\": 1, // comment\n \"b\": 2}",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{\"a\": 1,, \"b\": 2}",
+"out": "{\"a\": \"1,\", \"b\": 2}"
+},
+{
+"in": "{\"a\": 1}\n\nnote: done",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\"a\": 1} and some more text",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\"a\": 1} {\"b\": 2}",
+"out": "[{\"a\": 1}, {\"b\": 2}]"
+},
+{
+"in": "{\"a\": 1}, // c1\n \"b\": 2,, /* c2 */ \"c\": 3}",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{\"a\": [1, 2, {\"b\": 3",
+"out": "{\"a\": [1, 2, {\"b\": 3}]}"
+},
+{
+"in": "{\"a\": [1,2,3], \"b\": [4,5,6]}",
+"out": "{\"a\": [1, 2, 3], \"b\": [4, 5, 6]}"
+},
+{
+"in": "{\"a\": hello, \"b\": world}",
+"out": "{\"a\": \"hello\", \"b\": \"world\"}"
+},
+{
+"in": "{\"a\": tru",
+"out": "{\"a\": \"tru\"}"
+},
+{
+"in": "{\"a\": true, \"b\": false, \"c\": null}",
+"out": "{\"a\": true, \"b\": false, \"c\": null}"
+},
+{
+"in": "{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3, \"d\": 4, \"e\": 5}"
+},
+{
+"in": "{\"a\":: 1, // c1\n \"b\": 2, /* c2 */ \"c:  3",
+"out": "{\"a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"a: 1, / /c1\n\"b\":: 2, /* c2 */ \"c\": }",
+"out": "{\"a: 1, / /c1\\n\\\"b\": 2, \"c\": \"\"}"
+},
+{
+"in": "{\"a: 1, // c1\n \"\nb\": 2, /",
+"out": "{\"a: 1, // c1\\n \\\"\\nb\": 2}"
+},
+{
+"in": "{\"a:\" 1, // c1\n \"b: 2, /* c2 */ \"c\": 3}",
+"out": "{\"a:\\\" 1, // c1\\n \": 2, \"c\": 3}"
+},
+{
+"in": "{\"arr\": [\"a\", \"b\", \"c\"",
+"out": "{\"arr\": [\"a\", \"b\", \"c\"]}"
+},
+{
+"in": "{\"bool_str\": \"true\", \"real_bool\": true}",
+"out": "{\"bool_str\": \"true\", \"real_bool\": true}"
+},
+{
+"in": "{\"conclusion\": \"test\", \"level\": \"high\", \"confidence\": 0.95}",
+"out": "{\"conclusion\": \"test\", \"level\": \"high\", \"confidence\": 0.95}"
+},
+{
+"in": "{\"d",
+"out": "[\"d\"]"
+},
+{
+"in": "{\"d[eductive\": [{]\"conclsion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"d[eductive\": [{\"conclsion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"dedductive\": [{\"conclusion\": \"c1\", premses\": [\"p1\",\"p2]}], explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"dedductive\": [{\"conclusion\": \"c1\", \"premses\": [\"p1\", {\"p2]}], explicit\": [\"e1\", \"e2\"]}]}]}"
+},
+{
+"in": "{\"dedu\tctive\": [{\"conclusion\": \"c1, \"premises\": [\"p1\",\"p2",
+"out": "{\"dedu\\tctive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}]}"
+},
+{
+"in": "{\"dedu ctive\": [{\"conclusion\n\": \"c1\", \"premises\": [\"p1\",\"p2\"]}],",
+"out": "{\"dedu ctive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}]}"
+},
+{
+"in": "{\"dedu[ctive\": [{\"conclusioon\": \"c1\", \"premises \": \"[p1\",\"",
+"out": "{\"dedu[ctive\": [{\"conclusioon\": \"c1\", \"premises \": \"[p1\"}]}"
+},
+{
+"in": "{\"deductiv\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductiv\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\" :[[{\"conclusion\": \"c1\", \"premises\": [\"p1\",p2:\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [[{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2:\"]}], {\"explicit\": [\"e1\", \"e2\"]}]}"
+},
+{
+"in": "{\"deductive\" [{\"conclusion\": \"c1\", \"premises\": [\"1p\",\"p",
+"out": "{\"deductive\\\" [{\\\"conclusion\": \"c1\", \"premises\": [\"1p\", \"p\"]}"
+},
+{
+"in": "{\"deductive\": [\t{\"conclusion\": \"c1\", \"premises\":: [\"p1\",\"p2\n\"]}], explicit\": [\"e1,\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1,\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [\"conclusio\nn\": \"c1\", \"premis es",
+"out": "{\"deductive\": [{\"conclusio\\nn\": \"c1\"}]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\"}]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\":  [\"p1\",\"p2\"]}], \"explicit\":  [\"e1\",\"e2\"}[]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explic\tit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explic\\tit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\" [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\\\" [\\\"e1\\\",\\\"e2\": \"\"}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"}]",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1,\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1,\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], [\"explcit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}, {\"explcit\": [\"e1\", \"e2\"]}]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], [\"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}, {\"explicit\": [\"e1\", \"e2\"]}]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\",p\"2\"]}, \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p\", 2, \"]}, \", \"explicit\\\": [\\\"e1\", \"e2\"]}]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": {[\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "[{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": {\"p1\": \"p2\"}}]}, [\"e1\", \"e2\"]]"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": }[\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": \"\"}, [\"p1\", \"p2\"]], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises: [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", \"premisess\": [\"",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premisess\": []}]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1\", p\"remises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"p\\\"remises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1, \"premisees\": [",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premisees\": []}]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1, \"premises\": [\"p1\",\"p2\"]}], \"exp licit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"exp licit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"c1}\", \"premises\": [\"p1\",\"p",
+"out": "{\"deductive\": [{\"conclusion\": \"c1}\", \"premises\": [\"p1\", \"p\"]}]}"
+},
+{
+"in": "{\"deductive\": [{\"conclusion\": \"x\", \"premises\": [\"p1\", \"p2\"]}]}",
+"out": "{\"deductive\": [{\"conclusion\": \"x\", \"premises\": [\"p1\", \"p2\"]}]}"
+},
+{
+"in": "{\"deductive\": [{\"concluson\": \"c1\", \"premises\": p1\",\"p2\"]}],",
+"out": "{\"deductive\": [{\"concluson\": \"c1\", \"premises\": \"p1\", \"p2\": \"\"}]}"
+},
+{
+"in": "{\"deductive\": [{\"conlusion\": \"c1\", premises\": [\"p1\t\",\"p2}\"]], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": [{\"conlusion\": \"c1\", \"premises\": [\"p1\\t\", \"p2}\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"ocnclusion\" \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\",]}",
+"out": "{\"deductive\": [{\"ocnclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": [{\"premises\": [\"incomplete",
+"out": "{\"deductive\": [{\"premises\": [\"incomplete\"]}]}"
+},
+{
+"in": "{\"deductive\": [{ocncluion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}\t",
+"out": "{\"deductive\": [{\"ocncluion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": {\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": {\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}, \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": {\"conclusion\": \"c1\", \"prmises\": [\"p\"1,\t\"\np2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": {\"conclusion\": \"c1\", \"prmises\": [\"p\", 1, \"\\np2\"]}, \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive\": {\"conclusion: \n\"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "{\"deductive\": {\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}, \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"deductive: [{\"conclusion\": \"c1\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",\"e2\"]}",
+"out": "[{\"deductive: [{\\\"conclusion\": \"c1\", \"premises\": [\"p1\", \"p2\"]}, [\"e1\", \"e2\"]]"
+},
+{
+"in": "{\"deductvie\": [{\"conclusi",
+"out": "{\"deductvie\": [[\"conclusi\"]]}"
+},
+{
+"in": "{\"deeply\": [[[[\"x\"]]]]}",
+"out": "{\"deeply\": [[[[\"x\"]]]]}"
+},
+{
+"in": "{\"deuctive\": [{\"conclusion\": \"c1\", \"premises\": [\"p 1\",\"p2\"]}] , \"explicit\": [\"e1\",\"e2\"]",
+"out": "{\"deuctive\": [{\"conclusion\": \"c1\", \"premises\": [\"p 1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{\"empty_arr\": [], \"empty_obj\": {}, \"empty_str\": \"\"}",
+"out": "{\"empty_arr\": [], \"empty_obj\": {}, \"empty_str\": \"\"}"
+},
+{
+"in": "{\"escapes\": \"tab\\there newline\\nhere\"}",
+"out": "{\"escapes\": \"tab\\there newline\\nhere\"}"
+},
+{
+"in": "{\"explicit\": [\"fact one\", \"fact two\"], \"deductive\": []}",
+"out": "{\"explicit\": [\"fact one\", \"fact two\"], \"deductive\": []}"
+},
+{
+"in": "{\"key with spaces\": \"value\", \"another\": 123}",
+"out": "{\"key with spaces\": \"value\", \"another\": 123}"
+},
+{
+"in": "{\"key\": value without quotes here}",
+"out": "{\"key\": \"value without quotes here\"}"
+},
+{
+"in": "{\"list\": [1 2 3]}",
+"out": "{\"list\": [1, 2, 3]}"
+},
+{
+"in": "{\"mixed\": [1, \"two\", true, null, 3.5]}",
+"out": "{\"mixed\": [1, \"two\", true, null, 3.5]}"
+},
+{
+"in": "{\"n",
+"out": "[\"n\"]"
+},
+{
+"in": "{\"n\te:sted\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"n\\te:sted\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"n\tested\": {\"a\": {\"\"b: {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"n\\tested\": {\"a\": {\"b: {\\\"c\": 1}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"n\": 42, \"f\": 3.14, \"neg\": -5, \"exp\": 1e3}",
+"out": "{\"n\": 42, \"f\": 3.14, \"neg\": -5, \"exp\": 1000.0}"
+},
+{
+"in": "{\"naame\": \"alice\", \"age\": 30, \"tags\": [\n\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"naame\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"naem\": \"alice\", \"age\":  30, \"tags\": [\"a\",\"b\"], \"meta\"}: {\"x\": 1, y\"\": 2.5}}",
+"out": "[{\"naem\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"]}, {\"x\": 1, \"y\": 2.5}]"
+},
+{
+"in": "{\"name\"",
+"out": "[\"name\"]"
+},
+{
+"in": "{\"name\"\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], ",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"]}"
+},
+{
+"in": "{\"name\"\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"a\"lice\", \"age\": 30, \"\"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"a\\\"lice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alic",
+"out": "{\"name\": \"alic\"}"
+},
+{
+"in": "{\"name\": \"alice\"",
+"out": "{\"name\": \"alice\"}"
+},
+{
+"in": "{\"name\": \"alice\",  \"age\": 30, \"taggs\": [\"a\",b\"], \"meta\": {\"x\": \t1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"taggs\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"a ge\": 30, \"tags\": [\"a\",\"b\"],, \"meta\": \"x\": 1, \"y\": 2.5}",
+"out": "{\"name\": \"alice\", \"a ge\": 30, \"tags\": [\"a\", \"b\"], \"meta\": \"x\", \"y\": 2.5}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 0, \"\"tags\": \"a\",\"b\"], meta\": {\"x\": 1, ",
+"out": "{\"name\": \"alice\", \"age\": 0, \"tags\": \"a\", \"b\\\"], meta\": {\"x\": 1}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 03, \"tags\": [a\",\"b\"], \"meta\": {\"x\": 1,[ \"y\": 2.5}}}",
+"out": "{\"name\": \"alice\", \"age\": 3, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30,",
+"out": "{\"name\": \"alice\", \"age\": 30}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \n\":tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1,\t \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \":tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30,  \"tags\"}: [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "[{\"name\": \"alice\", \"age\": 30}, [\"a\", \"b\"], {\"x\": 1, \"y\": 2.5}]"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\" :[\"a\",\"b\"], \"meta\": {\t\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": \"a\",\"bb\"], \"meta\": {\"x\": 1, \"y\": 2.5},}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": \"a\", \"bb\\\"], \\\"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"\"a\",\"b\"], \"meta\": {\",x\": 1,  \"\"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\",x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\"\",\"b\"], \"met\"a: {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \",\", \"b\"], \"met\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\", \"meta\": {\"x\" 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\", {\"meta\": {\"x\": \"\", \"y\": 2.5}}]}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"] \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"met\na\": {\"x\": 1, \"y\":  2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"met\\na\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1 \"y:\" 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y:\": 0.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\":\t 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {{\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\":{ \"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\":{\"x\": 1, \"y\": 2.\"5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.0}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], m\"eta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"m\\\"eta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\",,\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a,\"b\"], \"meta\": {\"x\": 11, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a,\", \"b\"], \"meta\": {\"x\": 11, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a[\",\"b\"], \"}meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a[\", \"b\"], \"}meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags: [\"a\",\"b \"], \"meta\n\": {\"x\": 1, \"y\":  2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b \"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, \"tags: [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, tag",
+"out": "{\"name\": \"alice\", \"age\": 30}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\": 30, tags\": [\"aa\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"aa\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age\":] 30, \"tag\ts\": [\"a\",\"b\"], \"meta\": {\"x\"\": 1, \"y\": 2.5",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tag\\ts\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", \"age: 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age: 30, \\\"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice\", age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice, \"age\": 30, \" tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.\t5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \" tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.0}}"
+},
+{
+"in": "{\"name\": \"alice, \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"alice,\" age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \" age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": \"allice\", \"age\": 30, \"tags\":[ \"a\",\"b\"], \"meta\": {\"\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"allice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": [\"alice\", \"age\": 30, \"tags:\" [\"a\",\"b\"], \"meta: {\"x\":1 , \"y\": 2.5}}",
+"out": "{\"name\": [\"alice\", {\"age\": 30, \"tags:\\\" [\\\"a\": \"b\"}], \"meta: {\\\"x\": 1, \"y\": 2.5}"
+},
+{
+"in": "{\"name\": ali:ce\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"ali:ce\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name\": alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"name: \"alice\", \"age\": 30, \"tags\": [\"a\",\"b\"], \"meta\"\n: {\"x\": 1, \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tags\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{\"neested: {\"a\": {\"b\": {\"c\": 1}}}, arr\": [[1,2],[3,4]]}",
+"out": "[{\"neested: {\\\"a\": {\"b\": {\"c\": 1}}}, [[1, 2], [3, 4]]]"
+},
+{
+"in": "{\"neset d\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [,[1,2],[3,4]]}",
+"out": "{\"neset d\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nessted\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nessted\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\" {\"a\": {\"b\": {\"c\": 1",
+"out": "{\"nested\\\" {\\\"a\": {\"b\": {\"c\": 1}}}"
+},
+{
+"in": "{\"nested\",: {\"a\": {\"b\": {\"c\": 1}}, \"arr\":[ [12],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}, \"arr\": [[12], [3, 4]]}}"
+},
+{
+"in": "{\"nested\":\n {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": ",
+"out": "{\"nested\": \"\"}"
+},
+{
+"in": "{\"nested\":  {\"a\": {\"b: {\"c: 1}}}, \"ar",
+"out": "{\"nested\": {\"a\": {\"b: {\": 1}}}"
+},
+{
+"in": "{\"nested\": \"a\": {\"b\": {\"c\": 1}}}, \"arr\":  [[1,2],3,4]}",
+"out": "[{\"nested\": \"a\", \"b\": {\"c\": 1}}, [[1, 2], 3, 4]]"
+},
+{
+"in": "{\"nested\": \"a\": {{\"b\": {c\": 1}}}, arr\": [",
+"out": "{\"nested\": \"a\", \"b\": {\"c\": 1}}"
+},
+{
+"in": "{\"nested\": {\" a: {\"b\": {\"c\": 1}}}, \"ar\tr\": [[1,2],[3{,4]]}",
+"out": "{\"nested\": {\" a: {\\\"b\": {\"c\": 1}}, \"ar\\tr\": [[1, 2], [3, {\"4\": \"\"}]]}"
+},
+{
+"in": "{\"nested\": {\"a \": {\"b\": {\"c\":1 }}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a \": {\"b\": {\"c\": 1}}, \"arr\": [[1, 2], [3, 4]]}}"
+},
+{
+"in": "{\"nested\": {\"a\"",
+"out": "{\"nested\": [\"a\"]}"
+},
+{
+"in": "{\"nested\": {\"a\" :{\"b\": {\"c\": 1}}, \"arr\": [1,2],[3,4]]} ",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}, \"arr\": [1, 2, 3, 4]}}"
+},
+{
+"in": "{\"nested\": {\"a\" :{\"b\": {\"c\": :1}}, \"arr\": [",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}, \"arr\": []}}"
+},
+{
+"in": "{\"nested\": {\"a\" {\"b:\" {\"c\": 1}}}, \"arr\": [[1,2,[3,4]]}",
+"out": "[{\"nested\": {\"a\\\" {\": \" {\\\"c\\\": 1\"}}, [[1, 2, [3, 4]]]]"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\":\t {\"c\":  1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": :{\"c\": 11}}}, \"arr\":  [[1,2],[3,4]]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 11}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"\"c\": 1}}}, \"arr: [[12,],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[12], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}\"}}, \"\tarr: [1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"\\tarr\": [1, 2, 3, 4]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"ar\": [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"ar\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"ar\"r: [[1,2],[3,4]]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"ar\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\":  [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[,12],[3,4]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[12], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1\t,2],[3],4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3], 4]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,2], [3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,],[3",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1], [3]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\": {\"c\": }\t}, \"arr\": ",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": \"\"}}, \"arr\": \"\"}}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b\"]: {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b:",
+"out": "{\"nested\": {\"a\": {\"b\": \"\"}}}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b: {\"",
+"out": "{\"nested\": {\"a\": [\"b: {\"]}}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b: {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]",
+"out": "{\"nested\": {\"a\": {\"b: {\\\"c\": 1}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\": {\"b: {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b: {\\\"c\": 1}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested\": {\"a\":, {\"\"b: {\"c\"",
+"out": "{\"nested\": {\"a\": \"\"}}"
+},
+{
+"in": "{\"nested\": {\"deep\": [1,2,3]",
+"out": "{\"nested\": {\"deep\": [1, 2, 3]}}"
+},
+{
+"in": "{\"nested\": {a\": {\"b\": {\"c\": 1}}, arr\": [[1,2],[3\t,4]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}, \"arr\": [[1, 2], [3, 4]]}}"
+},
+{
+"in": "{\"nested\": {{\"a\": {\"[b\": {\"cc\": 1}}}, \"arr\": [1,2],,[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"[b\": {\"cc\": 1}}}, \"arr\": [1, 2]}"
+},
+{
+"in": "{\"nested\":{ \"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nested\": {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nested: {\"a\": {\"b\": {\"c\": 1}}}, \"arr\": [[1,2],[3,4]]}",
+"out": "{\"nested: {\\\"a\": {\"b\": {\"c\": 1}}, \"arr\": [[1, 2], [3, 4]]}"
+},
+{
+"in": "{\"nesteed\": {\"a\": {\"b\": \t{\"c\": 1}}}, \"",
+"out": "{\"nesteed\": {\"a\": {\"b\": {\"c\": 1}}}}"
+},
+{
+"in": "{\"num\": 007, \"hex\": 0x1F}",
+"out": "{\"num\": 7, \"hex\": \"0x1F\"}"
+},
+{
+"in": "{\"path\": \"C:\\\\Users\"}",
+"out": "{\"path\": \"C:\\\\Users\"}"
+},
+{
+"in": "{\"q \"she said \\\"hi\\\" and left\",, \"n: -5.5}",
+"out": "{\"q \": \"he said \\\"hi\\\" and left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\"\": \"she said \\\"hi\\\\\" and leftt\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\" and leftt\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\"\": \"she saidd \\hi\\\" ",
+"out": "{\"q\": \"she saidd \\\\hi\\\"\"}"
+},
+{
+"in": "{\"q\",}: \"she said \\\"hi\\\" and le:ft\", \"n\": -5.5}",
+"out": "{\"q\": \"\"}"
+},
+{
+"in": "{\"q\": ",
+"out": "{\"q\": \"\"}"
+},
+{
+"in": "{\"q\": \"\"she said \\\"hi\\\" and left\", ",
+"out": "{\"q\": \"she said \\\"hi\\\" and left\"}"
+},
+{
+"in": "{\"q\": \"s",
+"out": "{\"q\": \"s\"}"
+},
+{
+"in": "{\"q\": \"s[hh esaid \\\"hi\\",
+"out": "{\"q\": \"s[hh esaid \\\"hi\\\\\"}"
+},
+{
+"in": "{\"q\": \"she :sai\td \\\"hi\\\" and left\", ,n\": -5.5}",
+"out": "{\"q\": \"she :sai\\td \\\"hi\\\" and left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she sa id \\\"h\\i\" and left\"\", n\": -5. 5}",
+"out": "{\"q\": \"she sa id \\\"h\\\\i\\\" and left\\\"\", \"n\": -5.0}"
+},
+{
+"in": "{\"q\": \"she sa id: ",
+"out": "{\"q\": \"she sa id:\"}"
+},
+{
+"in": "{\"q\": \"she sai \\\"hi\\\" and left\", \"n\": -5.5}",
+"out": "{\"q\": \"she sai \\\"hi\\\" and left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she sai d\\,\"hi\\\" and left\", \"n\": -5.5}",
+"out": "{\"q\": \"she sai d\\\\,\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi",
+"out": "{\"q\": \"she said \\\"hi\"}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\" and left\", \"nn\":- 5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\" and left\", \"nn\": \"\"}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\"  and left\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\"  and left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\" and",
+"out": "{\"q\": \"she said \\\"hi\\\" and\"}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\" and left\", \"n\": -5\".5}",
+"out": "{\"q\": \"she said \\\"hi\\\" and left\", \"n\": -5}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\" and left\", \"n\": -5.5",
+"out": "{\"q\": \"she said \\\"hi\\\" and left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\" and left\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\" and left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\" and left\", \"n: -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\" and left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\" and left,\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\" and left,\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\" andd left\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\" andd left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\\"\"}",
+"out": "{\"q\": \"she said \\\"hi\\\"\"}"
+},
+{
+"in": "{\"q\": \"she said \\\"hi\\,\" and left\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\\,\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\h\"i \\\" and left\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\\h\", \" and left\\\", \\\"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"she said \\hi\\\"nd left\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\\hi\\\"nd left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\": \"shee said \\\"hi\\",
+"out": "{\"q\": \"shee said \\\"hi\\\\\"}"
+},
+{
+"in": "{\"q\": \"shhe sid \\\"hi\\\" and lef\"t, \"n\": -5\n.5",
+"out": "{\"q\": \"shhe sid \\\"hi\\\" and lef\", \"n\": -5}"
+},
+{
+"in": "{\"q\": she said \\\"hi\\\" nad left\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\" nad left\", \"n\": -5.5}"
+},
+{
+"in": "{\"q\":[ \"s",
+"out": "{\"q\": [\"s\"]}"
+},
+{
+"in": "{\"q\":{ \"she said \\\"hi\\\" and lef\"t, \"n\": -5.5}",
+"out": "{\"q\": {\"she said \\\"hi\\\" and lef\\\"t, \\\"n\": -5.5}}"
+},
+{
+"in": "{\"qq\": \"she said \\\"hi\\\" and left\", \"n\": -5.5",
+"out": "{\"qq\": \"she said \\\"hi\\\" and left\", \"n\": -5.5}"
+},
+{
+"in": "{\"quote_in_val\": \"she said \"hello\" loudly\"}",
+"out": "{\"quote_in_val\": \"she said \\\"hello\\\" loudly\"}"
+},
+{
+"in": "{\"samrt\": \"\"curly quotes\"\n, \"plai",
+"out": "{\"samrt\": \"curly quotes\"}"
+},
+{
+"in": "{\"sma\"rt\": \"cc]urly quotes\"",
+"out": "{\"sma\\\"rt\": \"cc]urly quotes\"}"
+},
+{
+"in": "{\"sma]rt\": {\"curl y quotes\",, \"plai\": 1}",
+"out": "{\"sma]rt\": {\"curl y quotes\\\",, \\\"plai\": 1}}"
+},
+{
+"in": "{\"smaart\"",
+"out": "[\"smaart\"]"
+},
+{
+"in": "{\"smart\"  curl yquotes\", \"plain\": 1}",
+"out": "{\"smart\\\"  curl yquotes\\\", \\\"plain\": 1}"
+},
+{
+"in": "{\"smart\":\n  \"curly quotes,\" \"plain\": 1}",
+"out": "{\"smart\": \"curly quotes,\", \"plain\": 1}"
+},
+{
+"in": "{\"smart\": \"curly q\tuotes\",",
+"out": "{\"smart\": \"curly q\\tuotes\"}"
+},
+{
+"in": "{\"smart\": \"curly q:uotes\", \"plain\": 1}",
+"out": "{\"smart\": \"curly q:uotes\", \"plain\": 1}"
+},
+{
+"in": "{\"smart\": \"curly qquotes\", \"plann\" :1}",
+"out": "{\"smart\": \"curly qquotes\", \"plann\": 1}"
+},
+{
+"in": "{\"smart\": \"curly quotes",
+"out": "{\"smart\": \"curly quotes\"}"
+},
+{
+"in": "{\"smart\": \"curly quotes\", \"pain\": 11}",
+"out": "{\"smart\": \"curly quotes\", \"pain\": 11}"
+},
+{
+"in": "{\"smart\": \"curly quotes\", \"plain\": 11}",
+"out": "{\"smart\": \"curly quotes\", \"plain\": 11}"
+},
+{
+"in": "{\"smart\": \"curly quotes\", \"plain\": 1}",
+"out": "{\"smart\": \"curly quotes\", \"plain\": 1}"
+},
+{
+"in": "{\"smart\": \"curly quotes\", \"plain\"::, 1}",
+"out": "{\"smart\": \"curly quotes\", \"plain\": 1}"
+},
+{
+"in": "{\"smart\": \"curly quotes\", \"plain:\" 1",
+"out": "{\"smart\": \"curly quotes\", \"plain:\": \"\"}"
+},
+{
+"in": "{\"smart\": \"curly quotes\", \"pllain: 1}",
+"out": "{\"smart\": \"curly quotes\", \"pllain\": 1}"
+},
+{
+"in": "{\"smart\": \"curly quotes\", \"}plain\": 1}",
+"out": "{\"smart\": \"curly quotes\", \"}plain\": 1}"
+},
+{
+"in": "{\"smart\": \"curly quots\", \"plain\": 1}",
+"out": "{\"smart\": \"curly quots\", \"plain\": 1}"
+},
+{
+"in": "{\"smart\": \"curly qutes\", \"plin\": 1}",
+"out": "{\"smart\": \"curly qutes\", \"plin\": 1}"
+},
+{
+"in": "{\"smart\": \"curly qutse\", \"plani: 1}",
+"out": "{\"smart\": \"curly qutse\", \"plani\": 1}"
+},
+{
+"in": "{\"smart\": \"curly} quotes\", \"plain\": 1}",
+"out": "{\"smart\": \"curly} quotes\", \"plain\": 1}"
+},
+{
+"in": "{\"smart\":, \"curly quotes\", \"plain\": 1}",
+"out": "{\"smart\": \"\", \"curly quotes\\\", \\\"plain\": 1}"
+},
+{
+"in": "{\"smart\":] \"curlyu qotes\", \"plain\":",
+"out": "{\"smart\": \"curlyu qotes\", \"plain\": \"\"}"
+},
+{
+"in": "{\"smart:  \"curly quotes\"[ \"plain\": 1}",
+"out": "{\"smart:  \\\"curly quotes\\\"[ \\\"plain\": 1}"
+},
+{
+"in": "{\"smart: \"\"curly quotes\"\n, \"plain\": 1",
+"out": "{\"smart: \": \"curly quotes\", \"plain\": 1}"
+},
+{
+"in": "{\"smart: \"curly quotes\", \"plain\": 1}",
+"out": "{\"smart\": \"curly quotes\", \"plain\": 1}"
+},
+{
+"in": "{\"smart: curly quotes\", plain\": 1}",
+"out": "{\"smart: curly quotes\\\", plain\": 1}"
+},
+{
+"in": "{\"smart:\" cu",
+"out": "{\"smart:\": \"u\"}"
+},
+{
+"in": "{\"smrat\": \" urly  qutoes\", \"plain\": 1}",
+"out": "{\"smrat\": \" urly  qutoes\", \"plain\": 1}"
+},
+{
+"in": "{\"smrt\": \"curly quote\", \"plain\": 1}",
+"out": "{\"smrt\": \"curly quote\", \"plain\": 1}"
+},
+{
+"in": "{\"smrt\":} \"curly quotes\", ",
+"out": "{\"smrt\": \"\"}"
+},
+{
+"in": "{\"ssmart\" :\"curly quotes\", \"plain\": 1}",
+"out": "{\"ssmart\": \"curly quotes\", \"plain\": 1}"
+},
+{
+"in": "{\"text\": \"line with, comma and: colon\"}",
+"out": "{\"text\": \"line with, comma and: colon\"}"
+},
+{
+"in": "{\"trailing\": \"comma\",}",
+"out": "{\"trailing\": \"comma\"}"
+},
+{
+"in": "{\"unicode\": \"café\", \"emoji\": \"x\"}",
+"out": "{\"unicode\": \"caf\\u00e9\", \"emoji\": \"x\"}"
+},
+{
+"in": "{\"unicode_escape\": \"\\u00e9\\u00e8\"}",
+"out": "{\"unicode_escape\": \"\\u00e9\\u00e8\"}"
+},
+{
+"in": "{\"users\": [{\"name\": \"a\"}, {\"name\": \"b\"}]}",
+"out": "{\"users\": [{\"name\": \"a\"}, {\"name\": \"b\"}]}"
+},
+{
+"in": "{\"}a\": 1, // c1\n \"b\": 2, /* c2 */ \"c\":  3}",
+"out": "{\"}a\": 1, \"b\": 2, \"c\": 3}"
+},
+{
+"in": "{\"}q",
+"out": "[\"}q\"]"
+},
+{
+"in": "{'\na': 1, 'b': [2,3], 'c': {['d': 'e'}}",
+"out": "{\"\\na\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'': 1,'b': [2,3], ",
+"out": "{\"\": 1, \"b\": [2, 3]}"
+},
+{
+"in": "{''a: 1}, 'b': 2,3], '': 'd': 'e'}}",
+"out": "{\"a: 1}, 'b\": \"2,3\", \"\": \"d': 'e\"}"
+},
+{
+"in": "{'a'': 1, 'b': [2,3], 'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a':\t 1, b'",
+"out": "{\"a\": 1}"
+},
+{
+"in": "{'a': ",
+"out": "{\"a\": \"\"}"
+},
+{
+"in": "{'a':  1,' b': [2,3], 'c",
+"out": "{\"a\": 1, \" b\": [2, 3]}"
+},
+{
+"in": "{'a': , 'b': [2,3], 'c': {'d': 'e'}}",
+"out": "{\"a\": \"\", \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1 'b: [2,3], 'c': {':d': 'e'}}",
+"out": "{\"a\": 1, \"b: [2,3], 'c\": {\":d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, ''b': 2,",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{'a': 1, ':b':\t [2,]]3, 'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \":b\": [2], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b' :[2,3], 'c': {'d' : 'e:'}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e:\"}}"
+},
+{
+"in": "{'a': 1, 'b'\": []2,3], 'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \"b\": [], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': 'two'}",
+"out": "{\"a\": 1, \"b\": \"two\"}"
+},
+{
+"in": "{'a': 1, 'b': 2,3], 'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \"b\": \"2,3\", \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': 2,3],, 'c': {'d': 'e",
+"out": "{\"a\": 1, \"b\": \"2,3\", \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': 2,3]{, 'c': {'d': 'e'",
+"out": "{\"a\": 1, \"b\": \"2,3\", \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': [",
+"out": "{\"a\": 1, \"b\": []}"
+},
+{
+"in": "{'a': 1, 'b': [2,3, 'c': {'d' 'e'}}",
+"out": "{\"a\": 1, \"b\": [2, 3, {\"c\": {\"d\": \"e'\"}}]}"
+},
+{
+"in": "{'a': 1, 'b': [2,3] 'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': [2,3], '",
+"out": "{\"a\": 1, \"b\": [2, 3]}"
+},
+{
+"in": "{'a': 1, 'b': [2,3], ':c': {'d': 'e'}",
+"out": "{\"a\": 1, \"b\": [2, 3], \":c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': [2,3], 'c",
+"out": "{\"a\": 1, \"b\": [2, 3]}"
+},
+{
+"in": "{'a': 1, 'b': [2,3], 'c': {'d': 'e'}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': [2,3], 'c': {'d': 'e'}[}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': [2,3], 'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': [2,3], 'c': {'d': 'e'}}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': [2,3],,'c'{: {'",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {}}"
+},
+{
+"in": "{'a': 1, 'b': [2,3],[]'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b': [23,], 'c': {'d': ",
+"out": "{\"a\": 1, \"b\": [23], \"c\": {\"d\": \"\"}}"
+},
+{
+"in": "{'a': 1, 'b': [[2 ,3]], 'c': {'': 'e'}}",
+"out": "{\"a\": 1, \"b\": [[2, 3]], \"c\": {\"\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b':[2,3], 'c': {'d': 'e'}}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a': 1, 'b: [2,3], 'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \"b: [2,3], 'c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a':1 , 'b': [2,3], '",
+"out": "{\"a\": 1, \"b\": [2, 3]}"
+},
+{
+"in": "{'a':1 , 'b': [2,3], 'c': {'d': 'e'}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"d\": \"e\"}}"
+},
+{
+"in": "{'a':1, 'b': [2,3], 'c': {'dd': 'e'}}",
+"out": "{\"a\": 1, \"b\": [2, 3], \"c\": {\"dd\": \"e\"}}"
+},
+{
+"in": "{'a':{ 1, 'b': [2,3], 'c': ",
+"out": "{\"a\": {\"b\": [2, 3], \"c\": \"\"}}"
+},
+{
+"in": "{'single': 'quotes', 'nested': {'deep': 'value'}}",
+"out": "{\"single\": \"quotes\", \"nested\": {\"deep\": \"value\"}}"
+},
+{
+"in": "{:\" \"",
+"out": "{}"
+},
+{
+"in": "{a\": 1, // c1\n \"b: 2, /* c2 */ c\": 3}",
+"out": "{\"a\": 1, \"b: 2, /* c2 */ c\": 3}"
+},
+{
+"in": "{a':1,{",
+"out": "{\"a'\": 1}"
+},
+{
+"in": "{a: 1, b: 2}",
+"out": "{\"a\": 1, \"b\": 2}"
+},
+{
+"in": "{deductiv",
+"out": "[\"deductiv\"]"
+},
+{
+"in": "{deductivee\": [{\"conclusion\": \"1c\", \"premises\": [\"p1\",\"p2\"]}], \"explicit\": [\"e1\",e2\"]}",
+"out": "{\"deductivee\": [{\"conclusion\": \"1c\", \"premises\": [\"p1\", \"p2\"]}], \"explicit\": [\"e1\", \"e2\"]}"
+},
+{
+"in": "{name: \"alice\", \"age\": 30, \"tgas\": [\"a\",\"b\"], \"meta\": {\"x\": 1,  \"y\": 2.5}}",
+"out": "{\"name\": \"alice\", \"age\": 30, \"tgas\": [\"a\", \"b\"], \"meta\": {\"x\": 1, \"y\": 2.5}}"
+},
+{
+"in": "{name: \"bob\", age: 30}",
+"out": "{\"name\": \"bob\", \"age\": 30}"
+},
+{
+"in": "{nested\": \"{\"a\": {\"b\": {c\": 1",
+"out": "{\"nested\": \"{\\\"a\\\": {\", \"b\": {\"c\": 1}}"
+},
+{
+"in": "{q\"\": \"she said \\\"hi\\\" a\tnd left\", \"n\": -5.5}",
+"out": "{\"q\": \"she said \\\"hi\\\" a\\tnd left\", \"n\": -5.5}"
+},
+{
+"in": "{q\": \"she said \\\"hi\\\"  and left\", \"n\": -5.5",
+"out": "{\"q\": \"she said \\\"hi\\\"  and left\", \"n\": -5.5}"
+},
+{
+"in": "{q\": \"she saiid \\\"hi\\\" and left\", \"n\": -.5}",
+"out": "{\"q\": \"she saiid \\\"hi\\\" and left\", \"n\": -0.5}"
+},
+{
+"in": "{smart\": \"curly quote\"s, p}plain\": 1}",
+"out": "{\"smart\": \"curly quote\", \"p}plain\": 1}"
+},
+{
+"in": "{smart\":\"curly quotes\", \"plain\": 1}",
+"out": "{\"smart\": \"curly quotes\", \"plain\": 1}"
+},
+{
+"in": "{smart\":\"curyl quo\ttes\", \"plain\": 1",
+"out": "{\"smart\": \"curyl quo\\ttes\", \"plain\": 1}"
+},
+{
+"in": "{{",
+"out": "{}"
+},
+{
+"in": "{{ ",
+"out": "[]"
+},
+{
+"in": "{{\"a\": ,1 // c1\n",
+"out": "{\"a\": \"\"}"
+},
+{
+"in": "{}",
+"out": "{}"
+},
+{
+"in": "{}\"q\": \"she said \\\"hi\\ and  left\", \"n\": -5.5}",
+"out": "{}"
+}
+]

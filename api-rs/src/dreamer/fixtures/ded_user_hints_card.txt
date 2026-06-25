@@ -1,0 +1,20 @@
+
+## CURRENT PEER CARD
+
+- IDENTITY: Name: Alice
+- ATTRIBUTE: Location: NYC
+
+Update this with `update_peer_card` only for stable identity markers. See the PEER CARD section in the system prompt for the allowed entry kinds and rules.
+If you update it, send the full deduplicated list and remove stale entries.
+
+Start by exploring recent observations and messages. These topics may be worth investigating:
+
+- topic one
+- topic two
+- topic three
+- topic four
+- topic five
+
+But follow the evidence - if you find something more interesting, pursue that instead.
+
+Begin with `get_recent_observations` to see what's there.

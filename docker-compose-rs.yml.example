@@ -1,19 +1,35 @@
-# Honcho Docker Compose
+# Honcho — full Rust stack (Docker Compose)
+#
+# This brings up the Rust port end to end: the API server (honcho-api-rs) and
+# the queue worker (honcho-deriver), both built from ./api-rs, plus the Rust
+# MCP server, Postgres (pgvector) and Redis. There is NO Python anywhere — the
+# schema is provisioned by the Rust API itself via embedded sqlx migrations
+# (ported 1:1 from the Python Alembic migrations). For the Python stack use
+# docker-compose.yml.example instead.
 #
 # Usage:
-#   cp docker-compose.yml.example docker-compose.yml
-#   cp .env.template .env  # edit with your provider config
-#   docker compose up -d --build
+#   cp docker-compose-rs.yml.example docker-compose-rs.yml
+#   cp .env.template .env  # set DB / provider / LLM keys
+#   docker compose -f docker-compose-rs.yml up -d --build
 #
 # By default, ports are bound to 127.0.0.1 (localhost only).
-# For development, uncomment the source mounts and monitoring services below.
+#
+# NOTE: the API server and the worker are the SAME image (./api-rs builds both
+# the honcho-api-rs and honcho-deriver binaries); the worker just overrides the
+# command. Run exactly ONE deriver against a given database queue — do not run
+# this worker alongside the Python deriver on the same DB.
 
 services:
   api:
     build:
-      context: .
+      context: ./api-rs
       dockerfile: Dockerfile
-    entrypoint: ["sh", "docker/entrypoint.sh"]
+    command: ["honcho-api-rs"]
+    # honcho-api-rs applies the embedded sqlx migrations on startup (the schema
+    # is identical to the Python Alembic head), then serves. The deriver waits
+    # for it to become healthy, so the schema is in place before any worker
+    # touches the queue. Set RUST_API_RUN_MIGRATIONS=false to manage schema
+    # out of band.
     depends_on:
       database:
         condition: service_healthy
@@ -23,24 +39,29 @@ services:
       - "127.0.0.1:8000:8000"
     healthcheck:
       test:
-        [
-          "CMD",
-          "/app/.venv/bin/python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()",
-        ]
+        ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 10s
-    # -- Development: mount source for live reload --
-    # volumes:
-    #   - .:/app
-    #   - venv:/app/.venv
     environment:
+      - RUST_API_BIND_ADDRESS=0.0.0.0:8000
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - CACHE_URL=redis://redis:6379/0?suppress=true
-      - CACHE_ENABLED=true
+      - DB_SCHEMA=${DB_SCHEMA:-public}
+      - AUTH_USE_AUTH=${AUTH_USE_AUTH:-false}
+      - AUTH_JWT_SECRET=${AUTH_JWT_SECRET:-}
+      # The Rust API defaults to read-only; flip to true to enable write routes.
+      - RUST_API_ENABLE_WRITES=${RUST_API_ENABLE_WRITES:-true}
+      - NAMESPACE=${NAMESPACE:-honcho}
+      - CACHE_ENABLED=${CACHE_ENABLED:-true}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
+      - CACHE_NAMESPACE=${CACHE_NAMESPACE:-}
+      # Providers (chat completion + embedding). Set the keys for whatever you use.
+      - LLM_ANTHROPIC_API_KEY=${LLM_ANTHROPIC_API_KEY:-}
+      - LLM_OPENAI_API_KEY=${LLM_OPENAI_API_KEY:-}
+      - LLM_GEMINI_API_KEY=${LLM_GEMINI_API_KEY:-}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
     env_file:
       - path: .env
         required: false
@@ -48,9 +69,12 @@ services:
 
   deriver:
     build:
-      context: .
+      context: ./api-rs
       dockerfile: Dockerfile
-    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+    # Same image as `api`, different binary — the background queue worker
+    # (porting `python -m src.deriver`). Processes representation, deletion,
+    # summary, reconciler, webhook and dream work units.
+    command: ["honcho-deriver"]
     depends_on:
       api:
         condition: service_healthy
@@ -58,14 +82,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # -- Development: mount source for live reload --
-    # volumes:
-    #   - .:/app
-    #   - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - CACHE_URL=redis://redis:6379/0?suppress=true
-      - CACHE_ENABLED=true
+      - DB_SCHEMA=${DB_SCHEMA:-public}
+      - CACHE_ENABLED=${CACHE_ENABLED:-true}
+      - CACHE_URL=${CACHE_URL:-redis://redis:6379/0?suppress=true}
+      - CACHE_NAMESPACE=${CACHE_NAMESPACE:-}
+      - LLM_ANTHROPIC_API_KEY=${LLM_ANTHROPIC_API_KEY:-}
+      - LLM_OPENAI_API_KEY=${LLM_OPENAI_API_KEY:-}
+      - LLM_GEMINI_API_KEY=${LLM_GEMINI_API_KEY:-}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-openai}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - DREAM_ENABLED=${DREAM_ENABLED:-true}
+      - RUST_LOG=${RUST_LOG:-info}
     env_file:
       - path: .env
         required: false
@@ -122,36 +151,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # -- Development: monitoring stack (uncomment to enable) --
-  # prometheus:
-  #   image: prom/prometheus:v3.2.1
-  #   ports:
-  #     - "127.0.0.1:9090:9090"
-  #   volumes:
-  #     - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-  #     - prometheus-data:/prometheus
-  #   depends_on:
-  #     api:
-  #       condition: service_started
-  # grafana:
-  #   image: grafana/grafana:11.4.0
-  #   ports:
-  #     - "127.0.0.1:3000:3000"
-  #   environment:
-  #     - GF_SECURITY_ADMIN_USER=admin
-  #     - GF_SECURITY_ADMIN_PASSWORD=admin
-  #     - GF_AUTH_ANONYMOUS_ENABLED=true
-  #     - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-  #   volumes:
-  #     - ./docker/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
-  #   depends_on:
-  #     prometheus:
-  #       condition: service_started
-
 volumes:
   pgdata:
   redis-data:
-  mcp-typescript-node-modules:
-  # -- Development: uncomment if using source mounts --
-  # venv:
-  # prometheus-data:

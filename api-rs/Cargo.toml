@@ -1,0 +1,36 @@
+[package]
+name = "honcho-api-rs"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "honcho-api-rs"
+path = "src/main.rs"
+
+[[bin]]
+name = "honcho-deriver"
+path = "src/bin/deriver.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+hmac = "0.12"
+http = "1"
+rand = "0.8"
+redis = { version = "0.27", features = ["tokio-comp"] }
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate"] }
+thiserror = "2"
+tiktoken-rs = "0.6"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
