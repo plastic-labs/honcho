@@ -265,7 +265,16 @@ fn try_complete_structure(json_str: &str, tokens: &[Token]) -> Option<String> {
     match last_token.ttype {
         TokType::Comma => {
             // After comma, try removing the trailing comma first.
-            let trimmed = json_str.trim_end().trim_end_matches(',');
+            let without_ws = json_str.trim_end();
+            let trimmed = without_ws.trim_end_matches(',');
+            if trimmed.len() == without_ws.len() {
+                // The last *token* is a comma but the string does not actually
+                // end with one (trailing untokenized text, e.g. prose). Trimming
+                // removes nothing, so recursing on the identical string would
+                // loop forever — Python is bounded here only by RecursionError,
+                // which the Rust port lacks. Give up on this strategy instead.
+                return None;
+            }
             try_contextual_closure_repair(trimmed)
         }
         TokType::Colon => {
@@ -524,6 +533,19 @@ mod tests {
         assert!(validate_and_repair_json(&trailing).is_ok());
         let continuation = format!("{{\"a\":[{}", "[1],".repeat(50_000));
         assert!(validate_and_repair_json(&continuation).is_ok());
+    }
+
+    #[test]
+    fn repair_terminates_on_comma_token_without_trailing_comma() {
+        // The actual deriver crash: the LLM returned markdown prose (json_mode
+        // ignored), `repair_json_value` gave up (empty), and comprehensive repair
+        // ran. `try_complete_structure` saw a comma as the last *token* but the
+        // string ended in text, so trimming the (absent) trailing comma changed
+        // nothing and it recursed on the identical string forever — overflowing
+        // the worker stack. The progress check must make this terminate. The test
+        // returning at all (no overflow/abort) is the assertion.
+        let prose = "- On June 25, 2026, codex ran tests, fmt, and clippy on the `storage` package.\n- It also touched `agent-core`, `tool-registry`, and other modules, repeatedly.";
+        let _ = validate_and_repair_json(prose);
     }
 
     #[test]
