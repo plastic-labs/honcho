@@ -3,6 +3,9 @@ FROM rust:1-bookworm AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+# sqlx::migrate!("./migrations") embeds these at COMPILE time, so they must be
+# present before `cargo build`.
+COPY migrations ./migrations
 RUN cargo build --release
 
 FROM debian:bookworm-slim

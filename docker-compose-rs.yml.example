@@ -2,8 +2,10 @@
 #
 # This brings up the Rust port end to end: the API server (honcho-api-rs) and
 # the queue worker (honcho-deriver), both built from ./api-rs, plus the Rust
-# MCP server, Postgres (pgvector) and Redis. There is NO Python service here —
-# for the Python stack use docker-compose.yml.example instead.
+# MCP server, Postgres (pgvector) and Redis. There is NO Python anywhere — the
+# schema is provisioned by the Rust API itself via embedded sqlx migrations
+# (ported 1:1 from the Python Alembic migrations). For the Python stack use
+# docker-compose.yml.example instead.
 #
 # Usage:
 #   cp docker-compose-rs.yml.example docker-compose-rs.yml
@@ -18,35 +20,17 @@
 # this worker alongside the Python deriver on the same DB.
 
 services:
-  # One-shot schema provisioning. The Rust stack does NOT run migrations; it
-  # reuses the Python alembic migrations via this short-lived job so the schema
-  # is byte-identical to the Python deployment. It runs, applies migrations,
-  # and exits; api/deriver wait for it to complete successfully. This is the
-  # one piece of Python in the otherwise all-Rust stack.
-  migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: ["/app/.venv/bin/python", "scripts/provision_db.py"]
-    depends_on:
-      database:
-        condition: service_healthy
-    environment:
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - DB_SCHEMA=${DB_SCHEMA:-public}
-    env_file:
-      - path: .env
-        required: false
-    restart: "no"
-
   api:
     build:
       context: ./api-rs
       dockerfile: Dockerfile
     command: ["honcho-api-rs"]
+    # honcho-api-rs applies the embedded sqlx migrations on startup (the schema
+    # is identical to the Python Alembic head), then serves. The deriver waits
+    # for it to become healthy, so the schema is in place before any worker
+    # touches the queue. Set RUST_API_RUN_MIGRATIONS=false to manage schema
+    # out of band.
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       database:
         condition: service_healthy
       redis:
@@ -92,8 +76,6 @@ services:
     # summary, reconciler, webhook and dream work units.
     command: ["honcho-deriver"]
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       api:
         condition: service_healthy
       database:

@@ -27,6 +27,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         })
         .connect(&config.database_url)
         .await?;
+
+    // Apply pending schema migrations before serving, mirroring the Python
+    // entrypoint (`scripts/provision_db.py` -> `alembic upgrade head`). The
+    // migrations are embedded at compile time from ./migrations and run inside
+    // the configured search_path schema (set by the pool's after_connect hook),
+    // so this honours DB_SCHEMA exactly like the Python provisioner. Opt out
+    // with RUST_API_RUN_MIGRATIONS=false to manage schema out of band.
+    let run_migrations = std::env::var("RUST_API_RUN_MIGRATIONS")
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "false" | "0" | "no"
+            )
+        })
+        .unwrap_or(true);
+    if run_migrations {
+        tracing::info!("applying database migrations");
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        tracing::info!("database migrations up to date");
+    }
+
     let bind_address = config.bind_address;
     let embedding = config.embedding_config();
     let dream_enabled = config.dream_enabled;
