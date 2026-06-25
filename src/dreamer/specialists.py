@@ -292,6 +292,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                     parent_category="dream",
                     agent_type=self.name,
                     run_id=run_id,
+                    # Root span per specialist run. parent_span_id stays None for
+                    # now; wiring specialists as children of a dream-level trace
+                    # is forking (out of scope), but the field is ready for it.
+                    trace_id=run_id,
+                    span_id=run_id,
                     observer=observer,
                     observed=observed,
                     track_name=f"Dreamer/{self.name}",

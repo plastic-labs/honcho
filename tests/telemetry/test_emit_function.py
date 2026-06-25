@@ -314,6 +314,11 @@ class TestInitializeTelemetryEvents:
             mock_settings.TELEMETRY.FLUSH_THRESHOLD = 50
             mock_settings.TELEMETRY.MAX_RETRIES = 3
             mock_settings.TELEMETRY.MAX_BUFFER_SIZE = 10000
+            # This test only covers the primary emitter. Pin trace payloads off
+            # so we don't fall into the trace branch and start a *real* trace
+            # emitter + register a real TraceExporter (a MagicMock here is
+            # truthy) — that global state would leak into other tests.
+            mock_settings.TELEMETRY.TRACE_PAYLOADS = False
             mock_init.return_value = AsyncMock()
 
             await initialize_telemetry_events()

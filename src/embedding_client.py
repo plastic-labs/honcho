@@ -88,6 +88,7 @@ def _publish_embedding_event(
             get_embedding_call_purpose,
             get_embedding_parent_category,
             get_embedding_run_id,
+            get_embedding_session_id,
             get_embedding_workspace_name,
         )
 
@@ -121,6 +122,29 @@ def _publish_embedding_event(
                 run_id=get_embedding_run_id(),
             )
         )
+
+        # Trace stream (ground-truth) — gated on payload tracing. Joins the
+        # embedding to the driving agent run: dialectic sets run_id == trace_id
+        # == span_id, so an embedding made in its prefetch nests under that
+        # run's trace and carries its session.
+        if settings.TELEMETRY.TRACE_PAYLOADS:
+            from src.telemetry.events import EmbeddingCallTracedEvent, emit_trace
+
+            run_id = get_embedding_run_id()
+            emit_trace(
+                EmbeddingCallTracedEvent(
+                    trace_id=run_id,
+                    span_id=run_id,
+                    session_id=get_embedding_session_id(),
+                    call_purpose=purpose_slug,
+                    parent_category=get_embedding_parent_category(),
+                    provider=provider,
+                    model=model,
+                    provider_input_tokens=input_tokens_estimate,
+                    provider_output_tokens=0,
+                    input_count=input_count,
+                )
+            )
     except Exception:  # pragma: no cover - telemetry must not raise
         logger.debug("Failed to emit EmbeddingCallCompletedEvent", exc_info=True)
 

@@ -2523,8 +2523,13 @@ def _begin_tool_observation(tool_name: str, tool_input: dict[str, Any]) -> Any:
     Auto-parents under the active step span (else standalone). Returns a handle
     (closed by `_finish_tool_observation`) or None when disabled/setup fails.
     All tools are ``as_type="tool"`` — they share one generic dispatcher.
+
+    Only fires in legacy *inline* mode. In exporter mode there's no live span
+    context to parent under, so this would emit a rootless tool trace per call;
+    the LangfuseExporter already projects tool spans (from ``output_tool_calls``)
+    nested under the step span, so a live observation here just double-emits.
     """
-    if not settings.LANGFUSE_PUBLIC_KEY:
+    if not settings.langfuse_inline_enabled:
         return None
     try:
         from langfuse import get_client

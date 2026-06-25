@@ -68,6 +68,7 @@ class DialecticAgent:
         observed_peer_card: list[str] | None = None,
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
+        session_id: str | None = None,
     ):
         """
         Initialize the dialectic agent.
@@ -81,9 +82,12 @@ class DialecticAgent:
             observed_peer_card: Biographical information about the observed peer
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
             reasoning_level: Level of reasoning to apply
+            session_id: Opaque Session.id (nanoid PK, NOT session_name) used as the
+                trace session grouping key. None for global queries.
         """
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
+        self.session_id: str | None = session_id
         self.observer: str = observer
         self.observed: str = observed
         self.observer_peer_card: list[str] | None = observer_peer_card
@@ -179,6 +183,7 @@ class DialecticAgent:
                 workspace_name=self.workspace_name,
                 run_id=self._run_id,
                 parent_category="dialectic",
+                session_id=self.session_id,
             ):
                 query_embedding = await embedding_client.embed(query)
 
@@ -316,6 +321,14 @@ class DialecticAgent:
             parent_category="dialectic",
             agent_type="dialectic",
             run_id=self._run_id,
+            # Root span of this dialectic invocation. Reuse the already-minted
+            # run_id so trace_id == span_id == run_id — the run-keyed CloudEvents
+            # stay byte-for-byte unchanged.
+            trace_id=self._run_id,
+            span_id=self._run_id,
+            # Honcho Session.id (conversation grouping). None for global queries.
+            # Single-turn today; future-proofs multi-turn conversation threading.
+            session_id=self.session_id,
             peer_name=self.observed,
             track_name=track_name,
         )

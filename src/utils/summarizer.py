@@ -6,6 +6,7 @@ from functools import cache
 from inspect import cleandoc as c
 from typing import TypedDict
 
+from nanoid import generate as generate_nanoid
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -219,6 +220,10 @@ async def create_short_summary(
         formatted_messages, output_words, previous_summary_text
     )
 
+    # Mint a root span id (run_id stays None — single-shot). track_name names the
+    # trace + generation. No session_id: a summary is a background job, not part
+    # of a conversation thread, so it must not fold into a Langfuse session.
+    trace_id = generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
         prompt=prompt,
@@ -227,6 +232,9 @@ async def create_short_summary(
             workspace_name=workspace_name,
             call_purpose=CallPurpose.SUMMARY_SHORT.value,
             parent_category="summary",
+            trace_id=trace_id,
+            span_id=trace_id,
+            track_name="Short Summary",
         ),
     )
 
@@ -251,6 +259,10 @@ async def create_long_summary(
         formatted_messages, output_words, previous_summary_text
     )
 
+    # Mint a root span id (run_id stays None — single-shot). track_name names the
+    # trace + generation. No session_id: a summary is a background job, not part
+    # of a conversation thread, so it must not fold into a Langfuse session.
+    trace_id = generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
         prompt=prompt,
@@ -259,6 +271,9 @@ async def create_long_summary(
             workspace_name=workspace_name,
             call_purpose=CallPurpose.SUMMARY_LONG.value,
             parent_category="summary",
+            trace_id=trace_id,
+            span_id=trace_id,
+            track_name="Long Summary",
         ),
     )
 

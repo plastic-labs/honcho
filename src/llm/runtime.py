@@ -33,14 +33,6 @@ logger = logging.getLogger(__name__)
 # ContextVar tracking the current retry attempt for provider switching.
 current_attempt: ContextVar[int] = ContextVar("current_attempt", default=0)
 
-# True while a `LangfuseAgentRun` handle is live (start → end). Set by
-# `start_langfuse_agent_run`, reset by `LangfuseAgentRun.end`. Used by
-# `annotate_current_langfuse_trace` to decide whether the current generation
-# is the trace root (single-shot callers like the deriver — stamp trace attrs)
-# or nested under an active run (multi-turn / streaming — skip trace attrs;
-# the run span already carries them via `propagate_attributes`).
-_in_agent_run: ContextVar[bool] = ContextVar("_in_agent_run", default=False)
-
 
 def annotate_current_langfuse_trace(
     provider: ModelTransport,
@@ -56,16 +48,22 @@ def annotate_current_langfuse_trace(
     callers — deriver, summarizer), this generation IS the trace root, so we
     also stamp the trace attrs.
 
+    "Nested" is derived from the explicit span tree: a call with a
+    `parent_span_id` is running under a run span (multi-turn / streaming),
+    so we skip the trace attrs. At the root (`parent_span_id is None` —
+    deriver/summarizer single-shot calls) this generation is the trace root.
+    This replaces the old `_in_agent_run` contextvar.
+
     Note: `model`/`metadata` are set on every call regardless of `inside_run`
     so multi-turn iterations no longer lose provider/model attribution.
     """
-    if not settings.LANGFUSE_PUBLIC_KEY:
+    if not settings.langfuse_inline_enabled:
         return
 
     try:
         from langfuse import get_client, propagate_attributes
 
-        inside_run = _in_agent_run.get()
+        inside_run = telemetry is not None and telemetry.parent_span_id is not None
         gen_metadata = _step_metadata(telemetry) if telemetry is not None else {}
         gen_metadata["provider"] = str(provider)
         gen_metadata["model"] = str(model)
@@ -76,7 +74,7 @@ def annotate_current_langfuse_trace(
         )
 
         if not inside_run:
-            run_id = telemetry.run_id if telemetry is not None else None
+            session_id = telemetry.span_identity() if telemetry is not None else None
             trace_name = telemetry.track_name if telemetry is not None else None
             trace_metadata: dict[str, str] = dict(gen_metadata)
             if telemetry is None:
@@ -87,7 +85,7 @@ def annotate_current_langfuse_trace(
             # dead code — the enter-time side effect is the point.
             with propagate_attributes(
                 user_id=str(settings.NAMESPACE),
-                session_id=run_id,
+                session_id=session_id,
                 trace_name=trace_name,
                 metadata=trace_metadata,
             ):
@@ -157,6 +155,11 @@ def _base_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
         ("observer", telemetry.observer),
         ("observed", telemetry.observed),
         ("peer_name", telemetry.peer_name),
+        # OTel span-tree ids so the Langfuse UI carries them and the Parquet
+        # `trace_id` and Langfuse `session_id` are the same id (cross-linkable).
+        ("trace_id", telemetry.trace_id),
+        ("span_id", telemetry.span_id),
+        ("parent_span_id", telemetry.exported_parent_span_id()),
     ):
         if value is not None:
             metadata[key] = str(value)
@@ -167,10 +170,13 @@ def _step_metadata(
     telemetry: LLMTelemetryContext,
     base: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Per-step metadata: ``base`` (or freshly computed) plus ``iteration``."""
+    """Per-step metadata: ``base`` (or freshly computed) plus the per-step
+    ``iteration`` / ``step_seq`` / ``attempt`` counters."""
     metadata = dict(base) if base is not None else _base_metadata(telemetry)
     if telemetry.iteration is not None:
         metadata["iteration"] = str(telemetry.iteration)
+    metadata["step_seq"] = str(telemetry.step_seq)
+    metadata["attempt"] = str(telemetry.attempt)
     return metadata
 
 
@@ -191,7 +197,6 @@ class LangfuseAgentRun:
 
     span: Any  # LangfuseSpan; opaque to keep src/llm/ free of langfuse imports.
     _stack: ExitStack
-    _run_token: Any
     _ended: bool = field(default=False)
 
     def update(self, **kwargs: Any) -> None:
@@ -217,12 +222,6 @@ class LangfuseAgentRun:
             self._stack.close()
         except Exception as exc:  # pragma: no cover - best-effort telemetry
             logger.debug("Failed to close Langfuse run span: %s", exc)
-        try:
-            _in_agent_run.reset(self._run_token)
-        except (ValueError, LookupError) as exc:  # pragma: no cover
-            # ContextVar.reset can raise if end() runs in a different async
-            # context than start(); telemetry must not fail user code.
-            logger.debug("Failed to reset _in_agent_run: %s", exc)
 
 
 def start_langfuse_agent_run(
@@ -230,13 +229,16 @@ def start_langfuse_agent_run(
 ) -> LangfuseAgentRun | None:
     """Open the one run-level Langfuse trace per agentic run, imperatively.
 
-    Returns ``None`` when Langfuse is disabled or there's no ``run_id``
-    (single-shot callers — those self-stamp via
-    ``annotate_current_langfuse_trace``). When non-None, the caller MUST
+    Returns ``None`` when Langfuse is disabled or there's no span identity
+    (single-shot callers without a ``span_id``/``run_id`` — those self-stamp
+    via ``annotate_current_langfuse_trace``). When non-None, the caller MUST
     eventually call ``.end()`` — typically in a ``finally`` block, or by
     transferring ownership to the streaming wrapper.
     """
-    if not settings.LANGFUSE_PUBLIC_KEY or telemetry is None or not telemetry.run_id:
+    if not settings.langfuse_inline_enabled or telemetry is None:
+        return None
+    session_id = telemetry.span_identity()
+    if not session_id:
         return None
     stack = ExitStack()
     try:
@@ -248,7 +250,7 @@ def start_langfuse_agent_run(
         stack.enter_context(
             propagate_attributes(
                 user_id=str(settings.NAMESPACE),
-                session_id=telemetry.run_id,
+                session_id=session_id,
                 trace_name=name,
                 metadata=_base_metadata(telemetry),
             )
@@ -258,8 +260,7 @@ def start_langfuse_agent_run(
         stack.close()
         return None
 
-    run_token = _in_agent_run.set(True)
-    return LangfuseAgentRun(span=span, _stack=stack, _run_token=run_token)
+    return LangfuseAgentRun(span=span, _stack=stack)
 
 
 @dataclass
@@ -328,9 +329,11 @@ def start_langfuse_agent_step(
     name: str, telemetry: LLMTelemetryContext | None
 ) -> LangfuseAgentStep | None:
     """Open a per-iteration step span, imperatively. Returns ``None`` when
-    Langfuse is disabled or there's no ``run_id`` (no agent run to nest under).
+    Langfuse is disabled or there's no span identity (no agent run to nest under).
     """
-    if not settings.LANGFUSE_PUBLIC_KEY or telemetry is None or not telemetry.run_id:
+    if not settings.langfuse_inline_enabled or telemetry is None:
+        return None
+    if not telemetry.span_identity():
         return None
     stack = ExitStack()
     try:

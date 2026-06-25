@@ -25,6 +25,7 @@ from src.telemetry.logging import conditional_observe
 from .backend import CompletionResult as BackendCompletionResult
 from .backend import StreamChunk as BackendStreamChunk
 from .backend import ToolCallResult
+from .capture import build_captured_call, dispatch_captured_call, has_exporters
 from .registry import CLIENTS, backend_for_provider
 from .request_builder import execute_completion, execute_stream
 from .runtime import (
@@ -189,7 +190,7 @@ def _emit_llm_call_completed(
                 call_purpose=call_purpose,
                 parent_category=(telemetry.parent_category if telemetry else None),
                 transport=provider,
-                provider_label=_infer_provider_label(provider, model, plan),
+                provider_label=infer_provider_label(provider, model, plan),
                 model=model,
                 effective_max_output_tokens=max_tokens,
                 provider_input_tokens=(result.input_tokens if result else 0),
@@ -217,7 +218,7 @@ def _emit_llm_call_completed(
         logger.debug("Failed to emit LLMCallCompletedEvent", exc_info=True)
 
 
-def _infer_provider_label(
+def infer_provider_label(
     _transport: ModelTransport, model: str, plan: AttemptPlan | None
 ) -> str | None:
     """Best-effort vendor inference for relay setups.
@@ -241,6 +242,50 @@ def _infer_provider_label(
     if base_url and "openrouter" in base_url.lower():
         return "openrouter"
     return None
+
+
+def _maybe_dispatch_capture(
+    *,
+    plan: AttemptPlan | None,
+    telemetry: LLMTelemetryContext | None,
+    provider: ModelTransport,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    tool_choice: Any,
+    result: BackendCompletionResult | None,
+    error: BaseException | None,
+) -> None:
+    """Build a CapturedLLMCall and fan it out to registered exporters.
+
+    No-op (and no hashing cost) when payload capture is off — `has_exporters()`
+    is checked BEFORE building. Best-effort: never raises into the call path.
+    Only the non-stream path calls this; streamed calls capture at stream
+    finalization (the wrapper drain), where the full text/output is known.
+    """
+    if not has_exporters():
+        return
+    try:
+        outcome = _outcome_from_error(error)
+        finish_reason = result.finish_reason if result is not None else outcome
+        dispatch_captured_call(
+            build_captured_call(
+                telemetry=telemetry,
+                transport=str(provider),
+                provider_label=infer_provider_label(provider, model, plan),
+                model=model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                result=result,
+                attempt=plan.attempt if plan is not None else 1,
+                was_fallback=plan.is_fallback if plan is not None else False,
+                was_stream=False,
+                finish_reason=finish_reason,
+            )
+        )
+    except Exception:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to dispatch CapturedLLMCall", exc_info=True)
 
 
 def completion_result_to_response(
@@ -549,6 +594,19 @@ async def honcho_llm_call_inner(
             has_tools=bool(tools),
             was_stream=False,
             outcome=_outcome_from_error(error),
+            result=backend_result,
+            error=error,
+        )
+        # Replay-grade content capture (separate from the accounting event
+        # above). No-op when payload capture is off.
+        _maybe_dispatch_capture(
+            plan=plan,
+            telemetry=telemetry,
+            provider=provider,
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
             result=backend_result,
             error=error,
         )
