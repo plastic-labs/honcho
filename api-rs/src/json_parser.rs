@@ -501,6 +501,19 @@ mod tests {
     }
 
     #[test]
+    fn repair_bounds_recursion_on_pathological_nesting() {
+        // A runaway-bracket LLM response (the kind that degenerate generation
+        // produces) used to recurse unbounded and overflow the deriver worker's
+        // 2 MB stack — `fatal runtime error: stack overflow, aborting`. The depth
+        // guard must turn that into a graceful, crash-free repair. The test
+        // passing at all (no abort) is the assertion; we also confirm the result
+        // is valid JSON.
+        let deep = "[".repeat(100_000);
+        let repaired = validate_and_repair_json(&deep).expect("deep input must not crash");
+        assert!(serde_json::from_str::<serde_json::Value>(&repaired).is_ok());
+    }
+
+    #[test]
     fn escape_unescaped_quotes_matches_python_lookaround() {
         assert_eq!(escape_unescaped_quotes("[1, 2, 3]"), "[1, 2, 3]");
         assert_eq!(escape_unescaped_quotes("{\"a\": 1}"), "{\\\"a\": 1}");

@@ -31,7 +31,19 @@ pub struct JsonParser {
     pub deferred_contexts: Vec<ContextValues>,
     pub stream_stable: bool,
     pub strict: bool,
+    /// Current recursion depth of `parse_json`. Python relies on `RecursionError`
+    /// to bound the recursive-descent repair; Rust has no such guard, so a
+    /// pathological / runaway-bracket LLM response would overflow the (2 MB)
+    /// worker thread stack and abort the process. This caps the depth instead.
+    pub depth: i64,
 }
+
+/// Maximum nesting depth for the recursive repair parser. Real JSON is shallow,
+/// and any *valid* input up to serde_json's own limit (128) is parsed before
+/// repair is ever attempted — so anything deeper that still needs repair is
+/// pathological. Capping turns a worker-killing stack overflow into a graceful
+/// truncation, mirroring how Python surfaces a caught `RecursionError`.
+const MAX_PARSE_DEPTH: i64 = 1000;
 
 impl JsonParser {
     pub fn new(json_str: &str) -> Self {
@@ -42,6 +54,7 @@ impl JsonParser {
             deferred_contexts: Vec::new(),
             stream_stable: false,
             strict: false,
+            depth: 0,
         }
     }
 
@@ -181,8 +194,26 @@ impl JsonParser {
         json
     }
 
-    /// Port of `JSONParser.parse_json` (no-schema path).
+    /// Depth-guarded entry to the recursive no-schema parse. Every nested value
+    /// (`parse_object`/`parse_array` → `parse_json`) flows through here, so this
+    /// is the single choke point at which recursion is bounded.
     pub fn parse_json(&mut self) -> Value {
+        self.depth += 1;
+        if self.depth > MAX_PARSE_DEPTH {
+            // Bail out of the whole parse: forcing the cursor to the end makes
+            // every enclosing parse_array/parse_object loop terminate and return
+            // its partial structure as the stack unwinds (no further recursion).
+            self.depth -= 1;
+            self.index = self.len();
+            return Value::String(String::new());
+        }
+        let result = self.parse_json_inner();
+        self.depth -= 1;
+        result
+    }
+
+    /// Port of `JSONParser.parse_json` (no-schema path).
+    fn parse_json_inner(&mut self) -> Value {
         if !self.deferred_contexts.is_empty() {
             let deferred = std::mem::take(&mut self.deferred_contexts);
             for &cv in &deferred {
