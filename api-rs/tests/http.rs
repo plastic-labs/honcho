@@ -42,6 +42,53 @@ async fn create_key_returns_disabled_when_auth_is_off() {
 }
 
 #[tokio::test]
+async fn get_representation_requires_auth() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: true,
+        jwt_secret: Some("secret".to_string()),
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/peers/peer-a/representation")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn get_representation_validates_search_top_k_bounds() {
+    // A peer-scoped token passes auth, so validation (422) fires before any DB
+    // access — proving the route is wired (no 404/405) and bounds are enforced.
+    let token =
+        create_hs256_token_for_test(&json!({"t": "", "w": "workspace-a", "p": "peer-a"}), "secret");
+    let state = AppState::for_test(AuthConfig {
+        use_auth: true,
+        jwt_secret: Some("secret".to_string()),
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/workspace-a/peers/peer-a/representation")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"search_top_k": 0}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "search_top_k must be between 1 and 100"})
+    );
+}
+
+#[tokio::test]
 async fn create_key_requires_admin_token_before_scope_validation() {
     let token = create_hs256_token_for_test(&json!({"t": "", "w": "workspace-a"}), "secret");
     let state = AppState::for_test(AuthConfig {

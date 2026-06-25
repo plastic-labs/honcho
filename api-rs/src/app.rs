@@ -266,6 +266,10 @@ pub fn build_router(state: AppState) -> Router {
             post(chat),
         )
         .route(
+            "/v3/workspaces/{workspace_id}/peers/{peer_id}/representation",
+            post(get_representation),
+        )
+        .route(
             "/v3/workspaces/{workspace_id}/sessions/list",
             post(list_sessions),
         )
@@ -1085,6 +1089,127 @@ struct DialecticBody {
     reasoning_level: Option<String>,
     #[serde(default)]
     stream: bool,
+}
+
+/// Request body for `get_representation`, porting Python
+/// `schemas.PeerRepresentationGet`. All fields optional; `max_conclusions`
+/// defaults to 25 when the key is omitted (an explicit `null` falls back to
+/// `WORKING_REPRESENTATION_MAX_OBSERVATIONS`, matching Pydantic + the handler).
+#[derive(Debug, serde::Deserialize)]
+struct PeerRepresentationGet {
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    search_query: Option<String>,
+    #[serde(default)]
+    search_top_k: Option<i64>,
+    #[serde(default)]
+    search_max_distance: Option<f64>,
+    #[serde(default)]
+    include_most_frequent: Option<bool>,
+    #[serde(default = "default_max_conclusions")]
+    max_conclusions: Option<i64>,
+}
+
+fn default_max_conclusions() -> Option<i64> {
+    Some(25)
+}
+
+/// `POST /v3/workspaces/{workspace_id}/peers/{peer_id}/representation` — return a
+/// curated subset of a peer's working representation, porting
+/// `routers/peers.py::get_representation`. `peer_id` is the observer; `target`
+/// (default `peer_id`) is the observed. With no `target` this is the omniscient
+/// representation of the peer; with a `session_id` it is scoped to that session.
+async fn get_representation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, peer_id)): Path<(String, String)>,
+    Json(body): Json<PeerRepresentationGet>,
+) -> Result<Json<Value>, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        Some(&peer_id),
+        None,
+    )?;
+
+    // Bounds-validate the optional knobs (Pydantic ge/le → 422), before any DB
+    // or embedding work.
+    if let Some(top_k) = body.search_top_k {
+        if !(1..=100).contains(&top_k) {
+            return Err(ApiError::Validation(
+                "search_top_k must be between 1 and 100".to_string(),
+            ));
+        }
+    }
+    if let Some(distance) = body.search_max_distance {
+        if !(0.0..=1.0).contains(&distance) {
+            return Err(ApiError::Validation(
+                "search_max_distance must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+    }
+    if let Some(max) = body.max_conclusions {
+        if !(1..=100).contains(&max) {
+            return Err(ApiError::Validation(
+                "max_conclusions must be between 1 and 100".to_string(),
+            ));
+        }
+    }
+
+    let observed = body.target.clone().unwrap_or_else(|| peer_id.clone());
+    let search_query = body.search_query.as_deref().filter(|text| !text.is_empty());
+
+    // Embed the curation query best-effort outside the DB session (a failed
+    // embed degrades to no semantic results, mirroring Python's suppressed
+    // embedding call).
+    let http = ReqwestHttp::default();
+    let embedding: Option<Vec<f32>> = match search_query {
+        Some(text) => {
+            use crate::dialectic::Embedder;
+            let embedder = crate::dialectic::OpenAiEmbedder {
+                http: &http,
+                credentials: Credentials::with_base_url(
+                    state.embedding.api_key.clone().unwrap_or_default(),
+                    state.embedding.base_url.clone(),
+                ),
+                model: state.embedding.model.clone(),
+                vector_dimensions: state.embedding.vector_dimensions,
+                send_dimensions: state.embedding.send_dimensions,
+                max_tokens: state.embedding.max_tokens,
+                transport: state.embedding.transport,
+            };
+            embedder.embed(text).await.ok()
+        }
+        None => None,
+    };
+
+    let max_observations = body
+        .max_conclusions
+        .unwrap_or(db::WORKING_REPRESENTATION_MAX_OBSERVATIONS);
+    let pool = state.pool()?;
+    let representation = db::query_working_representation(
+        pool,
+        &workspace_id,
+        &peer_id,
+        &observed,
+        body.session_id.as_deref(),
+        embedding.as_deref(),
+        search_query.is_some(),
+        body.search_top_k,
+        body.search_max_distance,
+        body.include_most_frequent.unwrap_or(false),
+        max_observations,
+    )
+    .await?;
+
+    Ok(Json(
+        json!({ "representation": representation.format_as_markdown(false) }),
+    ))
 }
 
 /// `POST /v3/workspaces/{workspace_id}/peers/{peer_id}/chat` — the dialectic
