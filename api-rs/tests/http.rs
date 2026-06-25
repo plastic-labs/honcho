@@ -89,6 +89,45 @@ async fn get_representation_validates_search_top_k_bounds() {
 }
 
 #[tokio::test]
+async fn get_peer_context_requires_auth() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: true,
+        jwt_secret: Some("secret".to_string()),
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::get("/v3/workspaces/workspace-a/peers/peer-a/context")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn get_peer_context_validates_search_top_k_bounds() {
+    let token =
+        create_hs256_token_for_test(&json!({"t": "", "w": "workspace-a", "p": "peer-a"}), "secret");
+    let state = AppState::for_test(AuthConfig {
+        use_auth: true,
+        jwt_secret: Some("secret".to_string()),
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::get("/v3/workspaces/workspace-a/peers/peer-a/context?search_top_k=0")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
 async fn create_key_requires_admin_token_before_scope_validation() {
     let token = create_hs256_token_for_test(&json!({"t": "", "w": "workspace-a"}), "secret");
     let state = AppState::for_test(AuthConfig {

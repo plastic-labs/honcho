@@ -270,6 +270,10 @@ pub fn build_router(state: AppState) -> Router {
             post(get_representation),
         )
         .route(
+            "/v3/workspaces/{workspace_id}/peers/{peer_id}/context",
+            get(get_peer_context),
+        )
+        .route(
             "/v3/workspaces/{workspace_id}/sessions/list",
             post(list_sessions),
         )
@@ -1210,6 +1214,114 @@ async fn get_representation(
     Ok(Json(
         json!({ "representation": representation.format_as_markdown(false) }),
     ))
+}
+
+/// Query params for `get_peer_context`, porting the `GET .../peers/{peer_id}/context`
+/// signature. Strings are parsed/bounds-checked by hand (like `GetContextQuery`)
+/// to produce faithful 422s. `include_most_frequent` defaults to true.
+#[derive(Debug, serde::Deserialize)]
+struct GetPeerContextQuery {
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    search_query: Option<String>,
+    #[serde(default)]
+    search_top_k: Option<String>,
+    #[serde(default)]
+    search_max_distance: Option<String>,
+    #[serde(default)]
+    include_most_frequent: Option<String>,
+    #[serde(default)]
+    max_conclusions: Option<String>,
+}
+
+/// `GET /v3/workspaces/{workspace_id}/peers/{peer_id}/context` — return a peer's
+/// curated context (working representation + peer card), porting
+/// `routers/peers.py::get_peer_context`. `peer_id` is the observer; `target`
+/// (default `peer_id`, i.e. self-observation) is the observed. Always global
+/// (never session-scoped). The GetContextEvent telemetry is omitted
+/// (observability-only).
+async fn get_peer_context(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((workspace_id, peer_id)): Path<(String, String)>,
+    Query(query): Query<GetPeerContextQuery>,
+) -> Result<Json<Value>, ApiError> {
+    authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        Some(&workspace_id),
+        Some(&peer_id),
+        None,
+    )?;
+
+    let search_query = query.search_query.as_deref().filter(|text| !text.is_empty());
+    let search_top_k = match query.search_top_k.as_deref() {
+        Some(raw) => Some(parse_query_int_bounded(raw, "search_top_k", 1, 100)?),
+        None => None,
+    };
+    let search_max_distance = match query.search_max_distance.as_deref() {
+        Some(raw) => Some(parse_query_float_bounded(raw, "search_max_distance", 0.0, 1.0)?),
+        None => None,
+    };
+    let include_most_frequent = match query.include_most_frequent.as_deref() {
+        Some(raw) => parse_query_bool(raw, "include_most_frequent")?,
+        None => true,
+    };
+    let max_conclusions = match query.max_conclusions.as_deref() {
+        Some(raw) => Some(parse_query_int_bounded(raw, "max_conclusions", 1, 100)?),
+        None => None,
+    };
+
+    let observed = query.target.clone().unwrap_or_else(|| peer_id.clone());
+
+    let http = ReqwestHttp::default();
+    let embedding: Option<Vec<f32>> = match search_query {
+        Some(text) => {
+            use crate::dialectic::Embedder;
+            let embedder = crate::dialectic::OpenAiEmbedder {
+                http: &http,
+                credentials: Credentials::with_base_url(
+                    state.embedding.api_key.clone().unwrap_or_default(),
+                    state.embedding.base_url.clone(),
+                ),
+                model: state.embedding.model.clone(),
+                vector_dimensions: state.embedding.vector_dimensions,
+                send_dimensions: state.embedding.send_dimensions,
+                max_tokens: state.embedding.max_tokens,
+                transport: state.embedding.transport,
+            };
+            embedder.embed(text).await.ok()
+        }
+        None => None,
+    };
+
+    let max_observations = max_conclusions.unwrap_or(db::WORKING_REPRESENTATION_MAX_OBSERVATIONS);
+    let pool = state.pool()?;
+    let representation = db::query_working_representation(
+        pool,
+        &workspace_id,
+        &peer_id,
+        &observed,
+        None, // peer context is global, not session-scoped
+        embedding.as_deref(),
+        search_query.is_some(),
+        search_top_k,
+        search_max_distance,
+        include_most_frequent,
+        max_observations,
+    )
+    .await?;
+
+    let peer_card = fetch_peer_card_list(pool, &workspace_id, &peer_id, &observed).await?;
+
+    Ok(Json(json!({
+        "peer_id": peer_id,
+        "target_id": observed,
+        "representation": representation.format_as_markdown(false),
+        "peer_card": peer_card,
+    })))
 }
 
 /// `POST /v3/workspaces/{workspace_id}/peers/{peer_id}/chat` — the dialectic
