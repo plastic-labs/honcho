@@ -325,6 +325,11 @@ pub struct HonchoCaller<'a, H: LlmHttp> {
     pub thinking_budget_tokens: Option<i64>,
     pub reasoning_effort: Option<String>,
     pub json_mode: bool,
+    /// An explicit provider `response_format` payload (e.g. the deriver's strict
+    /// `json_schema`), threaded into `extra_params` so the backend pins the
+    /// output shape. Takes precedence over `json_mode`. Mirrors Python's
+    /// `response_model` lowering to `response_format`.
+    pub response_format: Option<Value>,
     pub verbosity: Option<String>,
     /// The provider of the most recently dispatched attempt, for `provider()`
     /// (the tool loop reads it to shape the next assistant turn). Starts at the
@@ -353,6 +358,7 @@ impl<'a, H: LlmHttp> HonchoCaller<'a, H> {
             thinking_budget_tokens: None,
             reasoning_effort: None,
             json_mode: false,
+            response_format: None,
             verbosity: None,
             last_provider: Mutex::new(transport),
         }
@@ -395,6 +401,9 @@ impl<'a, H: LlmHttp> HonchoCaller<'a, H> {
 
             let mut call_extras = Map::new();
             call_extras.insert("json_mode".to_string(), json!(self.json_mode));
+            if let Some(response_format) = &self.response_format {
+                call_extras.insert("response_format".to_string(), response_format.clone());
+            }
             call_extras.insert(
                 "verbosity".to_string(),
                 self.verbosity

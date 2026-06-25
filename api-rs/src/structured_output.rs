@@ -6,10 +6,52 @@
 //! deriver shape), the Python `repair_response_model_json` deductive-patching is
 //! a no-op here and is omitted; everything else is faithful.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::json_parser::validate_and_repair_json;
 use crate::representation::PromptRepresentation;
+
+/// The OpenAI `response_format` payload that pins the deriver's structured output
+/// to the [`PromptRepresentation`] shape (`{"explicit": [{"content": str}]}`).
+///
+/// Ported from the Python deriver passing `response_model=PromptRepresentation`,
+/// which the OpenAI SDK lowers to a strict `json_schema`. Emitting this is what
+/// forces the model to return JSON instead of prose — bare `json_mode`
+/// (`{"type": "json_object"}`) is insufficient because the deriver prompt never
+/// names "JSON" (OpenAI rejects `json_object` without it) and conveys no shape.
+/// The field descriptions mirror Python's `PromptRepresentation` /
+/// `ExplicitObservationBase` so the model sees the same guidance.
+pub fn prompt_representation_response_format() -> Value {
+    json!({
+        "type": "json_schema",
+        "json_schema": {
+            "name": "PromptRepresentation",
+            "strict": true,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "explicit": {
+                        "type": "array",
+                        "description": "Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "string",
+                                    "description": "The explicit observation"
+                                }
+                            },
+                            "required": ["content"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["explicit"],
+                "additionalProperties": false
+            }
+        }
+    })
+}
 
 /// Port of `StructuredOutputFailurePolicy`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

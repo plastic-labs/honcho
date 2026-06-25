@@ -202,7 +202,14 @@ where
         base_model_config.clone(),
         max_tokens,
     );
+    // Force the PromptRepresentation shape via a strict json_schema response_format
+    // (mirroring Python's `response_model=PromptRepresentation`). `json_mode` stays
+    // on so any provider lacking response_format support — e.g. a Gemini fallback —
+    // still gets `response_mime_type: application/json`. Without this the model
+    // ignores json_mode, replies in prose, and the representation comes out empty.
     caller.json_mode = true;
+    caller.response_format =
+        Some(crate::structured_output::prompt_representation_response_format());
     let response = caller
         .complete_single(&call_messages)
         .await

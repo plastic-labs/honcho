@@ -2,8 +2,9 @@
 //! `src/llm/backends/openai.py`.
 //!
 //! Covers the network-free parts: cache-token extraction, reasoning
-//! content/details extraction, canonical→OpenAI tool conversion, and parsing a
-//! Chat Completions response into a [`CompletionResult`] (no `response_format`).
+//! content/details extraction, canonical→OpenAI tool conversion, structured-output
+//! enforcement (`response_format` / `json_mode`, threaded via `extra_params`), and
+//! parsing a Chat Completions response into a [`CompletionResult`].
 
 use serde_json::{Map, Value, json};
 
@@ -73,8 +74,9 @@ pub fn uses_max_completion_tokens(model: &str) -> bool {
         .any(|prefix| model == *prefix || model.starts_with(&format!("{prefix}-")))
 }
 
-/// Inputs for [`build_request`], mirroring the portable subset of `_build_params`
-/// (the `response_format` field is excluded).
+/// Inputs for [`build_request`], mirroring the portable subset of `_build_params`.
+/// `response_format` and `json_mode` are not separate fields here — they ride in
+/// `extra_params` (see [`build_request`]'s structured-output handling).
 #[derive(Debug, Clone)]
 pub struct RequestParams<'a> {
     pub model: &'a str,
@@ -92,7 +94,8 @@ pub struct RequestParams<'a> {
 /// Build the JSON body for the Chat Completions API, porting the deterministic
 /// `_build_params` (max-token field selection, temperature, reasoning effort,
 /// proxy `extra_body.reasoning.max_tokens`, stop, converted tools + tool_choice,
-/// and `top_p`/`frequency_penalty`/`presence_penalty`/`seed` passthrough).
+/// `top_p`/`frequency_penalty`/`presence_penalty`/`seed` passthrough, and the
+/// `response_format`/`json_mode` structured-output enforcement).
 pub fn build_request(params: &RequestParams<'_>) -> Value {
     let mut body = Map::new();
     body.insert("model".to_string(), json!(params.model));
@@ -139,6 +142,29 @@ pub fn build_request(params: &RequestParams<'_>) -> Value {
         if let Some(value) = params.extra_params.get(key) {
             body.insert(key.to_string(), value.clone());
         }
+    }
+
+    // Structured-output enforcement, porting the response_format branch of
+    // openai.py `complete`/`stream`: an explicit `response_format` (e.g. the
+    // deriver's strict `json_schema`, mirroring Python's `response_model`) wins;
+    // otherwise `json_mode` maps to `{"type": "json_object"}`. Dropping this is
+    // what let the deriver model reply with prose.
+    if let Some(response_format) = params
+        .extra_params
+        .get("response_format")
+        .filter(|value| !value.is_null())
+    {
+        body.insert("response_format".to_string(), response_format.clone());
+    } else if params
+        .extra_params
+        .get("json_mode")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        body.insert(
+            "response_format".to_string(),
+            json!({"type": "json_object"}),
+        );
     }
 
     Value::Object(body)
@@ -391,6 +417,65 @@ mod tests {
         assert_eq!(body["top_p"], json!(0.8));
         assert_eq!(body["seed"], json!(7));
         assert!(body.get("stop").is_none());
+    }
+
+    #[test]
+    fn build_request_threads_response_format_and_json_mode() {
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+
+        // An explicit response_format (the deriver's json_schema) is passed through.
+        let schema = json!({"type": "json_schema", "json_schema": {"name": "X"}});
+        let mut extra = Map::new();
+        extra.insert("response_format".to_string(), schema.clone());
+        extra.insert("json_mode".to_string(), json!(true));
+        let body = build_request(&RequestParams {
+            model: "gpt-5.4-mini",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        });
+        // Explicit response_format wins over json_mode.
+        assert_eq!(body["response_format"], schema);
+
+        // json_mode alone falls back to the json_object response format.
+        let mut json_only = Map::new();
+        json_only.insert("json_mode".to_string(), json!(true));
+        let body = build_request(&RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &json_only,
+        });
+        assert_eq!(body["response_format"], json!({"type": "json_object"}));
+
+        // json_mode=false emits nothing.
+        let mut json_off = Map::new();
+        json_off.insert("json_mode".to_string(), json!(false));
+        let body = build_request(&RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &json_off,
+        });
+        assert!(body.get("response_format").is_none());
     }
 
     #[test]
