@@ -194,6 +194,7 @@ where
 
     // Single LLM call (structured output): complete, then validate+repair the
     // returned JSON content into a PromptRepresentation.
+    tracing::info!(observed = %observed, msgs = sorted.len(), "deriver: calling LLM");
     let llm_start = Instant::now();
     let mut caller = HonchoCaller::new(
         ctx.http,
@@ -208,9 +209,14 @@ where
         .map_err(|e| sqlx::Error::Protocol(format!("deriver llm call failed: {e}")))?;
     let llm_duration = llm_start.elapsed().as_secs_f64() * 1000.0;
 
+    tracing::info!(
+        content_len = response.content.to_string().len(),
+        "deriver: parsing structured output"
+    );
     let prompt_repr =
         finalize_structured_output(&response.content, FailurePolicy::RepairThenEmpty)
             .unwrap_or_default();
+    tracing::info!("deriver: structured output parsed; saving representation");
 
     // Only the observed peer's own messages anchor the observations.
     let message_ids: Vec<i64> = sorted

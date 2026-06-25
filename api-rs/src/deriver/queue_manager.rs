@@ -148,6 +148,11 @@ where
             }
         };
 
+        tracing::info!(
+            task_type = %work_unit.task_type,
+            work_unit_key = %work_unit_key,
+            "processing work unit"
+        );
         let processed = match work_unit.task_type.as_str() {
             "representation" => self.drain_representation(&work_unit, &work_unit_key, &aqs_id).await,
             "deletion" | "summary" | "reconciler" | "webhook" | "dream" => {
@@ -239,6 +244,12 @@ where
                     break;
                 }
             };
+            tracing::info!(
+                task_type = %item.task_type,
+                item_id = %item.id,
+                message_id = ?item.message_id,
+                "processing queue item"
+            );
             // Dispatch by task type: summary + reconciler need the worker's LLM /
             // embedding collaborators; the other arms go through process_item.
             let outcome = match item.task_type.as_str() {

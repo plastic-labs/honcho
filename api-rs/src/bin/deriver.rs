@@ -109,7 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Arc::clone(&shutdown),
     ));
 
-    tracing::info!("deriver worker starting");
+    tracing::info!("deriver worker starting (build: depth-guard+itemtrace)");
     Arc::clone(&worker).run(shutdown).await;
     // The worker returns once shutdown is set; the scheduler observes the same
     // flag, so just await its exit.
