@@ -1360,6 +1360,17 @@ class VectorStoreSettings(HonchoSettings):
         return self
 
 
+class TraceViewerSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="TRACE_VIEWER_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    HOST: str = "127.0.0.1"
+    PORT: int = 8002
+    STORAGE_DIR: str = "./traces"
+    MAX_REQUEST_BYTES: int = 10 * 1024 * 1024  # 10 MB
+    VENDOR_CDN_BASE: str = "https://cdn.jsdelivr.net/npm"
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -1432,6 +1443,7 @@ class AppSettings(HonchoSettings):
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
+    TRACE_VIEWER: TraceViewerSettings = Field(default_factory=TraceViewerSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

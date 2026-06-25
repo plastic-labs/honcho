@@ -523,8 +523,12 @@ async def execute_tool_loop(
                     # pin to this exact client/model so we don't bounce back to
                     # primary after the tool loop settled on fallback.
                     winning_plan = get_attempt_plan()
+                    # +2 (not +1): the in-loop call we just made used iteration+1,
+                    # so the streamed tail needs the next ordinal — otherwise its
+                    # trace resource id collides with that call's. Mirrors the
+                    # synthesis path's distinct-next-value behavior.
                     stream_telemetry = _telemetry_for_iteration(
-                        telemetry, iteration + 1, step_seq=iteration + 1
+                        telemetry, iteration + 2, step_seq=iteration + 2
                     )
                     stream = stream_final_response(
                         winning_plan=winning_plan,

@@ -198,7 +198,9 @@ def emit_trace(event: BaseEvent) -> None:
             return
         emitter.emit(event)
     except Exception:  # pragma: no cover - best-effort telemetry
-        logger.debug("Failed to emit trace event %s", type(event).__name__)
+        logger.debug(
+            "Failed to emit trace event %s", type(event).__name__, exc_info=True
+        )
 
 
 async def initialize_telemetry_events() -> None:

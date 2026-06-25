@@ -113,7 +113,7 @@ class TestClipForTrace:
         content, truncated = clip_for_trace("x" * 1000)
         assert truncated is True
         assert content.endswith("…[truncated]")
-        assert len(content.encode("utf-8")) <= 32 + len("…[truncated]".encode())
+        assert len(content.encode("utf-8")) <= settings.TELEMETRY.TRACE_MAX_BYTES
 
     def test_leaves_structured_content_intact(self, monkeypatch: pytest.MonkeyPatch):
         from src.config import settings
