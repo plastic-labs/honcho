@@ -325,6 +325,10 @@ pub fn build_router(state: AppState) -> Router {
             get(list_webhook_endpoints).post(get_or_create_webhook_endpoint),
         )
         .route(
+            "/v3/workspaces/{workspace_id}/webhooks/test",
+            get(test_webhook),
+        )
+        .route(
             "/v3/workspaces/{workspace_id}/webhooks/{endpoint_id}",
             axum::routing::delete(delete_webhook_endpoint),
         )
@@ -1322,6 +1326,45 @@ async fn get_peer_context(
         "representation": representation.format_as_markdown(false),
         "peer_card": peer_card,
     })))
+}
+
+/// `GET /v3/workspaces/{workspace_id}/webhooks/test` — enqueue a `test.event`
+/// webhook for the workspace, porting `routers/webhooks.py::test_emit`. The
+/// deriver worker delivers it to the registered endpoints. Auth mirrors Python:
+/// any valid JWT, but a non-admin token whose workspace scope is set and does
+/// not match is rejected.
+async fn test_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let params = authorize(
+        &state.auth,
+        authorization_header(&headers),
+        false,
+        None,
+        None,
+        None,
+    )?;
+    if !params.admin.unwrap_or(false) {
+        if let Some(scope) = params.workspace.as_deref() {
+            if scope != workspace_id {
+                return Err(ApiError::Authentication(
+                    "Unable to publish test webhook".to_string(),
+                ));
+            }
+        }
+    }
+
+    // Mirrors `publish_webhook_event(TestEvent)` → `create_webhook_payload`:
+    // {event_type, data{workspace_id}} (TestEvent has no fields beyond the base
+    // workspace_id; `type` is excluded).
+    let payload = json!({
+        "event_type": "test.event",
+        "data": { "workspace_id": workspace_id },
+    });
+    db::enqueue_webhook_event(state.pool()?, &workspace_id, &payload).await?;
+    Ok(StatusCode::OK)
 }
 
 /// `POST /v3/workspaces/{workspace_id}/peers/{peer_id}/chat` — the dialectic

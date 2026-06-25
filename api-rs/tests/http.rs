@@ -89,6 +89,50 @@ async fn get_representation_validates_search_top_k_bounds() {
 }
 
 #[tokio::test]
+async fn test_webhook_requires_auth() {
+    let state = AppState::for_test(AuthConfig {
+        use_auth: true,
+        jwt_secret: Some("secret".to_string()),
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::get("/v3/workspaces/workspace-a/webhooks/test")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_webhook_rejects_mismatched_workspace_scope() {
+    // A non-admin token scoped to a different workspace is rejected before any
+    // enqueue, proving the route is wired and the scope check fires.
+    let token = create_hs256_token_for_test(&json!({"t": "", "w": "workspace-b"}), "secret");
+    let state = AppState::for_test(AuthConfig {
+        use_auth: true,
+        jwt_secret: Some("secret".to_string()),
+    });
+    let response = build_router(state)
+        .oneshot(
+            Request::get("/v3/workspaces/workspace-a/webhooks/test")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response_json(response).await,
+        json!({"detail": "Unable to publish test webhook"})
+    );
+}
+
+#[tokio::test]
 async fn get_peer_context_requires_auth() {
     let state = AppState::for_test(AuthConfig {
         use_auth: true,
