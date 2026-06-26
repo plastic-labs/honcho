@@ -102,6 +102,48 @@ def annotate_current_langfuse_trace(
         logger.debug("Failed to update Langfuse trace metadata: %s", exc)
 
 
+def annotate_current_generation_io(
+    *,
+    input: Any = None,  # noqa: A002 - mirrors langfuse's `input` kwarg name
+    output: Any = None,
+    model_parameters: dict[str, Any] | None = None,
+    usage_details: dict[str, Any] | None = None,
+) -> None:
+    """Set explicit input/output/model_parameters/usage on the current generation.
+
+    Used in place of ``@observe``'s auto-capture (disabled on
+    ``honcho_llm_call_inner``) so the provider client and api-key-bearing
+    ``ModelConfig`` arguments are never serialized into traces. Auto-capture
+    deep-copies those args, producing half-constructed clients whose teardown
+    raised ``AsyncHttpxClientWrapper ... no attribute '_state'`` /
+    ``BaseApiClient ... no attribute '_http_options'`` (HONCHO-4HA) and leaked
+    ``ModelConfig.api_key``. We instead hand Langfuse curated, serializable
+    values: ``messages`` in, response out, and the call's tuning knobs as
+    ``model_parameters`` — preserving (and tidying) full trace fidelity.
+
+    Best-effort: telemetry must never fail the LLM call.
+    """
+    if not settings.LANGFUSE_PUBLIC_KEY:
+        return
+    payload: dict[str, Any] = {}
+    if input is not None:
+        payload["input"] = input
+    if output is not None:
+        payload["output"] = output
+    if model_parameters:
+        payload["model_parameters"] = model_parameters
+    if usage_details:
+        payload["usage_details"] = usage_details
+    if not payload:
+        return
+    try:
+        from langfuse import get_client
+
+        get_client().update_current_generation(**payload)
+    except Exception as exc:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to set Langfuse generation IO: %s", exc)
+
+
 def _base_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
     """Static routing/attribution metadata (everything except ``iteration``).
 
@@ -480,6 +522,7 @@ __all__ = [
     "AttemptPlan",
     "LangfuseAgentRun",
     "LangfuseAgentStep",
+    "annotate_current_generation_io",
     "annotate_current_langfuse_trace",
     "current_attempt",
     "effective_config_for_call",
