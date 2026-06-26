@@ -1,0 +1,103 @@
+# Honcho NetworkPolicies
+#
+# Overall posture: default-deny all ingress within the honcho namespace, then
+# explicitly allow only the connections that need to exist. Egress is unrestricted
+# so that the API and Deriver can reach external LLM provider APIs.
+#
+# Egress is intentionally unrestricted: the API and Deriver pods must reach
+# external LLM provider APIs (Anthropic, Google, OpenAI) over HTTPS. Adding
+# egress policies would require listing all provider IP ranges, which are
+# not stable. In production, use a network proxy or egress gateway to audit
+# and control outbound traffic rather than restricting it at the pod level.
+#
+# Summary of allowed paths:
+#   [external / port-forward] ──► honcho-api:8000
+#   honcho-api                ──► postgres:5432
+#   honcho-api                ──► redis:6379
+#   honcho-deriver            ──► postgres:5432
+#   honcho-deriver            ──► redis:6379
+
+---
+# 1. Default deny — drop all ingress to every pod in the namespace.
+#    Subsequent policies punch specific holes in this baseline.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: honcho
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+# 2. Allow HTTP traffic into the API pods on port 8000.
+#    The empty `from` list means "from any source" — required for external
+#    traffic arriving via port-forward, NodePort, LoadBalancer, or Ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-ingress
+  namespace: honcho
+spec:
+  podSelector:
+    matchLabels:
+      app: honcho-api
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 8000
+
+---
+# 3. Allow only the API and Deriver pods to reach PostgreSQL on port 5432.
+#    All other ingress to postgres pods is blocked by the default-deny rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-from-honcho
+  namespace: honcho
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: honcho-api
+        - podSelector:
+            matchLabels:
+              app: honcho-deriver
+      ports:
+        - protocol: TCP
+          port: 5432
+
+---
+# 4. Allow only the API and Deriver pods to reach Redis on port 6379.
+#    All other ingress to redis pods is blocked by the default-deny rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-from-honcho
+  namespace: honcho
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: honcho-api
+        - podSelector:
+            matchLabels:
+              app: honcho-deriver
+      ports:
+        - protocol: TCP
+          port: 6379

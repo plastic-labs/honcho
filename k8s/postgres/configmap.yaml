@@ -1,0 +1,11 @@
+# Postgres init script — creates the pgvector extension when the data directory
+# is first initialized. The honcho API (provision_db.py / alembic) also runs
+# CREATE EXTENSION IF NOT EXISTS vector on startup, so this is belt-and-suspenders.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: honcho
+data:
+  init.sql: |
+    CREATE EXTENSION IF NOT EXISTS vector;

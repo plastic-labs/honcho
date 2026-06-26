@@ -1,0 +1,15 @@
+# Headless Service — required by the postgres StatefulSet for stable pod DNS.
+# With clusterIP: None, DNS for 'postgres' resolves directly to the pod IP.
+# For a single-replica StatefulSet this is transparent to clients.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: honcho
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
