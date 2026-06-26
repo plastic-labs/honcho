@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from pydantic import ConfigDict, Field, validate_call
 
 from .api_types import (
+    ConclusionLevel,
     ConclusionResponse,
     MessageCreateParams,
     MessageResponse,
@@ -1460,9 +1461,14 @@ class ConclusionScopeAio:
         size: int = 50,
         session: str | SessionBase | None = None,
         *,
+        level: ConclusionLevel | None = None,
         reverse: bool = False,
     ) -> AsyncPage[ConclusionResponse, Conclusion]:
-        """List conclusions in this scope asynchronously."""
+        """List conclusions in this scope asynchronously.
+
+        Pass ``level="explicit"`` to get only conclusions extracted directly
+        from messages (i.e. not derived during dreaming).
+        """
         await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
         filters: dict[str, Any] = {
@@ -1471,6 +1477,8 @@ class ConclusionScopeAio:
         }
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
+        if level is not None:
+            filters["level"] = level
 
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:

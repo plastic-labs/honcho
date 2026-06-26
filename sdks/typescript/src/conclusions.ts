@@ -3,6 +3,7 @@ import type { HonchoHTTPClient } from './http/client'
 import { Page } from './pagination'
 import type { Session } from './session'
 import type {
+  ConclusionLevel,
   ConclusionResponse,
   PageResponse,
   RepresentationOptions,
@@ -32,6 +33,12 @@ export class Conclusion {
   readonly observerId: string
   readonly observedId: string
   readonly sessionId: string | null
+  /**
+   * Reasoning level: 'explicit' conclusions are extracted directly from
+   * messages; 'deductive'/'inductive'/'contradiction' are derived during
+   * dreaming.
+   */
+  readonly level: ConclusionLevel
   readonly createdAt: string
 
   constructor(
@@ -40,13 +47,15 @@ export class Conclusion {
     observerId: string,
     observedId: string,
     sessionId: string | null,
-    createdAt: string
+    createdAt: string,
+    level: ConclusionLevel = 'explicit'
   ) {
     this.id = id
     this.content = content
     this.observerId = observerId
     this.observedId = observedId
     this.sessionId = sessionId
+    this.level = level
     this.createdAt = createdAt
   }
 
@@ -57,7 +66,8 @@ export class Conclusion {
       data.observer_id,
       data.observed_id,
       data.session_id,
-      data.created_at
+      data.created_at,
+      data.level
     )
   }
 
@@ -182,12 +192,16 @@ export class ConclusionScope {
    * @param options.page - Page number (1-indexed, default: 1)
    * @param options.size - Number of items per page (default: 50)
    * @param options.session - Optional session (ID string or Session object) to filter by
+   * @param options.level - Optional reasoning level to filter by. Use 'explicit'
+   *   to get only conclusions extracted directly from messages (i.e. not
+   *   derived during dreaming).
    * @returns Promise resolving to a Page of Conclusion objects
    */
   async list(options?: {
     page?: number
     size?: number
     session?: string | Session
+    level?: ConclusionLevel
     reverse?: boolean
   }): Promise<Page<Conclusion, ConclusionResponse>> {
     const resolvedSessionId = options?.session
@@ -201,6 +215,9 @@ export class ConclusionScope {
     }
     if (resolvedSessionId) {
       filters.session_id = resolvedSessionId
+    }
+    if (options?.level) {
+      filters.level = options.level
     }
     const reverse = options?.reverse
 

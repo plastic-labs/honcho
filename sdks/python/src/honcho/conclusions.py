@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from .api_types import ConclusionResponse, RepresentationResponse
+from .api_types import ConclusionLevel, ConclusionResponse, RepresentationResponse
 from .base import SessionBase
 from .http import routes
 from .pagination import SyncPage
@@ -43,6 +43,9 @@ class Conclusion:
         observer_id: The peer ID who made this conclusion
         observed_id: The peer ID this conclusion is about
         session_id: The session this conclusion relates to
+        level: Reasoning level ("explicit", "deductive", "inductive",
+            "contradiction"). "explicit" conclusions are extracted directly
+            from messages; the others are derived during dreaming.
         created_at: Timestamp for when the conclusion was created
     """
 
@@ -51,6 +54,7 @@ class Conclusion:
     observer_id: str
     observed_id: str
     session_id: str | None = None
+    level: ConclusionLevel = "explicit"
     created_at: datetime.datetime
 
     def __init__(
@@ -61,12 +65,14 @@ class Conclusion:
         observed_id: str,
         session_id: str | None,
         created_at: datetime.datetime,
+        level: ConclusionLevel = "explicit",
     ) -> None:
         self.id = id
         self.content = content
         self.observer_id = observer_id
         self.observed_id = observed_id
         self.session_id = session_id
+        self.level = level
         self.created_at = created_at
 
     @classmethod
@@ -78,6 +84,7 @@ class Conclusion:
             observer_id=data.observer_id,
             observed_id=data.observed_id,
             session_id=data.session_id,
+            level=data.level,
             created_at=data.created_at,
         )
 
@@ -169,6 +176,7 @@ class ConclusionScope:
         size: int = 50,
         session: str | SessionBase | None = None,
         *,
+        level: ConclusionLevel | None = None,
         reverse: bool = False,
     ) -> SyncPage[ConclusionResponse, Conclusion]:
         """
@@ -178,6 +186,9 @@ class ConclusionScope:
             page: Page number (1-indexed)
             size: Number of results per page
             session: Optional session (ID string or Session object) to filter by
+            level: Optional reasoning level to filter by. Use "explicit" to get
+                only conclusions extracted directly from messages (i.e. not
+                derived during dreaming).
             reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
@@ -191,6 +202,8 @@ class ConclusionScope:
         }
         if resolved_session_id:
             filters["session_id"] = resolved_session_id
+        if level is not None:
+            filters["level"] = level
 
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
