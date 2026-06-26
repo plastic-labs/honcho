@@ -29,6 +29,7 @@ from .registry import CLIENTS, backend_for_provider
 from .request_builder import execute_completion, execute_stream
 from .runtime import (
     AttemptPlan,
+    annotate_current_generation_io,
     annotate_current_langfuse_trace,
     effective_config_for_call,
 )
@@ -266,7 +267,18 @@ async def honcho_llm_call_inner(
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
 
 
-@conditional_observe(name="LLM Call", as_type="generation")
+@conditional_observe(
+    name="LLM Call",
+    as_type="generation",
+    # Disable @observe auto-capture: it would serialize `client_override` (a
+    # live AsyncOpenAI/genai client) and `selected_config` (carries api_key)
+    # into the span. Auto-capture deep-copies the client into a half-built
+    # object whose teardown raises `_state`/`_http_options` AttributeErrors
+    # (HONCHO-4HA) and leaks the key. We set curated input/output explicitly
+    # below via `annotate_current_generation_io`, preserving full fidelity.
+    capture_input=False,
+    capture_output=False,
+)
 async def honcho_llm_call_inner(
     provider: ModelTransport,
     model: str,
@@ -319,6 +331,10 @@ async def honcho_llm_call_inner(
 
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
+
+    # Explicit generation input (replaces @observe auto-capture). Set before
+    # the stream branch so it lands on the generation span for both paths.
+    annotate_current_generation_io(input=messages)
 
     backend = backend_for_provider(provider, client)
 
@@ -416,7 +432,12 @@ async def honcho_llm_call_inner(
             cache_policy=effective_config.cache_policy,
             extra_params=call_extras,
         )
-        return completion_result_to_response(backend_result)
+        response = completion_result_to_response(backend_result)
+        # Explicit generation output (replaces @observe auto-capture). The
+        # stream path closes this span before drain, so its output is stamped
+        # on the run-level span instead (StreamingResponseWithMetadata).
+        annotate_current_generation_io(output=response)
+        return response
     except BaseException as exc:
         error = exc
         raise

@@ -102,6 +102,39 @@ def annotate_current_langfuse_trace(
         logger.debug("Failed to update Langfuse trace metadata: %s", exc)
 
 
+def annotate_current_generation_io(
+    *,
+    input: Any = None,  # noqa: A002 - mirrors langfuse's `input` kwarg name
+    output: Any = None,
+) -> None:
+    """Set explicit input/output on the current Langfuse generation.
+
+    Used in place of ``@observe``'s auto-capture (disabled on
+    ``honcho_llm_call_inner``) so the provider client and api-key-bearing
+    ``ModelConfig`` arguments are never serialized into traces. Auto-capture
+    deep-copies those args, producing half-constructed clients whose teardown
+    raised ``AsyncHttpxClientWrapper ... no attribute '_state'`` /
+    ``BaseApiClient ... no attribute '_http_options'`` (HONCHO-4HA) and leaked
+    ``ModelConfig.api_key``. We hand Langfuse only the curated, serializable
+    ``messages`` in / response out, preserving full trace fidelity.
+
+    Best-effort: telemetry must never fail the LLM call.
+    """
+    if not settings.LANGFUSE_PUBLIC_KEY or (input is None and output is None):
+        return
+    try:
+        from langfuse import get_client
+
+        payload: dict[str, Any] = {}
+        if input is not None:
+            payload["input"] = input
+        if output is not None:
+            payload["output"] = output
+        get_client().update_current_generation(**payload)
+    except Exception as exc:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to set Langfuse generation IO: %s", exc)
+
+
 def _base_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
     """Static routing/attribution metadata (everything except ``iteration``).
 
@@ -480,6 +513,7 @@ __all__ = [
     "AttemptPlan",
     "LangfuseAgentRun",
     "LangfuseAgentStep",
+    "annotate_current_generation_io",
     "annotate_current_langfuse_trace",
     "current_attempt",
     "effective_config_for_call",

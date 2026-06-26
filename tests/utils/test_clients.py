@@ -960,11 +960,18 @@ class TestMainLLMCallFunction:
             assert captured["metadata"]["provider"] == "anthropic"
             assert captured["metadata"]["model"] == "claude-4-sonnet"
             # ...and the generation is named + carries per-call model/metadata.
-            mock_langfuse_client.update_current_generation.assert_called_once()
-            gen_kwargs = mock_langfuse_client.update_current_generation.call_args.kwargs
-            assert gen_kwargs["name"] == "Dialectic Agent LLM call"
-            assert gen_kwargs["model"] == "claude-4-sonnet"
-            assert gen_kwargs["metadata"]["provider"] == "anthropic"
+            gen_calls = mock_langfuse_client.update_current_generation.call_args_list
+            meta_kwargs = next(c.kwargs for c in gen_calls if "model" in c.kwargs)
+            assert meta_kwargs["name"] == "Dialectic Agent LLM call"
+            assert meta_kwargs["model"] == "claude-4-sonnet"
+            assert meta_kwargs["metadata"]["provider"] == "anthropic"
+            # Input/output are stamped explicitly: @observe auto-capture is
+            # disabled so the live client / api-key-bearing config never reach
+            # the trace (HONCHO-4HA), with no loss of trace fidelity.
+            input_kwargs = next(c.kwargs for c in gen_calls if "input" in c.kwargs)
+            assert input_kwargs["input"] == [{"role": "user", "content": "Hello"}]
+            output_kwargs = next(c.kwargs for c in gen_calls if "output" in c.kwargs)
+            assert output_kwargs["output"].content == "Named response"
 
     async def test_no_telemetry_still_stamps_trace_without_name(self):
         """Without telemetry, propagate_attributes still fires with namespace
@@ -1010,10 +1017,15 @@ class TestMainLLMCallFunction:
             assert captured["metadata"]["provider"] == "anthropic"
             # Generation gets model + metadata even without a track_name — only
             # the name kwarg stays None.
-            mock_langfuse_client.update_current_generation.assert_called_once()
-            gen_kwargs = mock_langfuse_client.update_current_generation.call_args.kwargs
-            assert gen_kwargs["name"] is None
-            assert gen_kwargs["model"] == "claude-4-sonnet"
+            gen_calls = mock_langfuse_client.update_current_generation.call_args_list
+            meta_kwargs = next(c.kwargs for c in gen_calls if "model" in c.kwargs)
+            assert meta_kwargs["name"] is None
+            assert meta_kwargs["model"] == "claude-4-sonnet"
+            # Input/output stamped explicitly (auto-capture disabled; HONCHO-4HA).
+            input_kwargs = next(c.kwargs for c in gen_calls if "input" in c.kwargs)
+            assert input_kwargs["input"] == [{"role": "user", "content": "Hello"}]
+            output_kwargs = next(c.kwargs for c in gen_calls if "output" in c.kwargs)
+            assert output_kwargs["output"].content == "Unnamed response"
 
 
 class TestEdgeCases:
