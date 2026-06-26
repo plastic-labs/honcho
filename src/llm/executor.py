@@ -46,6 +46,62 @@ logger = logging.getLogger(__name__)
 M = TypeVar("M", bound=BaseModel)
 
 
+# ModelConfig fields that must NEVER reach a trace: secrets and nested holders
+# of secrets. Everything else on the config is a safe tuning knob and is dumped
+# automatically — so new knobs get traced without touching this code. Keep this
+# a deny-list (small, stable) rather than an allow-list (drifts with the model).
+_UNSAFE_CONFIG_FIELDS = frozenset(
+    {
+        "api_key",  # provider secret
+        "base_url",  # may embed credentials / private host
+        "fallback",  # ResolvedFallbackConfig carries its own api_key/base_url
+        "provider_params",  # opaque dict; can carry auth headers/keys
+    }
+)
+
+
+def _langfuse_model_parameters(
+    *,
+    max_tokens: int,
+    config: ModelConfig,
+    json_mode: bool,
+    verbosity: str | None,
+    stream: bool,
+    tools: list[dict[str, Any]] | None,
+    tool_choice: str | dict[str, Any] | None,
+    response_model: type[BaseModel] | None,
+) -> dict[str, Any]:
+    """Serializable tuning knobs for the Langfuse generation.
+
+    Surfaces everything @observe auto-capture used to show (temperature, tools,
+    ...) MINUS the live client and the secret-bearing config fields. We dump the
+    resolved `effective_config` and deny-list only `_UNSAFE_CONFIG_FIELDS`, so a
+    new ModelConfig knob is traced automatically — no allow-list to keep in sync.
+    `mode="json"` coerces enums/sub-models to JSON-safe values. See HONCHO-4HA.
+    """
+    params: dict[str, Any] = config.model_dump(
+        exclude=set(_UNSAFE_CONFIG_FIELDS), exclude_none=True, mode="json"
+    )
+    # Per-call extras that live outside ModelConfig.
+    params["max_tokens"] = max_tokens
+    params["stream"] = stream
+    params["json_mode"] = json_mode
+    if verbosity is not None:
+        params["verbosity"] = verbosity
+    if response_model is not None:
+        params["response_format"] = response_model.__name__
+    if tools:
+        params["tools"] = [
+            t.get("name") or t.get("function", {}).get("name") or "unknown"
+            for t in tools
+        ]
+    if tool_choice is not None:
+        params["tool_choice"] = (
+            tool_choice if isinstance(tool_choice, str) else str(tool_choice)
+        )
+    return params
+
+
 def _outcome_from_error(
     err: BaseException | None,
 ) -> Literal["success", "error", "cancelled"]:
@@ -332,10 +388,6 @@ async def honcho_llm_call_inner(
     if messages is None:
         messages = [{"role": "user", "content": prompt}]
 
-    # Explicit generation input (replaces @observe auto-capture). Set before
-    # the stream branch so it lands on the generation span for both paths.
-    annotate_current_generation_io(input=messages)
-
     backend = backend_for_provider(provider, client)
 
     effective_config = effective_config_for_call(
@@ -346,6 +398,23 @@ async def honcho_llm_call_inner(
         stop_seqs=stop_seqs,
         thinking_budget_tokens=thinking_budget_tokens,
         reasoning_effort=reasoning_effort,
+    )
+
+    # Explicit generation input + tuning knobs (replaces @observe auto-capture,
+    # which would serialize the live client / api key). Set before the stream
+    # branch so it lands on the generation span for both paths.
+    annotate_current_generation_io(
+        input=messages,
+        model_parameters=_langfuse_model_parameters(
+            max_tokens=max_tokens,
+            config=effective_config,
+            json_mode=json_mode,
+            verbosity=verbosity,
+            stream=stream,
+            tools=tools,
+            tool_choice=tool_choice,
+            response_model=response_model,
+        ),
     )
     # json_mode + verbosity are per-call transport toggles, not ModelConfig
     # knobs — they pass through extra_params. execute_completion merges

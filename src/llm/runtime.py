@@ -106,8 +106,9 @@ def annotate_current_generation_io(
     *,
     input: Any = None,  # noqa: A002 - mirrors langfuse's `input` kwarg name
     output: Any = None,
+    model_parameters: dict[str, Any] | None = None,
 ) -> None:
-    """Set explicit input/output on the current Langfuse generation.
+    """Set explicit input/output/model_parameters on the current generation.
 
     Used in place of ``@observe``'s auto-capture (disabled on
     ``honcho_llm_call_inner``) so the provider client and api-key-bearing
@@ -115,21 +116,26 @@ def annotate_current_generation_io(
     deep-copies those args, producing half-constructed clients whose teardown
     raised ``AsyncHttpxClientWrapper ... no attribute '_state'`` /
     ``BaseApiClient ... no attribute '_http_options'`` (HONCHO-4HA) and leaked
-    ``ModelConfig.api_key``. We hand Langfuse only the curated, serializable
-    ``messages`` in / response out, preserving full trace fidelity.
+    ``ModelConfig.api_key``. We instead hand Langfuse curated, serializable
+    values: ``messages`` in, response out, and the call's tuning knobs as
+    ``model_parameters`` — preserving (and tidying) full trace fidelity.
 
     Best-effort: telemetry must never fail the LLM call.
     """
-    if not settings.LANGFUSE_PUBLIC_KEY or (input is None and output is None):
+    if not settings.LANGFUSE_PUBLIC_KEY:
+        return
+    payload: dict[str, Any] = {}
+    if input is not None:
+        payload["input"] = input
+    if output is not None:
+        payload["output"] = output
+    if model_parameters:
+        payload["model_parameters"] = model_parameters
+    if not payload:
         return
     try:
         from langfuse import get_client
 
-        payload: dict[str, Any] = {}
-        if input is not None:
-            payload["input"] = input
-        if output is not None:
-            payload["output"] = output
         get_client().update_current_generation(**payload)
     except Exception as exc:  # pragma: no cover - best-effort telemetry
         logger.debug("Failed to set Langfuse generation IO: %s", exc)
