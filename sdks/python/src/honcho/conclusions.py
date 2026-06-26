@@ -199,21 +199,19 @@ class ConclusionScope:
         """
         self._honcho._ensure_workspace()
         resolved_session_id = resolve_id(session)
-        merged_filters: dict[str, Any] = {
+        filters = {
             "observer_id": self.observer,
             "observed_id": self.observed,
+            **({"session_id": resolved_session_id} if resolved_session_id else {}),
+            **(filters or {}),
         }
-        if resolved_session_id:
-            merged_filters["session_id"] = resolved_session_id
-        if filters:
-            merged_filters.update(filters)
 
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
         data = self._honcho._http.post(
             routes.conclusions_list(self.workspace_id),
-            body={"filters": merged_filters},
+            body={"filters": filters},
             query=query,
         )
 
@@ -228,7 +226,7 @@ class ConclusionScope:
                 next_query["reverse"] = "true"
             next_data = self._honcho._http.post(
                 routes.conclusions_list(self.workspace_id),
-                body={"filters": merged_filters},
+                body={"filters": filters},
                 query=next_query,
             )
             return SyncPage(next_data, ConclusionResponse, transform, fetch_next)
@@ -260,17 +258,16 @@ class ConclusionScope:
             List of matching Conclusion objects
         """
         self._honcho._ensure_workspace()
-        merged_filters: dict[str, Any] = {
+        filters = {
             "observer_id": self.observer,
             "observed_id": self.observed,
+            **(filters or {}),
         }
-        if filters:
-            merged_filters.update(filters)
 
         body: dict[str, Any] = {
             "query": query,
             "top_k": top_k,
-            "filters": merged_filters,
+            "filters": filters,
         }
         if distance is not None:
             body["distance"] = distance

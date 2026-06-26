@@ -1473,21 +1473,19 @@ class ConclusionScopeAio:
         """
         await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
-        merged_filters: dict[str, Any] = {
+        filters = {
             "observer_id": self._scope.observer,
             "observed_id": self._scope.observed,
+            **({"session_id": resolved_session_id} if resolved_session_id else {}),
+            **(filters or {}),
         }
-        if resolved_session_id:
-            merged_filters["session_id"] = resolved_session_id
-        if filters:
-            merged_filters.update(filters)
 
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
         data = await self._scope._honcho._async_http_client.post(
             routes.conclusions_list(self._scope.workspace_id),
-            body={"filters": merged_filters},
+            body={"filters": filters},
             query=query,
         )
 
@@ -1502,7 +1500,7 @@ class ConclusionScopeAio:
                 next_query["reverse"] = "true"
             next_data = await self._scope._honcho._async_http_client.post(
                 routes.conclusions_list(self._scope.workspace_id),
-                body={"filters": merged_filters},
+                body={"filters": filters},
                 query=next_query,
             )
             return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
@@ -1527,17 +1525,16 @@ class ConclusionScopeAio:
                 with this scope's observer/observed (e.g. ``{"level": "deductive"}``).
         """
         await self._scope._honcho._ensure_workspace_async()
-        merged_filters: dict[str, Any] = {
+        filters = {
             "observer_id": self._scope.observer,
             "observed_id": self._scope.observed,
+            **(filters or {}),
         }
-        if filters:
-            merged_filters.update(filters)
 
         body: dict[str, Any] = {
             "query": query,
             "top_k": top_k,
-            "filters": merged_filters,
+            "filters": filters,
         }
         if distance is not None:
             body["distance"] = distance

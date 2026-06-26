@@ -212,20 +212,16 @@ export class ConclusionScope {
         ? options.session
         : options.session.id
       : undefined
-    const mergedFilters: Record<string, unknown> = {
+    const filters: Record<string, unknown> = {
       observer_id: this.observer,
       observed_id: this.observed,
-    }
-    if (resolvedSessionId) {
-      mergedFilters.session_id = resolvedSessionId
-    }
-    if (options?.filters) {
-      Object.assign(mergedFilters, options.filters)
+      ...(resolvedSessionId ? { session_id: resolvedSessionId } : {}),
+      ...options?.filters,
     }
     const reverse = options?.reverse
 
     const response = await this._list({
-      filters: mergedFilters,
+      filters,
       page: options?.page ?? 1,
       size: options?.size ?? 50,
       reverse,
@@ -235,7 +231,7 @@ export class ConclusionScope {
       page: number,
       size: number
     ): Promise<PageResponse<ConclusionResponse>> => {
-      return this._list({ filters: mergedFilters, page, size, reverse })
+      return this._list({ filters, page, size, reverse })
     }
 
     return new Page(
@@ -263,19 +259,15 @@ export class ConclusionScope {
     distance?: number,
     filters?: Record<string, unknown>
   ): Promise<Conclusion[]> {
-    const mergedFilters: Record<string, unknown> = {
-      observer_id: this.observer,
-      observed_id: this.observed,
-    }
-    if (filters) {
-      Object.assign(mergedFilters, filters)
-    }
-
     const response = await this._query({
       query,
       top_k: topK,
       distance,
-      filters: mergedFilters,
+      filters: {
+        observer_id: this.observer,
+        observed_id: this.observed,
+        ...filters,
+      },
     })
 
     return (response ?? []).map((item) => Conclusion.fromApiResponse(item))
