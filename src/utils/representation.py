@@ -15,6 +15,32 @@ def _strip_microseconds_and_timezone(timestamp: datetime) -> datetime:
     return timestamp.replace(microsecond=0, tzinfo=None)
 
 
+def _normalize_observation_content(content: str) -> str:
+    """Normalize observation content for retrieval-time exact deduplication."""
+    return " ".join(content.casefold().split())
+
+
+def _dedupe_documents_for_representation(
+    documents: Sequence[models.Document],
+) -> list[models.Document]:
+    """
+    Remove exact duplicate observations before formatting LLM-facing context.
+
+    This is intentionally retrieval-time only: it does not mutate the database,
+    vector store, or source/premise links. Keep the first document in the input
+    order so semantic/recent/derived ranking remains stable.
+    """
+    seen: set[tuple[str, str]] = set()
+    deduped: list[models.Document] = []
+    for doc in documents:
+        key = (doc.level or "explicit", _normalize_observation_content(doc.content))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(doc)
+    return deduped
+
+
 def flatten_message_ids(
     message_ids: list[int] | list[list[int]] | list[tuple[int, int]],
 ) -> list[int]:
@@ -581,6 +607,7 @@ class Representation(BaseModel):
 
     @classmethod
     def from_documents(cls, documents: Sequence[models.Document]) -> "Representation":
+        documents = _dedupe_documents_for_representation(documents)
         return cls(
             explicit=[
                 ExplicitObservation(
