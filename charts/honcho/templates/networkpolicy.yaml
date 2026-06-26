@@ -1,0 +1,204 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.networkPolicy.defaultDeny }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "honcho.fullname" . }}-default-deny
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "honcho.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "honcho.fullname" . }}-api
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "api") | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- toYaml .Values.networkPolicy.apiIngressFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.targetPort }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        {{- range .Values.networkPolicy.dnsIpBlocks }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "redis") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.service.port }}
+    {{- end }}
+    {{- if .Values.cnpg.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "honcho.dbName" . }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+    {{- end }}
+    {{- if .Values.networkPolicy.allowExternalHttps }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+{{- if .Values.redis.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "honcho.fullname" . }}-redis
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "redis") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "api") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "deriver") | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "migration") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.service.port }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "honcho.fullname" . }}-migration
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "migration") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        {{- range .Values.networkPolicy.dnsIpBlocks }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "redis") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.service.port }}
+    {{- end }}
+    {{- if .Values.cnpg.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "honcho.dbName" . }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "honcho.fullname" . }}-deriver
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "deriver") | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        {{- range .Values.networkPolicy.dnsIpBlocks }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "redis") | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.redis.service.port }}
+    {{- end }}
+    {{- if .Values.cnpg.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: {{ include "honcho.dbName" . }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.database.port }}
+    {{- end }}
+    {{- if .Values.networkPolicy.allowExternalHttps }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+{{- end }}

@@ -116,6 +116,37 @@ docker compose logs deriver --tail 20
 
 For a full end-to-end test, see [Verify Your Setup](#verify-your-setup) below.
 
+## Kubernetes Helm Chart
+
+Honcho also includes a Helm chart for Kubernetes deployments. The chart deploys
+the API server, deriver worker, optional Redis, and a migration Job. It expects a
+PostgreSQL database with the `pgvector` extension.
+
+Create a runtime Secret with your database connection and LLM provider settings:
+
+```bash
+kubectl create namespace honcho
+kubectl create secret generic honcho-runtime \
+  --namespace honcho \
+  --from-literal=DB_CONNECTION_URI='postgresql+psycopg://postgres:postgres@postgres.example.com:5432/postgres' \
+  --from-literal=LLM_OPENAI_API_KEY='sk-...' \
+  --from-literal=AUTH_JWT_SECRET='replace-with-a-random-secret'
+```
+
+Install the chart:
+
+```bash
+helm install honcho ./charts/honcho \
+  --namespace honcho \
+  --set runtimeSecret.enabled=true \
+  --set runtimeSecret.name=honcho-runtime \
+  --set database.host=postgres.example.com
+```
+
+See [`charts/honcho/README.md`](../../../charts/honcho/README.md) for chart
+values, optional CloudNativePG support, ingress, NetworkPolicy, and monitoring
+configuration.
+
 ## Manual Setup
 
 For more control over your environment, you can set up everything manually.
