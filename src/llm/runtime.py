@@ -121,7 +121,13 @@ def annotate_current_generation_io(
 
     Best-effort: telemetry must never fail the LLM call.
     """
-    if not settings.LANGFUSE_PUBLIC_KEY:
+    # Gated on inline mode (NOT just key presence): this writes to the *active*
+    # @observe generation span, which only exists in inline mode. In exporter
+    # mode `conditional_observe` applies no decorator, so there's no active
+    # span — calling update_current_generation() here would log "No active span
+    # in current context" per call. The exporter projects IO from the captured
+    # stream independently, so this is a pure no-op there.
+    if not settings.langfuse_inline_enabled:
         return
     payload: dict[str, Any] = {}
     if input is not None:

@@ -467,10 +467,11 @@ async def honcho_llm_call_inner(
 
     # Explicit generation input + tuning knobs (replaces @observe auto-capture,
     # which would serialize the live client / api key). Set before the stream
-    # branch so it lands on the generation span for both paths. Guard on the
-    # public key so we don't build the (model_dump-backed) payload when Langfuse
-    # is disabled — the annotate helper no-ops, but the payload still costs.
-    if settings.LANGFUSE_PUBLIC_KEY:
+    # branch so it lands on the generation span for both paths. Guard on inline
+    # mode (matching annotate_current_generation_io's own gate) so we don't
+    # build the (model_dump-backed) payload when the helper would no-op — in
+    # exporter mode there's no active generation span to stamp.
+    if settings.langfuse_inline_enabled:
         annotate_current_generation_io(
             input=messages,
             model_parameters=_langfuse_model_parameters(
@@ -573,8 +574,9 @@ async def honcho_llm_call_inner(
         # Explicit generation output + token usage (replaces @observe
         # auto-capture). The stream path closes this span before drain, so its
         # output is stamped on the run-level span instead
-        # (StreamingResponseWithMetadata).
-        if settings.LANGFUSE_PUBLIC_KEY:
+        # (StreamingResponseWithMetadata). Inline-mode gate: see the input
+        # annotate call above.
+        if settings.langfuse_inline_enabled:
             annotate_current_generation_io(
                 output=response,
                 usage_details=_langfuse_usage_details(response),

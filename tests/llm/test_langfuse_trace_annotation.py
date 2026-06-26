@@ -514,3 +514,49 @@ class TestStepIO:
         assert langfuse_client["run_span"]["output"] == {
             "tool_calls": ["grep_messages", "search_memory"]
         }
+
+
+class TestAnnotateGenerationIOGating:
+    """`annotate_current_generation_io` writes to the ACTIVE @observe generation
+    span (the `conditional_observe` wrapper), which only exists in inline mode.
+    In exporter mode — the default — there is no active span, so calling
+    `update_current_generation()` would make the Langfuse SDK log "No active span
+    in current context" on every LLM call. The helper must therefore no-op in
+    exporter mode (the LangfuseExporter projects I/O from the captured stream).
+    Regression guard for the gate that was on LANGFUSE_PUBLIC_KEY instead of
+    langfuse_inline_enabled."""
+
+    def test_noops_in_exporter_mode_even_with_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        langfuse_client: dict[str, dict[str, Any]],
+    ):
+        # Key present but exporter mode (the production default).
+        monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setattr(settings, "LANGFUSE_EXPORTER_MODE", "exporter")
+
+        runtime.annotate_current_generation_io(
+            input=[{"role": "user", "content": "hi"}],
+            output="hello",
+            usage_details={"input": 1, "output": 1},
+        )
+
+        # No active generation span in exporter mode → must not touch it.
+        assert langfuse_client["generation"] == {}
+
+    def test_writes_in_inline_mode(
+        self,
+        langfuse_enabled: None,  # pins inline mode + a key
+        langfuse_client: dict[str, dict[str, Any]],
+    ):
+        messages = [{"role": "user", "content": "hi"}]
+        runtime.annotate_current_generation_io(
+            input=messages,
+            output="hello",
+            usage_details={"input": 1, "output": 1},
+        )
+
+        gen = langfuse_client["generation"]
+        assert gen["input"] == messages
+        assert gen["output"] == "hello"
+        assert gen["usage_details"] == {"input": 1, "output": 1}

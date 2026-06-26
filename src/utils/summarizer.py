@@ -529,17 +529,16 @@ async def _create_and_save_summary(
         "ms",
     )
 
-    # Emit telemetry event (only for non-fallback summaries)
-    # Note: Using AgentToolSummaryCreatedEvent with dummy run_id/iteration since
-    # this is called from the deriver, not from an agentic loop
+    # Emit telemetry event (only for non-fallback summaries).
+    # Summarization is a single LLM call, not an agentic run, so run_id/iteration
+    # are left unset (None) rather than carrying a placeholder — a bogus run_id
+    # otherwise mints a junk correlated trace downstream.
     if not is_fallback:
         # `prompt_tokens` is set in the `if not is_fallback` block above for
         # both SHORT and LONG summary types — we're inside the same branch, so
         # it's guaranteed bound here.
         emit(
             AgentToolSummaryCreatedEvent(
-                run_id="deriver",  # Placeholder - not from an agentic run
-                iteration=0,  # Placeholder - not from an agentic loop
                 parent_category="deriver",
                 agent_type="summarizer",
                 workspace_name=workspace_name,

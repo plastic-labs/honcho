@@ -191,12 +191,20 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "agent.tool.summary.created"
-    _schema_version: ClassVar[int] = 2
+    _schema_version: ClassVar[int] = 3
     _category: ClassVar[str] = "agent"
 
-    # Run identification (may be placeholder if not from an agentic loop)
-    run_id: str = Field(..., description="Nanoid for run correlation")
-    iteration: int = Field(..., description="Iteration number when this occurred")
+    # Run identification. None for the summarizer — it's a single LLM call, not an
+    # agentic run, so it has no run/iteration. (Was a hardcoded "deriver"/0
+    # placeholder, which minted a junk correlated trace in the viewer.)
+    run_id: str | None = Field(
+        default=None,
+        description="Run id for agentic correlation; None when not in a run",
+    )
+    iteration: int | None = Field(
+        default=None,
+        description="Iteration within an agentic loop; None when not in one",
+    )
 
     # Context
     parent_category: str = Field(..., description="Parent category")
@@ -258,8 +266,10 @@ class AgentToolSummaryCreatedEvent(BaseEvent):
     )
 
     def get_resource_id(self) -> str:
-        """Resource ID includes run_id and iteration for uniqueness."""
-        return f"{self.run_id}:{self.iteration}:summary_created"
+        """Idempotency key. A summary is unique per (message it covers up to,
+        tier) — NOT run_id/iteration, which are None for the (non-agentic)
+        summarizer and would collide every summary on a single id."""
+        return f"{self.message_id}:{self.summary_type}:summary_created"
 
 
 class AgentToolCallCompletedEvent(BaseEvent):
