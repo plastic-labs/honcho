@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src import models
 from src.utils.formatting import parse_datetime_iso
@@ -118,13 +118,79 @@ class PromptRepresentation(BaseModel):
         default_factory=list,
     )
 
+    @classmethod
+    def _extract_explicit_container(cls, value: Any, *, depth: int = 0) -> Any:
+        if depth > 3:
+            return value
+        if value is None or isinstance(value, list):
+            return value
+        if not isinstance(value, dict):
+            return value
+        if "explicit" in value:
+            return value.get("explicit")
+        for alias in ("observations", "facts", "items", "data", "result", "output"):
+            if alias in value:
+                return cls._extract_explicit_container(value.get(alias), depth=depth + 1)
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_top_level_shape(cls, value: Any) -> Any:
+        """Normalize noisy provider outputs into the expected top-level shape."""
+        if value is None:
+            return {"explicit": []}
+
+        if isinstance(value, list):
+            return {"explicit": value}
+
+        if not isinstance(value, dict):
+            return value
+
+        extracted = cls._extract_explicit_container(value)
+        if isinstance(extracted, dict) and not any(
+            key in extracted for key in ("content", "text", "fact", "observation")
+        ):
+            raise ValueError(f"Unsupported PromptRepresentation shape: {sorted(value.keys())}")
+        return {"explicit": extracted}
+
     @field_validator("explicit", mode="before")
     @classmethod
-    def convert_none_to_empty_list(cls, v: Any) -> Any:
-        """Convert None to empty list - handles LLMs returning null instead of []."""
+    def normalize_explicit_items(cls, v: Any) -> Any:
+        """Normalize provider drift into explicit observation items."""
         if v is None:
             return []
-        return v
+
+        if not isinstance(v, list):
+            v = [v]
+
+        normalized: list[dict[str, str]] = []
+        for item in v:
+            content: str | None = None
+
+            if isinstance(item, str):
+                content = item
+            elif isinstance(item, ExplicitObservationBase):
+                content = item.content
+            elif isinstance(item, dict):
+                for key in ("content", "text", "fact", "observation"):
+                    value = item.get(key)
+                    if isinstance(value, str) and value.strip():
+                        content = value
+                        break
+
+            if not content:
+                continue
+
+            content = content.strip()
+            if not content:
+                continue
+
+            if len(content) > 2000:
+                content = content[:2000].rstrip()
+
+            normalized.append({"content": content})
+
+        return normalized
 
 
 class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
