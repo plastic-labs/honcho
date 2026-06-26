@@ -352,8 +352,9 @@ class OpenAIBackend:
             params["stop"] = stop
         if tools:
             params["tools"] = self._convert_tools(tools)
-            if tool_choice is not None:
-                params["tool_choice"] = tool_choice
+            converted_tool_choice = self._convert_tool_choice(tool_choice)
+            if converted_tool_choice is not None:
+                params["tool_choice"] = converted_tool_choice
         if extra_params:
             for key in (
                 "top_p",
@@ -507,6 +508,29 @@ class OpenAIBackend:
             return empty_structured_output(response_format)
         except ValidationError:
             return ""
+
+    @staticmethod
+    def _convert_tool_choice(
+        tool_choice: str | dict[str, Any] | None,
+    ) -> str | dict[str, Any] | None:
+        # Translate Honcho's canonical tool_choice vocabulary to OpenAI's. This
+        # mirrors the Anthropic/Gemini backends so a single TOOL_CHOICE value
+        # works regardless of which provider a fallback chain lands on. Notably
+        # OpenAI has no "any" — it spells the same intent "required".
+        if tool_choice is None:
+            return None
+        if isinstance(tool_choice, dict):
+            if "name" in tool_choice:
+                return {
+                    "type": "function",
+                    "function": {"name": tool_choice["name"]},
+                }
+            return tool_choice
+        if tool_choice in {"any", "required"}:
+            return "required"
+        if tool_choice in {"auto", "none"}:
+            return tool_choice
+        return {"type": "function", "function": {"name": tool_choice}}
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

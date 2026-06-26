@@ -504,6 +504,67 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
     assert call["tool_choice"] == "required"
 
 
+async def test_openai_backend_translates_canonical_any_tool_choice_to_required() -> (
+    None
+):
+    """Regression: a Gemini→OpenAI fallback passes canonical "any", which OpenAI
+    rejects as an invalid param. The backend must translate it to "required"."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[
+            {
+                "name": "get_weather",
+                "description": "Lookup weather",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ],
+        tool_choice="any",
+    )
+
+    assert _await_kwargs(client.chat.completions.create)["tool_choice"] == "required"
+
+
+@pytest.mark.parametrize(
+    ("canonical", "expected"),
+    [
+        ("any", "required"),
+        ("required", "required"),
+        ("auto", "auto"),
+        ("none", "none"),
+        (None, None),
+        ("search", {"type": "function", "function": {"name": "search"}}),
+        ({"name": "search"}, {"type": "function", "function": {"name": "search"}}),
+        ({"type": "function"}, {"type": "function"}),
+    ],
+)
+def test_openai_convert_tool_choice(canonical: Any, expected: Any) -> None:
+    assert OpenAIBackend._convert_tool_choice(canonical) == expected  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.parametrize(
     "model",
     [
