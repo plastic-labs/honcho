@@ -122,7 +122,9 @@ npx skills add plastic-labs/honcho
 ```
 
 ```bash Install as Claude Skill Manually
-curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+mkdir -p ~/.claude/skills/honcho-integration
+curl -o ~/.claude/skills/honcho-integration/SKILL.md \
+  https://raw.githubusercontent.com/plastic-labs/honcho/main/.claude/skills/honcho-integration/SKILL.md
 ```
 </CodeGroup>
 
@@ -138,6 +140,16 @@ curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com
 4. **Verifies the setup** to ensure everything is configured correctly
 
 Invoke with `/honcho-integration` in your coding agent.
+
+#### honcho-memory
+
+**Concepts & strategy for using Honcho at runtime.** The hub skill: it teaches the recall → respond → record loop, session and peer design, and token-batching (so reasoning actually fires) — the durable model behind using Honcho as memory, independent of how you're connected. It routes to the path skill for your connection (`honcho-mcp` or `honcho-cli`). Use this when your agent already has Honcho available and you want it to remember the user across conversations — as opposed to `honcho-integration`, which adds the SDK to a codebase.
+
+#### honcho-mcp
+
+**For using Honcho through the MCP server.** The mechanics of the recall/record loop with the [MCP tools](#mcp-server) — `create_session`, `add_messages_to_session`, `chat`, `search`, conclusions, and the rest — plus the session/peer reuse that keeps a user's memory unified. The most direct skill for an MCP-connected agent ("how do I use these Honcho tools?").
+
+Invoke implicitly when an MCP-connected agent needs to remember or recall something about the user.
 
 #### honcho-cli
 
