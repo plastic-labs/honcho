@@ -29,6 +29,7 @@ from src.schemas.configuration import (
     SessionPeerConfig,
     WorkspaceConfiguration,
 )
+from src.utils.types import DocumentLevel
 
 # ---------------------------------------------------------------------------
 # Metadata validation helpers
@@ -446,6 +447,15 @@ class Conclusion(BaseModel):
         serialization_alias="observed_id",
     )
     session_name: str | None = Field(default=None, serialization_alias="session_id")
+    level: DocumentLevel = Field(
+        serialization_alias="conclusion_type",
+        description="How the conclusion was derived",
+    )
+    source_ids: list[str] | None = Field(
+        default=None,
+        serialization_alias="premises",
+        description="Source conclusion IDs used to derive this conclusion",
+    )
     created_at: datetime.datetime
 
     model_config = ConfigDict(  # pyright: ignore
