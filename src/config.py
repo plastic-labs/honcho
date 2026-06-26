@@ -28,7 +28,7 @@ EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 
 # OpenAI-compatible models that reject the `dimensions=` request parameter.
 _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
-    {"text-embedding-ada-002"}
+    {"text-embedding-ada-002", "mistral-embed"}
 )
 
 

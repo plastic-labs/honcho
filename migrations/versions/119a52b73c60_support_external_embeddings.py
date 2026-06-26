@@ -25,6 +25,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 
 from migrations.utils import column_exists, constraint_exists, get_schema, index_exists
+from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "119a52b73c60"
@@ -42,7 +43,7 @@ def upgrade() -> None:
     op.alter_column(
         "message_embeddings",
         "embedding",
-        existing_type=Vector(1536),
+        existing_type=Vector(settings.EMBEDDING.VECTOR_DIMENSIONS),
         nullable=True,
         schema=schema,
     )
@@ -50,7 +51,7 @@ def upgrade() -> None:
     op.alter_column(
         "documents",
         "embedding",
-        existing_type=Vector(1536),
+        existing_type=Vector(settings.EMBEDDING.VECTOR_DIMENSIONS),
         nullable=True,
         schema=schema,
     )
