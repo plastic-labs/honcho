@@ -1,0 +1,278 @@
+{
+  "description": "dreamer_no_dedup [M] -- L1 reproducer for the dreamer's failure to consolidate duplicate observations. The dreamer's documented role is consolidation: rewriting / merging semantically related observations into better-stated ones, and deleting redundant observations. This test asserts the consolidation specifically targeting duplicates -- exact-text duplicates, near-duplicates (varying only in trivial details like timestamps), and semantic duplicates (the same fact stated from different angles). ===== Failure mode shape ===== Verified firing in a production Honcho workspace: the deriver re-extracts the same fact on subsequent runs over a long-running session, producing exact-content duplicates (the same observation text appearing two or more times with different IDs). Near-duplicates appear when the underlying event is paraphrased with minor variation -- for example, three observations of the form 'assistant executed the command cd ~/path' differing only by embedded timestamp. Semantic duplicates appear when the same convention is captured from opposite angles -- for example, two observations describing the same polarity convention from two-sided perspectives that should collapse to one. The dreamer is responsible for consolidating all three flavors during scheduled dreams; this test exercises that responsibility. ===== Test shape ===== Three SWE-chat sessions (indices 5, 6, 7 from swe_chat_sample_persona_balanced.json) are ingested through the deriver, then the dreamer is scheduled, then post-dream representation is checked for residual duplicates. Each session is independent; continue_on_failure aggregates per-session pass/fail. ===== Pre-dream setup gate ===== Before each dream is scheduled, the pre-dream representation is judged for the presence of >=2 duplicate observations. If the deriver did not produce duplicates, the test errors at the setup gate rather than silently passing (would otherwise be a false pass: dreamer had nothing to consolidate). ===== Post-dream main gate (strict v1) ===== After the dream completes, the post-dream representation is judged for ZERO remaining duplicates. Strict gate -- relative thresholds (e.g., post-dream dupe count < pre-dream dupe count) could be added later via runner-level cross-step state, but for v1 the gate is 'dreamer fully consolidated.' ===== Polarity ===== INITIAL polarity pass_if=true on both gates (invariant tests). Per a verify-first methodology, polarity flips to pass_if=false only after a fixture has been observed firing on real code, with the observed behavior documented in this description. ===== Scope ===== This fixture tests dedup + consolidation behavior end-to-end through the deriver -> dreamer pipeline. It does not isolate the dreamer; deriver behavior is upstream. If a future test wants to isolate the dreamer (seed observations directly, run dreamer only), that would require a new step type for observation injection. ===== Verify-first results ===== First end-to-end run produced: one session had a pre-dream setup-gate failure (deriver did not happen to produce duplicates this run, which is expected variance and the setup gate correctly errored rather than silently passing the post-dream gate on no inputs); two other sessions had pre-PASS / post-FAIL pattern (dupes present pre-dream, dupes still present post-dream after the dream cycle). The bug fires reliably where the deriver produces duplicates. ===== Adjacent finding (out of scope, captured for follow-up) ===== During analysis of post-dream artifacts a structurally different failure pattern was observed: the dreamer did not consolidate by removing redundant explicit observations -- it added two abstraction layers on top (Deductive observations that paraphrase 2-3 explicits, and Inductive Patterns that near-paraphrase the deductives). Net result on one session: explicit observations preserved untouched, plus added deductive + inductive observations expressing similar content -- the same fact stated at three abstraction levels. This is structurally distinct from the same-layer dedup failure this fixture targets and is being tracked for a future sibling fixture.",
+  "workspace_config": {
+    "dream": {
+      "enabled": true
+    }
+  },
+  "continue_on_failure": true,
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "dedupe_swe_5",
+      "peer_configs": {
+        "user_5": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_5": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "dedupe_swe_5",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 5,
+      "user_peer_id": "user_5",
+      "assistant_peer_id": "assistant_5"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 240,
+      "flush": true
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: pre-dream representation for swe_5",
+      "target": "get_representation",
+      "observer_peer_id": "user_5",
+      "observed_peer_id": "user_5",
+      "session_id": "dedupe_swe_5",
+      "filename": "swe_5_pre_dream.json"
+    },
+    {
+      "step_type": "query",
+      "description": "Session 5 PRE-DREAM SETUP GATE: assert >=2 duplicates exist before scheduling the dream.",
+      "target": "get_representation",
+      "observer_peer_id": "user_5",
+      "observed_peer_id": "user_5",
+      "session_id": "dedupe_swe_5",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation BEFORE the dreamer has run on it. A duplicate observation is one that captures the same fact as another observation in the representation. There are three flavors: (1) EXACT duplicates -- identical content text with different observation IDs. Example: 'user_a confirmed to delete items.' appearing twice in the same representation. (2) NEAR duplicates -- same underlying fact, varying only in trivial details (timestamps, formatting, minor word changes). Example: three observations of the form 'assistant executed the command \\\"cd ~/some/path\\\" successfully at HH:MM:SS' differing only in the embedded timestamp -- the dreamer should consolidate these to a single observation. (3) SEMANTIC duplicates -- the same underlying fact stated from different angles. Example: 'tests with pass_if: true are invariant tests, indicating that PASS means a bug is absent' and 'tests with pass_if: false are verified-firing tests for bugs documented to be firing' -- both describe the same polarity convention from opposite sides; they should consolidate to one statement covering both cases. NOT duplicates (do NOT flag these): observations with the same conversational shape but different objects -- 'user committed changes to branch X' and 'user committed changes to branch Y' are about DIFFERENT branches and should remain distinct. Same with 'user pushed to remote' and 'user reviewed PR feedback' -- same actor-verb pattern but different content. Your task: walk through the representation and identify any duplicate pairs (across all three flavors). In your reasoning, enumerate each pair you find with the verbatim text of each observation. Then count the total number of distinct duplicate pairs. This is the PRE-DREAM SETUP GATE: it validates that the deriver produced enough duplicate observations for the test to meaningfully exercise the dreamer's deduplication. Return passed=true if AT LEAST 2 duplicate observations (i.e., at least 1 duplicate pair) are found in the representation. Return passed=false if fewer than 2 duplicate observations exist (the setup did not reproduce the input shape; the test should error here rather than silently passing the post-dream gate).",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "schedule_dream",
+      "observer": "user_5",
+      "observed": "user_5",
+      "session_id": "dedupe_swe_5",
+      "dream_type": "omni"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 600,
+      "flush": true
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: post-dream representation for swe_5",
+      "target": "get_representation",
+      "observer_peer_id": "user_5",
+      "observed_peer_id": "user_5",
+      "session_id": "dedupe_swe_5",
+      "filename": "swe_5_post_dream.json"
+    },
+    {
+      "step_type": "query",
+      "description": "Session 5 POST-DREAM MAIN GATE: assert zero duplicates remain after dream consolidation.",
+      "target": "get_representation",
+      "observer_peer_id": "user_5",
+      "observed_peer_id": "user_5",
+      "session_id": "dedupe_swe_5",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation AFTER the dreamer has run on it. The dreamer's job is to consolidate duplicate observations into single representative ones. A duplicate observation is one that captures the same fact as another observation in the representation. There are three flavors: (1) EXACT duplicates -- identical content text with different observation IDs. Example: 'user_a confirmed to delete items.' appearing twice in the same representation. (2) NEAR duplicates -- same underlying fact, varying only in trivial details (timestamps, formatting, minor word changes). Example: three observations of the form 'assistant executed the command \\\"cd ~/some/path\\\" successfully at HH:MM:SS' differing only in the embedded timestamp -- the dreamer should consolidate these to a single observation. (3) SEMANTIC duplicates -- the same underlying fact stated from different angles. Example: 'tests with pass_if: true are invariant tests, indicating that PASS means a bug is absent' and 'tests with pass_if: false are verified-firing tests for bugs documented to be firing' -- both describe the same polarity convention from opposite sides; they should consolidate to one statement covering both cases. NOT duplicates (do NOT flag these): observations with the same conversational shape but different objects -- 'user committed changes to branch X' and 'user committed changes to branch Y' are about DIFFERENT branches and should remain distinct. Same with 'user pushed to remote' and 'user reviewed PR feedback' -- same actor-verb pattern but different content. Your task: walk through the post-dream representation and identify any duplicate pairs that still exist. In your reasoning, enumerate each pair you find with the verbatim text of each observation. This is the POST-DREAM MAIN GATE (strict v1): the dreamer is expected to have consolidated ALL duplicates. Return passed=true if NO duplicate observations remain in the representation (dreamer successfully consolidated). Return passed=false if ANY duplicate observations are still present. A future relative-threshold gate may relax this to 'post-dream dupe count < pre-dream dupe count'; for v1 the gate is zero.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "dedupe_swe_6",
+      "peer_configs": {
+        "user_6": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_6": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "dedupe_swe_6",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 6,
+      "user_peer_id": "user_6",
+      "assistant_peer_id": "assistant_6"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 240,
+      "flush": true
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: pre-dream representation for swe_6",
+      "target": "get_representation",
+      "observer_peer_id": "user_6",
+      "observed_peer_id": "user_6",
+      "session_id": "dedupe_swe_6",
+      "filename": "swe_6_pre_dream.json"
+    },
+    {
+      "step_type": "query",
+      "description": "Session 6 PRE-DREAM SETUP GATE.",
+      "target": "get_representation",
+      "observer_peer_id": "user_6",
+      "observed_peer_id": "user_6",
+      "session_id": "dedupe_swe_6",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation BEFORE the dreamer has run on it. A duplicate observation is one that captures the same fact as another observation in the representation. There are three flavors: (1) EXACT duplicates -- identical content text with different observation IDs. Example: 'user_a confirmed to delete items.' appearing twice in the same representation. (2) NEAR duplicates -- same underlying fact, varying only in trivial details (timestamps, formatting, minor word changes). Example: three observations of the form 'assistant executed the command \\\"cd ~/some/path\\\" successfully at HH:MM:SS' differing only in the embedded timestamp -- the dreamer should consolidate these to a single observation. (3) SEMANTIC duplicates -- the same underlying fact stated from different angles. Example: 'tests with pass_if: true are invariant tests, indicating that PASS means a bug is absent' and 'tests with pass_if: false are verified-firing tests for bugs documented to be firing' -- both describe the same polarity convention from opposite sides; they should consolidate to one statement covering both cases. NOT duplicates (do NOT flag these): observations with the same conversational shape but different objects -- 'user committed changes to branch X' and 'user committed changes to branch Y' are about DIFFERENT branches and should remain distinct. Same with 'user pushed to remote' and 'user reviewed PR feedback' -- same actor-verb pattern but different content. Your task: walk through the representation and identify any duplicate pairs (across all three flavors). In your reasoning, enumerate each pair you find with the verbatim text of each observation. Then count the total number of distinct duplicate pairs. This is the PRE-DREAM SETUP GATE: it validates that the deriver produced enough duplicate observations for the test to meaningfully exercise the dreamer's deduplication. Return passed=true if AT LEAST 2 duplicate observations (i.e., at least 1 duplicate pair) are found in the representation. Return passed=false if fewer than 2 duplicate observations exist (the setup did not reproduce the input shape; the test should error here rather than silently passing the post-dream gate).",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "schedule_dream",
+      "observer": "user_6",
+      "observed": "user_6",
+      "session_id": "dedupe_swe_6",
+      "dream_type": "omni"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 600,
+      "flush": true
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: post-dream representation for swe_6",
+      "target": "get_representation",
+      "observer_peer_id": "user_6",
+      "observed_peer_id": "user_6",
+      "session_id": "dedupe_swe_6",
+      "filename": "swe_6_post_dream.json"
+    },
+    {
+      "step_type": "query",
+      "description": "Session 6 POST-DREAM MAIN GATE.",
+      "target": "get_representation",
+      "observer_peer_id": "user_6",
+      "observed_peer_id": "user_6",
+      "session_id": "dedupe_swe_6",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation AFTER the dreamer has run on it. The dreamer's job is to consolidate duplicate observations into single representative ones. A duplicate observation is one that captures the same fact as another observation in the representation. There are three flavors: (1) EXACT duplicates -- identical content text with different observation IDs. Example: 'user_a confirmed to delete items.' appearing twice in the same representation. (2) NEAR duplicates -- same underlying fact, varying only in trivial details (timestamps, formatting, minor word changes). Example: three observations of the form 'assistant executed the command \\\"cd ~/some/path\\\" successfully at HH:MM:SS' differing only in the embedded timestamp -- the dreamer should consolidate these to a single observation. (3) SEMANTIC duplicates -- the same underlying fact stated from different angles. Example: 'tests with pass_if: true are invariant tests, indicating that PASS means a bug is absent' and 'tests with pass_if: false are verified-firing tests for bugs documented to be firing' -- both describe the same polarity convention from opposite sides; they should consolidate to one statement covering both cases. NOT duplicates (do NOT flag these): observations with the same conversational shape but different objects -- 'user committed changes to branch X' and 'user committed changes to branch Y' are about DIFFERENT branches and should remain distinct. Same with 'user pushed to remote' and 'user reviewed PR feedback' -- same actor-verb pattern but different content. Your task: walk through the post-dream representation and identify any duplicate pairs that still exist. In your reasoning, enumerate each pair you find with the verbatim text of each observation. This is the POST-DREAM MAIN GATE (strict v1): the dreamer is expected to have consolidated ALL duplicates. Return passed=true if NO duplicate observations remain in the representation (dreamer successfully consolidated). Return passed=false if ANY duplicate observations are still present. A future relative-threshold gate may relax this to 'post-dream dupe count < pre-dream dupe count'; for v1 the gate is zero.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "dedupe_swe_7",
+      "peer_configs": {
+        "user_7": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant_7": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages_from_fixture",
+      "session_id": "dedupe_swe_7",
+      "fixture_path": "swe_chat_sample_persona_balanced.json",
+      "fixture_session_index": 7,
+      "user_peer_id": "user_7",
+      "assistant_peer_id": "assistant_7"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 240,
+      "flush": true
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: pre-dream representation for swe_7",
+      "target": "get_representation",
+      "observer_peer_id": "user_7",
+      "observed_peer_id": "user_7",
+      "session_id": "dedupe_swe_7",
+      "filename": "swe_7_pre_dream.json"
+    },
+    {
+      "step_type": "query",
+      "description": "Session 7 PRE-DREAM SETUP GATE.",
+      "target": "get_representation",
+      "observer_peer_id": "user_7",
+      "observed_peer_id": "user_7",
+      "session_id": "dedupe_swe_7",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation BEFORE the dreamer has run on it. A duplicate observation is one that captures the same fact as another observation in the representation. There are three flavors: (1) EXACT duplicates -- identical content text with different observation IDs. Example: 'user_a confirmed to delete items.' appearing twice in the same representation. (2) NEAR duplicates -- same underlying fact, varying only in trivial details (timestamps, formatting, minor word changes). Example: three observations of the form 'assistant executed the command \\\"cd ~/some/path\\\" successfully at HH:MM:SS' differing only in the embedded timestamp -- the dreamer should consolidate these to a single observation. (3) SEMANTIC duplicates -- the same underlying fact stated from different angles. Example: 'tests with pass_if: true are invariant tests, indicating that PASS means a bug is absent' and 'tests with pass_if: false are verified-firing tests for bugs documented to be firing' -- both describe the same polarity convention from opposite sides; they should consolidate to one statement covering both cases. NOT duplicates (do NOT flag these): observations with the same conversational shape but different objects -- 'user committed changes to branch X' and 'user committed changes to branch Y' are about DIFFERENT branches and should remain distinct. Same with 'user pushed to remote' and 'user reviewed PR feedback' -- same actor-verb pattern but different content. Your task: walk through the representation and identify any duplicate pairs (across all three flavors). In your reasoning, enumerate each pair you find with the verbatim text of each observation. Then count the total number of distinct duplicate pairs. This is the PRE-DREAM SETUP GATE: it validates that the deriver produced enough duplicate observations for the test to meaningfully exercise the dreamer's deduplication. Return passed=true if AT LEAST 2 duplicate observations (i.e., at least 1 duplicate pair) are found in the representation. Return passed=false if fewer than 2 duplicate observations exist (the setup did not reproduce the input shape; the test should error here rather than silently passing the post-dream gate).",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "schedule_dream",
+      "observer": "user_7",
+      "observed": "user_7",
+      "session_id": "dedupe_swe_7",
+      "dream_type": "omni"
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 600,
+      "flush": true
+    },
+    {
+      "step_type": "save_artifact",
+      "description": "Trace: post-dream representation for swe_7",
+      "target": "get_representation",
+      "observer_peer_id": "user_7",
+      "observed_peer_id": "user_7",
+      "session_id": "dedupe_swe_7",
+      "filename": "swe_7_post_dream.json"
+    },
+    {
+      "step_type": "query",
+      "description": "Session 7 POST-DREAM MAIN GATE.",
+      "target": "get_representation",
+      "observer_peer_id": "user_7",
+      "observed_peer_id": "user_7",
+      "session_id": "dedupe_swe_7",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "You are evaluating a Honcho user representation AFTER the dreamer has run on it. The dreamer's job is to consolidate duplicate observations into single representative ones. A duplicate observation is one that captures the same fact as another observation in the representation. There are three flavors: (1) EXACT duplicates -- identical content text with different observation IDs. Example: 'user_a confirmed to delete items.' appearing twice in the same representation. (2) NEAR duplicates -- same underlying fact, varying only in trivial details (timestamps, formatting, minor word changes). Example: three observations of the form 'assistant executed the command \\\"cd ~/some/path\\\" successfully at HH:MM:SS' differing only in the embedded timestamp -- the dreamer should consolidate these to a single observation. (3) SEMANTIC duplicates -- the same underlying fact stated from different angles. Example: 'tests with pass_if: true are invariant tests, indicating that PASS means a bug is absent' and 'tests with pass_if: false are verified-firing tests for bugs documented to be firing' -- both describe the same polarity convention from opposite sides; they should consolidate to one statement covering both cases. NOT duplicates (do NOT flag these): observations with the same conversational shape but different objects -- 'user committed changes to branch X' and 'user committed changes to branch Y' are about DIFFERENT branches and should remain distinct. Same with 'user pushed to remote' and 'user reviewed PR feedback' -- same actor-verb pattern but different content. Your task: walk through the post-dream representation and identify any duplicate pairs that still exist. In your reasoning, enumerate each pair you find with the verbatim text of each observation. This is the POST-DREAM MAIN GATE (strict v1): the dreamer is expected to have consolidated ALL duplicates. Return passed=true if NO duplicate observations remain in the representation (dreamer successfully consolidated). Return passed=false if ANY duplicate observations are still present. A future relative-threshold gate may relax this to 'post-dream dupe count < pre-dream dupe count'; for v1 the gate is zero.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

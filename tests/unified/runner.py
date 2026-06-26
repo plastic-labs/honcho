@@ -1,7 +1,9 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -36,6 +38,7 @@ from tests.bench.harness import HonchoHarness
 from tests.unified.schema import (
     AddMessageAction,
     AddMessagesAction,
+    AddMessagesFromFixtureAction,
     ContainsAssertion,
     CreateSessionAction,
     ExactMatchAssertion,
@@ -43,12 +46,28 @@ from tests.unified.schema import (
     LLMJudgeAssertion,
     NotContainsAssertion,
     QueryAction,
+    SaveArtifactAction,
     ScheduleDreamAction,
     SetSessionConfigAction,
     SetWorkspaceConfigAction,
     TestDefinition,
     WaitAction,
 )
+
+FIXTURES_DIR = Path(__file__).parent / "test_cases" / "data"
+ARTIFACTS_DIR_DEFAULT = Path(__file__).parent / "artifacts"
+REPO_ROOT = Path(__file__).parents[2]
+
+# Source files whose SHA we capture in run metadata. Lets us tell whether a
+# prompt-level intervention is the only thing that changed between two runs.
+PROMPT_FILES_TO_HASH: dict[str, str] = {
+    "deriver_agent_prompts": "src/deriver/agent/prompts.py",
+    "deriver_prompts": "src/deriver/prompts.py",
+    "dialectic_agent_prompts": "src/dialectic/agent/prompts.py",
+    "dialectic_prompts": "src/dialectic/prompts.py",
+    "dreamer_specialists": "src/dreamer/specialists.py",
+    "summarizer": "src/utils/summarizer.py",
+}
 
 # Override log level with UNIFIED_TEST_LOG_LEVEL env var if needed (e.g., INFO, DEBUG)
 logging.basicConfig(
@@ -73,6 +92,100 @@ JUDGE_MODEL: str = "claude-haiku-4-5"
 
 class TestExecutionError(Exception):
     pass
+
+
+# ---- Run metadata helpers ---------------------------------------------------
+#
+# These capture the state of the system under test at run time so a future run
+# can be compared apples-to-apples. We do not (yet) automate replay — that
+# means manual discipline at compare-time. See tests/unified/README.md for the
+# replay procedure.
+
+
+def _resolve_artifacts_root() -> Path:
+    override = os.getenv("UNIFIED_TEST_ARTIFACTS_DIR")
+    return Path(override) if override else ARTIFACTS_DIR_DEFAULT
+
+
+def _honcho_git_sha() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        sha = result.stdout.strip()
+        return sha or None
+    except Exception:
+        return None
+
+
+def _honcho_git_dirty() -> bool | None:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return bool(result.stdout.strip())
+    except Exception:
+        return None
+
+
+def _agent_model_summaries() -> dict[str, Any]:
+    """Capture transport + model for each LLM-using agent in Honcho."""
+    summaries: dict[str, Any] = {}
+    try:
+        from src.config import settings  # late import: avoids load order issues
+    except Exception as e:
+        return {"_capture_error": f"could not import settings: {e}"}
+
+    def _summarize(cfg: Any) -> dict[str, Any] | None:
+        if cfg is None:
+            return None
+        return {
+            "transport": getattr(cfg, "transport", None),
+            "model": getattr(cfg, "model", None),
+        }
+
+    sections = {
+        "deriver": "DERIVER",
+        "dialectic": "DIALECTIC",
+        "summary": "SUMMARY",
+        "dream": "DREAM",
+        "peer_card": "PEER_CARD",
+    }
+    for label, attr in sections.items():
+        try:
+            section = getattr(settings, attr, None)
+            if section is None:
+                continue
+            cfg = getattr(section, "MODEL_CONFIG", None)
+            summaries[label] = _summarize(cfg)
+        except Exception as e:
+            summaries[label] = {"_error": str(e)}
+
+    return summaries
+
+
+def _prompt_shas() -> dict[str, str | None]:
+    """SHA-256 of each known prompt source file. Lets a comparison run detect
+    whether a prompt-level intervention is the only thing that changed."""
+    out: dict[str, str | None] = {}
+    for name, rel_path in PROMPT_FILES_TO_HASH.items():
+        full = REPO_ROOT / rel_path
+        if not full.exists():
+            out[name] = None
+            continue
+        try:
+            out[name] = hashlib.sha256(full.read_bytes()).hexdigest()
+        except Exception:
+            out[name] = None
+    return out
 
 
 async def send_discord_message(webhook_url: str, message: str) -> None:
@@ -211,12 +324,23 @@ class UnifiedTestExecutor:
         self,
         honcho_client: Honcho,
         anthropic_client: AsyncAnthropic | None,
+        artifacts_root: Path | None = None,
     ):
         self.client: Honcho = honcho_client
         self.anthropic: AsyncAnthropic | None = anthropic_client
+        self.artifacts_root: Path = artifacts_root or _resolve_artifacts_root()
+        self.current_test_artifacts_dir: Path | None = None
 
     async def execute(self, test_def: TestDefinition, test_name: str) -> bool:
         logger.info(f"Starting test: {test_name}")
+
+        # 0. Provision per-test artifact dir + capture run metadata snapshot.
+        # Artifacts let downstream analysis classify observations offline without
+        # coupling that classification to assertion polarity. Metadata captures
+        # the state of the system under test so a future run can be compared
+        # apples-to-apples (manual replay for now; see tests/unified/README.md).
+        self._setup_artifacts_dir(test_name)
+        self._write_run_metadata(test_name)
 
         # 1. Apply workspace config if present
         if test_def.workspace_config:
@@ -225,16 +349,121 @@ class UnifiedTestExecutor:
             )
             await self.client.aio.set_configuration(sdk_config)
 
+        assertion_failures: list[tuple[int, str, str | None, str]] = []
+
         for i, step in enumerate(test_def.steps):
             logger.info(f"Executing step {i + 1}: {step.step_type}")
             try:
                 await self.execute_step(step)
-            except Exception as e:
+            except TestExecutionError as e:
+                # Assertion failure — collect; abort or continue based on flag
+                if test_def.continue_on_failure:
+                    desc = getattr(step, "description", None)
+                    logger.warning(
+                        f"Step {i + 1} assertion failed (continuing): {e}"
+                    )
+                    assertion_failures.append((i + 1, step.step_type, desc, str(e)))
+                    continue
                 logger.error(f"Step {i + 1} failed: {e}", exc_info=False)
                 return False
+            except Exception as e:
+                # Infrastructure error — always abort
+                logger.error(f"Step {i + 1} infrastructure failed: {e}", exc_info=False)
+                return False
+
+        if assertion_failures:
+            logger.error(
+                f"Test {test_name} FAILED with {len(assertion_failures)} "
+                f"assertion failure(s) (continue_on_failure=true):"
+            )
+            for step_idx, step_type, desc, msg in assertion_failures:
+                logger.error(
+                    f"  Step {step_idx} ({step_type}) — {desc or '<no description>'}"
+                )
+                msg_short = (msg[:300] + " …") if len(msg) > 300 else msg
+                logger.error(f"    {msg_short}")
+            return False
 
         logger.info(f"Test {test_name} PASSED")
         return True
+
+    # ---- Artifacts + metadata --------------------------------------------------
+
+    def _setup_artifacts_dir(self, test_name: str) -> None:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.current_test_artifacts_dir = self.artifacts_root / f"{test_name}_{ts}"
+        self.current_test_artifacts_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            f"Artifacts dir: {self.current_test_artifacts_dir}"
+        )
+
+    def _write_run_metadata(self, test_name: str) -> None:
+        if self.current_test_artifacts_dir is None:
+            return
+
+        metadata: dict[str, Any] = {
+            "test_name": test_name,
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "judge_model": JUDGE_MODEL,
+            "honcho_git_sha": _honcho_git_sha(),
+            "honcho_git_dirty": _honcho_git_dirty(),
+            "agents": _agent_model_summaries(),
+            "prompt_shas": _prompt_shas(),
+        }
+
+        out = self.current_test_artifacts_dir / "_run_metadata.json"
+        out.write_text(json.dumps(metadata, indent=2, default=str))
+
+    def _write_artifact(self, filename: str, data: Any) -> None:
+        if self.current_test_artifacts_dir is None:
+            raise RuntimeError(
+                "artifacts dir not initialized; SaveArtifactAction outside execute()?"
+            )
+        # Prevent path traversal — flat filenames only
+        if "/" in filename or "\\" in filename or filename.startswith("."):
+            raise ValueError(
+                f"Invalid artifact filename {filename!r}: must be flat (no path separators, no leading dot)"
+            )
+
+        out = self.current_test_artifacts_dir / filename
+        try:
+            if hasattr(data, "model_dump"):
+                payload = data.model_dump(mode="json")
+            else:
+                payload = data
+            out.write_text(json.dumps(payload, indent=2, default=str))
+        except Exception as e:
+            logger.warning(
+                f"Could not JSON-serialize artifact {filename} cleanly ({e}); writing repr fallback"
+            )
+            out.write_text(json.dumps({"_repr": repr(data)}, indent=2))
+
+    async def _fetch_for_artifact(self, step: SaveArtifactAction) -> Any:
+        if step.target == "get_representation":
+            if not step.observer_peer_id:
+                raise ValueError("observer_peer_id required for save_artifact get_representation")
+            peer = await self.client.aio.peer(id=step.observer_peer_id)
+            return await peer.aio.representation(
+                step.session_id,
+                target=step.observed_peer_id,
+                search_query=step.search_query,
+            )
+        if step.target == "get_peer_card":
+            if not step.observer_peer_id:
+                raise ValueError("observer_peer_id required for save_artifact get_peer_card")
+            peer = await self.client.aio.peer(id=step.observer_peer_id)
+            card = await peer.aio.get_card(
+                step.observed_peer_id or step.observer_peer_id
+            )
+            return {"peer_card": card if card else None}
+        if step.target == "get_context":
+            if not step.session_id:
+                raise ValueError("session_id required for save_artifact get_context")
+            session: Session = await self.client.aio.session(id=step.session_id)
+            return await session.aio.context(
+                summary=step.summary, tokens=step.max_tokens
+            )
+        return None
 
     async def execute_step(self, step: Any):
         if isinstance(step, SetWorkspaceConfigAction):
@@ -311,6 +540,61 @@ class UnifiedTestExecutor:
                 )
             await session.aio.add_messages(msgs)
 
+        elif isinstance(step, AddMessagesFromFixtureAction):
+            fixture_path = FIXTURES_DIR / step.fixture_path
+            if not fixture_path.is_file():
+                raise FileNotFoundError(
+                    f"Fixture not found: {fixture_path} (resolved from "
+                    f"fixture_path={step.fixture_path!r}, FIXTURES_DIR={FIXTURES_DIR})"
+                )
+            with open(fixture_path) as f:
+                fixture = json.load(f)
+            sessions_in_fixture = fixture.get("sessions", [])
+            if step.fixture_session_index >= len(sessions_in_fixture):
+                raise IndexError(
+                    f"fixture_session_index={step.fixture_session_index} out of range "
+                    f"(fixture has {len(sessions_in_fixture)} sessions)"
+                )
+            fixture_session = sessions_in_fixture[step.fixture_session_index]
+            fixture_messages = fixture_session.get("messages", [])
+            if step.limit is not None:
+                fixture_messages = fixture_messages[: step.limit]
+
+            session = await self.client.aio.session(id=step.session_id)
+            msgs = []
+            user_peer = await self.client.aio.peer(id=step.user_peer_id)
+            assistant_peer = (
+                await self.client.aio.peer(id=step.assistant_peer_id)
+                if step.assistant_peer_id
+                else None
+            )
+            for fm in fixture_messages:
+                role = fm.get("role")
+                content = fm.get("content", "")
+                if not content:
+                    continue
+                if role == "user":
+                    peer = user_peer
+                elif role == "assistant":
+                    if assistant_peer is None:
+                        continue
+                    peer = assistant_peer
+                else:
+                    continue
+                # Parse timestamp if present (best-effort; skip if malformed)
+                ts = fm.get("timestamp")
+                created_at = None
+                if ts:
+                    try:
+                        created_at = datetime.fromisoformat(
+                            str(ts).replace("Z", "+00:00")
+                        )
+                    except (ValueError, TypeError):
+                        created_at = None
+                msgs.append(peer.message(content, created_at=created_at))
+            if msgs:
+                await session.aio.add_messages(msgs)
+
         elif isinstance(step, WaitAction):
             if step.duration:
                 await asyncio.sleep(step.duration)
@@ -329,6 +613,13 @@ class UnifiedTestExecutor:
             result = await self.perform_query(step)
             for assertion in step.assertions:
                 await self.check_assertion(result, assertion)
+
+        elif isinstance(step, SaveArtifactAction):
+            result = await self._fetch_for_artifact(step)
+            self._write_artifact(step.filename, result)
+            logger.info(
+                f"Saved artifact {step.filename} (target={step.target})"
+            )
 
     async def wait_for_queue(self, timeout: int):
         # Poll deriver status
