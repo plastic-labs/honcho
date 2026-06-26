@@ -15,14 +15,20 @@ import logging
 import time
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from src import models
 from src.dependencies import tracked_db
-from src.deriver.enqueue import enqueue as enqueue_deriver_task
 from src.utils.queue_payload import PromotionPayload
 
 logger = logging.getLogger(__name__)
+
+# Graph promotion *processing* is incomplete on the current schema (see the note
+# in _scan_and_enqueue). Keep the scheduler crash-free and observable, but do not
+# enqueue promotion tasks until the feature is finished. Flip to True once
+# process_promotion()/_get_related_documents()/create_edge() work without a
+# Document.collection_name column.
+_PROMOTION_PROCESSING_READY = False
 
 # How often to scan for un-promoted observations
 SCAN_INTERVAL_SECONDS = 60
@@ -101,43 +107,71 @@ class PromotionScheduler:
                 )
                 .limit(MAX_PER_SCAN)
             )
-            un_promoted = list(result.scalars().all())
+            # Extract plain data while still inside the session: the ORM
+            # instances detach (and their attributes expire) once this
+            # `async with` block exits, so reading doc.* afterwards raises
+            # DetachedInstanceError.
+            un_promoted = [
+                {
+                    "id": d.id,
+                    "workspace_name": d.workspace_name,
+                    "session_name": d.session_name,
+                    "observer": d.observer,
+                    "observed": d.observed,
+                    "collection_name": getattr(d, "collection_name", None) or "",
+                }
+                for d in result.scalars().all()
+            ]
         
         if not un_promoted:
             return
         
         logger.info(
-            "Found %d un-promoted observations, enqueuing promotion tasks",
+            "%d observations await graph promotion",
             len(un_promoted),
         )
+
+        # Graph promotion (L1->L2) is wired but NOT functional on this schema:
+        # process_promotion() -> _get_related_documents()/create_edge() filter and
+        # insert on Document.collection_name, which does not exist on the documents
+        # table/model (collections are keyed by observer/observed). Enqueuing would
+        # only crash the consumer and grow an un-deduped backlog, so stop here until
+        # the promotion feature is completed.
+        if not _PROMOTION_PROCESSING_READY:
+            return
         
-        # Enqueue promotion tasks for each un-promoted observation
+        # Build a `promotion` queue item per observation and insert them
+        # directly. We do NOT route through enqueue() — that is the
+        # message->representation path and rejects payloads that lack message
+        # `content`, which is why promotion never produced any queue items.
+        queue_records = []
         for doc in un_promoted:
-            try:
-                payload = PromotionPayload(
-                    collection_name=doc.collection_name if hasattr(doc, 'collection_name') else "",
-                    obs_id=doc.id,
-                    observer=doc.observer,
-                    observed=doc.observed,
-                    session_name=doc.session_name,
-                )
-                
-                await enqueue_deriver_task([{
-                    "workspace_name": doc.workspace_name,
-                    "session_name": doc.session_name or "",
-                    "peer_name": doc.observed,
-                    "message_id": 0,  # Not tied to a specific message
-                    "task_type": "promotion",
-                    "collection_name": payload.collection_name,
-                    "obs_id": payload.obs_id,
-                    "observer": payload.observer,
-                    "observed": payload.observed,
-                }])
-            except Exception as e:
-                logger.error(
-                    "Failed to enqueue promotion for observation %s: %s",
-                    doc.id, e,
-                )
+            payload = PromotionPayload(
+                collection_name=doc["collection_name"],
+                obs_id=doc["id"],
+                observer=doc["observer"],
+                observed=doc["observed"],
+                session_name=doc["session_name"],
+            )
+            queue_records.append({
+                "work_unit_key": (
+                    f"promotion:{doc['workspace_name']}:{doc['observed']}:{doc['id']}"
+                ),
+                "payload": payload.model_dump(),
+                "session_id": None,
+                "task_type": "promotion",
+                "workspace_name": doc["workspace_name"],
+                "message_id": None,  # not tied to a specific message
+            })
+
+        try:
+            async with tracked_db("promotion_scheduler.enqueue") as db:
+                await db.execute(insert(models.QueueItem), queue_records)
+                await db.commit()
+        except Exception as e:
+            logger.error(
+                "Failed to enqueue %d promotion tasks: %s", len(queue_records), e
+            )
 
 
 # Singleton

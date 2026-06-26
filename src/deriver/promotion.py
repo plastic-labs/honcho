@@ -302,6 +302,13 @@ async def process_promotion(
         obs_id, workspace_name,
     )
 
+    # Documents have no collection_name column — the collection identity is the
+    # (observer, observed) peer pair. Synthesize a stable name for the edges /
+    # access_log rows (which require a non-null collection_name) when the caller
+    # didn't supply a real one.
+    if not collection_name:
+        collection_name = f"{observer}/{observed}"
+
     async with tracked_db("promotion.fetch") as db:
         # Fetch the observation
         doc = await _get_document(db, obs_id, workspace_name)
@@ -312,9 +319,11 @@ async def process_promotion(
         content = doc.content
         level = doc.level or "explicit"
 
-        # Fetch related observations in the same collection
-        related_docs = await _get_related_documents(
-            db, workspace_name, collection_name, obs_id, limit=20
+        # Fetch ids of related observations in the same (observer, observed)
+        # collection. Return ids (not ORM rows) so step 2 can use them after
+        # this session closes without DetachedInstanceError.
+        related_ids = await _get_related_observation_ids(
+            db, workspace_name, observer, observed, obs_id, limit=20
         )
 
     # Step 1: Run promotion test. Skip the LLM call entirely if the worker
@@ -341,8 +350,8 @@ async def process_promotion(
         edge_type = LEVEL_TO_EDGE_TYPE.get(level, "related")
         edges_created = 0
 
-        for related in related_docs:
-            if related.id == obs_id:
+        for related_id in related_ids:
+            if related_id == obs_id:
                 continue
 
             try:
@@ -351,7 +360,7 @@ async def process_promotion(
                     workspace_name=workspace_name,
                     collection_name=collection_name,
                     source_obs_id=obs_id,
-                    target_obs_id=related.id,
+                    target_obs_id=related_id,
                     edge_type=edge_type,
                     created_by="promotion-worker",
                 )
@@ -359,7 +368,7 @@ async def process_promotion(
             except Exception as e:
                 logger.debug(
                     "Edge creation skipped for %s -> %s: %s",
-                    obs_id, related.id, e,
+                    obs_id, related_id, e,
                 )
 
         logger.info("Created %d edges for observation %s", edges_created, obs_id)
@@ -421,20 +430,27 @@ async def _get_document(
     return result.scalar_one_or_none()
 
 
-async def _get_related_documents(
+async def _get_related_observation_ids(
     db: AsyncSession,
     workspace_name: str,
-    collection_name: str,
+    observer: str,
+    observed: str,
     obs_id: str,
     limit: int = 20,
-) -> list[Document]:
-    """Get related documents in the same collection."""
+) -> list[str]:
+    """Get ids of related observations in the same (observer, observed) collection.
+
+    Documents have no collection_name column; a collection is identified by the
+    (observer, observed) peer pair. Returns ids only so callers can use them
+    after the DB session closes without DetachedInstanceError.
+    """
     result = await db.execute(
-        select(Document).where(
+        select(Document.id).where(
             Document.workspace_name == workspace_name,
-            Document.collection_name == collection_name,
+            Document.observer == observer,
+            Document.observed == observed,
             Document.deleted_at.is_(None),
             Document.id != obs_id,
         ).limit(limit)
     )
-    return list(result.scalars().all())
+    return [row[0] for row in result.all()]
