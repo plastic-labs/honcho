@@ -19,7 +19,7 @@ from typing import Any, Literal, TypeVar, overload
 
 from pydantic import BaseModel
 
-from src.config import ModelConfig, ModelTransport
+from src.config import ModelConfig, ModelTransport, settings
 from src.telemetry.logging import conditional_observe
 
 from .backend import CompletionResult as BackendCompletionResult
@@ -100,6 +100,26 @@ def _langfuse_model_parameters(
             tool_choice if isinstance(tool_choice, str) else str(tool_choice)
         )
     return params
+
+
+def _langfuse_usage_details(response: HonchoLLMCallResponse[Any]) -> dict[str, int]:
+    """Token usage duplicated onto the Langfuse generation.
+
+    These counts are also emitted via CloudEvents (LLMCallCompletedEvent), but
+    we mirror them here so Langfuse renders per-call tokens + cost natively,
+    including Anthropic-style prompt-cache reads/writes. Zero-valued cache keys
+    are dropped so non-cached calls stay tidy. Stream calls don't surface token
+    totals at this layer, so usage is set only on the non-stream path.
+    """
+    usage: dict[str, int] = {
+        "input": response.input_tokens,
+        "output": response.output_tokens,
+    }
+    if response.cache_read_input_tokens:
+        usage["cache_read_input_tokens"] = response.cache_read_input_tokens
+    if response.cache_creation_input_tokens:
+        usage["cache_creation_input_tokens"] = response.cache_creation_input_tokens
+    return usage
 
 
 def _outcome_from_error(
@@ -402,20 +422,23 @@ async def honcho_llm_call_inner(
 
     # Explicit generation input + tuning knobs (replaces @observe auto-capture,
     # which would serialize the live client / api key). Set before the stream
-    # branch so it lands on the generation span for both paths.
-    annotate_current_generation_io(
-        input=messages,
-        model_parameters=_langfuse_model_parameters(
-            max_tokens=max_tokens,
-            config=effective_config,
-            json_mode=json_mode,
-            verbosity=verbosity,
-            stream=stream,
-            tools=tools,
-            tool_choice=tool_choice,
-            response_model=response_model,
-        ),
-    )
+    # branch so it lands on the generation span for both paths. Guard on the
+    # public key so we don't build the (model_dump-backed) payload when Langfuse
+    # is disabled — the annotate helper no-ops, but the payload still costs.
+    if settings.LANGFUSE_PUBLIC_KEY:
+        annotate_current_generation_io(
+            input=messages,
+            model_parameters=_langfuse_model_parameters(
+                max_tokens=max_tokens,
+                config=effective_config,
+                json_mode=json_mode,
+                verbosity=verbosity,
+                stream=stream,
+                tools=tools,
+                tool_choice=tool_choice,
+                response_model=response_model,
+            ),
+        )
     # json_mode + verbosity are per-call transport toggles, not ModelConfig
     # knobs — they pass through extra_params. execute_completion merges
     # build_config_extra_params(effective_config) on top for top_p/seed/etc.
@@ -502,10 +525,15 @@ async def honcho_llm_call_inner(
             extra_params=call_extras,
         )
         response = completion_result_to_response(backend_result)
-        # Explicit generation output (replaces @observe auto-capture). The
-        # stream path closes this span before drain, so its output is stamped
-        # on the run-level span instead (StreamingResponseWithMetadata).
-        annotate_current_generation_io(output=response)
+        # Explicit generation output + token usage (replaces @observe
+        # auto-capture). The stream path closes this span before drain, so its
+        # output is stamped on the run-level span instead
+        # (StreamingResponseWithMetadata).
+        if settings.LANGFUSE_PUBLIC_KEY:
+            annotate_current_generation_io(
+                output=response,
+                usage_details=_langfuse_usage_details(response),
+            )
         return response
     except BaseException as exc:
         error = exc

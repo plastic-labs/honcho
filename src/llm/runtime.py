@@ -107,8 +107,9 @@ def annotate_current_generation_io(
     input: Any = None,  # noqa: A002 - mirrors langfuse's `input` kwarg name
     output: Any = None,
     model_parameters: dict[str, Any] | None = None,
+    usage_details: dict[str, Any] | None = None,
 ) -> None:
-    """Set explicit input/output/model_parameters on the current generation.
+    """Set explicit input/output/model_parameters/usage on the current generation.
 
     Used in place of ``@observe``'s auto-capture (disabled on
     ``honcho_llm_call_inner``) so the provider client and api-key-bearing
@@ -131,6 +132,8 @@ def annotate_current_generation_io(
         payload["output"] = output
     if model_parameters:
         payload["model_parameters"] = model_parameters
+    if usage_details:
+        payload["usage_details"] = usage_details
     if not payload:
         return
     try:

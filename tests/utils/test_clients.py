@@ -972,6 +972,10 @@ class TestMainLLMCallFunction:
             assert input_kwargs["input"] == [{"role": "user", "content": "Hello"}]
             output_kwargs = next(c.kwargs for c in gen_calls if "output" in c.kwargs)
             assert output_kwargs["output"].content == "Named response"
+            # Token usage is duplicated onto the generation (also in CloudEvents)
+            # so Langfuse renders native per-call tokens + cost.
+            assert output_kwargs["usage_details"]["input"] == 5
+            assert output_kwargs["usage_details"]["output"] == 5
             # Tuning knobs are tracked as model_parameters (not the live client
             # or api-key-bearing config). No serialized client/secret anywhere.
             params = next(c.kwargs for c in gen_calls if "model_parameters" in c.kwargs)
