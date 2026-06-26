@@ -24,7 +24,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v3.0.10",
+        "version": "v3.0.11",
         "api": {
           "openapi": ["v3/openapi.json"]
         },

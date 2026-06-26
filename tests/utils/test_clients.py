@@ -960,11 +960,29 @@ class TestMainLLMCallFunction:
             assert captured["metadata"]["provider"] == "anthropic"
             assert captured["metadata"]["model"] == "claude-4-sonnet"
             # ...and the generation is named + carries per-call model/metadata.
-            mock_langfuse_client.update_current_generation.assert_called_once()
-            gen_kwargs = mock_langfuse_client.update_current_generation.call_args.kwargs
-            assert gen_kwargs["name"] == "Dialectic Agent LLM call"
-            assert gen_kwargs["model"] == "claude-4-sonnet"
-            assert gen_kwargs["metadata"]["provider"] == "anthropic"
+            gen_calls = mock_langfuse_client.update_current_generation.call_args_list
+            meta_kwargs = next(c.kwargs for c in gen_calls if "model" in c.kwargs)
+            assert meta_kwargs["name"] == "Dialectic Agent LLM call"
+            assert meta_kwargs["model"] == "claude-4-sonnet"
+            assert meta_kwargs["metadata"]["provider"] == "anthropic"
+            # Input/output are stamped explicitly: @observe auto-capture is
+            # disabled so the live client / api-key-bearing config never reach
+            # the trace (HONCHO-4HA), with no loss of trace fidelity.
+            input_kwargs = next(c.kwargs for c in gen_calls if "input" in c.kwargs)
+            assert input_kwargs["input"] == [{"role": "user", "content": "Hello"}]
+            output_kwargs = next(c.kwargs for c in gen_calls if "output" in c.kwargs)
+            assert output_kwargs["output"].content == "Named response"
+            # Token usage is duplicated onto the generation (also in CloudEvents)
+            # so Langfuse renders native per-call tokens + cost.
+            assert output_kwargs["usage_details"]["input"] == 5
+            assert output_kwargs["usage_details"]["output"] == 5
+            # Tuning knobs are tracked as model_parameters (not the live client
+            # or api-key-bearing config). No serialized client/secret anywhere.
+            params = next(c.kwargs for c in gen_calls if "model_parameters" in c.kwargs)
+            assert params["model_parameters"]["max_tokens"] == 100
+            assert params["model_parameters"]["stream"] is False
+            assert "client_override" not in params["model_parameters"]
+            assert "api_key" not in params["model_parameters"]
 
     async def test_no_telemetry_still_stamps_trace_without_name(self):
         """Without telemetry, propagate_attributes still fires with namespace
@@ -1010,10 +1028,68 @@ class TestMainLLMCallFunction:
             assert captured["metadata"]["provider"] == "anthropic"
             # Generation gets model + metadata even without a track_name — only
             # the name kwarg stays None.
-            mock_langfuse_client.update_current_generation.assert_called_once()
-            gen_kwargs = mock_langfuse_client.update_current_generation.call_args.kwargs
-            assert gen_kwargs["name"] is None
-            assert gen_kwargs["model"] == "claude-4-sonnet"
+            gen_calls = mock_langfuse_client.update_current_generation.call_args_list
+            meta_kwargs = next(c.kwargs for c in gen_calls if "model" in c.kwargs)
+            assert meta_kwargs["name"] is None
+            assert meta_kwargs["model"] == "claude-4-sonnet"
+            # Input/output stamped explicitly (auto-capture disabled; HONCHO-4HA).
+            input_kwargs = next(c.kwargs for c in gen_calls if "input" in c.kwargs)
+            assert input_kwargs["input"] == [{"role": "user", "content": "Hello"}]
+            output_kwargs = next(c.kwargs for c in gen_calls if "output" in c.kwargs)
+            assert output_kwargs["output"].content == "Unnamed response"
+
+
+class TestLangfuseModelParameters:
+    """`_langfuse_model_parameters` is the deny-list seam that keeps secrets and
+    live clients out of Langfuse traces while still surfacing every tuning knob
+    (HONCHO-4HA). It dumps the config and excludes only secret-bearing fields, so
+    new knobs are traced automatically without an allow-list to maintain."""
+
+    def test_secret_fields_never_leak_but_knobs_do(self):
+        from src.config import ModelConfig
+        from src.llm.executor import (
+            _langfuse_model_parameters,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        # A config shaped like the production override path: real api_key /
+        # base_url / nested fallback / opaque provider_params.
+        config = ModelConfig(
+            model="gpt-4o",
+            transport="openai",
+            api_key="sk-super-secret",
+            base_url="https://user:pw@private.host/v1",
+            temperature=0.7,
+            provider_params={"x-internal-auth": "leak-me"},
+        )
+
+        params = _langfuse_model_parameters(
+            max_tokens=256,
+            config=config,
+            json_mode=True,
+            verbosity=None,
+            stream=False,
+            tools=[{"name": "search_memory"}],
+            tool_choice="auto",
+            response_model=None,
+        )
+
+        # Secrets and their nested holders are excluded entirely...
+        assert "api_key" not in params
+        assert "base_url" not in params
+        assert "fallback" not in params
+        assert "provider_params" not in params
+        # ...and no value anywhere echoes a secret.
+        flat = str(params)
+        assert "sk-super-secret" not in flat
+        assert "leak-me" not in flat
+        assert "private.host" not in flat
+        # Tuning knobs (config-derived + per-call) are still tracked.
+        assert params["model"] == "gpt-4o"
+        assert params["temperature"] == 0.7
+        assert params["max_tokens"] == 256
+        assert params["json_mode"] is True
+        assert params["tools"] == ["search_memory"]
+        assert params["tool_choice"] == "auto"
 
 
 class TestEdgeCases:

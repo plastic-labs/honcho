@@ -6,6 +6,7 @@ This script helps update version numbers across the Honcho repository.
 It handles the main API, Python SDK, and TypeScript SDK in a single operation.
 """
 
+import argparse
 import json
 import os
 import re
@@ -17,11 +18,11 @@ from datetime import datetime
 
 class VersionUpdater:
     def __init__(self, base_path: str):
-        self.base_path = base_path
+        self.base_path: str = base_path
 
     def get_current_versions(self) -> dict[str, str]:
         """Get current version numbers from the repository."""
-        versions = {}
+        versions: dict[str, str] = {}
 
         # Main API version
         with open(os.path.join(self.base_path, "pyproject.toml")) as f:
@@ -89,7 +90,7 @@ TYPESCRIPT_VERSION=
         os.unlink(temp_file)
 
         # Extract all versions and changelogs
-        updates = {}
+        updates: dict[str, dict[str, str]] = {}
 
         # Parse API version
         api_match = re.search(r"^API_VERSION=(.*)$", content, re.MULTILINE)
@@ -131,7 +132,7 @@ TYPESCRIPT_VERSION=
     ) -> str:
         """Extract changelog content between markers."""
         lines = content.split("\n")
-        changelog_lines = []
+        changelog_lines: list[str] = []
         in_section = False
 
         for line in lines:
@@ -158,8 +159,8 @@ TYPESCRIPT_VERSION=
         """Remove empty changelog sections."""
         sections = ["Added", "Changed", "Fixed", "Deprecated", "Removed", "Security"]
         lines = changelog.split("\n")
-        cleaned_lines = []
-        current_section = None
+        cleaned_lines: list[str] = []
+        current_section: str | None = None
         section_has_content = False
         section_start_idx = -1
         for i, line in enumerate(lines):
@@ -346,28 +347,30 @@ TYPESCRIPT_VERSION=
         self._update_compatibility_guide("typescript", new_version)
 
     def _update_docs_json(self, new_version: str):
-        """Update docs.json - only update versions with same major version."""
+        """Update docs.json version label(s) sharing the new version's major.
+
+        Uses a targeted regex replacement rather than a JSON round-trip so the
+        file's existing formatting (compact inline arrays) is preserved instead
+        of being reflowed.
+        """
         file_path = os.path.join(self.base_path, "docs/docs.json")
 
         with open(file_path) as f:
-            data = json.load(f)
+            content = f.read()
 
         # Get major version of new version
         new_major = new_version.split(".")[0]
 
-        # Update only matching major versions
-        if "navigation" in data and "versions" in data["navigation"]:
-            for version_entry in data["navigation"]["versions"]:
-                if "version" in version_entry:
-                    current_version = version_entry["version"].lstrip("v")
-                    current_major = current_version.split(".")[0]
+        def _replace(match: re.Match[str]) -> str:
+            # Only update labels whose major version matches the new version's.
+            if match.group(1) == new_major:
+                return f'"version": "v{new_version}"'
+            return match.group(0)
 
-                    if current_major == new_major:
-                        version_entry["version"] = f"v{new_version}"
+        content = re.sub(r'"version": "v(\d+)\.\d+\.\d+"', _replace, content)
 
         with open(file_path, "w") as f:
-            json.dump(data, f, indent=2)
-            f.write("\n")
+            f.write(content)
 
     def _update_sdk_changelog(self, version: str, changelog: str, relative_path: str):
         """Update an SDK's CHANGELOG.md file."""
@@ -405,11 +408,38 @@ TYPESCRIPT_VERSION=
             f.write(new_content)
 
     def _update_changelog_md(self, version: str, changelog: str):
-        """Update the main CHANGELOG.md file."""
+        """Update the main CHANGELOG.md file.
+
+        If an ``## [Unreleased]`` section is present, it is promoted to the new
+        version (its contents replaced by ``changelog``, which the caller is
+        expected to have already merged). Otherwise a new version entry is
+        prepended above the most recent release, preserving the legacy behavior.
+        """
         file_path = os.path.join(self.base_path, "CHANGELOG.md")
 
         with open(file_path) as f:
             content = f.read()
+
+        date = datetime.now().strftime("%Y-%m-%d")
+
+        # Ensure changelog content is properly formatted
+        if changelog.strip():
+            formatted_changelog = changelog.strip()
+        else:
+            formatted_changelog = "### Changed\n\n- Updated version"
+
+        # Promote an existing [Unreleased] section if one exists. Match from the
+        # "## [Unreleased]" header up to (but not including) the next release
+        # heading, and replace the whole block with the new version section.
+        unreleased_re = re.compile(
+            r"\n## \[Unreleased\][\s\S]*?(?=\n## \[)", re.IGNORECASE
+        )
+        if unreleased_re.search(content):
+            replacement = f"\n## [{version}] - {date}\n\n{formatted_changelog}\n"
+            new_content = unreleased_re.sub(replacement, content, count=1)
+            with open(file_path, "w") as f:
+                f.write(new_content)
+            return
 
         # Find the position after the header
         header_end = content.find("\n## [")
@@ -419,15 +449,6 @@ TYPESCRIPT_VERSION=
         if header_end == -1:
             # No existing entries, add after title
             header_end = content.find("\n", content.find("# Changelog"))
-
-        # Create new entry with proper formatting
-        date = datetime.now().strftime("%Y-%m-%d")
-
-        # Ensure changelog content is properly formatted
-        if changelog.strip():
-            formatted_changelog = changelog.strip()
-        else:
-            formatted_changelog = "### Changed\n\n- Updated version"
 
         new_entry = f"\n\n## [{version}] - {date}\n\n{formatted_changelog}\n"
 
@@ -624,7 +645,68 @@ TYPESCRIPT_VERSION=
             f.write(content)
 
 
+def _resolve_changelog(value: str | None) -> str:
+    """Resolve a changelog argument that is either inline text or a file path."""
+    if not value:
+        return ""
+    if os.path.isfile(value):
+        with open(value) as f:
+            return f.read().strip()
+    return value.strip()
+
+
+def _updates_from_args(args: argparse.Namespace) -> dict[str, dict[str, str]]:
+    """Build the updates dict from CLI flags (headless mode)."""
+    updates: dict[str, dict[str, str]] = {}
+    if args.api_version:
+        updates["api"] = {
+            "version": args.api_version,
+            "changelog": _resolve_changelog(args.api_changelog),
+        }
+    if args.python_version:
+        updates["python_sdk"] = {
+            "version": args.python_version,
+            "changelog": _resolve_changelog(args.python_changelog),
+        }
+    if args.typescript_version:
+        updates["typescript_sdk"] = {
+            "version": args.typescript_version,
+            "changelog": _resolve_changelog(args.typescript_changelog),
+        }
+    return updates
+
+
 def main():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Update Honcho version numbers and changelogs. With no version "
+            "flags, opens an interactive editor; pass one or more --*-version "
+            "flags to run headless (agent-friendly)."
+        )
+    )
+    parser.add_argument("--api-version", help="New Main API version.")
+    parser.add_argument("--python-version", help="New Python SDK version.")
+    parser.add_argument("--typescript-version", help="New TypeScript SDK version.")
+    parser.add_argument(
+        "--api-changelog",
+        help="API changelog markdown, or a path to a file containing it.",
+    )
+    parser.add_argument(
+        "--python-changelog",
+        help="Python SDK changelog markdown, or a path to a file containing it.",
+    )
+    parser.add_argument(
+        "--typescript-changelog",
+        help="TypeScript SDK changelog markdown, or a path to a file containing it.",
+    )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt (implied in headless mode).",
+    )
+    args = parser.parse_args()
+
     # Get the parent directory of the scripts folder (the project root)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     base_path = os.path.dirname(script_dir)
@@ -633,6 +715,8 @@ def main():
     # Get current versions
     current_versions = updater.get_current_versions()
 
+    headless = any([args.api_version, args.python_version, args.typescript_version])
+
     print("Honcho Version Updater")
     print("=" * 50)
     print("\nCurrent versions:")
@@ -640,12 +724,15 @@ def main():
     print(f"  Python SDK:      {current_versions['python_sdk']}")
     print(f"  TypeScript SDK:  {current_versions['typescript_sdk']}")
     print()
-    print("Opening editor for version updates...")
-    print("Leave version fields blank to skip updating that component.")
-    print()
 
-    # Get all updates at once
-    updates = updater.get_all_versions_from_editor(current_versions)
+    if headless:
+        updates = _updates_from_args(args)
+    else:
+        print("Opening editor for version updates...")
+        print("Leave version fields blank to skip updating that component.")
+        print()
+        # Get all updates at once
+        updates = updater.get_all_versions_from_editor(current_versions)
 
     if not updates:
         print("No versions specified. Exiting...")
@@ -661,11 +748,12 @@ def main():
         }[component]
         print(f"  {component_name}: {current_versions[component]} → {info['version']}")
 
-    # Confirm
-    response = input("\nProceed with updates? (y/n): ").strip().lower()
-    if response != "y":
-        print("Cancelled.")
-        sys.exit(0)
+    # Confirm (skipped in headless mode or with --yes)
+    if not headless and not args.yes:
+        response = input("\nProceed with updates? (y/n): ").strip().lower()
+        if response != "y":
+            print("Cancelled.")
+            sys.exit(0)
 
     # Apply all updates
     updater.update_all(updates, current_versions)
@@ -673,6 +761,7 @@ def main():
     print("\nVersion updates complete!")
     print("\nDon't forget to:")
     print("  - Review the changes with `git diff`")
+    print("  - Run `uv lock` to refresh the lockfile")
     print("  - Commit the changes")
     print("  - Create git tags for the new versions")
     print("  - Push the changes and tags")
