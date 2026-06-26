@@ -22,14 +22,12 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 
 logger = logging.getLogger(__name__)
 
-ModelTransport = Literal["anthropic", "openai", "gemini"]
-EmbeddingTransport = Literal["openai", "gemini"]
+ModelTransport = Literal["anthropic", "openai", "gemini", "azure_openai"]
+EmbeddingTransport = Literal["openai", "gemini", "azure_openai"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
 
 # OpenAI-compatible models that reject the `dimensions=` request parameter.
-_EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
-    {"text-embedding-ada-002"}
-)
+_EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset({"text-embedding-ada-002"})
 
 
 def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
@@ -57,9 +55,7 @@ def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
 TOML_CONFIG = load_toml_config()
 
 
-ThinkingEffortLevel = Literal[
-    "none", "minimal", "low", "medium", "high", "xhigh", "max"
-]
+ThinkingEffortLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 # "json_object" injects the schema into the prompt for OpenAI-compatible
 # providers that don't support json_schema (Structured Outputs).
@@ -72,6 +68,8 @@ class ModelOverrideSettings(BaseModel):
     api_key: str | None = None
     api_key_env: str | None = None
     base_url: str | None = None
+    api_version: str | None = None
+    use_entra_id: bool = False  # Use Azure AD token auth instead of API key
 
     provider_params: dict[str, Any] = Field(
         default_factory=dict,
@@ -115,25 +113,19 @@ def _normalize_model_transport(data: Any) -> Any:
     transport_value = update.get("transport")
     if isinstance(model_value, str) and "/" in model_value and transport_value is None:
         prefix, bare_model = model_value.split("/", 1)
-        if prefix in {"anthropic", "openai", "gemini"}:
+        if prefix in {"anthropic", "openai", "gemini", "azure_openai"}:
             update["transport"] = prefix
             update["model"] = bare_model
     return update
 
 
-def _validate_thinking_constraints(
-    transport: ModelTransport, thinking_budget_tokens: int | None
-) -> None:
+def _validate_thinking_constraints(transport: ModelTransport, thinking_budget_tokens: int | None) -> None:
     """Enforce transport-specific thinking_budget_tokens rules.
 
     Anthropic requires a minimum of 1024 tokens when thinking is enabled.
     Gemini/OpenAI accept any non-negative value (including 0 to disable).
     """
-    if (
-        transport == "anthropic"
-        and thinking_budget_tokens is not None
-        and 0 < thinking_budget_tokens < 1024
-    ):
+    if transport == "anthropic" and thinking_budget_tokens is not None and 0 < thinking_budget_tokens < 1024:
         raise ValueError("thinking_budget_tokens must be >= 1024 for Anthropic models")
 
 
@@ -253,6 +245,8 @@ class ResolvedFallbackConfig(BaseModel):
 
     api_key: str | None = None
     base_url: str | None = None
+    api_version: str | None = None
+    use_entra_id: bool = False
 
     temperature: float | None = None
     top_p: float | None = None
@@ -289,6 +283,8 @@ class ModelConfig(BaseModel):
 
     api_key: str | None = None
     base_url: str | None = None
+    api_version: str | None = None
+    use_entra_id: bool = False
 
     temperature: float | None = None
     top_p: float | None = None
@@ -357,13 +353,9 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
         update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
         model_value = update.get("model")
         transport_value = update.get("transport")
-        if (
-            isinstance(model_value, str)
-            and "/" in model_value
-            and transport_value is None
-        ):
+        if isinstance(model_value, str) and "/" in model_value and transport_value is None:
             prefix, bare_model = model_value.split("/", 1)
-            if prefix in {"openai", "gemini"}:
+            if prefix in {"openai", "gemini", "azure_openai"}:
                 update["transport"] = prefix
                 update["model"] = bare_model
         return update
@@ -382,6 +374,8 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    api_version: str | None = None
+    use_entra_id: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -393,13 +387,9 @@ class EmbeddingModelConfig(BaseModel):
         update: dict[str, Any] = {str(key): value for key, value in raw_data.items()}
         model_value = update.get("model")
         transport_value = update.get("transport")
-        if (
-            isinstance(model_value, str)
-            and "/" in model_value
-            and transport_value is None
-        ):
+        if isinstance(model_value, str) and "/" in model_value and transport_value is None:
             prefix, bare_model = model_value.split("/", 1)
-            if prefix in {"openai", "gemini"}:
+            if prefix in {"openai", "gemini", "azure_openai"}:
                 update["transport"] = prefix
                 update["model"] = bare_model
         return update
@@ -431,6 +421,8 @@ def _resolve_fallback_config(
             fallback.overrides.api_key_env,
         ),
         base_url=fallback.overrides.base_url,
+        api_version=fallback.overrides.api_version,
+        use_entra_id=fallback.overrides.use_entra_id,
         temperature=fallback.temperature,
         top_p=fallback.top_p,
         top_k=fallback.top_k,
@@ -450,11 +442,7 @@ def _resolve_fallback_config(
 def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
     """Resolve persisted model settings into the runtime ModelConfig."""
 
-    resolved_fallback = (
-        _resolve_fallback_config(configured.fallback)
-        if configured.fallback is not None
-        else None
-    )
+    resolved_fallback = _resolve_fallback_config(configured.fallback) if configured.fallback is not None else None
 
     return ModelConfig(
         model=configured.model,
@@ -465,6 +453,8 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
             configured.overrides.api_key_env,
         ),
         base_url=configured.overrides.base_url,
+        api_version=configured.overrides.api_version,
+        use_entra_id=configured.overrides.use_entra_id,
         temperature=configured.temperature,
         top_p=configured.top_p,
         top_k=configured.top_k,
@@ -487,6 +477,8 @@ def _default_embedding_api_key(transport: EmbeddingTransport) -> str | None:
         return settings.LLM.OPENAI_API_KEY
     if transport == "gemini":
         return settings.LLM.GEMINI_API_KEY
+    if transport == "azure_openai":
+        return settings.LLM.AZURE_OPENAI_API_KEY
 
 
 def resolve_embedding_model_config(
@@ -506,12 +498,12 @@ def resolve_embedding_model_config(
         transport=configured.transport,
         api_key=api_key,
         base_url=configured.overrides.base_url,
+        api_version=configured.overrides.api_version,
+        use_entra_id=configured.overrides.use_entra_id,
     )
 
 
-_TRANSPORT_SPECIFIC_THINKING_KEYS: frozenset[str] = frozenset(
-    {"thinking_budget_tokens", "thinking_effort"}
-)
+_TRANSPORT_SPECIFIC_THINKING_KEYS: frozenset[str] = frozenset({"thinking_budget_tokens", "thinking_effort"})
 
 
 def _fill_defaults_for_nested_field(
@@ -589,13 +581,10 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "": "app",  # For AppSettings with no prefix
     }
 
-    def get_field_value(
-        self, field: FieldInfo, field_name: str
-    ) -> tuple[Any, str, bool]:
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         # Get the env_prefix from the model config
         prefix = self.settings_cls.model_config.get("env_prefix", "")
-        if prefix.endswith("_"):
-            prefix = prefix[:-1]
+        prefix = prefix.removesuffix("_")
 
         # Map prefixes to TOML sections
         section = self.SECTION_MAP.get(prefix, prefix.lower())
@@ -613,8 +602,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
     def __call__(self) -> dict[str, Any]:
         # Get the env_prefix from the model config
         prefix = self.settings_cls.model_config.get("env_prefix", "")
-        if prefix.endswith("_"):
-            prefix = prefix[:-1]
+        prefix = prefix.removesuffix("_")
 
         section = self.SECTION_MAP.get(prefix, prefix.lower())
         toml_data = TOML_CONFIG.get(section, {})
@@ -651,9 +639,7 @@ class HonchoSettings(BaseSettings):
 class DBSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", extra="ignore")  # pyright: ignore
 
-    CONNECTION_URI: str = (
-        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
-    )
+    CONNECTION_URI: str = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
     SCHEMA: str = "public"
     POOL_CLASS: str = "default"
     POOL_PRE_PING: bool = True
@@ -663,9 +649,7 @@ class DBSettings(HonchoSettings):
         5  # seconds a pooled checkout may wait for a free connection (QueuePool
         # only; NullPool has no local queue wait)
     )
-    POOL_RECYCLE: Annotated[int, Field(default=300, gt=0, le=7200)] = (
-        300  # seconds (max 2 hours)
-    )
+    POOL_RECYCLE: Annotated[int, Field(default=300, gt=0, le=7200)] = 300  # seconds (max 2 hours)
     POOL_USE_LIFO: bool = True
     SQL_DEBUG: bool = False
     TRACING: bool = False
@@ -709,12 +693,14 @@ class LLMSettings(HonchoSettings):
     ANTHROPIC_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
+    AZURE_OPENAI_API_KEY: str | None = None
 
     # Base URLs for LLM providers (for OpenAI-compatible proxies like
     # OpenRouter, vLLM, Together, Anyscale, self-hosted, etc.)
     ANTHROPIC_BASE_URL: str | None = None
     OPENAI_BASE_URL: str | None = None
     GEMINI_BASE_URL: str | None = None
+    AZURE_OPENAI_API_KEY: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
@@ -722,15 +708,11 @@ class LLMSettings(HonchoSettings):
     # Maximum characters for tool output to prevent token explosion.
     # Set to 10,000 chars (~2,500 tokens at 4 chars/token) to stay well under
     # typical context limits while providing substantial tool output.
-    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=10000, gt=0, le=100_000)] = (
-        10000
-    )
+    MAX_TOOL_OUTPUT_CHARS: Annotated[int, Field(default=10000, gt=0, le=100_000)] = 10000
 
     # Maximum characters for individual message content in tool results.
     # Keeps each message preview concise while preserving key context.
-    MAX_MESSAGE_CONTENT_CHARS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = (
-        2000
-    )
+    MAX_MESSAGE_CONTENT_CHARS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
 
 
 class EmbeddingSettings(HonchoSettings):
@@ -745,9 +727,7 @@ class EmbeddingSettings(HonchoSettings):
             model="text-embedding-3-small",
         )
 
-    MODEL_CONFIG: ConfiguredEmbeddingModelSettings = Field(
-        default_factory=_MODEL_CONFIG_DEFAULT
-    )
+    MODEL_CONFIG: ConfiguredEmbeddingModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
     VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
@@ -792,9 +772,7 @@ class DeriverSettings(HonchoSettings):
     ENABLED: bool = True
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
-    POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
-        float, Field(default=1.0, gt=0.0, le=60.0)
-    ] = 1.0
+    POLLING_SLEEP_INTERVAL_SECONDS: Annotated[float, Field(default=1.0, gt=0.0, le=60.0)] = 1.0
     # Adaptive polling: when the queue is idle (or the loop is erroring) the
     # sleep interval grows from POLLING_SLEEP_INTERVAL_SECONDS toward
     # POLLING_SLEEP_MAX_INTERVAL_SECONDS by POLLING_BACKOFF_MULTIPLIER each
@@ -825,9 +803,7 @@ class DeriverSettings(HonchoSettings):
     ] = 60.0
 
     # Retention window (seconds) for keeping errored items in the queue
-    QUEUE_ERROR_RETENTION_SECONDS: Annotated[
-        int, Field(default=30 * 24 * 3600, gt=0)
-    ] = 30 * 24 * 3600  # 30 days default
+    QUEUE_ERROR_RETENTION_SECONDS: Annotated[int, Field(default=30 * 24 * 3600, gt=0)] = 30 * 24 * 3600  # 30 days default
 
     @staticmethod
     def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
@@ -847,15 +823,11 @@ class DeriverSettings(HonchoSettings):
     LOG_OBSERVATIONS: bool = False
 
     MAX_INPUT_TOKENS: Annotated[int, Field(default=25000, gt=0, le=25000)] = 25000
-    MAX_CUSTOM_INSTRUCTIONS_TOKENS: Annotated[
-        int, Field(default=2000, ge=0, le=2000)
-    ] = 2000
+    MAX_CUSTOM_INSTRUCTIONS_TOKENS: Annotated[int, Field(default=2000, ge=0, le=2000)] = 2000
 
     # Maximum number of observations to return in working representation
     # This is applied to both explicit and deductive observations
-    WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
-        int, Field(default=100, gt=0, le=1000)
-    ] = 100
+    WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[int, Field(default=100, gt=0, le=1000)] = 100
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
@@ -916,12 +888,10 @@ class DialecticLevelSettings(BaseModel):
         ConfiguredModelSettings,
         Field(validation_alias="model_config"),
     ]
-    MAX_TOOL_ITERATIONS: Annotated[
-        int, Field(ge=0, le=50, validation_alias="max_tool_iterations")
-    ]
-    MAX_OUTPUT_TOKENS: Annotated[
-        int | None, Field(ge=1, le=100_000, validation_alias="max_output_tokens")
-    ] = None  # None means use global DIALECTIC.MAX_OUTPUT_TOKENS
+    MAX_TOOL_ITERATIONS: Annotated[int, Field(ge=0, le=50, validation_alias="max_tool_iterations")]
+    MAX_OUTPUT_TOKENS: Annotated[int | None, Field(ge=1, le=100_000, validation_alias="max_output_tokens")] = (
+        None  # None means use global DIALECTIC.MAX_OUTPUT_TOKENS
+    )
     TOOL_CHOICE: Annotated[str | None, Field(validation_alias="tool_choice")] = (
         None  # None/auto lets model decide, "any"/"required" forces tool use
     )
@@ -987,9 +957,7 @@ class DialecticSettings(HonchoSettings):
         env_prefix="DIALECTIC_", env_nested_delimiter="__", extra="ignore"
     )
 
-    LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(
-        default_factory=_default_dialectic_levels
-    )
+    LEVELS: dict[ReasoningLevel, DialecticLevelSettings] = Field(default_factory=_default_dialectic_levels)
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=8192, gt=0, le=100_000)] = 8192
     MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
@@ -999,56 +967,59 @@ class DialecticSettings(HonchoSettings):
 
     # Session history injection: max tokens of recent messages to include when session_id is specified.
     # Set to 0 to disable automatic session history injection.
-    SESSION_HISTORY_MAX_TOKENS: Annotated[
-        int, Field(default=4_096, ge=0, le=16_384)
-    ] = 4_096
+    SESSION_HISTORY_MAX_TOKENS: Annotated[int, Field(default=4_096, ge=0, le=16_384)] = 4_096
 
     @model_validator(mode="before")
     @classmethod
     def _merge_level_defaults(cls, data: Any) -> Any:
-        """Merge partial level overrides with built-in defaults."""
+        """Merge partial level overrides with built-in defaults.
+
+        Iterates over every built-in default level so partial overrides
+        (e.g. only setting ``DIALECTIC_LEVELS__minimal__MODEL_CONFIG__TRANSPORT``)
+        don't drop the untouched levels - which would fail
+        ``_validate_all_levels_present``.
+        """
         if not isinstance(data, dict):
             return data
         typed_data = cast(dict[str, Any], data)
-        levels_raw: dict[str, Any] | None = typed_data.get("LEVELS") or typed_data.get(
-            "levels"
-        )
+        levels_raw: dict[str, Any] | None = typed_data.get("LEVELS") or typed_data.get("levels")
         if not isinstance(levels_raw, dict):
             return data  # pyright: ignore[reportUnknownVariableType]
         defaults = _default_dialectic_levels()
         for level_name_key, level_override_val in levels_raw.items():
             level_name = str(level_name_key)
+            # Honor programmatic DialecticLevelSettings (BaseModel) overrides by
+            # normalizing to a dict instead of discarding them below.
+            if isinstance(level_override_val, BaseModel):
+                level_override_val = level_override_val.model_dump(by_alias=True)
             if not isinstance(level_override_val, dict):
                 continue
             level_override = cast(dict[str, Any], level_override_val)
             if level_name in defaults:
-                base: dict[str, Any] = defaults[level_name].model_dump(by_alias=True)
+                base: dict[str, Any] = default_settings.model_dump(by_alias=True)
                 # Recursively merge nested MODEL_CONFIG / model_config too.
                 # model_dump() always produces the Python field name
                 # ("MODEL_CONFIG"), but TOML overrides arrive as lowercase
                 # ("model_config").  Check both casings in the override and
                 # resolve the base value from whichever casing is present.
                 for mc_key in ("MODEL_CONFIG", "model_config"):
-                    if mc_key in level_override and isinstance(
-                        level_override[mc_key], dict
-                    ):
-                        base_mc: dict[str, Any] = dict(
-                            base.get("MODEL_CONFIG") or base.get("model_config") or {}
-                        )
+                    if mc_key in level_override and isinstance(level_override[mc_key], dict):
+                        base_mc: dict[str, Any] = dict(base.get("MODEL_CONFIG") or base.get("model_config") or {})
                         override_mc = cast(dict[str, Any], level_override[mc_key])
                         override_lower = {k.lower(): v for k, v in override_mc.items()}
                         base_lower = {k.lower(): v for k, v in base_mc.items()}
                         override_transport = override_lower.get("transport")
                         base_transport = base_lower.get("transport")
-                        if (
-                            override_transport is not None
-                            and override_transport != base_transport
-                        ):
+                        if override_transport is not None and override_transport != base_transport:
                             for k in list(base_mc.keys()):
                                 if k.lower() in _TRANSPORT_SPECIFIC_THINKING_KEYS:
                                     del base_mc[k]
                         level_override[mc_key] = {**base_mc, **override_mc}
                 levels_raw[level_name] = {**base, **level_override}
+            else:
+                # Preserve any unexpected custom level names the caller supplied
+                # (normalized to a dict above when passed programmatically).
+                levels_raw[level_name] = level_override
         # Backfill any reasoning levels the operator didn't explicitly set with the default values.
         for default_level_name, default_level in defaults.items():
             if default_level_name not in levels_raw:
@@ -1061,14 +1032,11 @@ class DialecticSettings(HonchoSettings):
         for level, level_settings in self.LEVELS.items():
             thinking_budget = level_settings.MODEL_CONFIG.thinking_budget_tokens or 0
             effective_max = (
-                level_settings.MAX_OUTPUT_TOKENS
-                if level_settings.MAX_OUTPUT_TOKENS is not None
-                else self.MAX_OUTPUT_TOKENS
+                level_settings.MAX_OUTPUT_TOKENS if level_settings.MAX_OUTPUT_TOKENS is not None else self.MAX_OUTPUT_TOKENS
             )
             if thinking_budget > 0 and thinking_budget >= effective_max:
                 raise ValueError(
-                    "MAX_OUTPUT_TOKENS must be greater than MODEL_CONFIG."
-                    + f"thinking_budget_tokens for level '{level}'"
+                    "MAX_OUTPUT_TOKENS must be greater than MODEL_CONFIG." + f"thinking_budget_tokens for level '{level}'"
                 )
         return self
 
@@ -1183,9 +1151,7 @@ class CacheSettings(HonchoSettings):
     ENABLED: bool = False
     URL: str = "redis://localhost:6379/0?suppress=true"
     NAMESPACE: str | None = None
-    DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
-        300  # how long to keep items in cache
-    )
+    DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = 300  # how long to keep items in cache
 
     DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
         5  # how long to hold a lock on a resource when fetching DB after cache miss
@@ -1198,9 +1164,7 @@ class SurprisalSettings(BaseModel):
     ENABLED: bool = False
 
     # Tree configuration
-    TREE_TYPE: Literal[
-        "kdtree", "balltree", "rptree", "covertree", "lsh", "graph", "prototype"
-    ] = "kdtree"
+    TREE_TYPE: Literal["kdtree", "balltree", "rptree", "covertree", "lsh", "graph", "prototype"] = "kdtree"
     TREE_K: Annotated[int, Field(default=5, gt=0, le=20)] = 5  # k for kNN-based trees
 
     # Sampling strategy
@@ -1208,9 +1172,7 @@ class SurprisalSettings(BaseModel):
     SAMPLE_SIZE: Annotated[int, Field(default=200, gt=0, le=2000)] = 200
 
     # Surprisal filtering (normalized scores: 0.0 = lowest, 1.0 = highest)
-    TOP_PERCENT_SURPRISAL: Annotated[float, Field(default=0.10, gt=0.0, le=1.0)] = (
-        0.10  # Top 10% of observations
-    )
+    TOP_PERCENT_SURPRISAL: Annotated[float, Field(default=0.10, gt=0.0, le=1.0)] = 0.10  # Top 10% of observations
     # Hybrid mode: min high-surprisal observations to replace standard questions
     MIN_HIGH_SURPRISAL_FOR_REPLACE: Annotated[int, Field(default=10, gt=0)] = 10
 
@@ -1233,9 +1195,7 @@ class DreamSettings(HonchoSettings):
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
 
     # Token limit for get_recent_history tool within the agent
-    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=16_384, gt=0, le=200_000)] = (
-        16_384
-    )
+    HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=16_384, gt=0, le=200_000)] = 16_384
 
     @staticmethod
     def _DEDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
@@ -1245,9 +1205,7 @@ class DreamSettings(HonchoSettings):
             model="gpt-5.4-mini",
         )
 
-    DEDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
-        default_factory=_DEDUCTION_MODEL_CONFIG_DEFAULT
-    )
+    DEDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_DEDUCTION_MODEL_CONFIG_DEFAULT)
 
     @staticmethod
     def _INDUCTION_MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
@@ -1257,9 +1215,7 @@ class DreamSettings(HonchoSettings):
             model="gpt-5.4-mini",
         )
 
-    INDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(
-        default_factory=_INDUCTION_MODEL_CONFIG_DEFAULT
-    )
+    INDUCTION_MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_INDUCTION_MODEL_CONFIG_DEFAULT)
 
     # Surprisal-based sampling subsystem
     SURPRISAL: SurprisalSettings = Field(default_factory=SurprisalSettings)
@@ -1294,8 +1250,7 @@ class DreamSettings(HonchoSettings):
                 and cfg.max_output_tokens <= cfg.thinking_budget_tokens
             ):
                 raise ValueError(
-                    f"dream.{name}.max_output_tokens must be greater than "
-                    + f"dream.{name}.thinking_budget_tokens"
+                    f"dream.{name}.max_output_tokens must be greater than " + f"dream.{name}.thinking_budget_tokens"
                 )
         return self
 
@@ -1332,16 +1287,12 @@ class VectorStoreSettings(HonchoSettings):
     # LanceDB-specific settings (local embedded mode)
     LANCEDB_PATH: str = "./lancedb_data"
 
-    RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
-        300  # 5 minutes
-    )
+    RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = 300  # 5 minutes
 
     @model_validator(mode="after")
     def _require_api_key_for_turbopuffer(self) -> "VectorStoreSettings":
         if self.TYPE == "turbopuffer" and not self.TURBOPUFFER_API_KEY:
-            raise ValueError(
-                "VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'"
-            )
+            raise ValueError("VECTOR_STORE_TURBOPUFFER_API_KEY must be set when TYPE is 'turbopuffer'")
         return self
 
 
@@ -1356,9 +1307,7 @@ class AppSettings(HonchoSettings):
     PERFORMANCE_LOG_FORMAT: str = "compact"
     SESSION_OBSERVERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
-    GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
-        100_000
-    )
+    GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = 100_000
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
     EMBED_MESSAGES: bool = True

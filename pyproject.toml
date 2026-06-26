@@ -40,6 +40,14 @@ dependencies = [
     "prometheus_client>=0.21.0",
     "cloudevents>=1.12.0,<2.0",
 ]
+
+[project.optional-dependencies]
+# Azure AD / Entra ID token authentication for the azure_openai transport.
+# Only needed when a ModelConfig sets ``overrides.use_entra_id = true``.
+azure = [
+    "azure-identity>=1.15.0",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=8.2.2",
