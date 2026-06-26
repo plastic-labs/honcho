@@ -192,16 +192,19 @@ export class ConclusionScope {
    * @param options.page - Page number (1-indexed, default: 1)
    * @param options.size - Number of items per page (default: 50)
    * @param options.session - Optional session (ID string or Session object) to filter by
-   * @param options.level - Optional reasoning level to filter by. Use 'explicit'
-   *   to get only conclusions extracted directly from messages (i.e. not
-   *   derived during dreaming).
+   * @param options.filters - Optional additional filter criteria, merged with
+   *   this scope's observer/observed (and session, if given). Supports the same
+   *   operators as other list endpoints — e.g. `{ level: 'explicit' }` to get
+   *   only conclusions extracted directly from messages (i.e. not derived during
+   *   dreaming). See
+   *   https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
    * @returns Promise resolving to a Page of Conclusion objects
    */
   async list(options?: {
     page?: number
     size?: number
     session?: string | Session
-    level?: ConclusionLevel
+    filters?: Record<string, unknown>
     reverse?: boolean
   }): Promise<Page<Conclusion, ConclusionResponse>> {
     const resolvedSessionId = options?.session
@@ -209,20 +212,20 @@ export class ConclusionScope {
         ? options.session
         : options.session.id
       : undefined
-    const filters: Record<string, unknown> = {
+    const mergedFilters: Record<string, unknown> = {
       observer_id: this.observer,
       observed_id: this.observed,
     }
     if (resolvedSessionId) {
-      filters.session_id = resolvedSessionId
+      mergedFilters.session_id = resolvedSessionId
     }
-    if (options?.level) {
-      filters.level = options.level
+    if (options?.filters) {
+      Object.assign(mergedFilters, options.filters)
     }
     const reverse = options?.reverse
 
     const response = await this._list({
-      filters,
+      filters: mergedFilters,
       page: options?.page ?? 1,
       size: options?.size ?? 50,
       reverse,
@@ -232,7 +235,7 @@ export class ConclusionScope {
       page: number,
       size: number
     ): Promise<PageResponse<ConclusionResponse>> => {
-      return this._list({ filters, page, size, reverse })
+      return this._list({ filters: mergedFilters, page, size, reverse })
     }
 
     return new Page(

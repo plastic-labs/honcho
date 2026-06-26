@@ -31,7 +31,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from pydantic import ConfigDict, Field, validate_call
 
 from .api_types import (
-    ConclusionLevel,
     ConclusionResponse,
     MessageCreateParams,
     MessageResponse,
@@ -1461,31 +1460,34 @@ class ConclusionScopeAio:
         size: int = 50,
         session: str | SessionBase | None = None,
         *,
-        level: ConclusionLevel | None = None,
+        filters: dict[str, Any] | None = None,
         reverse: bool = False,
     ) -> AsyncPage[ConclusionResponse, Conclusion]:
         """List conclusions in this scope asynchronously.
 
-        Pass ``level="explicit"`` to get only conclusions extracted directly
-        from messages (i.e. not derived during dreaming).
+        Pass ``filters`` to add criteria merged with this scope's
+        observer/observed (and session, if given) — e.g.
+        ``{"level": "explicit"}`` to get only conclusions extracted directly
+        from messages (i.e. not derived during dreaming). See
+        https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
         """
         await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
-        filters: dict[str, Any] = {
+        merged_filters: dict[str, Any] = {
             "observer_id": self._scope.observer,
             "observed_id": self._scope.observed,
         }
         if resolved_session_id:
-            filters["session_id"] = resolved_session_id
-        if level is not None:
-            filters["level"] = level
+            merged_filters["session_id"] = resolved_session_id
+        if filters:
+            merged_filters.update(filters)
 
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
             query["reverse"] = "true"
         data = await self._scope._honcho._async_http_client.post(
             routes.conclusions_list(self._scope.workspace_id),
-            body={"filters": filters},
+            body={"filters": merged_filters},
             query=query,
         )
 
@@ -1500,7 +1502,7 @@ class ConclusionScopeAio:
                 next_query["reverse"] = "true"
             next_data = await self._scope._honcho._async_http_client.post(
                 routes.conclusions_list(self._scope.workspace_id),
-                body={"filters": filters},
+                body={"filters": merged_filters},
                 query=next_query,
             )
             return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
