@@ -240,6 +240,8 @@ class ConclusionScope:
         query: str,
         top_k: int = 10,
         distance: float | None = None,
+        *,
+        filters: dict[str, Any] | None = None,
     ) -> list[Conclusion]:
         """
         Semantic search for conclusions in this scope.
@@ -248,20 +250,27 @@ class ConclusionScope:
             query: The search query string
             top_k: Maximum number of results to return
             distance: Maximum cosine distance threshold (0.0-1.0)
+            filters: Optional dictionary of additional filter criteria, merged
+                with this scope's observer/observed. Supports the same operators
+                as the list endpoint — e.g. ``{"level": "deductive"}`` to search
+                only conclusions derived during dreaming. See
+                https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
 
         Returns:
             List of matching Conclusion objects
         """
         self._honcho._ensure_workspace()
-        filters: dict[str, Any] = {
+        merged_filters: dict[str, Any] = {
             "observer_id": self.observer,
             "observed_id": self.observed,
         }
+        if filters:
+            merged_filters.update(filters)
 
         body: dict[str, Any] = {
             "query": query,
             "top_k": top_k,
-            "filters": filters,
+            "filters": merged_filters,
         }
         if distance is not None:
             body["distance"] = distance

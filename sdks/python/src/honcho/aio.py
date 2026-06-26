@@ -1514,18 +1514,30 @@ class ConclusionScopeAio:
         query: str,
         top_k: int = 10,
         distance: float | None = None,
+        *,
+        filters: dict[str, Any] | None = None,
     ) -> list[Conclusion]:
-        """Semantic search for conclusions asynchronously."""
+        """Semantic search for conclusions asynchronously.
+
+        Args:
+            query: The search query string
+            top_k: Maximum number of results to return
+            distance: Maximum cosine distance threshold (0.0-1.0)
+            filters: Optional dictionary of additional filter criteria, merged
+                with this scope's observer/observed (e.g. ``{"level": "deductive"}``).
+        """
         await self._scope._honcho._ensure_workspace_async()
-        filters: dict[str, Any] = {
+        merged_filters: dict[str, Any] = {
             "observer_id": self._scope.observer,
             "observed_id": self._scope.observed,
         }
+        if filters:
+            merged_filters.update(filters)
 
         body: dict[str, Any] = {
             "query": query,
             "top_k": top_k,
-            "filters": filters,
+            "filters": merged_filters,
         }
         if distance is not None:
             body["distance"] = distance

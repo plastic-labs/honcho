@@ -247,22 +247,35 @@ export class ConclusionScope {
 
   /**
    * Semantic search for conclusions in this scope.
+   *
+   * @param query - The search query string
+   * @param topK - Maximum number of results to return (default: 10)
+   * @param distance - Maximum cosine distance threshold (0.0-1.0)
+   * @param filters - Optional additional filter criteria, merged with this
+   *   scope's observer/observed. Supports the same operators as the list
+   *   endpoint — e.g. `{ level: 'deductive' }` to search only conclusions
+   *   derived during dreaming. See
+   *   https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
    */
   async query(
     query: string,
     topK: number = 10,
-    distance?: number
+    distance?: number,
+    filters?: Record<string, unknown>
   ): Promise<Conclusion[]> {
-    const filters: Record<string, unknown> = {
+    const mergedFilters: Record<string, unknown> = {
       observer_id: this.observer,
       observed_id: this.observed,
+    }
+    if (filters) {
+      Object.assign(mergedFilters, filters)
     }
 
     const response = await this._query({
       query,
       top_k: topK,
       distance,
-      filters,
+      filters: mergedFilters,
     })
 
     return (response ?? []).map((item) => Conclusion.fromApiResponse(item))
