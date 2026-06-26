@@ -1,7 +1,7 @@
 import { API_VERSION } from './api-version'
 import type { HonchoHTTPClient } from './http/client'
 import { Message } from './message'
-import { Page } from './pagination'
+import { Page, QueueWorkUnitsPage } from './pagination'
 import { Peer } from './peer'
 import { SessionContext, SessionSummaries } from './session_context'
 import type {
@@ -11,13 +11,16 @@ import type {
   QueueStatus,
   QueueStatusParams,
   QueueStatusResponse,
+  QueueWorkUnit,
+  QueueWorkUnitResponse,
+  QueueWorkUnitsResponse,
   RepresentationOptions,
   RepresentationResponse,
   SessionContextResponse,
   SessionResponse,
   SessionSummariesResponse,
 } from './types/api'
-import { transformQueueStatus } from './utils'
+import { transformQueueStatus, transformQueueWorkUnit } from './utils'
 import {
   ContextParamsSchema,
   FileUploadSchema,
@@ -37,6 +40,7 @@ import {
   PeerRemovalSchema,
   peerConfigFromApi,
   type QueueStatusOptions,
+  type QueueWorkUnitsOptions,
   SearchQuerySchema,
   type SessionConfig,
   SessionConfigSchema,
@@ -904,6 +908,66 @@ export class Session {
 
     const status = await this._getQueueStatus(queryParams)
     return transformQueueStatus(status)
+  }
+
+  /**
+   * List unprocessed queue work units scoped to this session, cursor-paginated.
+   *
+   * @returns A QueueWorkUnitsPage iterable across pages. session_id is hard-set
+   *   to this session and cannot be overridden.
+   */
+  async queueWorkUnits(
+    options?: Omit<
+      QueueWorkUnitsOptions,
+      'sessionId' | 'observerId' | 'senderId' | 'session'
+    > & {
+      observer?: string | Peer
+      sender?: string | Peer
+    }
+  ): Promise<QueueWorkUnitsPage<QueueWorkUnit, QueueWorkUnitResponse>> {
+    const resolvedObserverId = options?.observer
+      ? typeof options.observer === 'string'
+        ? options.observer
+        : options.observer.id
+      : undefined
+    const resolvedSenderId = options?.sender
+      ? typeof options.sender === 'string'
+        ? options.sender
+        : options.sender.id
+      : undefined
+    const size = options?.size
+
+    const buildQuery = (
+      cursor?: string
+    ): Record<string, string | number | boolean | undefined> => {
+      const q: Record<string, string | number | boolean | undefined> = {
+        session_id: this.id,
+      }
+      if (resolvedObserverId) q.observer_id = resolvedObserverId
+      if (resolvedSenderId) q.sender_id = resolvedSenderId
+      if (cursor) q.cursor = cursor
+      if (size != null) q.size = size
+      return q
+    }
+
+    const fetchAt = async (cursor: string): Promise<QueueWorkUnitsResponse> => {
+      return this._http.get<QueueWorkUnitsResponse>(
+        `/${API_VERSION}/workspaces/${this.workspaceId}/queue/work-units`,
+        { query: buildQuery(cursor) }
+      )
+    }
+
+    const data = await this._http.get<QueueWorkUnitsResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/queue/work-units`,
+      { query: buildQuery(options?.cursor) }
+    )
+
+    return new QueueWorkUnitsPage<QueueWorkUnit, QueueWorkUnitResponse>(
+      data,
+      transformQueueWorkUnit,
+      fetchAt,
+      fetchAt
+    )
   }
 
   /**

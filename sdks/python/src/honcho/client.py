@@ -16,6 +16,8 @@ from .api_types import (
     PeerConfig,
     PeerResponse,
     QueueStatusResponse,
+    QueueWorkUnit,
+    QueueWorkUnitsPageSync,
     SessionConfiguration,
     SessionPeerConfig,
     SessionResponse,
@@ -650,6 +652,79 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             query=query if query else None,
         )
         return QueueStatusResponse.model_validate(data)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def queue_work_units(
+        self,
+        observer: str | PeerBase | None = None,
+        sender: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        *,
+        cursor: str | None = None,
+        size: int | None = None,
+    ) -> QueueWorkUnitsPageSync:
+        """
+        List unprocessed queue work units, cursor-paginated.
+
+        Useful for debugging "why isn't this work unit advancing?" — distinguishes
+        work units stalled below the batch token threshold from those claimed by
+        a worker or eligible to be claimed.
+
+        Args:
+            observer: Optional observer (ID string or Peer object) to filter by
+            sender: Optional sender (ID string or Peer object) to filter by
+            session: Optional session (ID string or Session object) to filter by
+            cursor: Optional cursor token from a previous page's ``next_page``
+                or ``previous_page``
+            size: Optional page size
+
+        Returns:
+            A ``QueueWorkUnitsPageSync`` — iterate items via ``.items`` (current
+            page only) or by iterating the page object (auto-walks subsequent
+            pages until exhausted). ``.representation_batch_max_tokens`` and
+            ``.flush_enabled`` expose the server's threshold configuration.
+        """
+        self._ensure_workspace()
+        resolved_observer_id = resolve_id(observer)
+        resolved_sender_id = resolve_id(sender)
+        resolved_session_id = resolve_id(session)
+
+        def build_query(cursor_token: str | None) -> dict[str, Any]:
+            q: dict[str, Any] = {}
+            if resolved_observer_id:
+                q["observer_id"] = resolved_observer_id
+            if resolved_sender_id:
+                q["sender_id"] = resolved_sender_id
+            if resolved_session_id:
+                q["session_id"] = resolved_session_id
+            if cursor_token is not None:
+                q["cursor"] = cursor_token
+            if size is not None:
+                q["size"] = size
+            return q
+
+        def fetch_at(cursor_token: str) -> QueueWorkUnitsPageSync:
+            next_data = self._http.get(
+                routes.workspace_queue_work_units(self.workspace_id),
+                query=build_query(cursor_token),
+            )
+            return QueueWorkUnitsPageSync(
+                next_data,
+                QueueWorkUnit,
+                fetch_next=fetch_at,
+                fetch_previous=fetch_at,
+            )
+
+        data = self._http.get(
+            routes.workspace_queue_work_units(self.workspace_id),
+            query=build_query(cursor) or None,
+        )
+        return QueueWorkUnitsPageSync(
+            data,
+            QueueWorkUnit,
+            fetch_next=fetch_at,
+            fetch_previous=fetch_at,
+        )
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def schedule_dream(

@@ -325,6 +325,8 @@ export interface SessionQueueStatusResponse {
   completed_work_units: number
   in_progress_work_units: number
   pending_work_units: number
+  pending_stalled_work_units?: number
+  pending_ready_work_units?: number
 }
 
 export interface QueueStatusResponse {
@@ -332,6 +334,8 @@ export interface QueueStatusResponse {
   completed_work_units: number
   in_progress_work_units: number
   pending_work_units: number
+  pending_stalled_work_units?: number
+  pending_ready_work_units?: number
   sessions?: Record<string, SessionQueueStatusResponse>
 }
 
@@ -350,6 +354,8 @@ export interface SessionQueueStatus {
   completedWorkUnits: number
   inProgressWorkUnits: number
   pendingWorkUnits: number
+  pendingStalledWorkUnits: number
+  pendingReadyWorkUnits: number
 }
 
 /**
@@ -360,7 +366,43 @@ export interface QueueStatus {
   completedWorkUnits: number
   inProgressWorkUnits: number
   pendingWorkUnits: number
+  pendingStalledWorkUnits: number
+  pendingReadyWorkUnits: number
   sessions?: Record<string, SessionQueueStatus>
+}
+
+/** Raw per-work-unit row from /queue/work-units. */
+export interface QueueWorkUnitResponse {
+  work_unit_key: string
+  task_type: string
+  session_id: string | null
+  session_name: string | null
+  observer: string | null
+  observed: string | null
+  pending_items: number
+  pending_tokens: number
+  tokens_until_threshold: number
+  hit_threshold: boolean
+  in_progress: boolean
+  oldest_item_at: string
+  newest_item_at: string
+}
+
+/** Transformed per-work-unit row, camelCase. */
+export interface QueueWorkUnit {
+  workUnitKey: string
+  taskType: string
+  sessionId: string | null
+  sessionName: string | null
+  observer: string | null
+  observed: string | null
+  pendingItems: number
+  pendingTokens: number
+  tokensUntilThreshold: number
+  hitThreshold: boolean
+  inProgress: boolean
+  oldestItemAt: string
+  newestItemAt: string
 }
 
 // =============================================================================
@@ -373,4 +415,21 @@ export interface PageResponse<T> {
   size: number
   total: number
   pages: number
+}
+
+/** Cursor-paginated response envelope. */
+export interface CursorPageResponse<T> {
+  items: T[]
+  total?: number
+  current_page?: string | null
+  current_page_backwards?: string | null
+  next_page?: string | null
+  previous_page?: string | null
+}
+
+/** /queue/work-units response: a CursorPage of QueueWorkUnit plus envelope extras. */
+export interface QueueWorkUnitsResponse
+  extends CursorPageResponse<QueueWorkUnitResponse> {
+  representation_batch_max_tokens: number
+  flush_enabled: boolean
 }

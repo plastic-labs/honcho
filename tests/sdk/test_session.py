@@ -1,6 +1,11 @@
 import pytest
 
-from sdks.python.src.honcho.api_types import QueueStatusResponse
+from sdks.python.src.honcho.api_types import (
+    QueueStatusResponse,
+    QueueWorkUnit,
+    QueueWorkUnitsPageAsync,
+    QueueWorkUnitsPageSync,
+)
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.message import Message
 from sdks.python.src.honcho.peer import Peer
@@ -597,6 +602,50 @@ async def test_session_queue_status(
         status = session.queue_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
         assert_session_queue_status(status)
+
+
+@pytest.mark.asyncio
+async def test_session_queue_work_units(client_fixture: tuple[Honcho, str]):
+    """
+    Tests cursor-paginated /queue/work-units scoped to a session.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        session = await honcho_client.aio.session(id="test-session-wu")
+        await session.aio.get_metadata()
+        page_async = await session.aio.queue_work_units()
+        assert isinstance(page_async, QueueWorkUnitsPageAsync)
+        assert isinstance(page_async.representation_batch_max_tokens, int)
+        assert isinstance(page_async.flush_enabled, bool)
+        for wu in page_async.items:
+            assert isinstance(wu, QueueWorkUnit)
+
+        # Filter combinations still parse
+        peer = await honcho_client.aio.peer(id="test-peer-session-wu")
+        await peer.aio.get_metadata()
+        page_async = await session.aio.queue_work_units(observer=peer.id)
+        assert isinstance(page_async, QueueWorkUnitsPageAsync)
+        page_async = await session.aio.queue_work_units(
+            observer=peer.id, sender=peer.id
+        )
+        assert isinstance(page_async, QueueWorkUnitsPageAsync)
+    else:
+        session = honcho_client.session(id="test-session-wu")
+        session.get_metadata()
+        page_sync = session.queue_work_units()
+        assert isinstance(page_sync, QueueWorkUnitsPageSync)
+        assert isinstance(page_sync.representation_batch_max_tokens, int)
+        assert isinstance(page_sync.flush_enabled, bool)
+        for wu in page_sync.items:
+            assert isinstance(wu, QueueWorkUnit)
+
+        peer = honcho_client.peer(id="test-peer-session-wu")
+        peer.get_metadata()
+        page_sync = session.queue_work_units(observer=peer.id)
+        assert isinstance(page_sync, QueueWorkUnitsPageSync)
+        page_sync = session.queue_work_units(observer=peer.id, sender=peer.id)
+        assert isinstance(page_sync, QueueWorkUnitsPageSync)
 
 
 @pytest.mark.asyncio

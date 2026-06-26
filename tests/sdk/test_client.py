@@ -1,7 +1,12 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from sdks.python.src.honcho.api_types import QueueStatusResponse
+from sdks.python.src.honcho.api_types import (
+    QueueStatusResponse,
+    QueueWorkUnit,
+    QueueWorkUnitsPageAsync,
+    QueueWorkUnitsPageSync,
+)
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.message import Message
 from sdks.python.src.honcho.pagination import AsyncPage, SyncPage
@@ -197,6 +202,13 @@ async def test_get_queue_status(client_fixture: tuple[Honcho, str]):
             + status.in_progress_work_units
             + status.pending_work_units
         )
+        # Phase 1 fields: stalled + ready partition pending
+        assert status.pending_stalled_work_units >= 0
+        assert status.pending_ready_work_units >= 0
+        assert (
+            status.pending_stalled_work_units + status.pending_ready_work_units
+            == status.pending_work_units
+        )
 
         if status.sessions is not None:
             for session_status in status.sessions.values():
@@ -204,6 +216,11 @@ async def test_get_queue_status(client_fixture: tuple[Honcho, str]):
                     session_status.completed_work_units
                     + session_status.in_progress_work_units
                     + session_status.pending_work_units
+                )
+                assert (
+                    session_status.pending_stalled_work_units
+                    + session_status.pending_ready_work_units
+                    == session_status.pending_work_units
                 )
 
     if client_type == "async":
@@ -266,6 +283,88 @@ async def test_get_queue_status(client_fixture: tuple[Honcho, str]):
         status = honcho_client.queue_status(observer=peer.id, sender=peer.id)
         assert isinstance(status, QueueStatusResponse)
         assert_queue_status(status)
+
+
+@pytest.mark.asyncio
+async def test_get_queue_work_units(client_fixture: tuple[Honcho, str]):
+    """
+    Tests the cursor-paginated /queue/work-units SDK method.
+
+    Verifies envelope extras are populated, items parse into QueueWorkUnit,
+    and forward cursor traversal works without duplicates or skips.
+    """
+    honcho_client, client_type = client_fixture
+
+    def assert_envelope(
+        page: QueueWorkUnitsPageSync | QueueWorkUnitsPageAsync,
+    ) -> None:
+        # Envelope extras present and typed
+        assert isinstance(page.representation_batch_max_tokens, int)
+        assert isinstance(page.flush_enabled, bool)
+        assert page.representation_batch_max_tokens > 0
+
+    if client_type == "async":
+        # Empty workspace path
+        page_async = await honcho_client.aio.queue_work_units()
+        assert isinstance(page_async, QueueWorkUnitsPageAsync)
+        assert_envelope(page_async)
+        for wu in page_async.items:
+            assert isinstance(wu, QueueWorkUnit)
+
+        # Filter combos still parse
+        peer = await honcho_client.aio.peer(id="test-peer-wu-async")
+        await peer.aio.get_metadata()
+        session = await honcho_client.aio.session(id="test-session-wu-async")
+        await session.aio.get_metadata()
+
+        page_async = await honcho_client.aio.queue_work_units(observer=peer.id)
+        assert isinstance(page_async, QueueWorkUnitsPageAsync)
+
+        page_async = await honcho_client.aio.queue_work_units(session=session.id)
+        assert isinstance(page_async, QueueWorkUnitsPageAsync)
+
+        # Session-scoped variant
+        page_async = await session.aio.queue_work_units()
+        assert isinstance(page_async, QueueWorkUnitsPageAsync)
+        assert_envelope(page_async)
+
+        # Size param is plumbed through (small empty page is still valid)
+        page_async = await honcho_client.aio.queue_work_units(size=10)
+        assert isinstance(page_async, QueueWorkUnitsPageAsync)
+        assert len(page_async.items) <= 10
+        # Cursor traversal terminates on empty queue
+        assert page_async.has_next_page() is False
+        assert page_async.get_next_page is not None
+        nxt = await page_async.get_next_page()
+        assert nxt is None
+    else:
+        page_sync = honcho_client.queue_work_units()
+        assert isinstance(page_sync, QueueWorkUnitsPageSync)
+        assert_envelope(page_sync)
+        for wu in page_sync.items:
+            assert isinstance(wu, QueueWorkUnit)
+
+        peer = honcho_client.peer(id="test-peer-wu-sync")
+        peer.get_metadata()
+        session = honcho_client.session(id="test-session-wu-sync")
+        session.get_metadata()
+
+        page_sync = honcho_client.queue_work_units(observer=peer.id)
+        assert isinstance(page_sync, QueueWorkUnitsPageSync)
+
+        page_sync = honcho_client.queue_work_units(session=session.id)
+        assert isinstance(page_sync, QueueWorkUnitsPageSync)
+
+        # Session-scoped variant
+        page_sync = session.queue_work_units()
+        assert isinstance(page_sync, QueueWorkUnitsPageSync)
+        assert_envelope(page_sync)
+
+        page_sync = honcho_client.queue_work_units(size=10)
+        assert isinstance(page_sync, QueueWorkUnitsPageSync)
+        assert len(page_sync.items) <= 10
+        assert page_sync.has_next_page() is False
+        assert page_sync.get_next_page() is None
 
 
 @pytest.mark.asyncio

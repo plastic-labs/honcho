@@ -44,6 +44,7 @@ All API routes follow the pattern: `/v3/{resource}/{id}/{action}`. Most "list/se
 - **Peers**: Create, list, update, chat (dialectic), messages, representation
 - **Sessions**: Create, list, update, delete, clone, manage peers, get context
 - **Messages**: Create (batch up to 100), upload (file), list, get, update
+- **Queue introspection**: `/queue/status` aggregate counts (incl. `pending_stalled_work_units` / `pending_ready_work_units` split for representation batches below `DERIVER_REPRESENTATION_BATCH_MAX_TOKENS`) and `/queue/work-units` per-work-unit detail (cursor-paginated via `fastapi-pagination.CursorPage`)
 - **Conclusions**: Create, list, query (semantic search), delete — the API-facing name for observations stored in `(observer, observed)` collections
 - **Keys**: Create scoped JWTs
 - **Webhooks**: Register endpoint, list, delete, test

@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .pagination import AsyncCursorPage, SyncCursorPage
+
 # ==============================================================================
 # Configuration Types
 # ==============================================================================
@@ -468,6 +470,8 @@ class SessionQueueStatus(BaseModel):
     completed_work_units: int
     in_progress_work_units: int
     pending_work_units: int
+    pending_stalled_work_units: int = 0
+    pending_ready_work_units: int = 0
 
 
 class QueueStatusResponse(BaseModel):
@@ -477,7 +481,55 @@ class QueueStatusResponse(BaseModel):
     completed_work_units: int
     in_progress_work_units: int
     pending_work_units: int
+    pending_stalled_work_units: int = 0
+    pending_ready_work_units: int = 0
     sessions: dict[str, SessionQueueStatus] | None = None
+
+
+class QueueWorkUnit(BaseModel):
+    """One row from ``/queue/work-units`` — a single unprocessed work unit."""
+
+    work_unit_key: str
+    task_type: str
+    session_id: str | None = None
+    session_name: str | None = None
+    observer: str | None = None
+    observed: str | None = None
+    pending_items: int
+    pending_tokens: int
+    tokens_until_threshold: int
+    hit_threshold: bool
+    in_progress: bool
+    oldest_item_at: datetime.datetime
+    newest_item_at: datetime.datetime
+
+
+class _QueueWorkUnitsEnvelopeMixin:
+    """Shared accessors for the /queue/work-units envelope extras."""
+
+    _data: dict[str, Any]  # pyright: ignore[reportUninitializedInstanceVariable]
+
+    @property
+    def representation_batch_max_tokens(self) -> int:
+        """DERIVER_REPRESENTATION_BATCH_MAX_TOKENS at the time of the request."""
+        return int(self._data["representation_batch_max_tokens"])
+
+    @property
+    def flush_enabled(self) -> bool:
+        """True when the batch threshold gating is bypassed server-side."""
+        return bool(self._data["flush_enabled"])
+
+
+class QueueWorkUnitsPageSync(
+    _QueueWorkUnitsEnvelopeMixin, SyncCursorPage[QueueWorkUnit, QueueWorkUnit]
+):
+    """Cursor-paginated page of ``QueueWorkUnit`` with envelope extras."""
+
+
+class QueueWorkUnitsPageAsync(
+    _QueueWorkUnitsEnvelopeMixin, AsyncCursorPage[QueueWorkUnit, QueueWorkUnit]
+):
+    """Async cursor-paginated page of ``QueueWorkUnit`` with envelope extras."""
 
 
 # ==============================================================================

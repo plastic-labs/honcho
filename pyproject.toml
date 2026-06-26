@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.30",
     "fastapi-pagination>=0.14.2",
+    "sqlakeyset>=2.0.1745022416",
     "pgvector>=0.2.5",
     "sentry-sdk[anthropic,fastapi,sqlalchemy]>=2.3.1",
     "greenlet>=3.0.3",

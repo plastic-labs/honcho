@@ -1,6 +1,8 @@
 """FastAPI routes for workspace resources and workspace-scoped operations."""
 
 import logging
+from collections.abc import Sequence
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi_pagination import Page
@@ -187,6 +189,79 @@ async def get_queue_status(
             session_name=session_id,
             observer=observer_id,
             observed=sender_id,
+        )
+    except ValueError as e:
+        logger.warning(f"Invalid request parameters: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.get(
+    "/{workspace_id}/queue/work-units",
+    response_model=schemas.QueueWorkUnitsPage,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def get_queue_work_units(
+    workspace_id: str = Path(...),
+    observer_id: str | None = Query(
+        None, description="Optional observer ID to filter by"
+    ),
+    sender_id: str | None = Query(None, description="Optional sender ID to filter by"),
+    session_id: str | None = Query(
+        None, description="Optional session ID to filter by"
+    ),
+    db: AsyncSession = db,
+):
+    """
+    Return one row per unprocessed work unit in the Workspace's queue, with
+    token totals, in-progress flag, and threshold classification. Cursor-
+    paginated (the queue mutates rapidly; offset pagination would skip rows
+    as workers process items between page fetches).
+
+    Useful for debugging "why isn't this work unit advancing?" — distinguishes
+    work units stalled below the batch token threshold from those claimed by a
+    worker or eligible to be claimed. Same filter semantics as /queue/status.
+    """
+    try:
+        stmt = await crud.get_queue_work_units_query(
+            workspace_name=workspace_id,
+            session_name=session_id,
+            observer=observer_id,
+            observed=sender_id,
+        )
+
+        def _transform(rows: Sequence[Any]) -> list[schemas.QueueWorkUnit]:
+            items: list[schemas.QueueWorkUnit] = []
+            for row in rows:
+                hit_threshold, tokens_until_threshold = crud.classify_work_unit_row(row)
+                items.append(
+                    schemas.QueueWorkUnit(
+                        work_unit_key=row.work_unit_key,
+                        task_type=row.task_type,
+                        session_id=row.session_id,
+                        session_name=row.session_name,
+                        observer=row.observer,
+                        observed=row.observed,
+                        pending_items=row.pending_items,
+                        pending_tokens=row.pending_tokens,
+                        tokens_until_threshold=tokens_until_threshold,
+                        hit_threshold=hit_threshold,
+                        in_progress=bool(row.in_progress),
+                        oldest_item_at=row.oldest_item_at,
+                        newest_item_at=row.newest_item_at,
+                    )
+                )
+            return items
+
+        return await apaginate(
+            db,
+            stmt,
+            transformer=_transform,
+            additional_data={
+                "representation_batch_max_tokens": (
+                    settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                ),
+                "flush_enabled": settings.DERIVER.FLUSH_ENABLED,
+            },
         )
     except ValueError as e:
         logger.warning(f"Invalid request parameters: {str(e)}")
