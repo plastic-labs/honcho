@@ -200,15 +200,16 @@ async def create_edge(
         raise ValidationException("Source and target observations must be different")
     
     # Use raw SQL for ON CONFLICT upsert
+    import json
     from sqlalchemy import text as sa_text
-    
+
     stmt = sa_text("""
         INSERT INTO edges (workspace_name, collection_name, source_obs_id, target_obs_id, edge_type, created_by, metadata)
-        VALUES (:workspace_name, :collection_name, :source_obs_id, :target_obs_id, :edge_type, :created_by, :metadata)
+        VALUES (:workspace_name, :collection_name, :source_obs_id, :target_obs_id, :edge_type, :created_by, CAST(:metadata AS jsonb))
         ON CONFLICT (workspace_name, collection_name, source_obs_id, target_obs_id, edge_type)
         DO UPDATE SET
             metadata = edges.metadata || jsonb_build_object('reinforced_by', 
-                COALESCE(edges.metadata->'reinforced_by', '[]'::jsonb) || to_jsonb(:created_by::text)),
+                COALESCE(edges.metadata->'reinforced_by', '[]'::jsonb) || to_jsonb(CAST(:created_by AS text))),
             created_at = NOW()
         RETURNING id
     """)
@@ -220,7 +221,7 @@ async def create_edge(
         "target_obs_id": target_obs_id,
         "edge_type": edge_type,
         "created_by": created_by,
-        "metadata": edge_metadata or {},
+        "metadata": json.dumps(edge_metadata or {}),
     })
     edge_id = result.scalar_one()
     await db.commit()
