@@ -331,6 +331,77 @@ async def test_process_promotion_uses_chunking_for_oversized_observations(
     full_sentence = content.replace(".", "")
     assert all(full_sentence != chunk.replace(".", "") for chunk in chunks)
 
+    # Edges should still be created using the averaged chunk representation.
+    edges = await _edges_for_obs(db_session, workspace.name, oversized_doc.id)
+    assert len(edges) > 0, "Chunked observation should still form promotion edges"
+
+
+@pytest.mark.asyncio
+async def test_process_promotion_chunking_creates_edges_to_multiple_topic_clusters(
+    db_session: AsyncSession,
+    graph_memory_setup: dict[str, Any],
+    force_promote: None,
+    controlled_promotion_embedding_client: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A multi-intent oversized observation forms edges through each chunk."""
+    setup = graph_memory_setup
+    workspace = setup["workspace"]
+    observer_name = setup["observer"].name
+    observed_name = setup["observed"].name
+    collection_name = setup["collection_name"]
+
+    # Two sentences from two different topic clusters.  With a low per-observation
+    # token budget each sentence becomes its own chunk, and each chunk embedding
+    # points to a different topic cluster.
+    content = (
+        "We decided the LLMinal protocol uses L1 encoding for clarity-critical messages. "
+        "The Honcho graph memory backend builds edges between semantically related observations."
+    )
+    multi_topic_doc = models.Document(
+        workspace_name=workspace.name,
+        observer=observer_name,
+        observed=observed_name,
+        content=content,
+        level="explicit",
+        times_derived=1,
+        embedding=None,
+        session_name=setup["session"].name,
+    )
+    db_session.add(multi_topic_doc)
+    await db_session.commit()
+    await db_session.refresh(multi_topic_doc)
+
+    # Force sentence-level chunking by giving just enough budget for one sentence
+    # but not both.
+    monkeypatch.setattr(
+        promotion_mod,
+        "MAX_TOKENS_PER_OBSERVATION_EMBEDDING",
+        12,
+    )
+
+    await process_promotion(
+        workspace_name=workspace.name,
+        collection_name=collection_name,
+        obs_id=multi_topic_doc.id,
+        observer=observer_name,
+        observed=observed_name,
+        session_name=setup["session"].name,
+    )
+
+    edges = await _edges_for_obs(db_session, workspace.name, multi_topic_doc.id)
+    target_ids = {e.target_obs_id for e in edges}
+
+    llminal_ids = {d.id for d in setup["docs_by_topic"]["llminal"]}
+    honcho_ids = {d.id for d in setup["docs_by_topic"]["honcho"]}
+
+    assert target_ids & llminal_ids, (
+        f"Expected edges to LLMinal-topic observations, got targets {target_ids}"
+    )
+    assert target_ids & honcho_ids, (
+        f"Expected edges to Honcho-topic observations, got targets {target_ids}"
+    )
+
 
 @pytest.mark.asyncio
 async def test_process_promotion_edges_use_correct_collection_keys(
