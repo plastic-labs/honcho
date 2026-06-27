@@ -71,6 +71,7 @@ def get_openai_client() -> AsyncOpenAI:
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
         default_headers=_default_headers_for(settings.LLM.OPENAI_BASE_URL),
+        timeout=600.0,
     )
 
 
@@ -96,6 +97,7 @@ def get_openai_override_client(
         api_key=api_key,
         base_url=base_url,
         default_headers=_default_headers_for(base_url),
+        timeout=600.0,
     )
 
 
@@ -133,6 +135,7 @@ if settings.LLM.OPENAI_API_KEY:
         api_key=settings.LLM.OPENAI_API_KEY,
         base_url=settings.LLM.OPENAI_BASE_URL,
         default_headers=_default_headers_for(settings.LLM.OPENAI_BASE_URL),
+        timeout=600.0,
     )
 
 if settings.LLM.GEMINI_API_KEY:

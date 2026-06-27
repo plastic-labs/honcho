@@ -6,6 +6,7 @@ from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.llm import honcho_llm_call
+from src.llm.structured_output import StructuredOutputError
 from src.llm.types import LLMTelemetryContext
 from src.models import Message
 from src.schemas import ResolvedConfiguration
@@ -143,24 +144,40 @@ async def process_representation_tasks_batch(
 
     # Single LLM call
     llm_start = time.perf_counter()
-    response = await honcho_llm_call(
-        model_config=model_config,
-        prompt=prompt,
-        max_tokens=max_tokens,
-        response_model=PromptRepresentation,
-        json_mode=True,
-        max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
-        enable_retry=True,
-        retry_attempts=3,
-        trace_name="minimal_deriver",
-        telemetry=LLMTelemetryContext(
-            workspace_name=latest_message.workspace_name,
-            call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
-            parent_category="representation",
-            observed=observed,
-            track_name="Minimal Deriver",
-        ),
-    )
+    try:
+        response = await honcho_llm_call(
+            model_config=model_config,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            response_model=PromptRepresentation,
+            json_mode=True,
+            max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
+            enable_retry=True,
+            retry_attempts=3,
+            trace_name="minimal_deriver",
+            telemetry=LLMTelemetryContext(
+                workspace_name=latest_message.workspace_name,
+                call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
+                parent_category="representation",
+                observed=observed,
+                track_name="Minimal Deriver",
+            ),
+        )
+    except StructuredOutputError as e:
+        logger.error(
+            "Deriver parse failure",
+            extra={
+                "work_unit_id": f"{observed}_{latest_message.session_name}",
+                "peer_id": observed,
+                "session_id": latest_message.session_name,
+                "transport": model_config.transport,
+                "model": model_config.model,
+                "structured_output_mode": model_config.structured_output_mode,
+                "parse_failure_reason": e.reason,
+                "raw_response_excerpt": e.raw_content[:500] if e.raw_content else "",
+            }
+        )
+        raise
     llm_duration = (time.perf_counter() - llm_start) * 1000
 
     accumulate_metric(

@@ -10,6 +10,10 @@ from src.utils.representation import PromptRepresentation
 
 class StructuredOutputError(ValueError):
     """Raised when structured output cannot be validated or repaired."""
+    def __init__(self, message: str, raw_content: str = "", reason: str = ""):
+        super().__init__(message)
+        self.raw_content = raw_content
+        self.reason = reason
 
 
 def repair_response_model_json(
@@ -43,15 +47,13 @@ def repair_response_model_json(
                         item["premises"] = []
 
         final = json.dumps(repaired_data)
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-        final = ""
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+        raise StructuredOutputError(f"Failed to repair JSON: {e}", raw_content=raw_content, reason="empty_after_repair") from e
 
     try:
         return response_model.model_validate_json(final)
-    except ValidationError:
-        if response_model is PromptRepresentation:
-            return PromptRepresentation(explicit=[])
-        raise
+    except ValidationError as e:
+        raise StructuredOutputError(f"Validation failed after repair: {e}", raw_content=raw_content, reason="validation_error") from e
 
 
 def validate_structured_output(

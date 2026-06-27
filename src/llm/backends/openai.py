@@ -190,28 +190,15 @@ class OpenAIBackend:
                     truncated,
                     content_override=content,
                 )
-            except BadRequestError:
+            except BadRequestError as e:
                 # A 400 means the provider rejected the request shape — most
                 # often it doesn't support OpenAI Structured Outputs (json_schema).
-                # Retrying or re-requesting won't help (it rejects the same shape
-                # again, the latency trap of #797), so return empty rather than
-                # erroring existing flows. The warning is the signal to set
-                # structured_output_mode=json_object. There is no response body to
-                # account for, so token usage is legitimately zero here.
-                logger.warning(
-                    "Structured output via json_schema rejected by model %s; "
+                raise StructuredOutputError(
+                    f"Structured output via json_schema rejected by model {model}; "
                     + "set structured_output_mode=json_object if the provider does "
                     + "not support OpenAI Structured Outputs.",
-                    model,
-                )
-                # empty_structured_output() validates {} against the model, which
-                # itself raises if the model has required fields. Fall back to
-                # empty string content rather than letting that escape the handler.
-                try:
-                    fallback_content: Any = empty_structured_output(response_format)
-                except ValidationError:
-                    fallback_content = ""
-                return CompletionResult(content=fallback_content)
+                    reason="bad_request"
+                ) from e
             parsed = response.choices[0].message.parsed
             if parsed is not None:
                 return self._normalize_response(
