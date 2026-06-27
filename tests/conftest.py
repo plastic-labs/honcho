@@ -1,11 +1,14 @@
 import logging
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
 import pytest_asyncio
+
+pytest_plugins = ["tests.fixtures.graph_memory_fixtures"]
+
 from cashews.backends.interface import ControlMixin
 from cashews.picklers import PicklerType
 from fakeredis import FakeAsyncRedis
@@ -72,6 +75,19 @@ DB_URI = (
     settings.DB.CONNECTION_URI
     or "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 )
+
+# When tests run on the host (CI/dev laptop) the compose service name
+# ``database`` is not resolvable, but the Postgres port is forwarded to
+# localhost.  Fall back to localhost only when the service name is unreachable
+# so tests inside the compose network continue to use the real service name.
+try:
+    import socket
+
+    socket.gethostbyname("database")
+except OSError:
+    if "database:" in DB_URI:
+        DB_URI = DB_URI.replace("database:", "localhost:")
+
 CONNECTION_URI = make_url(DB_URI)
 
 _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
@@ -328,11 +344,11 @@ async def fake_cache(fake_cache_session: FakeAsyncRedis):
 
 
 @pytest.fixture(scope="function")
-async def client(
+def client(
     db_session: AsyncSession,
     fake_cache_session: FakeAsyncRedis,  # pyright: ignore[reportUnusedParameter]
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[TestClient, Any]:
+) -> Generator[TestClient, Any, None]:
     """Create a FastAPI TestClient for the scope of a single test function"""
 
     # Register exception handlers for tests
@@ -849,6 +865,8 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
+        "src.deriver.promotion.tracked_db",
+        "src.deriver.promotion_scheduler.tracked_db",
     ]
     with ExitStack() as stack:
         for target in tracked_db_targets:
