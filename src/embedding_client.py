@@ -175,6 +175,7 @@ class _EmbeddingClient:
             self.client = AsyncOpenAI(
                 api_key=config.api_key,
                 base_url=config.base_url,
+                timeout=600.0,
             )
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048  # OpenAI batch limit
