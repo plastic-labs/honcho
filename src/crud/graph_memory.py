@@ -199,7 +199,10 @@ async def create_edge(
     if source_obs_id == target_obs_id:
         raise ValidationException("Source and target observations must be different")
     
-    # Use raw SQL for ON CONFLICT upsert
+    # Use raw SQL for ON CONFLICT upsert.
+    # NOTE: metadata must be json.dumps()'d and cast with CAST(:metadata AS jsonb)
+    # because psycopg cannot adapt Python dicts to JSONB directly, and the
+    # ::jsonb syntax conflicts with SQLAlchemy's :param naming.
     import json
     from sqlalchemy import text as sa_text
 

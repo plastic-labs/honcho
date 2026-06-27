@@ -298,6 +298,8 @@ docker exec -u root honcho-selfhost-api-1 sh -c 'chown 100:101 /app/src/models.p
 
 ## File Manifest
 
+### Graph Memory Core
+
 | File | Purpose |
 |---|---|
 | `src/utils/types.py` | `EdgeType`, `AccessLogEventType` type literals |
@@ -306,10 +308,34 @@ docker exec -u root honcho-selfhost-api-1 sh -c 'chown 100:101 /app/src/models.p
 | `src/crud/graph_memory.py` | CRUD functions (activation/confidence derivation, edges, contexts, thread bindings, pinning, verify, eviction) |
 | `src/routers/graph_memory.py` | FastAPI router with 18 endpoints |
 | `src/main.py` | Router wired into app |
-| `src/deriver/promotion.py` | Promotion worker (heuristic test, edge creation, context assignment) |
-| `src/deriver/promotion_scheduler.py` | Promotion scheduler (scans for un-promoted observations every 60s) |
+
+### Promotion Worker
+
+| File | Purpose |
+|---|---|
+| `src/deriver/promotion.py` | Promotion worker: heuristic/LLM test, vector similarity (`_get_related_observation_ids`), edge creation, intent-aware chunking (`_embed_observation`) |
+| `src/deriver/promotion_scheduler.py` | Scans for un-promoted observations every 60s, enqueues promotion tasks |
 | `src/deriver/compaction_scheduler.py` | Compaction scheduler (compacts access log every 24h, GC protocol aligned) |
-| `migrations/versions/2a3b4c5d6e7f_*.py` | Alembic migration |
+| `src/utils/work_unit.py` | Work unit key construction/parsing — supports `promotion` task type (format: `promotion:{workspace}:{observed}:{obs_id}`) |
+| `src/utils/queue_payload.py` | `PromotionPayload` and other task payloads |
+
+### Migrations
+
+| File | Purpose |
+|---|---|
+| `migrations/versions/2a3b4c5d6e7f_*.py` | Creates graph memory tables |
+| (later migration) | Adds `promotion_failed`, `promotion_attempts`, `promotion_error`, `promoted_at` columns to `documents` |
+
+### Hermes Agent Integration
+
+| File | Purpose |
+|---|---|
+| `~/.hermes/hermes-agent/plugins/memory/honcho/__init__.py` | `honcho_recall`, `honcho_recall_context`, `honcho_thread_bind` tools (PR #4, merged 2026-06-27) |
+
+### Tests & Simulation
+
+| File | Purpose |
+|---|---|
 | `tests/unit/validate_phase1.py` | Schema + CRUD logic validation (26 tests) |
 | `tests/unit/verify_migration.py` | Migration verification (tables, indexes, FKs, rollback) |
 | `tests/unit/verify_reapply.py` | Quick re-apply check |
@@ -317,3 +343,14 @@ docker exec -u root honcho-selfhost-api-1 sh -c 'chown 100:101 /app/src/models.p
 | `workshop/experiments/ngram-honcho-bridge/concrete-spec.md` | Full specification |
 | `workshop/experiments/ngram-honcho-bridge/phase1-validation-strategy.md` | Test plan |
 | `workshop/experiments/ngram-honcho-bridge/process-template.md` | Implementation process template |
+
+---
+
+## Full Setup Guide
+
+See **[docs/GRAPH_MEMORY_SETUP.md](../../docs/GRAPH_MEMORY_SETUP.md)** for:
+- Complete installation from scratch
+- `.env` configuration reference
+- Docker rebuild procedures
+- Bug fixes applied (2026-06-27)
+- Troubleshooting guide
