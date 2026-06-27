@@ -14,12 +14,16 @@ from src.schemas.graph_memory import (
 
 
 class TestEdgeCreate:
+    # 21-char nanoid-style test IDs
+    SRC_ID = "abc123def456ghi789jk1"
+    TGT_ID = "xyz789uvw456rst123ab2"
+
     def test_valid_edge(self):
         """Valid edge creation should succeed."""
         edge = EdgeCreate(
             collection_name="test-collection",
-            source_obs_id="abc123def456ghi789j",
-            target_obs_id="xyz789uvw456rst123a",
+            source_obs_id=self.SRC_ID,
+            target_obs_id=self.TGT_ID,
             edge_type="related",
         )
         assert edge.collection_name == "test-collection"
@@ -30,8 +34,8 @@ class TestEdgeCreate:
         with pytest.raises(ValidationError, match="edge_type"):
             EdgeCreate(
                 collection_name="test",
-                source_obs_id="abc123def456ghi789j",
-                target_obs_id="xyz789uvw456rst123a",
+                source_obs_id=self.SRC_ID,
+                target_obs_id=self.TGT_ID,
                 edge_type="invalid_type",
             )
 
@@ -39,8 +43,8 @@ class TestEdgeCreate:
         """Self-referencing edge should be allowed at schema level (DB constraint catches it)."""
         edge = EdgeCreate(
             collection_name="test",
-            source_obs_id="abc123def456ghi789j",
-            target_obs_id="abc123def456ghi789j",
+            source_obs_id=self.SRC_ID,
+            target_obs_id=self.SRC_ID,
             edge_type="related",
         )
         assert edge.source_obs_id == edge.target_obs_id
@@ -51,7 +55,7 @@ class TestEdgeCreate:
             EdgeCreate(
                 collection_name="test",
                 source_obs_id="too-short",
-                target_obs_id="xyz789uvw456rst123a",
+                target_obs_id=self.TGT_ID,
                 edge_type="related",
             )
 
@@ -60,8 +64,8 @@ class TestEdgeCreate:
         for edge_type in ["related", "composes-with", "see-also", "refines", "supersedes", "contradicts"]:
             edge = EdgeCreate(
                 collection_name="test",
-                source_obs_id="abc123def456ghi789j",
-                target_obs_id="xyz789uvw456rst123a",
+                source_obs_id=self.SRC_ID,
+                target_obs_id=self.TGT_ID,
                 edge_type=edge_type,
             )
             assert edge.edge_type == edge_type
@@ -70,8 +74,8 @@ class TestEdgeCreate:
         """Optional metadata should default to empty dict."""
         edge = EdgeCreate(
             collection_name="test",
-            source_obs_id="abc123def456ghi789j",
-            target_obs_id="xyz789uvw456rst123a",
+            source_obs_id=self.SRC_ID,
+            target_obs_id=self.TGT_ID,
             edge_type="related",
         )
         assert edge.metadata == {}
@@ -188,6 +192,6 @@ class TestEdgeListFilter:
 
     def test_partial_filter(self):
         """Partial filter should work."""
-        filt = EdgeListFilter(source_obs_id="abc123def456ghi789j")
-        assert filt.source_obs_id == "abc123def456ghi789j"
+        filt = EdgeListFilter(source_obs_id="abc123def456ghi789jk1")
+        assert filt.source_obs_id == "abc123def456ghi789jk1"
         assert filt.target_obs_id is None
