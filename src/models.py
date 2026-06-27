@@ -26,7 +26,7 @@ from sqlalchemy.sql import func
 from typing_extensions import override
 
 from src.config import settings
-from src.utils.types import DocumentLevel, TaskType, VectorSyncState
+from src.utils.types import DocumentLevel, EdgeType, AccessLogEventType, TaskType, VectorSyncState
 
 from .db import Base
 
@@ -471,6 +471,199 @@ class Document(Base):
             "last_sync_at",
         ),
     )
+
+
+@final
+class DocumentCold(Base):
+    """Cold storage for evicted observations.
+    
+    When an unpinned observation's activation drops below threshold, it is
+    moved here with its edges and access log tail. It can be rehydrated
+    back to the active documents table if re-queried.
+    """
+    __tablename__: str = "documents_cold"
+    id: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
+    collection_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    content: Mapped[str] = mapped_column(TEXT)
+    level: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    doc_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata", JSONB, nullable=True, server_default=text("NULL")
+    )
+    internal_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
+    evicted_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    edge_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    access_log_tail: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    rehydrated_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        Index("ix_documents_cold_workspace", "workspace_name"),
+        Index("ix_documents_cold_evicted_at", "evicted_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"DocumentCold(id={self.id}, workspace={self.workspace_name}, evicted={self.evicted_at})"
+
+
+@final
+class Edge(Base):
+    """A typed edge between two observations in the semantic graph.
+    
+    Edges form the graph structure that spreading-activation recall traverses.
+    Convergence-upsert is handled via SQL INSERT ... ON CONFLICT at the query level.
+    """
+    __tablename__: str = "edges"
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False, index=True
+    )
+    collection_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    source_obs_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    target_obs_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    edge_type: Mapped[EdgeType] = mapped_column(TEXT, nullable=False)
+    created_by: Mapped[str] = mapped_column(TEXT, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    edge_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_name", "collection_name", "source_obs_id", "target_obs_id", "edge_type",
+            name="uq_edge"
+        ),
+        CheckConstraint("source_obs_id != target_obs_id", name="ck_edge_different_obs"),
+        Index("ix_edges_source", "workspace_name", "collection_name", "source_obs_id"),
+        Index("ix_edges_target", "workspace_name", "collection_name", "target_obs_id"),
+        Index("ix_edges_type", "workspace_name", "collection_name", "edge_type"),
+        Index("ix_edges_created_by", "workspace_name", "created_by"),
+    )
+
+    def __repr__(self) -> str:
+        return f"Edge(id={self.id}, source={self.source_obs_id}, target={self.target_obs_id}, type={self.edge_type})"
+
+
+@final
+class AccessLogEntry(Base):
+    """Append-only access log for deriving activation and confidence at query time.
+    
+    Events are append-only — never modified after creation. Activation and confidence
+    are derived at query time by scanning this log. Old events are pruned by periodic
+    compaction (retention: 5 activation half-lives).
+    """
+    __tablename__: str = "access_log"
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    workspace_name: Mapped[str] = mapped_column(TEXT, nullable=False, index=True)
+    collection_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    obs_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[AccessLogEventType] = mapped_column(TEXT, nullable=False)
+    created_by: Mapped[str] = mapped_column(TEXT, nullable=False)
+    session_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_access_log_obs", "workspace_name", "collection_name", "obs_id", "created_at"),
+        Index("ix_access_log_created_by", "workspace_name", "collection_name", "created_by"),
+    )
+
+    def __repr__(self) -> str:
+        return f"AccessLogEntry(id={self.id}, obs={self.obs_id}, event={self.event_type}, by={self.created_by})"
+
+
+@final
+class ContextIndex(Base):
+    """Named context membership — which observations belong to which workstream context.
+    
+    A workstream's context-set is shared across multiple Slack threads (1:many).
+    The thread_id field is informational; the thread_binding_registry is authoritative
+    for thread→context resolution.
+    """
+    __tablename__: str = "context_index"
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False, index=True
+    )
+    context_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    obs_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    added_by: Mapped[str] = mapped_column(TEXT, nullable=False)
+    added_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_name", "context_name", "obs_id",
+            name="uq_context_member"
+        ),
+        Index("ix_context_name", "workspace_name", "context_name"),
+        Index("ix_context_thread", "workspace_name", "thread_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"ContextIndex(id={self.id}, context={self.context_name}, obs={self.obs_id})"
+
+
+@final
+class ThreadBinding(Base):
+    """Maps a Slack thread to a workstream context (1:many).
+    
+    Default-new-then-join: a new thread is its own workstream by default (1:1).
+    It can be joined into an existing workstream on demand (becoming 1:many).
+    Once bound, rebinding is denied.
+    """
+    __tablename__: str = "thread_binding_registry"
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False, index=True
+    )
+    thread_id: Mapped[str] = mapped_column(TEXT, nullable=False)
+    context_name: Mapped[str] = mapped_column(TEXT, nullable=False)
+    bound_by: Mapped[str] = mapped_column(TEXT, nullable=False)
+    bound_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_name", "thread_id",
+            name="uq_thread_binding"
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"ThreadBinding(id={self.id}, thread={self.thread_id}, context={self.context_name})"
 
 
 @final

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
+from src.deriver.promotion import process_promotion
 from src.dreamer import process_dream
 from src.exceptions import ResourceNotFoundException, ValidationException
 from src.models import Message
@@ -25,6 +26,7 @@ from src.utils import summarizer
 from src.utils.queue_payload import (
     DeletionPayload,
     DreamPayload,
+    PromotionPayload,
     ReconcilerPayload,
     SummaryPayload,
     WebhookPayload,
@@ -149,6 +151,26 @@ async def process_item(queue_item: models.QueueItem) -> None:
                 )
                 raise ValueError(f"Invalid payload structure: {str(e)}") from e
             await process_deletion(validated, workspace_name)
+
+    elif task_type == "promotion":
+        with sentry_sdk.start_transaction(name="process_promotion_task", op="deriver"):
+            try:
+                validated = PromotionPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid promotion payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_promotion(
+                workspace_name=workspace_name,
+                collection_name=validated.collection_name,
+                obs_id=validated.obs_id,
+                observer=validated.observer,
+                observed=validated.observed,
+                session_name=validated.session_name,
+            )
 
     else:
         raise ValueError(f"Invalid task type: {task_type}")

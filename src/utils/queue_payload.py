@@ -83,6 +83,17 @@ class ReconcilerPayload(BasePayload):
     reconciler_type: ReconcilerType
 
 
+class PromotionPayload(BasePayload):
+    """Payload for promotion tasks (L1->L2 promotion of observations)."""
+
+    task_type: Literal["promotion"] = "promotion"
+    collection_name: str
+    obs_id: str
+    observer: str
+    observed: str
+    session_name: str | None = None
+
+
 def create_webhook_payload(
     event_type: str,
     data: dict[str, Any],

@@ -74,6 +74,15 @@ def construct_work_unit_key(
             raise ValueError("reconciler_type is required for reconciler tasks")
         return f"reconciler:{reconciler_type}"
 
+    if task_type == "promotion":
+        observed = payload.get("observed")
+        obs_id = payload.get("obs_id")
+        if not observed or not obs_id:
+            raise ValueError(
+                "observed and obs_id are required for promotion tasks"
+            )
+        return f"promotion:{workspace_name}:{observed}:{obs_id}"
+
     raise ValueError(f"Invalid task type: {task_type}")
 
 
@@ -181,6 +190,20 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
             session_name=None,
             observer=None,
             observed=None,
+        )
+
+    if task_type == "promotion":
+        # Format: promotion:{workspace}:{observed}:{obs_id}
+        if len(parts) != 4:
+            raise ValueError(
+                f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
+            )
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=parts[1],
+            session_name=None,
+            observer=None,
+            observed=parts[2],
         )
 
     raise ValueError(f"Invalid task type in work_unit_key: {task_type}")

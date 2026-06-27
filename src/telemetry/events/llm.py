@@ -36,6 +36,9 @@ class CallPurpose(str, Enum):
     DREAM_INDUCTION = "dream.induction"
     SUMMARY_SHORT = "summary.short"
     SUMMARY_LONG = "summary.long"
+    # Promotion worker LLM call (single-token YES/NO classification — see
+    # spec §7.4a + src/deriver/promotion.py). Cheap model, no tools.
+    PROMOTION_TEST = "promotion.test"
 
 
 class LLMCallCompletedEvent(BaseEvent):

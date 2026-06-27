@@ -138,6 +138,25 @@ model = "gpt-5.4-mini"
 # [deriver.model_config.overrides.provider_params]
 # verbosity = "low"
 
+# Promotion worker settings (spec §7). The promotion test is an LLM-based
+# single-token YES/NO classifier that decides whether a derived observation
+# is non-obvious AND durable enough to promote to L2. A cheap model is
+# sufficient — no tools, no thinking, small max_tokens. On persistent LLM
+# failure the worker falls back to the v1 heuristic (safe-but-noisy) rather
+# than dropping the observation.
+[promotion]
+ENABLED = true
+MAX_TOKENS = 8
+MAX_OUTER_RETRIES = 3
+MAX_INPUT_TOKENS = 2000
+
+[promotion.model_config]
+transport = "openai"
+model = "gpt-5.4-mini"
+# temperature = 0.0   # forced to 0.0 by the caller regardless
+# A cheaper/smaller model is also fine here, e.g.:
+# model = "kimi-k2.6"
+
 # Peer card settings
 [peer_card]
 ENABLED = true

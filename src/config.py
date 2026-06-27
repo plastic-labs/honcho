@@ -890,6 +890,63 @@ class DeriverSettings(HonchoSettings):
         return self
 
 
+class PromotionSettings(HonchoSettings):
+    """Settings for the promotion worker (spec §7).
+
+    The promotion test is an LLM-based single-token YES/NO classifier that
+    decides whether a derived observation is non-obvious AND durable enough
+    to promote to L2 (with edges + context assignment). A cheap model is
+    sufficient; no tools, no thinking, small max_tokens.
+    """
+
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="PROMOTION_", env_nested_delimiter="__", extra="ignore"
+    )
+
+    ENABLED: bool = True
+
+    @staticmethod
+    def _MODEL_CONFIG_DEFAULT() -> ConfiguredModelSettings:
+        # Minimal default: transport + model only. Any other knobs would merge
+        # into operator-supplied env / config.toml overrides via
+        # _fill_defaults_for_nested_field and clobber intent.
+        return ConfiguredModelSettings(
+            transport="openai",
+            model="gpt-5.4-mini",
+        )
+
+    MODEL_CONFIG: ConfiguredModelSettings = Field(default_factory=_MODEL_CONFIG_DEFAULT)
+
+    # Single-token YES/NO classification needs very little output room. The
+    # default leaves a small margin so provider stop-sequence quirks don't
+    # truncate the answer.
+    MAX_TOKENS: Annotated[int, Field(default=8, gt=0, le=256)] = 8
+
+    # Per spec §7.4a: "On LLM timeout/error, retry with backoff (max 3)."
+    # This is passed as `retry_attempts` to honcho_llm_call (which wraps the
+    # call in tenacity stop_after_attempt + wait_exponential). On exhaustion
+    # the caller falls back to the v1 heuristic test rather than dropping the
+    # observation (safe-but-noisy, never silent loss).
+    MAX_OUTER_RETRIES: Annotated[int, Field(default=3, gt=0, le=10)] = 3
+
+    # Hard cap on input size we'll send to the classifier. Observations are
+    # already bounded by DERIVER.MAX_INPUT_TOKENS at extraction time, but we
+    # re-clamp here so a pathological long observation can't blow the cheap
+    # model's context window.
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=32000)] = 2000
+
+    @model_validator(mode="before")
+    @classmethod
+    def _merge_model_config_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            _fill_defaults_for_nested_field(
+                cast(dict[str, Any], data),
+                "MODEL_CONFIG",
+                cls._MODEL_CONFIG_DEFAULT,
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
+
+
 class PeerCardSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
 
@@ -1394,6 +1451,7 @@ class AppSettings(HonchoSettings):
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
+    PROMOTION: PromotionSettings = Field(default_factory=PromotionSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
