@@ -4,7 +4,8 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal, NamedTuple, TypeVar
+from importlib import import_module
+from typing import Any, Literal, NamedTuple, Protocol, TypeVar
 
 import tiktoken
 from google import genai
@@ -134,6 +135,74 @@ class BatchItem(NamedTuple):
     token_count: int
 
 
+class TokenizerLike(Protocol):
+    def encode(self, text: str) -> list[int]: ...
+
+    def decode(self, tokens: list[int]) -> str: ...
+
+
+class _HuggingFaceTokenizer:
+    def __init__(self, tokenizer: Any) -> None:
+        self._tokenizer: Any = tokenizer
+
+    def encode(self, text: str) -> list[int]:
+        encoded = self._tokenizer.encode(text)
+        return list(encoded.ids)
+
+    def decode(self, tokens: list[int]) -> str:
+        return str(self._tokenizer.decode(tokens))
+
+
+def _load_huggingface_tokenizer(spec: str) -> TokenizerLike:
+    try:
+        tokenizer_cls = import_module("tokenizers").Tokenizer
+    except ImportError as exc:
+        raise ImportError(
+            "The 'tokenizers' package is required for hf: and file: embedding "
+            + "tokenizers. Install it with the honcho[tokenizers] extra."
+        ) from exc
+
+    if spec.startswith("hf:"):
+        model_name = spec.removeprefix("hf:")
+        if not model_name:
+            raise ValueError("Embedding tokenizer spec 'hf:' requires a model name")
+        return _HuggingFaceTokenizer(tokenizer_cls.from_pretrained(model_name))
+
+    path = spec.removeprefix("file:")
+    if not path:
+        raise ValueError("Embedding tokenizer spec 'file:' requires a tokenizer path")
+    return _HuggingFaceTokenizer(tokenizer_cls.from_file(path))
+
+
+def _default_tokenizer_for_model(model: str) -> TokenizerLike:
+    try:
+        return tiktoken.encoding_for_model(model)
+    except KeyError:
+        return tiktoken.get_encoding("cl100k_base")
+
+
+def _resolve_tokenizer(model: str, spec: str | None) -> TokenizerLike:
+    if spec is None:
+        return _default_tokenizer_for_model(model)
+
+    spec = spec.strip()
+    if spec == "":
+        return _default_tokenizer_for_model(model)
+
+    if spec.startswith("tiktoken:"):
+        encoding_name = spec.removeprefix("tiktoken:")
+        if not encoding_name:
+            raise ValueError("Embedding tokenizer spec 'tiktoken:' requires a name")
+        return tiktoken.get_encoding(encoding_name)
+
+    if spec.startswith(("hf:", "file:")):
+        return _load_huggingface_tokenizer(spec)
+
+    raise ValueError(
+        "Embedding tokenizer must be unset or start with one of: tiktoken:, hf:, file:"
+    )
+
+
 class _EmbeddingClient:
     """
     Embedding client supporting OpenAI and Gemini with chunking and batching support.
@@ -179,10 +248,7 @@ class _EmbeddingClient:
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048  # OpenAI batch limit
 
-        try:
-            self.encoding: tiktoken.Encoding = tiktoken.encoding_for_model(self.model)
-        except KeyError:
-            self.encoding = tiktoken.get_encoding("cl100k_base")
+        self.encoding: TokenizerLike = _resolve_tokenizer(self.model, config.tokenizer)
         self.max_embedding_tokens_per_request: int = max_tokens_per_request
 
     @property
@@ -509,7 +575,7 @@ def _chunk_text_with_tokens(
     text: str,
     encoded_tokens: list[int],
     max_tokens: int,
-    encoding: tiktoken.Encoding,
+    encoding: TokenizerLike,
 ) -> list[tuple[str, int]]:
     """
     Split text into chunks that fit within token limits, with 20% overlap.
@@ -597,6 +663,7 @@ class EmbeddingClient:
             runtime_config.model,
             runtime_config.api_key,
             runtime_config.base_url,
+            runtime_config.tokenizer,
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
@@ -647,8 +714,8 @@ class EmbeddingClient:
         return self._get_client().vector_dimensions
 
     @property
-    def encoding(self) -> tiktoken.Encoding:
-        """Get the tiktoken encoding."""
+    def encoding(self) -> TokenizerLike:
+        """Get the configured embedding tokenizer."""
         return self._get_client().encoding
 
 
