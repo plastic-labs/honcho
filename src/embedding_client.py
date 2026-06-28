@@ -13,6 +13,7 @@ from google.genai import types as genai_types
 from openai import AsyncOpenAI
 
 from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
+from .exceptions import ValidationException
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +158,7 @@ def _load_huggingface_tokenizer(spec: str) -> TokenizerLike:
     try:
         tokenizer_cls = import_module("tokenizers").Tokenizer
     except ImportError as exc:
-        raise ImportError(
+        raise ValidationException(
             "The 'tokenizers' package is required for hf: and file: embedding "
             + "tokenizers. Install it with the honcho[tokenizers] extra."
         ) from exc
@@ -165,12 +166,16 @@ def _load_huggingface_tokenizer(spec: str) -> TokenizerLike:
     if spec.startswith("hf:"):
         model_name = spec.removeprefix("hf:")
         if not model_name:
-            raise ValueError("Embedding tokenizer spec 'hf:' requires a model name")
+            raise ValidationException(
+                "Embedding tokenizer spec 'hf:' requires a model name"
+            )
         return _HuggingFaceTokenizer(tokenizer_cls.from_pretrained(model_name))
 
     path = spec.removeprefix("file:")
     if not path:
-        raise ValueError("Embedding tokenizer spec 'file:' requires a tokenizer path")
+        raise ValidationException(
+            "Embedding tokenizer spec 'file:' requires a tokenizer path"
+        )
     return _HuggingFaceTokenizer(tokenizer_cls.from_file(path))
 
 
@@ -192,13 +197,20 @@ def _resolve_tokenizer(model: str, spec: str | None) -> TokenizerLike:
     if spec.startswith("tiktoken:"):
         encoding_name = spec.removeprefix("tiktoken:")
         if not encoding_name:
-            raise ValueError("Embedding tokenizer spec 'tiktoken:' requires a name")
-        return tiktoken.get_encoding(encoding_name)
+            raise ValidationException(
+                "Embedding tokenizer spec 'tiktoken:' requires a name"
+            )
+        try:
+            return tiktoken.get_encoding(encoding_name)
+        except ValueError as exc:
+            raise ValidationException(
+                f"Embedding tokenizer spec uses unknown tiktoken encoding: {encoding_name}"
+            ) from exc
 
     if spec.startswith(("hf:", "file:")):
         return _load_huggingface_tokenizer(spec)
 
-    raise ValueError(
+    raise ValidationException(
         "Embedding tokenizer must be unset or start with one of: tiktoken:, hf:, file:"
     )
 

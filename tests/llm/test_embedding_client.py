@@ -8,6 +8,7 @@ from src.embedding_client import (
     _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
     _resolve_tokenizer,  # pyright: ignore[reportPrivateUsage]
 )
+from src.exceptions import ValidationException
 
 
 class FakeOpenAIEmbeddingsAPI:
@@ -414,6 +415,48 @@ def test_file_tokenizer_spec_wraps_encode_decode(
         ("encode", "hello"),
         ("decode", "4,5"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("spec", "message"),
+    [
+        ("tiktoken:", "requires a name"),
+        ("hf:", "requires a model name"),
+        ("file:", "requires a tokenizer path"),
+        ("sentencepiece:model", "must be unset or start with"),
+    ],
+)
+def test_invalid_tokenizer_specs_raise_validation_exception(
+    spec: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValidationException, match=message):
+        _resolve_tokenizer("unused", spec)
+
+
+def test_unknown_tiktoken_tokenizer_raises_validation_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_get_encoding(name: str) -> FakeEncoding:
+        raise ValueError(f"unknown encoding {name}")
+
+    monkeypatch.setattr("src.embedding_client.tiktoken.get_encoding", fake_get_encoding)
+
+    with pytest.raises(ValidationException, match="unknown tiktoken encoding"):
+        _resolve_tokenizer("unused", "tiktoken:not-real")
+
+
+def test_missing_tokenizers_extra_raises_validation_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_import_module(name: str) -> None:
+        assert name == "tokenizers"
+        raise ImportError(name)
+
+    monkeypatch.setattr("src.embedding_client.import_module", fake_import_module)
+
+    with pytest.raises(ValidationException, match="honcho\\[tokenizers\\]"):
+        _resolve_tokenizer("unused", "hf:BAAI/bge-m3")
 
 
 @pytest.mark.asyncio
