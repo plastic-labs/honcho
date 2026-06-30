@@ -7,9 +7,14 @@ import pytest
 
 from src import models
 from src.config import settings
+from src.crud.representation import RepresentationManager
 from src.deriver.deriver import process_representation_tasks_batch
 from src.llm import HonchoLLMCallResponse
-from src.utils.representation import PromptRepresentation, Representation
+from src.utils.representation import (
+    ExplicitObservationBase,
+    PromptRepresentation,
+    Representation,
+)
 from src.utils.work_unit import construct_work_unit_key, parse_work_unit_key
 
 
@@ -65,6 +70,54 @@ class TestDeriverProcessing:
         )
         assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
         assert "llm_settings" not in kwargs
+
+    async def test_all_observer_saves_failing_surfaces_failure(self):
+        """When every observer's save_representation fails (e.g. embedding retries
+        exhausted under a sustained 429), the batch must surface the failure to the
+        queue manager — by raising — instead of swallowing it and reporting success.
+        Without this, the work unit is marked processed with zero documents saved:
+        silent memory loss (#728)."""
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(timezone.utc),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="The user has a dog named Rover")
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        failing_save = AsyncMock(side_effect=RuntimeError("429 RESOURCE_EXHAUSTED"))
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", failing_save),
+            pytest.raises(RuntimeError, match="save_representation failed"),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+            )
 
     async def test_process_representation_tasks_batch_passes_custom_instructions_into_prompt(
         self,
