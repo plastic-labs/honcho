@@ -82,10 +82,7 @@ async def measure_silent_loss_and_visibility(
                 "save_representation",
                 new=AsyncMock(side_effect=RuntimeError("429 RESOURCE_EXHAUSTED")),
             ),
-            patch(
-                "src.deriver.deriver.emit",
-                side_effect=lambda e, _sink=emitted: _sink.append(e),
-            ),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
         ):
             try:
                 await process_representation_tasks_batch(
