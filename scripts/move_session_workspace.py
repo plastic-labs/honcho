@@ -236,6 +236,36 @@ async def _session_fk_constraints(session: AsyncSession) -> list[tuple[str, str]
     return [(r.child, r.conname) for r in rows]
 
 
+async def _can_defer_constraints(session: AsyncSession) -> bool:
+    """Return True if the current role can ALTER the ``sessions`` table's constraints.
+
+    Heuristic: if the probe is wrong, the apply transaction rolls back (pg_dump-backed),
+    so a false positive is safe — the ALTER will fail and the outer transaction aborts.
+    """
+    result = await session.scalar(
+        text(
+            "SELECT COALESCE("
+            + "  (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)"
+            + "  OR pg_catalog.pg_get_userbyid(relowner) = current_user, false)"
+            + " FROM pg_class WHERE relname = 'sessions' AND relkind = 'r'"
+        )
+    )
+    return bool(result)
+
+
+async def _resolve_strategy(session: AsyncSession, strategy: str) -> str:
+    """Resolve ``strategy`` to a concrete ``"in_place"`` or ``"create_new"`` value.
+
+    Raises ``MoveError`` for unrecognised values.  ``"auto"`` probes the current
+    role's ALTER privilege and picks the best available strategy.
+    """
+    if strategy not in {"auto", "in_place", "create_new"}:
+        raise MoveError(f"unknown strategy: {strategy!r}")
+    if strategy == "auto":
+        return "in_place" if await _can_defer_constraints(session) else "create_new"
+    return strategy
+
+
 async def relocate_in_place(
     session: AsyncSession,
     source_ws: str,
@@ -426,19 +456,22 @@ async def apply_moves(
     target_ws: str,
     plans: list[SessionPlan],
     force_clear_queue: bool,
-    strategy: str = "in_place",
+    strategy: str = "auto",
 ) -> None:
     """Apply the given plans: for each plan ensure dependencies, clear queue,
     relocate, then flush and assert integrity.
 
     ``strategy`` selects the relocate implementation:
-    - ``"in_place"`` (default): id-preserving, requires deferrable constraints.
-    - ``"create_new"``: creates a fresh session row; works without deferrable
-      constraints but the session id changes.
+    - ``"auto"`` (default): probe ALTER privilege and pick the best available strategy.
+    - ``"in_place"``: id-preserving, requires table-owner or superuser role.
+    - ``"create_new"``: creates a fresh session row; works without special privilege
+      but the session id changes.
 
+    Raises ``MoveError`` for unrecognised strategy values.
     The caller controls the outer transaction (commit/rollback).
     """
-    relocate = relocate_in_place if strategy == "in_place" else relocate_create_new
+    concrete = await _resolve_strategy(session, strategy)
+    relocate = relocate_in_place if concrete == "in_place" else relocate_create_new
     for plan in plans:
         await ensure_dependencies(session, source_ws, target_ws, plan.source_name)
         await clear_session_queue(
@@ -463,6 +496,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--apply", action="store_true", help="default: dry-run")
     p.add_argument("--force-clear-queue", action="store_true")
     p.add_argument("--no-backup", action="store_true")
+    p.add_argument(
+        "--strategy",
+        choices=["auto", "in_place", "create_new"],
+        default="auto",
+        help=(
+            "relocate strategy: auto=detect privilege (default),"
+            + " in_place=id-preserving (requires table-owner/superuser),"
+            + " create_new=no special privilege required (session id changes)"
+        ),
+    )
     return p
 
 
@@ -477,9 +520,9 @@ def _pg_dump(out_path: str) -> None:
     subprocess.run(["pg_dump", "--dbname", libpq, "--file", out_path], check=True)
 
 
-def _print_plans(plans: list[SessionPlan], apply: bool) -> None:
+def _print_plans(plans: list[SessionPlan], apply: bool, resolved_strategy: str) -> None:
     mode = "APPLY" if apply else "DRY-RUN"
-    print(f"[{mode}] {len(plans)} session(s):")
+    print(f"[{mode}] {len(plans)} session(s) strategy: {resolved_strategy}:")
     for p in plans:
         rn = f" -> {p.target_name} (renamed)" if p.renamed else ""
         print(
@@ -514,7 +557,8 @@ async def main_async(args: argparse.Namespace) -> int:
             p.cross_boundary_premises = await cross_boundary_premises(
                 r, args.source, moved
             )
-    _print_plans(plans, apply=args.apply)
+        resolved = await _resolve_strategy(r, args.strategy)
+    _print_plans(plans, apply=args.apply, resolved_strategy=resolved)
     if not args.apply:
         return 0
     if not args.no_backup:
@@ -526,7 +570,12 @@ async def main_async(args: argparse.Namespace) -> int:
     # session.begin() is the first DB op on a fresh session → true outer txn
     async with SessionLocal() as session, session.begin():
         await apply_moves(
-            session, args.source, args.target, plans, args.force_clear_queue
+            session,
+            args.source,
+            args.target,
+            plans,
+            args.force_clear_queue,
+            strategy=args.strategy,
         )
     print("move applied.")
     return 0

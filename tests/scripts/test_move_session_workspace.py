@@ -4,7 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from scripts.move_session_workspace import (
     MoveError,
+    _can_defer_constraints,  # pyright: ignore[reportPrivateUsage]
     _count,  # pyright: ignore[reportPrivateUsage]
+    _resolve_strategy,  # pyright: ignore[reportPrivateUsage]
     plan_moves,
 )
 from scripts.move_session_workspace import (
@@ -636,3 +638,99 @@ async def test_assert_integrity_ignores_peer_global_documents(db_session: AsyncS
     await db_session.flush()
     # Must NOT raise (would raise "orphaned rows in documents" before the fix).
     await _assert_integrity(db_session, "wsgi")
+
+
+def test_build_parser_strategy_default():
+    """--strategy defaults to 'auto'; explicit --strategy create_new is accepted."""
+    from scripts.move_session_workspace import build_parser
+
+    args_default = build_parser().parse_args(
+        ["--from", "personal", "--to", "highway", "--session", "s1"]
+    )
+    assert args_default.strategy == "auto"
+
+    args_explicit = build_parser().parse_args(
+        [
+            "--from",
+            "personal",
+            "--to",
+            "highway",
+            "--session",
+            "s1",
+            "--strategy",
+            "create_new",
+        ]
+    )
+    assert args_explicit.strategy == "create_new"
+
+
+@pytest.mark.asyncio
+async def test_can_defer_constraints_true_in_test_env(db_session: AsyncSession):
+    """The test role can alter constraints (owner or superuser) so this returns True.
+
+    The in-place relocation tests already prove the role can ALTER TABLE … ALTER CONSTRAINT,
+    so the probe must agree.
+    """
+    result = await _can_defer_constraints(db_session)
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_strategy_auto_picks_in_place(db_session: AsyncSession):
+    """With a privileged test role, auto-detection resolves to 'in_place'."""
+    resolved = await _resolve_strategy(db_session, "auto")
+    assert resolved == "in_place"
+
+
+@pytest.mark.asyncio
+async def test_resolve_strategy_rejects_unknown(db_session: AsyncSession):
+    """An unrecognised strategy string must raise MoveError immediately."""
+    with pytest.raises(MoveError, match="unknown strategy"):
+        await _resolve_strategy(db_session, "bogus")
+
+
+@pytest.mark.asyncio
+async def test_apply_moves_create_new_strategy(db_session: AsyncSession):
+    """apply_moves with strategy='create_new' moves session to target with a new id."""
+    await _mk_workspace(db_session, "personal")
+    await _mk_workspace(db_session, "highway")
+    await _mk_session_with_messages(db_session, "personal", "s1", "robsherman", 2)
+
+    # Capture the original session id before the move
+    old_sess = await db_session.scalar(
+        select(models.Session).where(
+            models.Session.workspace_name == "personal",
+            models.Session.name == "s1",
+        )
+    )
+    assert old_sess is not None
+    old_id = old_sess.id
+
+    from scripts.move_session_workspace import apply_moves
+
+    plans = await plan_moves(db_session, "personal", "highway", ["s1"])
+    await apply_moves(
+        db_session,
+        "personal",
+        "highway",
+        plans,
+        force_clear_queue=False,
+        strategy="create_new",
+    )
+    await db_session.flush()
+
+    # Session exists in target
+    moved = await db_session.scalar(
+        select(models.Session).where(
+            models.Session.workspace_name == "highway",
+            models.Session.name == "s1",
+        )
+    )
+    assert moved is not None
+    assert moved.id != old_id  # id must churn with create_new
+
+    # Messages followed
+    assert await _count(db_session, models.Message, "highway", "s1") == 2
+    assert await _count(db_session, models.Message, "personal", "s1") == 0
+    # Source session row is gone
+    assert await _session_row_helper(db_session, "personal", "s1") is None
