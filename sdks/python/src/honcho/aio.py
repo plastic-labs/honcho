@@ -47,7 +47,11 @@ from .api_types import (
     WorkspaceResponse,
 )
 from .base import PeerBase, SessionBase
-from .conclusions import Conclusion
+from .conclusions import (
+    _SCOPE_RESERVED,
+    Conclusion,
+    _reject_reserved_filter_keys,
+)
 from .http import routes
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
@@ -1471,6 +1475,9 @@ class ConclusionScopeAio:
         from messages (i.e. not derived during dreaming). See
         https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
         """
+        _reject_reserved_filter_keys(
+            filters, _SCOPE_RESERVED + ("session", "session_id")
+        )
         await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
         filters = {
@@ -1524,6 +1531,7 @@ class ConclusionScopeAio:
             filters: Optional dictionary of additional filter criteria, merged
                 with this scope's observer/observed (e.g. ``{"level": "deductive"}``).
         """
+        _reject_reserved_filter_keys(filters, _SCOPE_RESERVED)
         await self._scope._honcho._ensure_workspace_async()
         filters = {
             "observer_id": self._scope.observer,

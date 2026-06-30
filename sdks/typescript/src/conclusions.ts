@@ -12,6 +12,43 @@ import type {
 import { normalizeSearchQuery, RepresentationOptionsSchema } from './validation'
 
 /**
+ * Filter keys that define a conclusion scope (the observer/observed peer pair).
+ * They are set from the scope itself, so a caller must not pass them in `filters`.
+ */
+const SCOPE_RESERVED_KEYS = [
+  'observer',
+  'observed',
+  'observer_id',
+  'observed_id',
+]
+
+/**
+ * Throw if `filters` contains keys managed by the conclusion scope.
+ *
+ * The observer/observed peer pair (and, on `list`, the session) is fixed by the
+ * scope, so letting a user filter override it would silently return data from a
+ * different scope than requested. Fail loud instead.
+ */
+function rejectReservedFilterKeys(
+  filters: Record<string, unknown> | undefined,
+  reserved: string[]
+): void {
+  if (!filters) return
+  const clash = reserved.filter((k) => k in filters).sort()
+  if (clash.length > 0) {
+    let guidance =
+      'Choose the peer pair via peer.conclusions / peer.conclusionsOf(target)'
+    if (reserved.includes('session') || reserved.includes('session_id')) {
+      guidance += '; use the session option to filter by session'
+    }
+    throw new Error(
+      `Filter key(s) ${clash.join(', ')} are managed by this conclusion scope ` +
+        `and cannot be passed in filters. ${guidance}.`
+    )
+  }
+}
+
+/**
  * Parameters for creating a conclusion.
  */
 export interface ConclusionCreateParams {
@@ -207,6 +244,11 @@ export class ConclusionScope {
     filters?: Record<string, unknown>
     reverse?: boolean
   }): Promise<Page<Conclusion, ConclusionResponse>> {
+    rejectReservedFilterKeys(options?.filters, [
+      ...SCOPE_RESERVED_KEYS,
+      'session',
+      'session_id',
+    ])
     const resolvedSessionId = options?.session
       ? typeof options.session === 'string'
         ? options.session
@@ -259,6 +301,7 @@ export class ConclusionScope {
     distance?: number,
     filters?: Record<string, unknown>
   ): Promise<Conclusion[]> {
+    rejectReservedFilterKeys(filters, SCOPE_RESERVED_KEYS)
     const response = await this._query({
       query,
       top_k: topK,

@@ -24,6 +24,34 @@ __all__ = [
     "ConclusionCreateParams",
 ]
 
+# Filter keys that define a conclusion scope (the observer/observed peer pair).
+# They are set from the scope itself, so a caller must not pass them in `filters`.
+_SCOPE_RESERVED = ("observer", "observed", "observer_id", "observed_id")
+
+
+def _reject_reserved_filter_keys(
+    filters: dict[str, Any] | None, reserved: tuple[str, ...]
+) -> None:
+    """Raise if ``filters`` contains keys managed by the conclusion scope.
+
+    The observer/observed peer pair (and, on ``list``, the session) is fixed by
+    the scope, so letting a user filter override it would silently return data
+    from a different scope than requested. Fail loud instead.
+    """
+    if not filters:
+        return
+    clash = sorted(k for k in reserved if k in filters)
+    if clash:
+        guidance = (
+            "Choose the peer pair via peer.conclusions / peer.conclusions_of(target)"
+        )
+        if "session" in reserved or "session_id" in reserved:
+            guidance += "; use the session= parameter to filter by session"
+        raise ValueError(
+            f"Filter key(s) {clash} are managed by this conclusion scope and "
+            + f"cannot be passed in filters. {guidance}."
+        )
+
 
 class ConclusionCreateParams(BaseModel):
     content: str
@@ -197,6 +225,9 @@ class ConclusionScope:
         Returns:
             Paginated response containing Conclusion objects
         """
+        _reject_reserved_filter_keys(
+            filters, _SCOPE_RESERVED + ("session", "session_id")
+        )
         self._honcho._ensure_workspace()
         resolved_session_id = resolve_id(session)
         filters = {
@@ -257,6 +288,7 @@ class ConclusionScope:
         Returns:
             List of matching Conclusion objects
         """
+        _reject_reserved_filter_keys(filters, _SCOPE_RESERVED)
         self._honcho._ensure_workspace()
         filters = {
             "observer_id": self.observer,
