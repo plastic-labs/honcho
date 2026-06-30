@@ -466,6 +466,236 @@ class TestDocumentCRUD:
         assert len(live) == 0
 
     @pytest.mark.asyncio
+    async def test_exact_dedup_within_batch_drops_repeat(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Exact (case/whitespace-insensitive) duplicates within a single batch
+        collapse to one document, even with semantic dedup disabled."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        # Three "exact" matches that differ only by case/surrounding whitespace.
+        doc_schemas = [
+            schemas.DocumentCreate(
+                content="User likes coffee",
+                embedding=[0.1] * 1536,
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[1],
+                    message_created_at="2026-01-01T00:00:00Z",
+                ),
+            ),
+            schemas.DocumentCreate(
+                content="user likes coffee",
+                embedding=[0.2] * 1536,
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[2],
+                    message_created_at="2026-01-01T00:01:00Z",
+                ),
+            ),
+            schemas.DocumentCreate(
+                content="  User likes coffee\n",
+                embedding=[0.3] * 1536,
+                session_name=test_session.name,
+                metadata=schemas.DocumentMetadata(
+                    message_ids=[3],
+                    message_created_at="2026-01-01T00:02:00Z",
+                ),
+            ),
+        ]
+
+        accepted = await crud.create_documents(
+            db_session,
+            documents=doc_schemas,
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=False,
+        )
+
+        assert len(accepted) == 1
+        live = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == test_workspace.name,
+                        models.Document.observer == test_peer.name,
+                        models.Document.observed == test_peer2.name,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(live) == 1
+        # Within-batch repeats are dropped silently, no reinforcement.
+        assert live[0].times_derived == 1
+
+    @pytest.mark.asyncio
+    async def test_exact_dedup_against_existing_reinforces(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """An exact match of an existing live document is rejected and reinforces
+        the existing row, even with semantic dedup disabled."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="User likes coffee",
+                    embedding=[0.1] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=False,
+        )
+
+        # Case/whitespace variant of the existing content -> exact match.
+        accepted = await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="user likes coffee ",
+                    embedding=[0.9] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2026-01-02T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=False,
+        )
+
+        assert len(accepted) == 0
+        surviving = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == test_workspace.name,
+                        models.Document.observer == test_peer.name,
+                        models.Document.observed == test_peer2.name,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(surviving) == 1
+        assert surviving[0].content == "User likes coffee"
+        assert surviving[0].times_derived == 2
+
+    @pytest.mark.asyncio
+    async def test_exact_dedup_flushes_before_semantic_replacement(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """An exact-match reinforcement in a batch must be visible to a later
+        semantic replacement of the same existing row when autoflush is off."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="User likes coffee",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=False,
+        )
+
+        db_session.autoflush = False
+        accepted = await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content=" user likes coffee ",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2026-01-02T00:00:00Z",
+                    ),
+                ),
+                schemas.DocumentCreate(
+                    content="User likes coffee and tea",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[3],
+                        message_created_at="2026-01-03T00:00:00Z",
+                    ),
+                ),
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+
+        assert len(accepted) == 1
+        assert accepted[0].content == "User likes coffee and tea"
+
+        surviving = (
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == test_workspace.name,
+                        models.Document.observer == test_peer.name,
+                        models.Document.observed == test_peer2.name,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(surviving) == 1
+        assert surviving[0].content == "User likes coffee and tea"
+        assert surviving[0].times_derived == 3
+
+    @pytest.mark.asyncio
     async def test_delete_document_success(
         self,
         db_session: AsyncSession,

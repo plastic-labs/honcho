@@ -428,6 +428,19 @@ async def query_documents(
         return docs
 
 
+def _normalize_content(content: str) -> str:
+    """Normalize document content for exact-match deduplication.
+
+    Content is compared after trimming surrounding whitespace and lowercasing
+
+    The SQL filter in ``create_documents`` must stay in sync with this:
+    ``lower(regexp_replace(content, '^\\s+|\\s+$', '', 'g'))``. Postgres'
+    ``trim()`` only strips spaces, so a regex is used to match Python's
+    ``str.strip()`` across all whitespace.
+    """
+    return content.strip().lower()
+
+
 async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
@@ -440,12 +453,17 @@ async def create_documents(
     """
     Create multiple documents with optional duplicate detection.
 
+    The ``deduplicate`` flag additionally enables semantic (cosine-similarity)
+    dedup via ``is_rejected_duplicate`` for documents that survive the exact
+    deduplication check.
+
     Args:
         db: Database session
         documents: List of document creation schemas
         workspace_name: Name of the workspace
         observer: Name of the observing peer
         observed: Name of the observed peer
+        deduplicate: Enable semantic duplicate detection
 
     Returns:
         List of DocumentCreate schemas that were actually inserted (excludes
@@ -456,8 +474,54 @@ async def create_documents(
     # Store (document_model, embedding) pairs - IDs aren't available until after commit
     docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
 
+    # exact-content dedup (independent of `deduplicate`): pre-fetch
+    # existing live documents whose normalized content matches anything in this
+    # batch, scoped to (workspace, observer, observed). The SQL normalization must
+    # mirror _normalize_content.
+    batch_normalized: set[str] = {_normalize_content(d.content) for d in documents}
+    existing_by_normalized: dict[str, models.Document] = {}
+    if batch_normalized:
+        normalized_content_sql = func.lower(
+            func.regexp_replace(models.Document.content, r"^\s+|\s+$", "", "g")
+        )
+        existing_result = await db.execute(
+            select(models.Document).where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.observer == observer,
+                models.Document.observed == observed,
+                models.Document.deleted_at.is_(None),
+                normalized_content_sql.in_(batch_normalized),
+            )
+        )
+        for existing_doc in existing_result.scalars():
+            # If multiple historical rows share normalized content, reinforcing
+            # one is sufficient; keep the first.
+            existing_by_normalized.setdefault(
+                _normalize_content(existing_doc.content), existing_doc
+            )
+
+    # Tracks normalized content already accepted from this batch so exact
+    # duplicates within a single inference call collapse to one document.
+    seen_in_batch: set[str] = set()
+
     for doc in documents:
         try:
+            normalized_content = _normalize_content(doc.content)
+
+            # Exact-match dedup, always on:
+            # 1) collapse exact duplicates within this batch (drop silently).
+            if normalized_content in seen_in_batch:
+                continue
+            seen_in_batch.add(normalized_content)
+
+            # 2) drop exact duplicates of an existing live document, recording
+            #    the re-derivation as reinforcement on the existing row.
+            existing_match = existing_by_normalized.get(normalized_content)
+            if existing_match is not None:
+                existing_match.times_derived = models.Document.times_derived + 1
+                await db.flush()
+                continue
+
             # for each document, if deduplicate is True, perform a process
             # that checks against existing documents and either rejects this document
             # as a duplicate OR deletes an existing document that is a duplicate.
