@@ -119,6 +119,62 @@ class TestDeriverProcessing:
                 queue_item_message_ids=[1],
             )
 
+    async def test_partial_observer_failure_is_processed_and_surfaced(self):
+        """When some observers save and one fails, the batch does NOT raise (the unit
+        stays processed and the saved observers are kept), and the failure is surfaced
+        discoverably via telemetry — not just a log line (#728 partial case, D2)."""
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(timezone.utc),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="The user has a dog named Rover")
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        # bob succeeds (returns a saved-doc count), carol fails.
+        partial_save = AsyncMock(
+            side_effect=[1, RuntimeError("429 RESOURCE_EXHAUSTED")]
+        )
+        emitted: list[Any] = []
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", partial_save),
+            patch("src.deriver.deriver.emit", side_effect=lambda e: emitted.append(e)),
+        ):
+            # Must NOT raise — the saved observer's work is kept, unit stays processed.
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob", "carol"],
+                observed="alice",
+                queue_item_message_ids=[1],
+            )
+
+        assert emitted, "expected a telemetry event to be emitted"
+        event = emitted[-1]
+        assert event.observer_count == 1
+        assert event.failed_observer_count == 1
+
     async def test_process_representation_tasks_batch_passes_custom_instructions_into_prompt(
         self,
     ) -> None:

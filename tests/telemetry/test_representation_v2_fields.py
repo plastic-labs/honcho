@@ -53,6 +53,7 @@ class TestRepresentationV2AdditiveFields:
         assert event.hit_batch_token_cap is False
         assert event.hit_input_token_cap is False
         assert event.observer_count == 0
+        assert event.failed_observer_count == 0
 
     def test_input_tokens_semantics_preserved(self):
         """The downstream metering key must remain 'queued-message tokens'.

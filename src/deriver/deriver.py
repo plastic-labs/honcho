@@ -315,6 +315,7 @@ async def process_representation_tasks_batch(
             hit_batch_token_cap=hit_batch_token_cap,
             hit_input_token_cap=response.hit_input_token_cap,
             observer_count=successful_observer_count,
+            failed_observer_count=len(save_errors),
         )
     )
 
