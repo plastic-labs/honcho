@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -126,8 +126,8 @@ async def test_simple_batch_embed_truncates_oversize_input_instead_of_raising(
     assert len(result) == 1  # 1:1 preserved
     assert result[0] == [0.1] * 8
     # The provider received a truncated input within the cap, not the full text.
-    sent = fake_embeddings.calls[-1]["input"]
-    sent_text = sent[0] if isinstance(sent, list) else sent
+    # In batch mode the provider is always called with a list of strings.
+    sent_text = cast("list[str]", fake_embeddings.calls[-1]["input"])[0]
     assert len(client.encoding.encode(sent_text)) <= client.max_embedding_tokens
 
 
