@@ -283,10 +283,55 @@ class TestRepresentationManagerSave:
             )
 
         assert len(saved.created_documents) == 1
-        mock_embed.assert_awaited_once_with(["useful observation"])
+        mock_embed.assert_awaited_once_with(
+            ["useful observation"], on_oversize="truncate"
+        )
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
         assert saved_observations[0].content == "useful observation"
+
+    @pytest.mark.asyncio
+    async def test_save_representation_embeds_with_truncate_on_oversize(self):
+        """save_representation embeds observations with on_oversize='truncate' so a
+        single over-length observation does not fail the whole batch (#569)."""
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="observed",
+        )
+        representation = Representation(
+            explicit=[
+                ExplicitObservation(
+                    content="an observation",
+                    created_at=datetime.now(timezone.utc),
+                    message_ids=[1],
+                    session_name="session",
+                ),
+            ]
+        )
+
+        with (
+            patch("src.crud.representation.tracked_db", _fake_tracked_db),
+            patch(
+                "src.crud.representation.embedding_client.simple_batch_embed",
+                new=AsyncMock(return_value=[[0.1]]),
+            ) as mock_embed,
+            patch.object(
+                manager,
+                "_save_representation_internal",
+                new=AsyncMock(return_value=1),
+            ),
+        ):
+            await manager.save_representation(
+                representation,
+                message_ids=[1],
+                session_name="session",
+                message_created_at=datetime.now(timezone.utc),
+                message_level_configuration=_resolved_config(),
+            )
+
+        assert mock_embed.await_args is not None
+        assert mock_embed.await_args.kwargs.get("on_oversize") == "truncate"
 
     @pytest.mark.asyncio
     async def test_save_representation_filters_blank_deductive_observations(self):
@@ -339,7 +384,9 @@ class TestRepresentationManagerSave:
             )
 
         assert len(saved.created_documents) == 1
-        mock_embed.assert_awaited_once_with(["inferred conclusion"])
+        mock_embed.assert_awaited_once_with(
+            ["inferred conclusion"], on_oversize="truncate"
+        )
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
         assert isinstance(saved_observations[0], DeductiveObservation)
