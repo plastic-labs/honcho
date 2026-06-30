@@ -93,6 +93,75 @@ async def test_openai_embedding_client_rejects_dimension_mismatch(
 
 
 @pytest.mark.asyncio
+async def test_simple_batch_embed_truncates_oversize_input_instead_of_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In truncate mode, an input exceeding the token cap is embedded from a
+    token-capped prefix and still yields exactly one vector — one oversize
+    observation must not fail the whole batch (#569)."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=5,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    oversize = "word " * 100  # far over the 5-token cap
+
+    result = await client.simple_batch_embed([oversize], on_oversize="truncate")
+
+    assert len(result) == 1  # 1:1 preserved
+    assert result[0] == [0.1] * 8
+    # The provider received a truncated input within the cap, not the full text.
+    sent = fake_embeddings.calls[-1]["input"]
+    sent_text = sent[0] if isinstance(sent, list) else sent
+    assert len(client.encoding.encode(sent_text)) <= client.max_embedding_tokens
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_raises_on_oversize_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default mode preserves the historical contract: an oversize input raises,
+    so existing callers are unaffected by the new truncate option (#569 guard)."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=5,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    with pytest.raises(ValueError, match="exceeds maximum token limit"):
+        await client.simple_batch_embed(["word " * 100])
+
+
+@pytest.mark.asyncio
 async def test_gemini_embedding_client_uses_output_dimensionality(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
