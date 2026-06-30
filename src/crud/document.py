@@ -531,7 +531,16 @@ async def create_documents(
             #    the re-derivation as reinforcement on the existing row.
             existing_match = existing_by_normalized.get(normalized_content)
             if existing_match is not None:
-                existing_match.times_derived = models.Document.times_derived + 1
+                # Reinforce the existing row. greatest(...) keeps the bump atomic
+                # server-side (concurrent workers can't lose an increment) while
+                # still honoring an incoming doc that already carries accumulated
+                # reinforcement (times_derived > 1, e.g. a future re-ingestion or
+                # collection-merge path). Mirrors the superior-replacement branch
+                # in is_rejected_duplicate.
+                existing_match.times_derived = func.greatest(
+                    models.Document.times_derived + 1,
+                    doc.times_derived,
+                )
                 await db.flush()
                 continue
 
@@ -1115,10 +1124,14 @@ async def is_rejected_duplicate(
         return False  # Don't reject the new document
 
     # Existing document has more information, reject the new one but record the
-    # reinforcement: a semantic duplicate was derived again. Assign a SQL
-    # expression so the increment is atomic server-side -- concurrent workers
-    # reinforcing the same document must not lose updates.
-    existing_doc.times_derived = models.Document.times_derived + 1
+    # reinforcement: a semantic duplicate was derived again. greatest(...) keeps
+    # the increment atomic server-side -- concurrent workers reinforcing the same
+    # document must not lose updates -- while still honoring an incoming doc that
+    # already carries accumulated reinforcement (times_derived > 1).
+    existing_doc.times_derived = func.greatest(
+        models.Document.times_derived + 1,
+        doc.times_derived,
+    )
     await db.flush()
     logger.debug(
         "[DUPLICATE DETECTION] Rejecting new in favor of existing. new=%r, existing=%r.",

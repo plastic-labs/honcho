@@ -611,6 +611,108 @@ class TestDocumentCRUD:
         assert surviving[0].times_derived == 2
 
     @pytest.mark.asyncio
+    async def test_exact_dedup_honors_incoming_times_derived(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Reinforcement folds in an incoming doc that already carries
+        accumulated reinforcement: the existing row becomes
+        ``greatest(existing + 1, incoming)``."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        async def _live() -> list[models.Document]:
+            return list(
+                (
+                    await db_session.execute(
+                        select(models.Document).where(
+                            models.Document.workspace_name == test_workspace.name,
+                            models.Document.observer == test_peer.name,
+                            models.Document.observed == test_peer2.name,
+                            models.Document.deleted_at.is_(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+        # Existing row already reinforced twice.
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="User likes coffee",
+                    embedding=[0.1] * 1536,
+                    session_name=test_session.name,
+                    times_derived=2,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=False,
+        )
+
+        # Incoming exact match claims more accumulated reinforcement (5) than
+        # existing + 1 (3) -> incoming wins.
+        accepted = await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="user likes coffee ",
+                    embedding=[0.9] * 1536,
+                    session_name=test_session.name,
+                    times_derived=5,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2026-01-02T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=False,
+        )
+        assert len(accepted) == 0
+        live = await _live()
+        assert len(live) == 1
+        assert live[0].times_derived == 5
+
+        # A normal re-derivation (times_derived defaults to 1) now bumps by one:
+        # greatest(existing + 1, 1) -> existing + 1.
+        accepted = await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="USER LIKES COFFEE",
+                    embedding=[0.4] * 1536,
+                    session_name=test_session.name,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[3],
+                        message_created_at="2026-01-03T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=False,
+        )
+        assert len(accepted) == 0
+        live = await _live()
+        assert len(live) == 1
+        assert live[0].times_derived == 6
+
+    @pytest.mark.asyncio
     async def test_exact_dedup_flushes_before_semantic_replacement(
         self,
         db_session: AsyncSession,
