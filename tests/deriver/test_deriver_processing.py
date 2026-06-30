@@ -159,7 +159,7 @@ class TestDeriverProcessing:
                 return_value=mock_response,
             ),
             patch.object(RepresentationManager, "save_representation", partial_save),
-            patch("src.deriver.deriver.emit", side_effect=lambda e: emitted.append(e)),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
         ):
             # Must NOT raise — the saved observer's work is kept, unit stays processed.
             await process_representation_tasks_batch(
