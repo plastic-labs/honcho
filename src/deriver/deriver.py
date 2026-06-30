@@ -339,6 +339,7 @@ async def process_representation_tasks_batch(
             exact_dup_in_batch_count=agg_representation_result.exact_dup_in_batch_count,
             semantic_dup_rejected_count=agg_representation_result.semantic_dup_rejected_count,
             semantic_dup_replaced_count=agg_representation_result.semantic_dup_replaced_count,
+            failed_observer_count=len(save_errors),
         )
     )
 
