@@ -481,6 +481,19 @@ async def create_documents(
     batch_normalized: set[str] = {_normalize_content(d.content) for d in documents}
     existing_by_normalized: dict[str, models.Document] = {}
     if batch_normalized:
+        # The `normalized_content_sql.in_(...)` filter below narrows to the
+        # (workspace, observer, observed) partition via the single-column indexes,
+        # then evaluates lower(regexp_replace(...)) per row.
+        # TODO: add a partial expression index matching
+        # this filter exactly
+        #     CREATE INDEX ix_documents_normalized_content
+        #     ON documents (
+        #         workspace_name,
+        #         observer,
+        #         observed,
+        #         (lower(regexp_replace(content, '^\s+|\s+$', '', 'g')))
+        #     )
+        #     WHERE deleted_at IS NULL;
         normalized_content_sql = func.lower(
             func.regexp_replace(models.Document.content, r"^\s+|\s+$", "", "g")
         )
