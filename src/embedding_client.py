@@ -663,9 +663,19 @@ class EmbeddingClient:
         """Embed a single query string."""
         return await self._get_client().embed(query)
 
-    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
-        """Batch embed a list of text strings (each must fit token limit)."""
-        return await self._get_client().simple_batch_embed(texts)
+    async def simple_batch_embed(
+        self,
+        texts: list[str],
+        *,
+        on_oversize: Literal["raise", "truncate"] = "raise",
+    ) -> list[list[float]]:
+        """Batch embed a list of text strings, one vector per input.
+
+        See ``_EmbeddingClient.simple_batch_embed`` for ``on_oversize`` semantics.
+        """
+        return await self._get_client().simple_batch_embed(
+            texts, on_oversize=on_oversize
+        )
 
     def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
         """Chunk texts using the same rules as `batch_embed` (no network)."""
