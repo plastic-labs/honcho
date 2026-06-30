@@ -196,6 +196,7 @@ async def process_representation_tasks_batch(
 
     agg_representation_result = crud.CreateDocumentsResult()
     successful_observer_count = 0
+    save_errors: list[str] = []
     if observations.is_empty() or not message_ids:
         logger.warning(
             "Deriver generated zero observations for messages %s:%s in %s/%s!",
@@ -240,6 +241,7 @@ async def process_representation_tasks_batch(
                 logger.error(
                     "Failed to save representation for observer %s: %s", observer, e
                 )
+                save_errors.append(f"{observer}: {e.__class__.__name__}: {e}")
 
     # Log metrics
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -339,3 +341,12 @@ async def process_representation_tasks_batch(
             semantic_dup_replaced_count=agg_representation_result.semantic_dup_replaced_count,
         )
     )
+
+    # If every observer's save failed, surface the failure to the queue manager so the
+    # work unit is marked errored instead of silently processed with zero documents saved
+    # (#728). Raised after telemetry so metrics still record the attempt.
+    if save_errors and successful_observer_count == 0:
+        raise RuntimeError(
+            f"save_representation failed for all {len(save_errors)} observer(s): "
+            + "; ".join(save_errors)
+        )
