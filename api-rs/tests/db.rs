@@ -3152,7 +3152,7 @@ async fn get_and_claim_respects_ownership_threshold_and_flush() {
         .expect("pre-claim owned");
 
     // Threshold active (flush off, cap 10): big + summary eligible, small excluded.
-    let claimed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, false)
+    let claimed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, 1800, false)
         .await
         .expect("claim with threshold");
     let mut keys: Vec<String> = claimed.keys().cloned().collect();
@@ -3175,11 +3175,62 @@ async fn get_and_claim_respects_ownership_threshold_and_flush() {
     }
 
     // Flush enabled: the small representation unit is now eligible too.
-    let flushed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, true)
+    let flushed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, 1800, true)
         .await
         .expect("claim with flush");
     assert!(flushed.contains_key("representation:ws:sess:small"));
     assert!(flushed.contains_key("representation:ws:sess:big"));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn get_and_claim_age_flushes_old_sub_threshold_representation_batch() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message_with_tokens("bob", "old small", 5),
+            message_with_tokens("bob", "fresh small", 5),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+
+    insert_queue_row(
+        &test_db.pool,
+        "representation:ws:sess:old-small",
+        "representation",
+        Some(created[0].id),
+    )
+    .await;
+    insert_queue_row(
+        &test_db.pool,
+        "representation:ws:sess:fresh-small",
+        "representation",
+        Some(created[1].id),
+    )
+    .await;
+    sqlx::query(
+        "UPDATE queue SET created_at = now() - INTERVAL '31 minutes' \
+         WHERE work_unit_key = 'representation:ws:sess:old-small'",
+    )
+    .execute(&test_db.pool)
+    .await
+    .expect("age queue item");
+
+    let claimed = db::get_and_claim_work_units(&test_db.pool, 10, 0, 10, 1800, false)
+        .await
+        .expect("claim with age threshold");
+    let keys: Vec<String> = claimed.keys().cloned().collect();
+    assert_eq!(keys, vec!["representation:ws:sess:old-small".to_string()]);
 
     test_db.teardown().await;
 }
@@ -3194,7 +3245,7 @@ async fn get_and_claim_limit_zero_returns_empty() {
         .expect("workspace");
     insert_queue_row(&test_db.pool, "summary:ws:sess:a:bob", "summary", None).await;
     // owned_count == workers -> no capacity.
-    let claimed = db::get_and_claim_work_units(&test_db.pool, 2, 2, 0, false)
+    let claimed = db::get_and_claim_work_units(&test_db.pool, 2, 2, 0, 1800, false)
         .await
         .expect("claim");
     assert!(claimed.is_empty());
@@ -5203,6 +5254,13 @@ fn doc_to_create(content: &str, dim: usize) -> db::DocumentToCreate {
     }
 }
 
+fn doc_to_create_with_times(content: &str, dim: usize, times_derived: i32) -> db::DocumentToCreate {
+    db::DocumentToCreate {
+        times_derived,
+        ..doc_to_create(content, dim)
+    }
+}
+
 #[tokio::test]
 async fn create_documents_inserts_and_marks_synced() {
     let Some(test_db) = TestDb::setup().await else {
@@ -5230,6 +5288,120 @@ async fn create_documents_inserts_and_marks_synced() {
     .await
     .expect("count synced");
     assert_eq!(synced, 2);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_documents_exact_dedup_collapses_batch_and_reinforces_existing() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    setup_collection_fixtures(&test_db.pool).await;
+
+    db::create_documents(
+        &test_db.pool,
+        vec![doc_to_create_with_times("  Exact Match  ", 5, 2)],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    )
+    .await
+    .expect("seed existing");
+
+    let count = db::create_documents(
+        &test_db.pool,
+        vec![
+            doc_to_create_with_times("exact match", 6, 5),
+            doc_to_create_with_times(" Exact Match ", 7, 8),
+            doc_to_create("new fact", 8),
+            doc_to_create_with_times(" NEW FACT ", 9, 6),
+        ],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    )
+    .await
+    .expect("create with exact dedup");
+    assert_eq!(count, 1);
+
+    let exact_times: i32 = sqlx::query_scalar(
+        "SELECT times_derived FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND content = '  Exact Match  ' \
+           AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("exact existing");
+    assert_eq!(exact_times, 8);
+
+    let new_fact_times: i32 = sqlx::query_scalar(
+        "SELECT times_derived FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND content = 'new fact' \
+           AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("new fact");
+    assert_eq!(new_fact_times, 6);
+
+    let live: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL \
+         ORDER BY content",
+    )
+    .fetch_all(&test_db.pool)
+    .await
+    .expect("live docs");
+    assert_eq!(
+        live,
+        vec!["  Exact Match  ".to_string(), "new fact".to_string()]
+    );
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_documents_exact_dedup_serializes_concurrent_writers() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    setup_collection_fixtures(&test_db.pool).await;
+
+    let left_pool = test_db.pool.clone();
+    let right_pool = test_db.pool.clone();
+    let left = db::create_documents(
+        &left_pool,
+        vec![doc_to_create_with_times(" Concurrent Exact ", 5, 2)],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    );
+    let right = db::create_documents(
+        &right_pool,
+        vec![doc_to_create_with_times("concurrent exact", 6, 7)],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    );
+
+    let (left_count, right_count) = tokio::join!(left, right);
+    let inserted = left_count.expect("left create") + right_count.expect("right create");
+    assert_eq!(inserted, 1);
+
+    let row: (i64, i32) = sqlx::query_as(
+        "SELECT COUNT(*), MAX(times_derived) FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("live docs");
+    assert_eq!(row.0, 1);
+    assert!(row.1 >= 7);
 
     test_db.teardown().await;
 }

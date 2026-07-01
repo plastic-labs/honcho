@@ -110,6 +110,7 @@ struct ConclusionRow {
     observer: String,
     observed: String,
     session_name: Option<String>,
+    level: String,
     created_at: DateTime<Utc>,
 }
 
@@ -1773,7 +1774,8 @@ pub async fn list_conclusions(
     let limit_idx = filter.bindings.len() + 2;
     let offset_idx = filter.bindings.len() + 3;
     let sql = format!(
-        "SELECT id, content, observer, observed, session_name, created_at \
+        "SELECT id, content, observer, observed, session_name, \
+                COALESCE(level, 'explicit') AS level, created_at \
          FROM documents {where_sql} \
          ORDER BY created_at {direction} \
          LIMIT ${limit_idx} OFFSET ${offset_idx}"
@@ -2444,7 +2446,7 @@ pub async fn insert_conclusions(
              (id, workspace_name, observer, observed, content, level, times_derived, \
               internal_metadata, session_name, embedding, sync_state) \
              VALUES ($1, $2, $3, $4, $5, 'explicit', 1, '{}'::jsonb, $6, $7::vector, 'synced') \
-             RETURNING id, content, observer, observed, session_name, created_at",
+             RETURNING id, content, observer, observed, session_name, level, created_at",
         )
         .bind(generate_nanoid())
         .bind(workspace_name)
@@ -2479,7 +2481,8 @@ pub async fn query_documents_recent(
     };
     let limit_idx = if session_name.is_some() { 5 } else { 4 };
     let sql = format!(
-        "SELECT id, content, observer, observed, session_name, created_at \
+        "SELECT id, content, observer, observed, session_name, \
+                COALESCE(level, 'explicit') AS level, created_at \
          FROM documents \
          WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
            AND deleted_at IS NULL{session_clause} \
@@ -2557,7 +2560,8 @@ pub async fn query_documents_most_derived(
     limit: i64,
 ) -> Result<Vec<Value>, sqlx::Error> {
     let rows = sqlx::query_as::<_, ConclusionRow>(
-        "SELECT id, content, observer, observed, session_name, created_at \
+        "SELECT id, content, observer, observed, session_name, \
+                COALESCE(level, 'explicit') AS level, created_at \
          FROM documents \
          WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
            AND deleted_at IS NULL \
@@ -2720,7 +2724,8 @@ pub async fn query_documents_pgvector(
     };
 
     let sql = format!(
-        "SELECT id, content, observer, observed, session_name, created_at \
+        "SELECT id, content, observer, observed, session_name, \
+                COALESCE(level, 'explicit') AS level, created_at \
          FROM documents \
          WHERE workspace_name = ${ws_idx} AND observer = ${observer_idx} \
            AND observed = ${observed_idx} \
@@ -3446,6 +3451,48 @@ struct DuplicateCandidate {
     times_derived: i32,
 }
 
+const NORMALIZED_DOCUMENT_CONTENT_SQL: &str =
+    "lower(regexp_replace(content, '^\\s+|\\s+$', '', 'g'))";
+
+fn normalize_document_content(content: &str) -> String {
+    content.trim().to_lowercase()
+}
+
+fn exact_dedup_scope_key(workspace_name: &str, observer: &str, observed: &str) -> String {
+    format!("documents_exact_dedup:{workspace_name}:{observer}:{observed}")
+}
+
+async fn lock_exact_dedup_scope(
+    conn: &mut sqlx::PgConnection,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(exact_dedup_scope_key(workspace_name, observer, observed))
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+fn aggregate_exact_content_duplicates(
+    documents: Vec<DocumentToCreate>,
+) -> Vec<(String, DocumentToCreate)> {
+    let mut index_by_normalized: HashMap<String, usize> = HashMap::new();
+    let mut aggregated: Vec<(String, DocumentToCreate)> = Vec::new();
+    for doc in documents {
+        let normalized = normalize_document_content(&doc.content);
+        if let Some(index) = index_by_normalized.get(&normalized).copied() {
+            aggregated[index].1.times_derived =
+                aggregated[index].1.times_derived.max(doc.times_derived);
+        } else {
+            index_by_normalized.insert(normalized.clone(), aggregated.len());
+            aggregated.push((normalized, doc));
+        }
+    }
+    aggregated
+}
+
 /// The nearest non-deleted document within `max_distance` cosine distance of
 /// `embedding` for `(observer, observed)` — `query_documents(..., top_k=1)` as
 /// used by `is_rejected_duplicate`. Runs on the caller's transaction so it sees
@@ -3518,10 +3565,13 @@ async fn is_rejected_duplicate(
         Ok(false)
     } else {
         // Existing wins; record the reinforcement atomically and reject the new.
-        sqlx::query("UPDATE documents SET times_derived = times_derived + 1 WHERE id = $1")
-            .bind(&existing.id)
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query(
+            "UPDATE documents SET times_derived = greatest(times_derived + 1, $2) WHERE id = $1",
+        )
+        .bind(&existing.id)
+        .bind(doc.times_derived)
+        .execute(&mut *conn)
+        .await?;
         Ok(true)
     }
 }
@@ -3559,11 +3609,54 @@ pub async fn create_documents_returning_levels(
     observed: &str,
     deduplicate: bool,
 ) -> Result<Vec<String>, sqlx::Error> {
+    let documents = aggregate_exact_content_duplicates(documents);
     let mut transaction = pool.begin().await?;
+    if !documents.is_empty() {
+        lock_exact_dedup_scope(&mut transaction, workspace_name, observer, observed).await?;
+    }
     let mut inserted_ids: Vec<String> = Vec::new();
     let mut inserted_levels: Vec<String> = Vec::new();
+    let batch_normalized: Vec<String> = documents
+        .iter()
+        .map(|(normalized, _)| normalized.clone())
+        .collect();
+    let mut existing_by_normalized: HashMap<String, String> = HashMap::new();
+    if !batch_normalized.is_empty() {
+        let sql = format!(
+            "SELECT id, content FROM documents \
+             WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+               AND deleted_at IS NULL \
+               AND {NORMALIZED_DOCUMENT_CONTENT_SQL} = ANY($4)"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(workspace_name)
+            .bind(observer)
+            .bind(observed)
+            .bind(&batch_normalized)
+            .fetch_all(&mut *transaction)
+            .await?;
 
-    for mut doc in documents {
+        for row in rows {
+            let id: String = row.get("id");
+            let content: String = row.get("content");
+            existing_by_normalized
+                .entry(normalize_document_content(&content))
+                .or_insert(id);
+        }
+    }
+
+    for (normalized_content, mut doc) in documents {
+        if let Some(existing_id) = existing_by_normalized.get(&normalized_content) {
+            sqlx::query(
+                "UPDATE documents SET times_derived = greatest(times_derived + 1, $2) WHERE id = $1",
+            )
+            .bind(existing_id)
+            .bind(doc.times_derived)
+            .execute(&mut *transaction)
+            .await?;
+            continue;
+        }
+
         if deduplicate
             && is_rejected_duplicate(
                 &mut transaction,
@@ -3894,13 +3987,16 @@ where
 /// requiring representation batches to have reached the cumulative-token
 /// threshold, then claim up to `workers - owned_count` of them in one
 /// transaction. `representation:` keys must meet `batch_max_tokens` (summed over
-/// their unprocessed messages) unless flushing is enabled or the cap is 0; other
-/// task types are always eligible. Returns the `work_unit_key -> aqs_id` map.
+/// their unprocessed messages) or have an oldest unprocessed item at least
+/// `batch_max_age_seconds` old unless flushing is enabled, the cap is 0, or age
+/// flushing is disabled with 0; other task types are always eligible. Returns
+/// the `work_unit_key -> aqs_id` map.
 pub async fn get_and_claim_work_units(
     pool: &PgPool,
     workers: i64,
     owned_count: i64,
     batch_max_tokens: i64,
+    batch_max_age_seconds: i64,
     flush_enabled: bool,
 ) -> Result<HashMap<String, String>, sqlx::Error> {
     let limit = (workers - owned_count).max(0);
@@ -3910,12 +4006,14 @@ pub async fn get_and_claim_work_units(
 
     let apply_threshold = !flush_enabled && batch_max_tokens > 0;
 
-    // No ORDER BY — matches the Python query, whose LIMIT caps the count without
-    // a defined ordering. The threshold filter and the cap parameter are bound
-    // positionally ($1 = limit, $2 = batch_max_tokens).
+    let apply_age_threshold = apply_threshold && batch_max_age_seconds > 0;
+
     let mut sql = String::from(
         "SELECT wu.work_unit_key \
-         FROM (SELECT work_unit_key FROM queue WHERE NOT processed GROUP BY work_unit_key) wu \
+         FROM ( \
+             SELECT work_unit_key, MIN(created_at) AS oldest_created_at \
+             FROM queue WHERE NOT processed GROUP BY work_unit_key \
+         ) wu \
          LEFT JOIN ( \
              SELECT q.work_unit_key, SUM(m.token_count) AS total_tokens \
              FROM queue q JOIN messages m ON q.message_id = m.id \
@@ -3928,18 +4026,29 @@ pub async fn get_and_claim_work_units(
          )",
     );
     if apply_threshold {
-        sql.push_str(
-            " AND (wu.work_unit_key NOT LIKE 'representation:%' \
-             OR COALESCE(ts.total_tokens, 0) >= $2)",
-        );
+        if apply_age_threshold {
+            sql.push_str(
+                " AND (wu.work_unit_key NOT LIKE 'representation:%' \
+                 OR COALESCE(ts.total_tokens, 0) >= $2 \
+                 OR wu.oldest_created_at <= now() - ($3 * INTERVAL '1 second'))",
+            );
+        } else {
+            sql.push_str(
+                " AND (wu.work_unit_key NOT LIKE 'representation:%' \
+                 OR COALESCE(ts.total_tokens, 0) >= $2)",
+            );
+        }
     }
-    sql.push_str(" LIMIT $1");
+    sql.push_str(" ORDER BY wu.oldest_created_at ASC, wu.work_unit_key ASC LIMIT $1");
 
     let mut transaction = pool.begin().await?;
 
     let mut query = sqlx::query_scalar::<_, String>(&sql).bind(limit);
     if apply_threshold {
         query = query.bind(batch_max_tokens);
+        if apply_age_threshold {
+            query = query.bind(batch_max_age_seconds);
+        }
     }
     let available: Vec<String> = query.fetch_all(&mut *transaction).await?;
     if available.is_empty() {
@@ -4917,6 +5026,7 @@ fn conclusion_json(row: ConclusionRow) -> Value {
         "observer_id": row.observer,
         "observed_id": row.observed,
         "session_id": row.session_name,
+        "level": row.level,
         "created_at": row.created_at
     })
 }
