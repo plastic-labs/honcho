@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sqlx::postgres::{PgArguments, PgRow};
 use sqlx::query::{Query, QueryAs};
 use sqlx::{FromRow, PgPool, Postgres, Row};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 
 use crate::filters::FilterClause;
@@ -3446,6 +3446,10 @@ struct DuplicateCandidate {
     times_derived: i32,
 }
 
+fn normalize_document_content(content: &str) -> String {
+    content.trim().to_lowercase()
+}
+
 /// The nearest non-deleted document within `max_distance` cosine distance of
 /// `embedding` for `(observer, observed)` — `query_documents(..., top_k=1)` as
 /// used by `is_rejected_duplicate`. Runs on the caller's transaction so it sees
@@ -3518,10 +3522,13 @@ async fn is_rejected_duplicate(
         Ok(false)
     } else {
         // Existing wins; record the reinforcement atomically and reject the new.
-        sqlx::query("UPDATE documents SET times_derived = times_derived + 1 WHERE id = $1")
-            .bind(&existing.id)
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query(
+            "UPDATE documents SET times_derived = greatest(times_derived + 1, $2) WHERE id = $1",
+        )
+        .bind(&existing.id)
+        .bind(doc.times_derived)
+        .execute(&mut *conn)
+        .await?;
         Ok(true)
     }
 }
@@ -3562,8 +3569,53 @@ pub async fn create_documents_returning_levels(
     let mut transaction = pool.begin().await?;
     let mut inserted_ids: Vec<String> = Vec::new();
     let mut inserted_levels: Vec<String> = Vec::new();
+    let batch_normalized: Vec<String> = documents
+        .iter()
+        .map(|doc| normalize_document_content(&doc.content))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut existing_by_normalized: HashMap<String, String> = HashMap::new();
+    if !batch_normalized.is_empty() {
+        let rows = sqlx::query(
+            "SELECT id, content FROM documents \
+             WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
+               AND deleted_at IS NULL \
+               AND lower(regexp_replace(content, '^\\s+|\\s+$', '', 'g')) = ANY($4)",
+        )
+        .bind(workspace_name)
+        .bind(observer)
+        .bind(observed)
+        .bind(&batch_normalized)
+        .fetch_all(&mut *transaction)
+        .await?;
+
+        for row in rows {
+            let id: String = row.get("id");
+            let content: String = row.get("content");
+            existing_by_normalized
+                .entry(normalize_document_content(&content))
+                .or_insert(id);
+        }
+    }
+    let mut seen_in_batch: HashSet<String> = HashSet::new();
 
     for mut doc in documents {
+        let normalized_content = normalize_document_content(&doc.content);
+        if !seen_in_batch.insert(normalized_content.clone()) {
+            continue;
+        }
+        if let Some(existing_id) = existing_by_normalized.get(&normalized_content) {
+            sqlx::query(
+                "UPDATE documents SET times_derived = greatest(times_derived + 1, $2) WHERE id = $1",
+            )
+            .bind(existing_id)
+            .bind(doc.times_derived)
+            .execute(&mut *transaction)
+            .await?;
+            continue;
+        }
+
         if deduplicate
             && is_rejected_duplicate(
                 &mut transaction,

@@ -5203,6 +5203,13 @@ fn doc_to_create(content: &str, dim: usize) -> db::DocumentToCreate {
     }
 }
 
+fn doc_to_create_with_times(content: &str, dim: usize, times_derived: i32) -> db::DocumentToCreate {
+    db::DocumentToCreate {
+        times_derived,
+        ..doc_to_create(content, dim)
+    }
+}
+
 #[tokio::test]
 async fn create_documents_inserts_and_marks_synced() {
     let Some(test_db) = TestDb::setup().await else {
@@ -5230,6 +5237,67 @@ async fn create_documents_inserts_and_marks_synced() {
     .await
     .expect("count synced");
     assert_eq!(synced, 2);
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_documents_exact_dedup_collapses_batch_and_reinforces_existing() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    setup_collection_fixtures(&test_db.pool).await;
+
+    db::create_documents(
+        &test_db.pool,
+        vec![doc_to_create_with_times("  Exact Match  ", 5, 2)],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    )
+    .await
+    .expect("seed existing");
+
+    let count = db::create_documents(
+        &test_db.pool,
+        vec![
+            doc_to_create_with_times("exact match", 6, 5),
+            doc_to_create_with_times(" Exact Match ", 7, 8),
+            doc_to_create("new fact", 8),
+            doc_to_create(" NEW FACT ", 9),
+        ],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    )
+    .await
+    .expect("create with exact dedup");
+    assert_eq!(count, 1);
+
+    let exact_times: i32 = sqlx::query_scalar(
+        "SELECT times_derived FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND content = '  Exact Match  ' \
+           AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("exact existing");
+    assert_eq!(exact_times, 5);
+
+    let live: Vec<String> = sqlx::query_scalar(
+        "SELECT content FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL \
+         ORDER BY content",
+    )
+    .fetch_all(&test_db.pool)
+    .await
+    .expect("live docs");
+    assert_eq!(
+        live,
+        vec!["  Exact Match  ".to_string(), "new fact".to_string()]
+    );
 
     test_db.teardown().await;
 }
