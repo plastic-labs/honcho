@@ -9,11 +9,16 @@
 use serde_json::{Map, Value, json};
 
 use crate::llm::http::{Credentials, LlmHttp, LlmHttpError, LlmStreamHttp, TextStream};
+use crate::llm::request_builder::{
+    PassthroughError, merge_header_mapping, passthrough_mapping, passthrough_value_to_string,
+};
 use crate::llm::{CompletionResult, ToolCallResult};
+use crate::structured_output::json_object_instruction_for_response_format;
 
 /// The OpenAI SDK's default API base. Unlike Anthropic this already includes the
 /// `/v1` version segment, so the path appended below is just `/chat/completions`.
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+const OPENROUTER_BASE_URL_PREFIX: &str = "https://openrouter.ai";
 
 /// Run one Chat Completions request: build the body, POST it through the
 /// [`LlmHttp`] transport with a Bearer auth header, and parse the response.
@@ -22,17 +27,99 @@ pub async fn complete<H: LlmHttp>(
     credentials: &Credentials,
     params: &RequestParams<'_>,
 ) -> Result<CompletionResult, LlmHttpError> {
-    let body = build_request(params);
-    let url = format!(
-        "{}/chat/completions",
-        credentials.effective_base_url(DEFAULT_BASE_URL)
-    );
-    let headers = [(
+    let body = build_request(params).map_err(passthrough_error)?;
+    let base_url = credentials.effective_base_url(DEFAULT_BASE_URL);
+    let url = apply_extra_query(format!("{base_url}/chat/completions"), params.extra_params)?;
+    let headers = build_headers(credentials, params.extra_params, base_url)?;
+    let response = http.post_json(&url, &headers, &body).await?;
+    Ok(parse_response(&response))
+}
+
+fn passthrough_error(error: PassthroughError) -> LlmHttpError {
+    LlmHttpError::Validation(error.to_string())
+}
+
+fn build_headers(
+    credentials: &Credentials,
+    extra_params: &Map<String, Value>,
+    base_url: &str,
+) -> Result<Vec<(String, String)>, LlmHttpError> {
+    let mut headers = vec![(
         "Authorization".to_string(),
         format!("Bearer {}", credentials.api_key),
     )];
-    let response = http.post_json(&url, &headers, &body).await?;
-    Ok(parse_response(&response))
+    if base_url.starts_with(OPENROUTER_BASE_URL_PREFIX) {
+        headers.push(("HTTP-Referer".to_string(), "https://honcho.dev".to_string()));
+        headers.push(("X-Openrouter-Title".to_string(), "Honcho".to_string()));
+    }
+    if let Some(mapping) =
+        passthrough_mapping("extra_headers", extra_params).map_err(passthrough_error)?
+    {
+        merge_header_mapping(&mut headers, mapping);
+    }
+    Ok(headers)
+}
+
+fn apply_extra_query(
+    url: String,
+    extra_params: &Map<String, Value>,
+) -> Result<String, LlmHttpError> {
+    let Some(mapping) =
+        passthrough_mapping("extra_query", extra_params).map_err(passthrough_error)?
+    else {
+        return Ok(url);
+    };
+    let mut parsed = reqwest::Url::parse(&url)
+        .map_err(|error| LlmHttpError::Transport(format!("invalid request URL: {error}")))?;
+    {
+        let mut pairs = parsed.query_pairs_mut();
+        for (key, value) in mapping {
+            pairs.append_pair(key, &passthrough_value_to_string(value));
+        }
+    }
+    Ok(parsed.to_string())
+}
+
+fn merge_extra_body(
+    body: &mut Map<String, Value>,
+    extra_params: &Map<String, Value>,
+) -> Result<(), PassthroughError> {
+    if let Some(extra_body) = passthrough_mapping("extra_body", extra_params)? {
+        for (key, value) in extra_body {
+            body.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(())
+}
+
+fn structured_output_mode(extra_params: &Map<String, Value>) -> Option<&str> {
+    extra_params
+        .get("structured_output_mode")
+        .and_then(Value::as_str)
+}
+
+fn with_json_schema_instructions(messages: &[Value], response_format: &Value) -> Vec<Value> {
+    let instruction = json_object_instruction_for_response_format(response_format);
+    let mut messages = messages.to_vec();
+    if let Some(first) = messages.first_mut()
+        && first.get("role").and_then(Value::as_str) == Some("system")
+        && first.get("content").is_some_and(Value::is_string)
+        && let Some(content) = first
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        && let Some(object) = first.as_object_mut()
+    {
+        object.insert(
+            "content".to_string(),
+            json!(format!("{content}\n\n{instruction}").trim().to_string()),
+        );
+        return messages;
+    }
+    let mut with_instruction = Vec::with_capacity(messages.len() + 1);
+    with_instruction.push(json!({"role": "system", "content": instruction}));
+    with_instruction.extend(messages);
+    with_instruction
 }
 
 /// Open a streaming Chat Completions request: the same body as [`complete`] with
@@ -43,22 +130,14 @@ pub async fn stream<H: LlmStreamHttp>(
     credentials: &Credentials,
     params: &RequestParams<'_>,
 ) -> Result<TextStream, LlmHttpError> {
-    let mut body = build_request(params);
+    let mut body = build_request(params).map_err(passthrough_error)?;
     if let Some(object) = body.as_object_mut() {
         object.insert("stream".to_string(), json!(true));
-        object.insert(
-            "stream_options".to_string(),
-            json!({"include_usage": true}),
-        );
+        object.insert("stream_options".to_string(), json!({"include_usage": true}));
     }
-    let url = format!(
-        "{}/chat/completions",
-        credentials.effective_base_url(DEFAULT_BASE_URL)
-    );
-    let headers = [(
-        "Authorization".to_string(),
-        format!("Bearer {}", credentials.api_key),
-    )];
+    let base_url = credentials.effective_base_url(DEFAULT_BASE_URL);
+    let url = apply_extra_query(format!("{base_url}/chat/completions"), params.extra_params)?;
+    let headers = build_headers(credentials, params.extra_params, base_url)?;
     http.post_json_stream(&url, &headers, &body).await
 }
 
@@ -93,10 +172,10 @@ pub struct RequestParams<'a> {
 
 /// Build the JSON body for the Chat Completions API, porting the deterministic
 /// `_build_params` (max-token field selection, temperature, reasoning effort,
-/// proxy `extra_body.reasoning.max_tokens`, stop, converted tools + tool_choice,
+/// proxy `reasoning.max_tokens`, stop, converted tools + tool_choice,
 /// `top_p`/`frequency_penalty`/`presence_penalty`/`seed` passthrough, and the
 /// `response_format`/`json_mode` structured-output enforcement).
-pub fn build_request(params: &RequestParams<'_>) -> Value {
+pub fn build_request(params: &RequestParams<'_>) -> Result<Value, PassthroughError> {
     let mut body = Map::new();
     body.insert("model".to_string(), json!(params.model));
     body.insert("messages".to_string(), json!(params.messages));
@@ -124,10 +203,7 @@ pub fn build_request(params: &RequestParams<'_>) -> Value {
         body.insert("reasoning_effort".to_string(), json!(effort));
     }
     if let Some(budget) = params.thinking_budget_tokens.filter(|budget| *budget > 0) {
-        body.insert(
-            "extra_body".to_string(),
-            json!({"reasoning": {"max_tokens": budget}}),
-        );
+        body.insert("reasoning".to_string(), json!({"max_tokens": budget}));
     }
     if let Some(stop) = params.stop.filter(|stop| !stop.is_empty()) {
         body.insert("stop".to_string(), json!(stop));
@@ -154,7 +230,21 @@ pub fn build_request(params: &RequestParams<'_>) -> Value {
         .get("response_format")
         .filter(|value| !value.is_null())
     {
-        body.insert("response_format".to_string(), response_format.clone());
+        if structured_output_mode(params.extra_params) == Some("json_object") {
+            body.insert(
+                "messages".to_string(),
+                json!(with_json_schema_instructions(
+                    params.messages,
+                    response_format
+                )),
+            );
+            body.insert(
+                "response_format".to_string(),
+                json!({"type": "json_object"}),
+            );
+        } else {
+            body.insert("response_format".to_string(), response_format.clone());
+        }
     } else if params
         .extra_params
         .get("json_mode")
@@ -167,7 +257,9 @@ pub fn build_request(params: &RequestParams<'_>) -> Value {
         );
     }
 
-    Value::Object(body)
+    merge_extra_body(&mut body, params.extra_params)?;
+
+    Ok(Value::Object(body))
 }
 
 /// Extract `(cache_creation, cache_read)` tokens, porting
@@ -445,16 +537,14 @@ mod tests {
             thinking_effort: Some("high"),
             thinking_budget_tokens: Some(1000),
             extra_params: &extra,
-        });
+        })
+        .unwrap();
         // gpt-5 -> max_completion_tokens, not max_tokens.
         assert_eq!(body["max_completion_tokens"], json!(512));
         assert!(body.get("max_tokens").is_none());
         assert_eq!(body["temperature"], json!(0.3));
         assert_eq!(body["reasoning_effort"], json!("high"));
-        assert_eq!(
-            body["extra_body"],
-            json!({"reasoning": {"max_tokens": 1000}})
-        );
+        assert_eq!(body["reasoning"], json!({"max_tokens": 1000}));
         // Tools are converted to function shape.
         assert_eq!(body["tools"][0]["type"], json!("function"));
         assert_eq!(body["tool_choice"], json!("auto"));
@@ -483,7 +573,8 @@ mod tests {
             thinking_effort: None,
             thinking_budget_tokens: None,
             extra_params: &extra,
-        });
+        })
+        .unwrap();
         // Explicit response_format wins over json_mode.
         assert_eq!(body["response_format"], schema);
 
@@ -501,7 +592,8 @@ mod tests {
             thinking_effort: None,
             thinking_budget_tokens: None,
             extra_params: &json_only,
-        });
+        })
+        .unwrap();
         assert_eq!(body["response_format"], json!({"type": "json_object"}));
 
         // json_mode=false emits nothing.
@@ -518,8 +610,79 @@ mod tests {
             thinking_effort: None,
             thinking_budget_tokens: None,
             extra_params: &json_off,
-        });
+        })
+        .unwrap();
         assert!(body.get("response_format").is_none());
+    }
+
+    #[test]
+    fn build_request_json_object_mode_injects_schema_instruction() {
+        let messages = vec![
+            json!({"role": "system", "content": "base system"}),
+            json!({"role": "user", "content": "hi"}),
+        ];
+        let schema = crate::structured_output::prompt_representation_json_object_response_format();
+        let mut extra = Map::new();
+        extra.insert("response_format".to_string(), schema);
+        extra.insert("structured_output_mode".to_string(), json!("json_object"));
+
+        let body = build_request(&RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        })
+        .unwrap();
+
+        assert_eq!(body["response_format"], json!({"type": "json_object"}));
+        let content = body["messages"][0]["content"].as_str().unwrap();
+        assert!(content.starts_with("base system\n\nYou must respond with a single JSON object"));
+        assert!(content.contains("JSON schema:\n{\"$defs\": {\"ExplicitObservationBase\""));
+        assert_eq!(
+            body["messages"][1],
+            json!({"role": "user", "content": "hi"})
+        );
+    }
+
+    #[test]
+    fn build_request_json_object_mode_prepends_instruction_without_string_system() {
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let schema = crate::structured_output::prompt_representation_json_object_response_format();
+        let mut extra = Map::new();
+        extra.insert("response_format".to_string(), schema);
+        extra.insert("structured_output_mode".to_string(), json!("json_object"));
+
+        let body = build_request(&RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        })
+        .unwrap();
+
+        assert_eq!(body["messages"][0]["role"], json!("system"));
+        assert!(
+            body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("You must respond with a single JSON object")
+        );
+        assert_eq!(
+            body["messages"][1],
+            json!({"role": "user", "content": "hi"})
+        );
     }
 
     #[test]
@@ -536,12 +699,96 @@ mod tests {
             thinking_effort: None,
             thinking_budget_tokens: None,
             extra_params: &Map::new(),
-        });
+        })
+        .unwrap();
         assert_eq!(body["max_tokens"], json!(256));
         assert!(body.get("max_completion_tokens").is_none());
         assert_eq!(body["stop"], json!(["END"]));
         assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("extra_body").is_none());
+    }
+
+    #[test]
+    fn build_request_merges_provider_extra_body_operator_wins() {
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert(
+            "extra_body".to_string(),
+            json!({"reasoning": {"max_tokens": 200}, "custom": "v"}),
+        );
+        let body = build_request(&RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: Some(100),
+            extra_params: &extra,
+        })
+        .unwrap();
+
+        assert_eq!(body["reasoning"], json!({"max_tokens": 200}));
+        assert_eq!(body["custom"], json!("v"));
+        assert!(body.get("extra_body").is_none());
+    }
+
+    #[test]
+    fn build_request_rejects_non_mapping_passthrough() {
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert("extra_body".to_string(), json!("bad"));
+        let err = build_request(&RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "provider_params.extra_body must be a mapping, got string"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_classifies_non_mapping_passthrough_as_validation() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({}));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert("extra_query".to_string(), json!("bad"));
+        let params = RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 64,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        };
+
+        let err = complete(&http, &Credentials::new("sk-openai"), &params)
+            .await
+            .unwrap_err();
+
+        let expected = "provider_params.extra_query must be a mapping, got string";
+        assert!(
+            matches!(err, LlmHttpError::Validation(message) if message == expected)
+        );
     }
 
     #[test]
@@ -632,13 +879,106 @@ mod tests {
             .unwrap();
 
         // The default base already carries `/v1`; only the path is appended.
-        assert_eq!(http.last_url(), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(
+            http.last_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
         assert_eq!(
             http.last_headers(),
             vec![("Authorization".to_string(), "Bearer sk-openai".to_string())]
         );
-        assert_eq!(http.last_body(), build_request(&params));
+        assert_eq!(http.last_body(), build_request(&params).unwrap());
         assert_eq!(result.content, json!("hi"));
         assert_eq!(result.input_tokens, 3);
+    }
+
+    #[tokio::test]
+    async fn complete_forwards_provider_extra_headers_and_query() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({
+            "choices": [{"finish_reason": "stop", "message": {"content": "hi"}}],
+        }));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert("extra_headers".to_string(), json!({"X-Trace": "abc"}));
+        extra.insert("extra_query".to_string(), json!({"route": "openrouter"}));
+        let params = RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 64,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        };
+
+        complete(&http, &Credentials::new("sk-openai"), &params)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            http.last_url(),
+            "https://api.openai.com/v1/chat/completions?route=openrouter"
+        );
+        assert_eq!(
+            http.last_headers(),
+            vec![
+                ("Authorization".to_string(), "Bearer sk-openai".to_string()),
+                ("X-Trace".to_string(), "abc".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_adds_openrouter_attribution_headers_with_operator_precedence() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({
+            "choices": [{"finish_reason": "stop", "message": {"content": "hi"}}],
+        }));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert(
+            "extra_headers".to_string(),
+            json!({"HTTP-Referer": "https://operator.example"}),
+        );
+        let params = RequestParams {
+            model: "openrouter/model",
+            messages: &messages,
+            max_tokens: 64,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        };
+        let credentials = Credentials::with_base_url(
+            "sk-openai",
+            Some("https://openrouter.ai/api/v1".to_string()),
+        );
+
+        complete(&http, &credentials, &params).await.unwrap();
+
+        assert_eq!(
+            http.last_url(),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert_eq!(
+            http.last_headers(),
+            vec![
+                ("Authorization".to_string(), "Bearer sk-openai".to_string()),
+                (
+                    "HTTP-Referer".to_string(),
+                    "https://operator.example".to_string()
+                ),
+                ("X-Openrouter-Title".to_string(), "Honcho".to_string()),
+            ]
+        );
     }
 }

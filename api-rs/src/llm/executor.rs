@@ -20,11 +20,13 @@ use super::request_builder::{build_config_extra_params, effective_max_tokens};
 use super::runtime::{effective_config_for_call, effective_temperature, plan_attempt};
 use super::tool_loop::ToolLoopCaller;
 use super::types::{HonchoLLMCallResponse, completion_result_to_response};
-use super::{CompletionResult, ModelConfig, Provider};
+use super::{CompletionResult, ModelConfig, Provider, StructuredOutputMode};
 
 /// An error from [`execute_completion`].
 #[derive(Debug)]
 pub enum ExecutorError {
+    /// The request configuration was invalid before any provider call was made.
+    Validation(String),
     /// The underlying provider HTTP call failed.
     Http(LlmHttpError),
 }
@@ -32,6 +34,7 @@ pub enum ExecutorError {
 impl std::fmt::Display for ExecutorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ExecutorError::Validation(message) => write!(f, "validation error: {message}"),
             ExecutorError::Http(error) => write!(f, "{error}"),
         }
     }
@@ -41,7 +44,10 @@ impl std::error::Error for ExecutorError {}
 
 impl From<LlmHttpError> for ExecutorError {
     fn from(error: LlmHttpError) -> Self {
-        ExecutorError::Http(error)
+        match error {
+            LlmHttpError::Validation(message) => ExecutorError::Validation(message),
+            other => ExecutorError::Http(other),
+        }
     }
 }
 
@@ -303,6 +309,29 @@ impl RetryPolicy {
     }
 }
 
+fn response_format_for_attempt(response_format: &Value, config: &ModelConfig) -> Value {
+    if !is_prompt_representation_response_format(response_format) {
+        return response_format.clone();
+    }
+
+    if matches!(
+        config.structured_output_mode,
+        Some(StructuredOutputMode::JsonObject)
+    ) {
+        crate::structured_output::prompt_representation_json_object_response_format()
+    } else {
+        crate::structured_output::prompt_representation_response_format()
+    }
+}
+
+fn is_prompt_representation_response_format(response_format: &Value) -> bool {
+    response_format
+        .get("json_schema")
+        .and_then(|json_schema| json_schema.get("name"))
+        .and_then(Value::as_str)
+        == Some("PromptRepresentation")
+}
+
 /// The provider-backed [`ToolLoopCaller`], porting the retry + fallback
 /// orchestration of `api.py::honcho_llm_call` (the tool path that threads
 /// `get_attempt_plan` into the loop). Each [`ToolLoopCaller::complete`] runs its
@@ -402,7 +431,10 @@ impl<'a, H: LlmHttp> HonchoCaller<'a, H> {
             let mut call_extras = Map::new();
             call_extras.insert("json_mode".to_string(), json!(self.json_mode));
             if let Some(response_format) = &self.response_format {
-                call_extras.insert("response_format".to_string(), response_format.clone());
+                call_extras.insert(
+                    "response_format".to_string(),
+                    response_format_for_attempt(response_format, &effective_config),
+                );
             }
             call_extras.insert(
                 "verbosity".to_string(),
@@ -472,6 +504,46 @@ mod tests {
     use super::*;
     use crate::llm::http::mock::MockHttp;
     use serde_json::json;
+    use std::collections::VecDeque;
+
+    type CapturedRequest = (String, Vec<(String, String)>, Value);
+
+    struct SequenceHttp {
+        responses: Mutex<VecDeque<Result<Value, LlmHttpError>>>,
+        captured: Mutex<Vec<CapturedRequest>>,
+    }
+
+    impl SequenceHttp {
+        fn new(responses: Vec<Result<Value, LlmHttpError>>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into()),
+                captured: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn requests(&self) -> Vec<CapturedRequest> {
+            self.captured.lock().unwrap().clone()
+        }
+    }
+
+    impl LlmHttp for SequenceHttp {
+        async fn post_json(
+            &self,
+            url: &str,
+            headers: &[(String, String)],
+            body: &Value,
+        ) -> Result<Value, LlmHttpError> {
+            self.captured
+                .lock()
+                .unwrap()
+                .push((url.to_string(), headers.to_vec(), body.clone()));
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err(LlmHttpError::Transport("no mock response".to_string())))
+        }
+    }
 
     fn no_backoff() -> RetryPolicy {
         RetryPolicy {
@@ -488,6 +560,13 @@ mod tests {
             "stop_reason": "end_turn",
             "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]
         }))
+    }
+
+    fn openai_ok_response() -> Value {
+        json!({
+            "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2}
+        })
     }
 
     fn messages() -> Vec<Value> {
@@ -576,6 +655,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn non_mapping_passthrough_is_executor_validation_error() {
+        let http = ok_http();
+        let creds = Credentials::new("key");
+        let config = ModelConfig::new("gpt-x", Provider::Openai);
+        let mut extra = Map::new();
+        extra.insert("extra_body".to_string(), json!(["bad"]));
+
+        let err = execute_completion(
+            &http,
+            &creds,
+            &config,
+            &messages(),
+            1024,
+            None,
+            None,
+            None,
+            Some(&extra),
+        )
+        .await
+        .unwrap_err();
+
+        let expected = "provider_params.extra_body must be a mapping, got array";
+        assert!(
+            matches!(err, ExecutorError::Validation(message) if message == expected)
+        );
+    }
+
+    #[tokio::test]
     async fn complete_single_feeds_structured_output_finalize() {
         // The LLM returns a JSON representation as its text content.
         let json_text = "{\"explicit\": [{\"content\": \"likes coffee\"}]}";
@@ -600,11 +707,7 @@ mod tests {
 
         // The caller-side structured-output step (what the deriver runs) turns the
         // JSON text content into a validated PromptRepresentation.
-        let pr = crate::structured_output::finalize_structured_output(
-            &response.content,
-            crate::structured_output::FailurePolicy::RepairThenEmpty,
-        )
-        .expect("finalize");
+        let pr = crate::structured_output::finalize_structured_output(&response.content);
         assert_eq!(pr.explicit, vec!["likes coffee".to_string()]);
     }
 
@@ -753,6 +856,97 @@ mod tests {
         let _ = caller.complete(&messages(), &[], None).await;
         assert!(http.last_url().ends_with("/chat/completions"));
         assert_eq!(caller.provider(), Provider::Openai);
+    }
+
+    #[tokio::test]
+    async fn fallback_attempt_uses_fallback_default_structured_output_mode() {
+        let http = SequenceHttp::new(vec![
+            Err(LlmHttpError::Status {
+                status: 500,
+                body: "boom".to_string(),
+            }),
+            Ok(openai_ok_response()),
+        ]);
+        let mut primary = ModelConfig::new("primary-model", Provider::Openai);
+        primary.structured_output_mode = Some(StructuredOutputMode::JsonObject);
+        primary.fallback = Some(Box::new(ModelConfig::new(
+            "fallback-model",
+            Provider::Openai,
+        )));
+        let mut caller = HonchoCaller::new(&http, caller_keys(), primary, 1024);
+        caller.retry = no_backoff();
+        caller.json_mode = true;
+        caller.response_format =
+            Some(crate::structured_output::prompt_representation_response_format());
+
+        let response = caller
+            .complete_single(&messages())
+            .await
+            .expect("fallback completion");
+
+        assert_eq!(response.content, json!("hi"));
+        let requests = http.requests();
+        assert_eq!(requests.len(), 2);
+        let fallback_body = &requests[1].2;
+        assert_eq!(fallback_body["model"], json!("fallback-model"));
+        assert_eq!(
+            fallback_body["response_format"]["type"],
+            json!("json_schema")
+        );
+        assert_eq!(
+            fallback_body["response_format"]["json_schema"]["strict"],
+            json!(true)
+        );
+        assert_eq!(
+            fallback_body["messages"],
+            json!([{"role": "user", "content": "hi"}])
+        );
+    }
+
+    #[tokio::test]
+    async fn fallback_attempt_uses_fallback_json_object_structured_output_mode() {
+        let http = SequenceHttp::new(vec![
+            Err(LlmHttpError::Status {
+                status: 500,
+                body: "boom".to_string(),
+            }),
+            Ok(openai_ok_response()),
+        ]);
+        let mut primary = ModelConfig::new("primary-model", Provider::Openai);
+        let mut fallback = ModelConfig::new("fallback-model", Provider::Openai);
+        fallback.structured_output_mode = Some(StructuredOutputMode::JsonObject);
+        primary.fallback = Some(Box::new(fallback));
+        let mut caller = HonchoCaller::new(&http, caller_keys(), primary, 1024);
+        caller.retry = no_backoff();
+        caller.json_mode = true;
+        caller.response_format =
+            Some(crate::structured_output::prompt_representation_response_format());
+
+        let response = caller
+            .complete_single(&messages())
+            .await
+            .expect("fallback completion");
+
+        assert_eq!(response.content, json!("hi"));
+        let requests = http.requests();
+        assert_eq!(requests.len(), 2);
+        let fallback_body = &requests[1].2;
+        assert_eq!(fallback_body["model"], json!("fallback-model"));
+        assert_eq!(
+            fallback_body["response_format"],
+            json!({"type": "json_object"})
+        );
+        assert_eq!(fallback_body["messages"][0]["role"], json!("system"));
+        assert!(
+            fallback_body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("\"title\": \"PromptRepresentation\"")
+        );
+        assert_eq!(
+            fallback_body["messages"][1],
+            json!({"role": "user", "content": "hi"})
+        );
     }
 
     #[test]

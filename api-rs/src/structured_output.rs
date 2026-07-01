@@ -53,12 +53,89 @@ pub fn prompt_representation_response_format() -> Value {
     })
 }
 
-/// Port of `StructuredOutputFailurePolicy`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FailurePolicy {
-    Raise,
-    RepairThenRaise,
-    RepairThenEmpty,
+/// The non-strict schema shape Pydantic emits for `PromptRepresentation`.
+///
+/// Used only for `structured_output_mode=json_object`, where the schema is
+/// injected into the prompt instead of sent as OpenAI Structured Outputs.
+pub fn prompt_representation_json_object_response_format() -> Value {
+    json!({
+        "type": "json_schema",
+        "json_schema": {
+            "name": "PromptRepresentation",
+            "schema": {
+                "$defs": {
+                    "ExplicitObservationBase": {
+                        "properties": {
+                            "content": {
+                                "description": "The explicit observation",
+                                "title": "Content",
+                                "type": "string"
+                            }
+                        },
+                        "required": ["content"],
+                        "title": "ExplicitObservationBase",
+                        "type": "object"
+                    }
+                },
+                "description": "The representation format that is used when getting structured output from an LLM.",
+                "properties": {
+                    "explicit": {
+                        "description": "Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+                        "items": {
+                            "$ref": "#/$defs/ExplicitObservationBase"
+                        },
+                        "title": "Explicit",
+                        "type": "array"
+                    }
+                },
+                "title": "PromptRepresentation",
+                "type": "object"
+            }
+        }
+    })
+}
+
+pub fn json_object_instruction_for_response_format(response_format: &Value) -> String {
+    let schema = response_format
+        .get("json_schema")
+        .and_then(|json_schema| json_schema.get("schema"))
+        .unwrap_or(response_format);
+    format!(
+        "You must respond with a single JSON object that conforms exactly to \
+the following JSON schema. Do not include any text, markdown, or code \
+fences outside the JSON object.\n\nJSON schema:\n{}",
+        json_dumps_python_default(schema)
+    )
+}
+
+fn json_dumps_python_default(value: &Value) -> String {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+        }
+        Value::Array(items) => {
+            let items = items
+                .iter()
+                .map(json_dumps_python_default)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{items}]")
+        }
+        Value::Object(object) => {
+            let items = object
+                .iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}: {}",
+                        serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string()),
+                        json_dumps_python_default(value)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{items}}}")
+        }
+    }
 }
 
 /// Port of `validate_structured_output` for `PromptRepresentation`.
@@ -107,38 +184,15 @@ pub fn empty_structured_output() -> PromptRepresentation {
     PromptRepresentation::default()
 }
 
-/// Port of `attempt_structured_output_repair`: only string payloads are
-/// repairable (and for `PromptRepresentation` repair always yields a value).
-fn attempt_structured_output_repair(content: &Value) -> Option<PromptRepresentation> {
-    match content {
-        Value::String(s) => Some(repair_response_model_json(s)),
-        _ => None,
-    }
-}
-
-/// Port of the post-call logic in `execute_structured_output_call`: validate the
-/// content, then (unless the policy is `Raise`) attempt repair, then apply the
-/// failure policy.
-pub fn finalize_structured_output(
-    content: &Value,
-    failure_policy: FailurePolicy,
-) -> Result<PromptRepresentation, String> {
+/// Validate the structured content, then repair strings, then fall back to empty.
+pub fn finalize_structured_output(content: &Value) -> PromptRepresentation {
     if let Ok(validated) = validate_structured_output(content) {
-        return Ok(validated);
+        return validated;
     }
-    if failure_policy == FailurePolicy::Raise {
-        return Err("structured output validation failed".to_string());
+    match content {
+        Value::String(s) => repair_response_model_json(s),
+        _ => empty_structured_output(),
     }
-
-    if let Some(repaired) = attempt_structured_output_repair(content) {
-        return Ok(repaired);
-    }
-
-    if failure_policy == FailurePolicy::RepairThenEmpty {
-        return Ok(empty_structured_output());
-    }
-
-    Err("Failed to produce valid structured output for PromptRepresentation".to_string())
 }
 
 #[cfg(test)]
@@ -180,45 +234,48 @@ mod tests {
     #[test]
     fn repair_recovers_truncated_json() {
         // Truncated but valid-shaped explicit objects.
-        let pr = repair_response_model_json("{\"explicit\": [{\"content\": \"a\"}, {\"content\": \"b\"");
+        let pr =
+            repair_response_model_json("{\"explicit\": [{\"content\": \"a\"}, {\"content\": \"b\"");
         assert_eq!(pr.explicit, vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]
     fn repair_falls_back_to_empty_on_garbage() {
-        assert!(repair_response_model_json("garbage not json at all").explicit.is_empty());
+        assert!(
+            repair_response_model_json("garbage not json at all")
+                .explicit
+                .is_empty()
+        );
         // Wrong-shaped explicit (bare strings) -> validation fails -> empty.
-        assert!(repair_response_model_json("{\"explicit\": [\"a\", \"b\"]}").explicit.is_empty());
+        assert!(
+            repair_response_model_json("{\"explicit\": [\"a\", \"b\"]}")
+                .explicit
+                .is_empty()
+        );
     }
 
     #[test]
-    fn finalize_applies_failure_policy() {
-        // Valid passes straight through regardless of policy.
+    fn json_object_instruction_matches_python_golden() {
+        assert_eq!(
+            json_object_instruction_for_response_format(
+                &prompt_representation_json_object_response_format()
+            ),
+            "You must respond with a single JSON object that conforms exactly to the following JSON schema. Do not include any text, markdown, or code fences outside the JSON object.\n\nJSON schema:\n{\"$defs\": {\"ExplicitObservationBase\": {\"properties\": {\"content\": {\"description\": \"The explicit observation\", \"title\": \"Content\", \"type\": \"string\"}}, \"required\": [\"content\"], \"title\": \"ExplicitObservationBase\", \"type\": \"object\"}}, \"description\": \"The representation format that is used when getting structured output from an LLM.\", \"properties\": {\"explicit\": {\"description\": \"Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']\", \"items\": {\"$ref\": \"#/$defs/ExplicitObservationBase\"}, \"title\": \"Explicit\", \"type\": \"array\"}}, \"title\": \"PromptRepresentation\", \"type\": \"object\"}"
+        );
+    }
+
+    #[test]
+    fn finalize_validates_repairs_then_empty() {
         let valid = json!({"explicit": [{"content": "ok"}]});
         assert_eq!(
-            finalize_structured_output(&valid, FailurePolicy::Raise).unwrap().explicit,
+            finalize_structured_output(&valid).explicit,
             vec!["ok".to_string()]
         );
 
-        // Invalid object: not a string, so no repair path.
         let bad_obj = json!({"explicit": ["bare"]});
-        assert!(finalize_structured_output(&bad_obj, FailurePolicy::Raise).is_err());
-        assert!(finalize_structured_output(&bad_obj, FailurePolicy::RepairThenRaise).is_err());
-        assert!(
-            finalize_structured_output(&bad_obj, FailurePolicy::RepairThenEmpty)
-                .unwrap()
-                .explicit
-                .is_empty()
-        );
+        assert!(finalize_structured_output(&bad_obj).explicit.is_empty());
 
-        // Invalid string: repaired (to empty here) for any non-Raise policy.
         let bad_str = Value::String("not json".to_string());
-        assert!(
-            finalize_structured_output(&bad_str, FailurePolicy::RepairThenRaise)
-                .unwrap()
-                .explicit
-                .is_empty()
-        );
-        assert!(finalize_structured_output(&bad_str, FailurePolicy::Raise).is_err());
+        assert!(finalize_structured_output(&bad_str).explicit.is_empty());
     }
 }

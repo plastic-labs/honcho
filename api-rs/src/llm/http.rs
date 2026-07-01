@@ -17,6 +17,8 @@ pub type TextStream = Pin<Box<dyn Stream<Item = Result<String, LlmHttpError>> + 
 /// A transport error from an LLM HTTP call.
 #[derive(Debug, Clone)]
 pub enum LlmHttpError {
+    /// The request configuration was invalid before any provider call was made.
+    Validation(String),
     /// The request never produced a response (connection/timeout/DNS).
     Transport(String),
     /// A non-2xx HTTP status, with the raw response body for diagnostics.
@@ -28,6 +30,7 @@ pub enum LlmHttpError {
 impl std::fmt::Display for LlmHttpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            LlmHttpError::Validation(message) => write!(f, "validation error: {message}"),
             LlmHttpError::Transport(message) => write!(f, "transport error: {message}"),
             LlmHttpError::Status { status, body } => {
                 write!(f, "http status {status}: {body}")
