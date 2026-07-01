@@ -258,10 +258,9 @@ def _maybe_dispatch_capture(
 ) -> None:
     """Build a CapturedLLMCall and fan it out to registered exporters.
 
-    No-op (and no hashing cost) when payload capture is off — `has_exporters()`
-    is checked BEFORE building. Best-effort: never raises into the call path.
-    Only the non-stream path calls this; streamed calls capture at stream
-    finalization (the wrapper drain), where the full text/output is known.
+    No-op when payload capture is off
+    `has_exporters()` is checked BEFORE building.
+    Best-effort: never raises into the call path.
     """
     if not has_exporters():
         return
@@ -574,8 +573,6 @@ async def honcho_llm_call_inner(
         # Explicit generation output + token usage (replaces @observe
         # auto-capture). The stream path closes this span before drain, so its
         # output is stamped on the run-level span instead
-        # (StreamingResponseWithMetadata). Inline-mode gate: see the input
-        # annotate call above.
         if settings.langfuse_inline_enabled:
             annotate_current_generation_io(
                 output=response,
@@ -599,8 +596,6 @@ async def honcho_llm_call_inner(
             result=backend_result,
             error=error,
         )
-        # Replay-grade content capture (separate from the accounting event
-        # above). No-op when payload capture is off.
         _maybe_dispatch_capture(
             plan=plan,
             telemetry=telemetry,

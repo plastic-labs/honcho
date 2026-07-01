@@ -1,11 +1,7 @@
 """Per-run content dedup for the trace stream — makes bandwidth O(N).
 
-Storage dedup alone (the ``content_hash`` primary key) doesn't make *bandwidth*
-linear: the content-addressed event id folds no timestamp, but a naive producer
-still ships one ``trace.content`` per message per iteration. In an agentic loop
-iteration N's context window *contains* iteration N−1's, so that's O(N²) on the
-wire. This module tracks which hashes a run has already shipped so each unique
-message ships exactly once per run.
+Tracks the set of content hashes a run has already shipped, so each unique
+message ships its `trace.content` exactly once per run.
 
 The set is bounded by an LRU over runs: once more than `_MAX_RUNS` runs are
 tracked, the least-recently-touched one is evicted (almost always a run that has

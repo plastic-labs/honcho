@@ -6,11 +6,6 @@ Registered into the `src/llm/capture.py` exporter registry at startup when
   per run so each ships once), and
 - one `llm.call.traced` carrying the span-tree correlation + content refs +
   a self-contained accounting copy.
-
-Input-message hashes are REUSED from the CapturedMessage (computed once in
-`src/llm/capture.py`); output/thinking/tool-schema hashes are computed here with
-the same shared `compute_content_hash`, so every ref agrees byte-for-byte with
-the `trace.content` it points at.
 """
 
 from __future__ import annotations

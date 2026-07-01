@@ -143,11 +143,7 @@ async def process_representation_tasks_batch(
     max_tokens = base_model_config.max_output_tokens or settings.LLM.DEFAULT_MAX_TOKENS
     model_config = base_model_config
 
-    # Single LLM call. Mint a root span id so the deriver's single-shot call is
-    # reconstructable from the trace stream. run_id stays None (the deriver is an
-    # intentionally sessionless single-shot — leaving run_id unset keeps existing
-    # LLMCallCompletedEvent resource ids unchanged); trace_id/span_id are new and
-    # separate.
+    # Single LLM call
     trace_id = generate_nanoid()
     llm_start = time.perf_counter()
     response = await honcho_llm_call(

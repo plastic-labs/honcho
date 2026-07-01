@@ -220,9 +220,8 @@ async def create_short_summary(
         formatted_messages, output_words, previous_summary_text
     )
 
-    # Mint a root span id (run_id stays None — single-shot). track_name names the
-    # trace + generation. No session_id: a summary is a background job, not part
-    # of a conversation thread, so it must not fold into a Langfuse session.
+    # Mint a root span id.
+    # No session_id or run_id for tracing
     trace_id = generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
@@ -259,9 +258,8 @@ async def create_long_summary(
         formatted_messages, output_words, previous_summary_text
     )
 
-    # Mint a root span id (run_id stays None — single-shot). track_name names the
-    # trace + generation. No session_id: a summary is a background job, not part
-    # of a conversation thread, so it must not fold into a Langfuse session.
+    # Mint a root span id.
+    # No session_id or run_id for tracing
     trace_id = generate_nanoid()
     return await honcho_llm_call(
         model_config=_get_summary_model_config(),
@@ -530,9 +528,6 @@ async def _create_and_save_summary(
     )
 
     # Emit telemetry event (only for non-fallback summaries).
-    # Summarization is a single LLM call, not an agentic run, so run_id/iteration
-    # are left unset (None) rather than carrying a placeholder — a bogus run_id
-    # otherwise mints a junk correlated trace downstream.
     if not is_fallback:
         # `prompt_tokens` is set in the `if not is_fallback` block above for
         # both SHORT and LONG summary types — we're inside the same branch, so

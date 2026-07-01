@@ -1,47 +1,30 @@
 """Langfuse projection over the captured LLM trace stream.
 
-`LangfuseExporter` is an `LLMCallExporter` (registered alongside the CloudEvents
-`TraceExporter`) that turns each `CapturedLLMCall` into Langfuse observations —
-the *same source of truth*, two projections. It replaces the legacy inline
-integration (live `@observe` + `propagate_attributes` spans), which is gated off
-whenever `LANGFUSE_EXPORTER_MODE == "exporter"`.
+`LangfuseExporter` is an `LLMCallExporter`, active when
+`LANGFUSE_EXPORTER_MODE == "exporter"`. It receives one `CapturedLLMCall` at a
+time and rebuilds the Langfuse trace tree from the ids on each call, since there
+is no live span nesting to inherit:
 
-Reconstructed hierarchy (linked by explicit ids, not live ContextVar nesting):
-
-    Trace (id = create_trace_id(seed=honcho trace_id); user/name stamped, no
-           Langfuse session — Honcho session rides in metadata; see below)
+    Trace (id = create_trace_id(seed=honcho trace_id))
      └─ [dream root]  (multi-specialist agents only — one "Dream" span per trace)
          └─ run span    (one per (run_id, agent_type); name = track_name)
             └─ step span (one per (agent_type, iteration); name = "<track> step")
                ├─ generation (one per CapturedLLMCall; name = "<track> generation")
                └─ tool span  (one per requested tool call; sibling of generation)
 
-Branch keying is by `agent_type`: the Dreamer's deduction and induction
-specialists share one dream `run_id` (one trace) but are distinct sub-trees, so
-each gets its own run span and its own per-iteration step spans. To keep the
-trace single-rooted, those branches hang off one synthetic "Dream" root span
-(`_ensure_trace_root`) — branch-agnostic, so the trace name ("Dream") and root
-aren't pinned to whichever specialist ran first. Single-specialist agents
-(dialectic) skip the synthetic root: their run span is the trace root.
+Run and step spans are created once per trace and reused as the `parent_span_id`
+of later calls (tracked in `langfuse_session`). Single-shot callers
+(deriver/summarizer, `run_id is None`) skip the run/step wrappers and put the
+generation at the trace root.
 
-Tool calls are emitted from `output_tool_calls` (the requests the model made) as
-spans under the step, siblings of the generation that produced them — matching
-the convention that tools run *after* inference. They carry the tool name + input
-args; result/duration/error are a later enhancement (those live on
-`AgentToolCallCompletedEvent`, not the captured call).
-
-Single-shot callers (deriver/summarizer — `run_id is None`) skip the run/step
-wrappers: the generation IS the trace root. Run/step spans are created once per
-trace via `langfuse_session` and reused as the `parent_span_id` of later calls.
-
-Exactly one observation per trace stays a root: the SDK stamps `AS_ROOT=True` on
-every span minted via `trace_context`, so we clear it (`_demote_from_root`) on
-every span that has a real parent. Otherwise Langfuse sees several root
-candidates and races to pick the trace's name/root — naming a trace after a
-child and rendering children as separate traces.
+The Dreamer runs two specialists (deduction + induction) under one run_id, so its
+branches hang off a single synthetic "Dream" root to keep the trace
+single-rooted; single-specialist agents (dialectic) let their run span be the
+root. Keeping exactly one root is also why child spans are demoted from the SDK's
+auto-root flag (see `_demote_from_root`).
 
 Best-effort throughout: every export is wrapped so telemetry can never break the
-LLM call path (and `dispatch_captured_call` guards again on top).
+LLM call path.
 """
 
 from __future__ import annotations

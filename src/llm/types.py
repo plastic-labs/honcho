@@ -72,25 +72,14 @@ class LLMTelemetryContext:
     parent_category: str | None = None
     run_id: str | None = None
     iteration: int | None = None
-    # OpenTelemetry-style span-tree correlation (model only, no OTel transport).
-    # `trace_id` is minted once at the top-level entrypoint and is stable across
-    # all forks; `span_id` is one unit of work (== trace_id at the root);
-    # `parent_span_id` is the span that spawned this one (None at the root,
-    # reserved for future forking). Entrypoints set run_id == span_id == trace_id
-    # at the root so existing run_id-keyed consumers (LLMCallCompletedEvent,
-    # Langfuse sessions) are byte-for-byte unchanged.
+    # OpenTelemetry-style span-tree correlation.
     trace_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None
     # Monotonic executor-call ordinal WITHIN a span (total ordering of its
-    # steps). Threaded explicitly — NOT a contextvar — because iteration_scope()
-    # resets per-iteration contextvars mid-span, which would corrupt ordering.
-    # Distinct from `iteration` (the logical tool-loop turn): synthesis /
-    # stream-final tail calls and retries each get the next step_seq.
+    # steps).
     step_seq: int = 0
-    # Retry/fallback attempt within an iteration. Mirrored from the
-    # `current_attempt` contextvar onto the context at the executor boundary,
-    # where `plan.attempt` is authoritative.
+    # Retry/fallback attempt within an iteration.
     attempt: int = 1
     # Optional peer context (dream agents pass observer/observed; dialectic
     # passes peer_name). Kept here so AgentIterationEvent can populate
@@ -98,11 +87,7 @@ class LLMTelemetryContext:
     observer: str | None = None
     observed: str | None = None
     peer_name: str | None = None
-    # Honcho conversation grouping key: the opaque `Session.id` (nanoid PK), NOT
-    # the user-provided `session_name` (which only unique within a workspace and
-    # would collide across tenants in the shared sink). Stored raw here; the
-    # NAMESPACE prefix is applied only at the Langfuse export boundary. None for
-    # sessionless calls (global peer.chat, deriver/summarizer/dreamer batches).
+    # Used to group traces (should not use session_name because it is not unique)
     session_id: str | None = None
     # Tool-related context: agent_type is the human-readable identifier of the
     # agent — dialectic/deduction/induction. Used by agent iteration
@@ -114,37 +99,17 @@ class LLMTelemetryContext:
     # Also used to label the sentry `ai_track` decorator and as the source for
     # the run-level `langfuse_agent_run` label.
     track_name: str | None = None
-    # Per-span memo for O(N) message capture in CapturedLLMCall: maps id(message
-    # dict) → the fully-built CapturedMessage (clip + content_hash). The tool loop
-    # seeds one dict and threads the SAME reference into every per-iteration
-    # context (via _telemetry_for_iteration) so each appended message is clipped
-    # and hashed exactly once across the whole span. None for single-shot callers
-    # (one call, nothing to memoize). Excluded from equality/repr — it's mutable
-    # scratch, not identity.
+    # Per-span memo for O(N) message capture in CapturedLLMCall
     hash_memo: dict[int, CapturedMessage] | None = field(
         default=None, compare=False, repr=False
     )
 
     def span_identity(self) -> str | None:
-        """Effective span id: the new `span_id`, falling back to legacy `run_id`.
-
-        Single source of truth for the span-tree → run_id fallback so the
-        Langfuse session id, step-span nesting, and `parent_span_id` derivation
-        all agree if the rule ever changes.
-        """
+        """Effective span id: the new `span_id`, falling back to legacy `run_id`."""
         return self.span_id or self.run_id
 
     def exported_parent_span_id(self) -> str | None:
-        """`parent_span_id` for EXPORT, collapsing the self-parent sentinel to None.
-
-        Internally `_telemetry_for_iteration` sets `parent_span_id` to the run
-        span's own id (== this span_id) so it doubles as the "inside a run"
-        signal for Langfuse nesting (see `runtime.py`). But a span that is its
-        own parent is just a root: emitting `parent_span_id == span_id` makes
-        span-tree consumers treat the root as a child of itself. So for exported
-        trace data, normalize that to None. The in-memory field is unchanged —
-        the Langfuse `inside_run` check still reads `parent_span_id` directly.
-        """
+        """`parent_span_id` for EXPORT, collapsing the self-parent sentinel to None."""
         pid = self.parent_span_id
         return None if pid is not None and pid == self.span_id else pid
 
@@ -219,7 +184,7 @@ class StreamingResponseWithMetadata:
     so the streamed text only exists once the stream drains — the wrapper calls
     the finalizer with `(accumulated_text, finish_reason)` in its `finally`.
     A partial/aborted stream still finalizes, with `finish_reason` =
-    "cancelled"/"error", closing the G2 streaming gap.
+    "cancelled"/"error".
     """
 
     _stream: AsyncIterator[HonchoLLMCallStreamChunk]
@@ -274,7 +239,7 @@ class StreamingResponseWithMetadata:
         final_stream_output_tokens = 0
         # Accumulate the streamed text when either consumer needs it: the
         # Langfuse run span (stamped as output on drain) or the content-capture
-        # finalizer. Dead weight for plain untraced streams, so gated.
+        # finalizer.
         accumulate = (
             self._langfuse_run_handle is not None or self._capture_finalizer is not None
         )

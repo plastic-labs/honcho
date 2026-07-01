@@ -1,29 +1,21 @@
-"""Per-Langfuse-trace span registry for the LangfuseExporter.
+"""Per-trace span registry backing the `LangfuseExporter`.
 
-The exporter receives one `CapturedLLMCall` at a time, but a single agentic run
-(e.g. a Dialectic invocation) fans out into many calls that must nest under ONE
-run span, with per-iteration step spans. Langfuse links observations by their
-OTEL span id, and `start_observation` mints a fresh id we can't predict — so we
-must remember the run/step span ids created for a trace and reuse them as the
-`parent_span_id` of later calls.
+The exporter sees one `CapturedLLMCall` at a time, but a single agentic run fans
+out into many calls that must nest under one run span with per-iteration step
+spans. Langfuse links observations by OTEL span id, and each id is minted fresh
+and unpredictable — so this module remembers the run/step span ids created for a
+trace and hands them back as the `parent_span_id` of later calls.
 
-Spans are keyed per *branch* within a trace — the branch being the agent_type.
-This matters for the Dreamer, whose deduction and induction specialists share
-one dream `run_id` (one trace) but are distinct sub-trees: without the branch
-key, induction's `iteration 1` would collide with deduction's and the two
-specialists' generations would interleave under the wrong steps.
+Spans are keyed per branch (the `agent_type`) within a trace. The Dreamer's
+deduction and induction specialists share one trace but are separate sub-trees;
+without the branch key their iterations and generations would collide.
 
-This registry holds, per Langfuse trace id: each branch's run span id, the
-per-(branch, iteration) step span ids, and whether trace-level attributes
-(session/user/name) have been stamped — so each is created/stamped exactly once
-across the incremental stream. The stamp decision is folded into
-`ensure_run_span` (passed to the create callback) so it stays under the single
-lock with no re-entrant acquire.
+Per trace, it holds each branch's run span id, the per-(branch, iteration) step
+span ids, and whether trace-level attrs have been stamped — so each is created
+once. The stamp decision is made inside `ensure_run_span` under the lock so it
+can't double-fire across branches.
 
-Bounded + lock-guarded like `trace_session`: an LRU over traces evicts the
-least-recently-touched trace once more than `_MAX_TRACES` are live (almost always
-one that has already finished), so span grouping keeps working for active traces
-no matter how many runs the process has handled. Best-effort throughout.
+Bounded by an LRU over traces (`_MAX_TRACES`), lock-guarded, best-effort.
 """
 
 from __future__ import annotations

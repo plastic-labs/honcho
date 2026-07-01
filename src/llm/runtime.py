@@ -48,14 +48,8 @@ def annotate_current_langfuse_trace(
     callers — deriver, summarizer), this generation IS the trace root, so we
     also stamp the trace attrs.
 
-    "Nested" is derived from the explicit span tree: a call with a
-    `parent_span_id` is running under a run span (multi-turn / streaming),
-    so we skip the trace attrs. At the root (`parent_span_id is None` —
-    deriver/summarizer single-shot calls) this generation is the trace root.
-    This replaces the old `_in_agent_run` contextvar.
-
-    Note: `model`/`metadata` are set on every call regardless of `inside_run`
-    so multi-turn iterations no longer lose provider/model attribution.
+    `model`/`metadata` are set on every call regardless of `inside_run`, so
+    every multi-turn iteration carries provider/model attribution.
     """
     if not settings.langfuse_inline_enabled:
         return
@@ -123,10 +117,7 @@ def annotate_current_generation_io(
     """
     # Gated on inline mode (NOT just key presence): this writes to the *active*
     # @observe generation span, which only exists in inline mode. In exporter
-    # mode `conditional_observe` applies no decorator, so there's no active
-    # span — calling update_current_generation() here would log "No active span
-    # in current context" per call. The exporter projects IO from the captured
-    # stream independently, so this is a pure no-op there.
+    # mode `conditional_observe` applies no decorator.
     if not settings.langfuse_inline_enabled:
         return
     payload: dict[str, Any] = {}
@@ -161,8 +152,6 @@ def _base_metadata(telemetry: LLMTelemetryContext) -> dict[str, str]:
         ("observer", telemetry.observer),
         ("observed", telemetry.observed),
         ("peer_name", telemetry.peer_name),
-        # OTel span-tree ids so the Langfuse UI carries them and the Parquet
-        # `trace_id` and Langfuse `session_id` are the same id (cross-linkable).
         ("trace_id", telemetry.trace_id),
         ("span_id", telemetry.span_id),
         ("parent_span_id", telemetry.exported_parent_span_id()),

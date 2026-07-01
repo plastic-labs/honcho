@@ -15,11 +15,6 @@ the exact context a model saw, content-addressed to keep payload O(N):
   roles can't collide. ``generate_id()`` is overridden to derive the CloudEvent
   id from the hash with NO timestamp, so accidental re-sends of identical
   content dedupe at the transport layer too.
-
-Both live on the ``"trace"`` category (separate ``source`` routing from the
-``"llm"`` metrics events) and go to the second emitter. Tenant identity is NOT
-a field — it rides the CloudEvent ``source`` and Xatu enriches ``tenant_id``
-downstream from the namespace.
 """
 
 from __future__ import annotations
@@ -31,12 +26,6 @@ from pydantic import Field
 from src.config import ModelTransport
 from src.telemetry.events.base import BaseEvent
 
-# NOTE: these event classes are pure carriers — they never compute hashes.
-# The single hashing function (`compute_content_hash`) lives in
-# `src/llm/capture.py`; the producer and `trace_exporter.py` both use it, which
-# is what keeps the refs byte-identical. We deliberately do NOT import it here:
-# pulling `src.llm.*` into this module (loaded eagerly via `events/__init__`)
-# would create an import cycle through `src.telemetry.logging`.
 __all__ = ["EmbeddingCallTracedEvent", "LLMCallTracedEvent", "TraceContentEvent"]
 
 
@@ -44,8 +33,7 @@ class LLMCallTracedEvent(BaseEvent):
     """One replay-grade record per LLM call. Ground-truth, never sampled.
 
     Content fields are *references* (content hashes) into the ``trace.content``
-    store, never inline bytes — that's what makes per-run payload linear in
-    unique messages instead of quadratic.
+    store, never inline bytes
     """
 
     _event_type: ClassVar[str] = "llm.call.traced"
@@ -61,16 +49,12 @@ class LLMCallTracedEvent(BaseEvent):
     step_seq: int = 0
     attempt: int = 1
     was_fallback: bool = False
-    # Optional pointer to the run-level event that spawned this call. Reserved
-    # for forking; None today.
     parent_event_id: str | None = None
 
     # --- Path identity ---
     call_purpose: str | None = None
     parent_category: str | None = None
-    # Honcho conversation grouping key (raw Session.id; the Langfuse projection
-    # NAMESPACE-prefixes it). None for sessionless calls. Not part of the
-    # idempotency key — it's a grouping attribute, not call identity.
+    # Used for grouping traces
     session_id: str | None = None
     transport: ModelTransport
     provider_label: str | None = None
@@ -105,15 +89,7 @@ class LLMCallTracedEvent(BaseEvent):
 
 
 class EmbeddingCallTracedEvent(BaseEvent):
-    """One trace-stream record per embedding-provider call. Ground-truth.
-
-    Embeddings don't flow through `honcho_llm_call`/`CapturedLLMCall` (a separate
-    client), but they're real LLM calls worth full trace + cost attribution. This
-    sibling of ``LLMCallTracedEvent`` carries the same span-tree correlation so an
-    embedding made inside an agent run (e.g. the Dialectic prefetch) nests under
-    that run's trace. Content is intentionally NOT shipped (high volume) — only
-    ``input_count``; replay-grade input refs are a deliberate v1 omission.
-    """
+    """One trace-stream record per embedding-provider call."""
 
     _event_type: ClassVar[str] = "embedding.call.traced"
     _schema_version: ClassVar[int] = 1
@@ -151,8 +127,7 @@ class TraceContentEvent(BaseEvent):
     """One unique message in the content store. Ground-truth, never sampled.
 
     The hash covers the full message identity, and the event id derives from the
-    hash with no timestamp — so re-sends of identical content dedupe both in
-    storage (content_hash PK) and on the wire (identical event id).
+    hash with no timestamp.
     """
 
     _event_type: ClassVar[str] = "trace.content"

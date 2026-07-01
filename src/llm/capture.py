@@ -1,18 +1,4 @@
-"""Single-capture point for replay-grade LLM call content + the exporter seam.
-
-The executor boundary (`honcho_llm_call_inner`) is the one place that holds the
-normalized `messages` array and the provider response together. Historically
-three consumers each re-serialized that content their own way (Langfuse, the
-JSONL reasoning trace, and — new in the CloudEvents tracing spec — the
-`llm.call.traced` / `trace.content` events). Divergent canonicalization would
-produce divergent `content_hash` values and silently break the O(N)
-content-addressing dedup, so this module owns the ONE canonical form.
-
-`build_captured_call` constructs a `CapturedLLMCall` once; `dispatch_captured_call`
-fans it out to every registered `LLMCallExporter`. The CloudEvents trace exporter
-(in `src/telemetry/`) registers itself at startup — telemetry depends on `src/llm/`,
-never the reverse, so this module stays import-cycle free (it imports only stdlib,
-`src.config`, and sibling `src/llm/` modules).
+"""Structures for data captured from LLM calls via telemetry.
 
 All capture is best-effort: `dispatch_captured_call` swallows exporter exceptions
 so telemetry can never break the LLM call path.
@@ -43,26 +29,14 @@ ROLE_THINKING = "__thinking__"
 
 
 def canonical_json(obj: Any) -> str:
-    """Deterministic JSON encoding used for every content hash.
-
-    `sort_keys` + tight separators + `default=str` make the output stable
-    regardless of dict ordering or non-JSON-native values (e.g. a stray enum),
-    so the same logical content always hashes to the same digest across
-    processes and exporters.
-    """
+    """Deterministic JSON encoding used for every content hash."""
     return json.dumps(
         obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
     )
 
 
 def compute_content_hash(role: str, content: Any, tool_call_id: str | None) -> str:
-    """Content hash covering the FULL message identity, not just the text.
-
-    `role` and `tool_call_id` live inside the hash so identical text under
-    different roles (or attached to different tool calls) can never collide.
-    This is the single source of truth — `src/telemetry/events/trace.py` imports
-    this exact function so producer and event agree byte-for-byte.
-    """
+    """Content hash covering the FULL message identity, not just the text."""
     digest = hashlib.sha256(
         canonical_json(
             {"role": role, "content": content, "tool_call_id": tool_call_id}
@@ -74,10 +48,8 @@ def compute_content_hash(role: str, content: Any, tool_call_id: str | None) -> s
 def clip_for_trace(content: Any) -> tuple[Any, bool]:
     """Clip a content value to `TELEMETRY.TRACE_MAX_BYTES`, returning (content, truncated).
 
-    Truncation happens BEFORE hashing so the hash matches the bytes actually
-    shipped. Only oversized string content is clipped (with a marker); non-string
-    structured content is left intact (its size is bounded in practice and
-    clipping it would corrupt structure). Returns the input unchanged when it
+    Only oversized string content is clipped (with a marker); non-string
+    structured content is left intact. Returns the input unchanged when it
     fits or when the cap is non-positive.
     """
     max_bytes = settings.TELEMETRY.TRACE_MAX_BYTES
@@ -96,8 +68,7 @@ def clip_for_trace(content: Any) -> tuple[Any, bool]:
 class CapturedMessage:
     """One input message, canonicalized + content-addressed.
 
-    `content` is the (possibly clipped) structured message Honcho holds —
-    multi-part blocks, tool results, cache hints — not flattened text.
+    `content` is the  structured message Honcho holds, not flattened text.
     `content_hash` is computed over this exact `content` so the ref and the
     shipped `trace.content` always agree.
     """
@@ -111,11 +82,7 @@ class CapturedMessage:
 
 @dataclass(slots=True)
 class CapturedLLMCall:
-    """Everything one LLM call needs to be reconstructed, captured once.
-
-    Built at the executor boundary from `LLMTelemetryContext` + the provider
-    result. Exporters read this; they never re-extract from the raw response.
-    """
+    """Everything one LLM call needs to be reconstructed, captured once."""
 
     # Correlation (span tree)
     trace_id: str | None
@@ -131,12 +98,8 @@ class CapturedLLMCall:
     call_purpose: str | None
     parent_category: str | None
     agent_type: str | None
-    # Honcho conversation grouping key (raw Session.id; NAMESPACE-prefixed only
-    # at the Langfuse boundary). None for sessionless calls.
+    # unique session ID for grouping traces
     session_id: str | None
-    # Peer context + human-readable trace/run name. Carried so the Langfuse
-    # projection has the same attribution the old inline `_base_metadata` did
-    # (the CloudEvents TraceExporter ignores them).
     observer: str | None
     observed: str | None
     peer_name: str | None
@@ -169,15 +132,10 @@ def build_captured_messages(
     messages: list[dict[str, Any]],
     memo: dict[int, CapturedMessage] | None,
 ) -> tuple[list[CapturedMessage], bool]:
-    """Canonicalize + content-hash each input message, O(N) via the memo.
+    """Create a list of CapturedMessage from LLM response messages.
 
-    The conversation is append-only across tool-loop iterations and the message
-    dict objects are reused (`truncate_messages_to_fit` rebuilds the list but not
-    the dicts), so memoizing the fully-built `CapturedMessage` by `id(message)`
-    means each message is clipped and hashed exactly once across the whole span —
-    a memo hit skips both `clip_for_trace` (a full re-encode of string content)
-    and the sha256. `memo` is None for single-shot callers (one call — nothing to
-    memoize). Returns (messages, any_truncated).
+    Conversation is append-only. Uses hashed message content to deduplicate
+    across turns. Content is truncated first, then hashed.
     """
     captured: list[CapturedMessage] = []
     any_truncated = False
@@ -221,12 +179,7 @@ def build_captured_call(
     was_stream: bool,
     finish_reason: str | None,
 ) -> CapturedLLMCall:
-    """Assemble a `CapturedLLMCall` from telemetry + the provider result.
-
-    `result` is None on the error path — output fields collapse to empty and
-    `finish_reason` carries the outcome ("error"/"cancelled"). The hash memo
-    rides on `telemetry.hash_memo` (seeded once per span by the tool loop).
-    """
+    """Assemble a `CapturedLLMCall` from telemetry + the provider result."""
     memo = telemetry.hash_memo if telemetry is not None else None
     captured_messages, input_truncated = build_captured_messages(messages, memo)
 
@@ -274,7 +227,7 @@ def build_captured_call(
 
 
 def _tool_call_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
-    """Normalize a ToolCallResult to a replay-grade dict (incl thought_signature)."""
+    """Normalize a ToolCallResult to a replay-grade dict."""
     out: dict[str, Any] = {
         "id": tool_call.id,
         "name": tool_call.name,
@@ -287,8 +240,7 @@ def _tool_call_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
 
 @runtime_checkable
 class LLMCallExporter(Protocol):
-    """A sink that consumes a `CapturedLLMCall`. Implementations must be
-    best-effort internally; `dispatch_captured_call` also guards against raises."""
+    """A sink that consumes a `CapturedLLMCall`"""
 
     def export(self, call: CapturedLLMCall) -> None: ...
 
@@ -308,16 +260,12 @@ def clear_exporters() -> None:
 
 
 def has_exporters() -> bool:
-    """True when at least one exporter is registered.
-
-    The executor checks this BEFORE building a `CapturedLLMCall` so the O(N)
-    hashing cost is never paid when payload capture is off.
-    """
+    """True when at least one exporter is registered."""
     return bool(_EXPORTERS)
 
 
 def dispatch_captured_call(call: CapturedLLMCall) -> None:
-    """Fan a captured call out to every exporter, swallowing any exporter error."""
+    """Fan a captured call out to every exporter."""
     for exporter in _EXPORTERS:
         try:
             exporter.export(call)

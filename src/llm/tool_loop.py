@@ -97,11 +97,7 @@ def _telemetry_for_iteration(
     that pass the same context into multiple `honcho_llm_call` invocations
     don't see drift across concurrent runs. `parent_span_id` is set to the
     span being looped over (`base.span_id`) so nested generations are correctly
-    treated as children of the run span (this is what replaced the old
-    `_in_agent_run` contextvar). `step_seq` is the monotonic executor-call
-    ordinal within the span, threaded explicitly because contextvars reset
-    mid-span. The shared `hash_memo` dict reference is preserved by
-    `dataclasses.replace`, so message hashing stays O(N) across the span.
+    treated as children of the run span.
     """
     if base is None:
         return None
@@ -120,11 +116,10 @@ def _make_stream_capture_finalizer(
 ) -> Callable[[str, str], None] | None:
     """Build the streamed-call capture finalizer, or None when capture is off.
 
-    Snapshots the input messages now (the conversation is mutated after the
-    stream is constructed) and returns a closure the streaming wrapper calls on
-    drain with `(streamed_text, finish_reason)`. Tool calls already ran in the
-    loop, so the final streamed turn is text-only. Returns None when no exporter
-    is registered so we skip the O(N) message snapshot entirely.
+    Snapshots the input messages now and returns a closure the streaming wrapper
+    calls on drain with `(streamed_text, finish_reason)`. Tool calls already ran
+    in the loop, so the final streamed turn is text-only. Returns None when no
+    exporter is registered.
     """
     if not has_exporters():
         return None
@@ -388,11 +383,9 @@ async def execute_tool_loop(
         messages.copy() if messages else [{"role": "user", "content": prompt}]
     )
 
-    # Seed one hash memo for the whole span. dataclasses.replace copies the dict
-    # reference into every per-iteration telemetry copy (_telemetry_for_iteration),
-    # so each appended message is content-hashed exactly once across the span
-    # (O(N), not O(N²)). Cheap no-op when payload capture is off — the executor
-    # only consults the memo when an exporter is registered.
+    # Seed one hash memo for the whole span. dataclasses.replace copies the dict reference into
+    # every per-iteration telemetry copy, so each appended message is content-hashed exactly once
+    # across the span.
     if telemetry is not None and telemetry.hash_memo is None:
         telemetry = dataclasses.replace(telemetry, hash_memo={})
 

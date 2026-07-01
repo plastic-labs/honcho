@@ -1177,9 +1177,7 @@ class TelemetrySettings(HonchoSettings):
     HIGH_VOLUME_SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
 
     # --- Full-fidelity payload tracing (llm.call.traced / trace.content) ---
-    # Master toggle for replay-grade content capture. Default-off: with this
-    # False there is ZERO behavior change — no CapturedLLMCall is built, no
-    # second emitter starts, the metrics events above are untouched.
+    # Master toggle for replay-grade content capture. Default-off.
     TRACE_PAYLOADS: bool = False
 
     # Per-message cap (bytes) for captured content; oversized string content is
