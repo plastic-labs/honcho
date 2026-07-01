@@ -12,18 +12,34 @@ from src.schemas import (
 
 logger = logging.getLogger(__name__)
 
+_NONE_OVERRIDE_PATHS: set[tuple[str, ...]] = {
+    ("summary", "custom_instructions"),
+}
 
-def deep_update(base: dict[str, Any], update: dict[str, Any]) -> None:
+
+def deep_update(
+    base: dict[str, Any],
+    update: dict[str, Any],
+    path: tuple[str, ...] = (),
+) -> None:
     """
     Recursive update of a dictionary.
-    Skips None values in the update dictionary.
+    Skips None values unless None explicitly clears a nullable field.
     """
     for key, value in update.items():
+        current_path = (*path, key)
+
         if value is None:
+            if current_path in _NONE_OVERRIDE_PATHS:
+                base[key] = None
             continue
 
         if isinstance(value, dict) and key in base and isinstance(base[key], dict):
-            deep_update(cast(dict[str, Any], base[key]), cast(dict[str, Any], value))
+            deep_update(
+                cast(dict[str, Any], base[key]),
+                cast(dict[str, Any], value),
+                current_path,
+            )
         else:
             base[key] = value
 
@@ -113,6 +129,7 @@ def get_configuration(
             "enabled": settings.SUMMARY.ENABLED,
             "messages_per_short_summary": settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY,
             "messages_per_long_summary": settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY,
+            "custom_instructions": None,
         },
         "dream": {"enabled": settings.DREAM.ENABLED},
     }
@@ -130,7 +147,7 @@ def get_configuration(
         deep_update(
             config_dict,
             normalize_configuration_dict(
-                message_configuration.model_dump(exclude_none=True)
+                message_configuration.model_dump(exclude_unset=True)
             ),
         )
 
