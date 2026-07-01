@@ -10,6 +10,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Reasoning level of a conclusion. "explicit" conclusions are extracted directly
+# from messages; the others are derived during dreaming.
+ConclusionLevel = Literal["explicit", "deductive", "inductive", "contradiction"]
+
 # ==============================================================================
 # Configuration Types
 # ==============================================================================
@@ -414,6 +418,7 @@ class ConclusionResponse(BaseModel):
     observer_id: str
     observed_id: str
     session_id: str | None = None
+    level: ConclusionLevel = "explicit"
     created_at: datetime.datetime
 
 

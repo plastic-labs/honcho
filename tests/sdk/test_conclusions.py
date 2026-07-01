@@ -769,3 +769,73 @@ async def test_observation_create_mixed_session_and_sessionless(
 
         assert session_obs.session_id == session.id
         assert global_obs.session_id is None
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_reserved_scope_filter_keys(
+    client_fixture: tuple[Honcho, str],
+):
+    """`list` rejects observer/observed/session filter keys managed by the scope.
+
+    These keys are fixed by the scope (observer/observed) or by the dedicated
+    ``session=`` parameter, so passing them in ``filters`` would silently return
+    data from a different scope. The guard raises before any HTTP call.
+    """
+    honcho_client, client_type = client_fixture
+    reserved = [
+        "observer",
+        "observed",
+        "observer_id",
+        "observed_id",
+        "session_id",
+        "session",
+    ]
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-reserved-list-observer")
+        target = await honcho_client.aio.peer(id="test-obs-reserved-list-target")
+        obs_scope = observer.conclusions_of(target)
+        for key in reserved:
+            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+                await obs_scope.aio.list(filters={key: "someone-else"})
+        # A non-reserved filter (level) is allowed through.
+        await obs_scope.aio.list(filters={"level": "explicit"})
+    else:
+        observer = honcho_client.peer(id="test-obs-reserved-list-observer")
+        target = honcho_client.peer(id="test-obs-reserved-list-target")
+        obs_scope = observer.conclusions_of(target)
+        for key in reserved:
+            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+                obs_scope.list(filters={key: "someone-else"})
+        obs_scope.list(filters={"level": "explicit"})
+
+
+@pytest.mark.asyncio
+async def test_query_rejects_reserved_scope_filter_keys(
+    client_fixture: tuple[Honcho, str],
+):
+    """`query` rejects observer/observed filter keys but allows session_id.
+
+    Unlike ``list``, ``query`` has no dedicated session parameter, so
+    ``session_id`` remains a normal filter and must NOT be rejected.
+    """
+    honcho_client, client_type = client_fixture
+    reserved = ["observer", "observed", "observer_id", "observed_id"]
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-reserved-query-observer")
+        target = await honcho_client.aio.peer(id="test-obs-reserved-query-target")
+        obs_scope = observer.conclusions_of(target)
+        for key in reserved:
+            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+                await obs_scope.aio.query("q", filters={key: "someone-else"})
+        # session_id is a normal filter for query (no dedicated param) — allowed.
+        await obs_scope.aio.query("q", filters={"session_id": "some-session"})
+    else:
+        observer = honcho_client.peer(id="test-obs-reserved-query-observer")
+        target = honcho_client.peer(id="test-obs-reserved-query-target")
+        obs_scope = observer.conclusions_of(target)
+        for key in reserved:
+            with pytest.raises(ValueError, match="managed by this conclusion scope"):
+                obs_scope.query("q", filters={key: "someone-else"})
+        obs_scope.query("q", filters={"session_id": "some-session"})
