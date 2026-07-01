@@ -315,6 +315,119 @@ async def test_gemini_backend_strips_system_and_tools_when_using_cached_content(
     assert "tool_config" not in call["config"]
 
 
+@pytest.mark.asyncio
+async def test_gemini_backend_forwards_provider_params_extra_body() -> None:
+    """provider_params.extra_body merges into the GenerateContentConfig dict
+    (Gemini's body-shaped fields live there, not as an SDK kwarg).
+    """
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    finish_reason=SimpleNamespace(name="STOP"),
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="ok")]),
+                )
+            ],
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=12,
+                candidates_token_count=6,
+            ),
+            parsed=None,
+        )
+    )
+
+    backend = GeminiBackend(client)
+    await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"extra_body": {"candidate_count": 3, "seed": 42}},
+    )
+
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
+    assert call["config"]["candidate_count"] == 3
+    assert call["config"]["seed"] == 42
+
+
+@pytest.mark.asyncio
+async def test_gemini_backend_forwards_provider_params_extra_headers() -> None:
+    """provider_params.extra_headers folds into config.http_options.headers."""
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    finish_reason=SimpleNamespace(name="STOP"),
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="ok")]),
+                )
+            ],
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=12,
+                candidates_token_count=6,
+            ),
+            parsed=None,
+        )
+    )
+
+    backend = GeminiBackend(client)
+    await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"extra_headers": {"X-Trace-Id": "abc123"}},
+    )
+
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
+    assert call["config"]["http_options"]["headers"] == {"X-Trace-Id": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_gemini_backend_silently_ignores_extra_query() -> None:
+    """extra_query has no google-genai SDK equivalent. The backend drops it
+    rather than crashing or surfacing it somewhere unexpected.
+    """
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    finish_reason=SimpleNamespace(name="STOP"),
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="ok")]),
+                )
+            ],
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=12,
+                candidates_token_count=6,
+            ),
+            parsed=None,
+        )
+    )
+
+    backend = GeminiBackend(client)
+    await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"extra_query": {"trace_id": "abc123"}},
+    )
+
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
+    # extra_query is not surfaced anywhere in the request — neither at the top
+    # level of the SDK call nor inside config.
+    assert "extra_query" not in call
+    assert "extra_query" not in call["config"]
+
+
 def test_gemini_sanitize_schema_strips_unsupported_keywords() -> None:
     """Gemini's function-declarations validator rejects JSON-Schema keywords
     outside its narrow allowlist (additionalProperties, allOf, if/then, $ref,

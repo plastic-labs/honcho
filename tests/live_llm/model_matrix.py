@@ -84,6 +84,18 @@ MODEL_FAMILIES: tuple[LiveModelFamily, ...] = (
         supports_caching=False,
         docs_url="https://openrouter.ai/models",
     ),
+    # OpenAI-compatible providers that don't support OpenAI Structured Outputs
+    # (json_schema) and need structured_output_mode="json_object" on the
+    # ModelConfig. Point LLM_OPENAI_BASE_URL/API_KEY at the target (Z.AI GLM is
+    # the canonical #797 repro; vLLM/Ollama are self-hostable equivalents) and
+    # set the model via this env var. Empty default_models → skipped unless set.
+    LiveModelFamily(
+        provider="openai",
+        family="openai_json_object",
+        env_var="LIVE_LLM_OPENAI_JSON_OBJECT_MODELS",
+        supports_structured_output=True,
+        docs_url="https://docs.z.ai/guides/llm/glm-4.6",
+    ),
     LiveModelFamily(
         provider="gemini",
         family="gemini_2_5_class",

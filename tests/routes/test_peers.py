@@ -7,7 +7,9 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.config import settings
 from src.models import Peer, Workspace
+from src.security import JWTParams, create_jwt
 
 
 def test_get_or_create_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
@@ -623,6 +625,39 @@ def test_chat(
     assert response.status_code == 200
     data = response.json()
     assert "content" in data
+
+
+@pytest.mark.asyncio
+async def test_chat_peer_key_denied_for_non_member_session(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A peer-scoped key cannot chat scoped to a session its peer is not a member
+    of — the session id is in the body, so the handler checks membership. The
+    guard fires before the dialectic runs, so no LLM call is made."""
+    test_workspace, alice = sample_data
+    session_id = str(generate_nanoid())
+
+    # Session exists but alice is NOT a member of it.
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id},
+    )
+    await db_session.commit()
+
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+    client.headers["Authorization"] = (
+        f"Bearer {create_jwt(JWTParams(w=test_workspace.name, p=alice.name))}"
+    )
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{alice.name}/chat",
+        json={"query": "what do you know?", "stream": False, "session_id": session_id},
+    )
+    assert response.status_code == 401
 
 
 def test_chat_with_optional_params(

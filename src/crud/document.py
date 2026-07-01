@@ -428,6 +428,19 @@ async def query_documents(
         return docs
 
 
+def _normalize_content(content: str) -> str:
+    """Normalize document content for exact-match deduplication.
+
+    Content is compared after trimming surrounding whitespace and lowercasing
+
+    The SQL filter in ``create_documents`` must stay in sync with this:
+    ``lower(regexp_replace(content, '^\\s+|\\s+$', '', 'g'))``. Postgres'
+    ``trim()`` only strips spaces, so a regex is used to match Python's
+    ``str.strip()`` across all whitespace.
+    """
+    return content.strip().lower()
+
+
 async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
@@ -440,12 +453,17 @@ async def create_documents(
     """
     Create multiple documents with optional duplicate detection.
 
+    The ``deduplicate`` flag additionally enables semantic (cosine-similarity)
+    dedup via ``is_rejected_duplicate`` for documents that survive the exact
+    deduplication check.
+
     Args:
         db: Database session
         documents: List of document creation schemas
         workspace_name: Name of the workspace
         observer: Name of the observing peer
         observed: Name of the observed peer
+        deduplicate: Enable semantic duplicate detection
 
     Returns:
         List of DocumentCreate schemas that were actually inserted (excludes
@@ -456,8 +474,76 @@ async def create_documents(
     # Store (document_model, embedding) pairs - IDs aren't available until after commit
     docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
 
+    # exact-content dedup (independent of `deduplicate`): pre-fetch
+    # existing live documents whose normalized content matches anything in this
+    # batch, scoped to (workspace, observer, observed). The SQL normalization must
+    # mirror _normalize_content.
+    batch_normalized: set[str] = {_normalize_content(d.content) for d in documents}
+    existing_by_normalized: dict[str, models.Document] = {}
+    if batch_normalized:
+        # The `normalized_content_sql.in_(...)` filter below narrows to the
+        # (workspace, observer, observed) partition via the single-column indexes,
+        # then evaluates lower(regexp_replace(...)) per row.
+        # TODO: add a partial expression index matching
+        # this filter exactly
+        #     CREATE INDEX ix_documents_normalized_content
+        #     ON documents (
+        #         workspace_name,
+        #         observer,
+        #         observed,
+        #         (lower(regexp_replace(content, '^\s+|\s+$', '', 'g')))
+        #     )
+        #     WHERE deleted_at IS NULL;
+        normalized_content_sql = func.lower(
+            func.regexp_replace(models.Document.content, r"^\s+|\s+$", "", "g")
+        )
+        existing_result = await db.execute(
+            select(models.Document).where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.observer == observer,
+                models.Document.observed == observed,
+                models.Document.deleted_at.is_(None),
+                normalized_content_sql.in_(batch_normalized),
+            )
+        )
+        for existing_doc in existing_result.scalars():
+            # If multiple historical rows share normalized content, reinforcing
+            # one is sufficient; keep the first.
+            existing_by_normalized.setdefault(
+                _normalize_content(existing_doc.content), existing_doc
+            )
+
+    # Tracks normalized content already accepted from this batch so exact
+    # duplicates within a single inference call collapse to one document.
+    seen_in_batch: set[str] = set()
+
     for doc in documents:
         try:
+            normalized_content = _normalize_content(doc.content)
+
+            # Exact-match dedup, always on:
+            # 1) collapse exact duplicates within this batch (drop silently).
+            if normalized_content in seen_in_batch:
+                continue
+            seen_in_batch.add(normalized_content)
+
+            # 2) drop exact duplicates of an existing live document, recording
+            #    the re-derivation as reinforcement on the existing row.
+            existing_match = existing_by_normalized.get(normalized_content)
+            if existing_match is not None:
+                # Reinforce the existing row. greatest(...) keeps the bump atomic
+                # server-side (concurrent workers can't lose an increment) while
+                # still honoring an incoming doc that already carries accumulated
+                # reinforcement (times_derived > 1, e.g. a future re-ingestion or
+                # collection-merge path). Mirrors the superior-replacement branch
+                # in is_rejected_duplicate.
+                existing_match.times_derived = func.greatest(
+                    models.Document.times_derived + 1,
+                    doc.times_derived,
+                )
+                await db.flush()
+                continue
+
             # for each document, if deduplicate is True, perform a process
             # that checks against existing documents and either rejects this document
             # as a duplicate OR deletes an existing document that is a duplicate.
@@ -1024,8 +1110,10 @@ async def is_rejected_duplicate(
 
     # If new document has more or equal information, keep it and delete existing
     if score_new >= score_existing:
-        logger.warning(
-            f"[DUPLICATE DETECTION] Deleting existing in favor of new. new='{doc.content}', existing='{existing_doc.content}'."
+        logger.debug(
+            "[DUPLICATE DETECTION] Deleting existing in favor of new. new=%r, existing=%r.",
+            doc.content,
+            existing_doc.content,
         )
         # Carry the reinforcement count forward so replacing a duplicate counts as
         # another derivation rather than resetting times_derived to 1.
@@ -1036,13 +1124,19 @@ async def is_rejected_duplicate(
         return False  # Don't reject the new document
 
     # Existing document has more information, reject the new one but record the
-    # reinforcement: a semantic duplicate was derived again. Assign a SQL
-    # expression so the increment is atomic server-side -- concurrent workers
-    # reinforcing the same document must not lose updates.
-    existing_doc.times_derived = models.Document.times_derived + 1
+    # reinforcement: a semantic duplicate was derived again. greatest(...) keeps
+    # the increment atomic server-side -- concurrent workers reinforcing the same
+    # document must not lose updates -- while still honoring an incoming doc that
+    # already carries accumulated reinforcement (times_derived > 1).
+    existing_doc.times_derived = func.greatest(
+        models.Document.times_derived + 1,
+        doc.times_derived,
+    )
     await db.flush()
-    logger.warning(
-        f"[DUPLICATE DETECTION] Rejecting new in favor of existing. new='{doc.content}', existing='{existing_doc.content}'."
+    logger.debug(
+        "[DUPLICATE DETECTION] Rejecting new in favor of existing. new=%r, existing=%r.",
+        doc.content,
+        existing_doc.content,
     )
     return True
 

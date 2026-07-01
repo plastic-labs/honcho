@@ -13,7 +13,7 @@ Targets:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -684,3 +684,84 @@ class TestStreamingResponseTokenWriteBack:
         # And we yielded every chunk to the caller — the wrapper is a
         # passthrough, not a sink.
         assert len(chunks) == 3
+
+
+class TestStreamingResponseRunHandleClose:
+    """When a `langfuse_run_handle` is transferred to the streaming wrapper,
+    the wrapper owns it: the accumulated streamed text is stamped as the run
+    span's output and the span is closed exactly once when the stream drains.
+    The close lives in a `finally`, so an early-exit caller still closes the
+    span rather than leaking it.
+    """
+
+    class _FakeRunHandle:
+        def __init__(self) -> None:
+            self.end_calls: list[Any] = []
+
+        def end(self, *, output: Any = None) -> None:
+            self.end_calls.append(output)
+
+    @staticmethod
+    async def _fake_stream() -> Any:
+        from src.llm.types import HonchoLLMCallStreamChunk
+
+        yield HonchoLLMCallStreamChunk(content="hel", output_tokens=None)
+        yield HonchoLLMCallStreamChunk(content="lo", output_tokens=None)
+        yield HonchoLLMCallStreamChunk(content="", is_done=True, output_tokens=7)
+
+    @pytest.mark.asyncio
+    async def test_full_drain_stamps_output_and_closes_once(self):
+        from src.llm.types import StreamingResponseWithMetadata
+
+        handle = self._FakeRunHandle()
+        wrapper = StreamingResponseWithMetadata(
+            stream=self._fake_stream(),
+            tool_calls_made=[],
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            langfuse_run_handle=handle,
+        )
+
+        async for _ in wrapper:
+            pass
+
+        # Closed exactly once, with the concatenated streamed text as output.
+        assert handle.end_calls == ["hello"]
+        # Ownership released so a second drain can't double-close.
+        assert wrapper._langfuse_run_handle is None
+
+    @pytest.mark.asyncio
+    async def test_abandoned_stream_still_closes_via_finally(self):
+        from src.llm.types import StreamingResponseWithMetadata
+
+        handle = self._FakeRunHandle()
+        wrapper = StreamingResponseWithMetadata(
+            stream=self._fake_stream(),
+            tool_calls_made=[],
+            input_tokens=0,
+            output_tokens=0,
+            cache_creation_input_tokens=0,
+            cache_read_input_tokens=0,
+            langfuse_run_handle=handle,
+        )
+
+        # Consume one chunk, then abandon the stream. `aclose()` is what the
+        # runtime/GC drives when a caller stops iterating early; it throws
+        # GeneratorExit at the suspended `yield`, firing the `finally`.
+        from collections.abc import AsyncGenerator
+
+        from src.llm.types import HonchoLLMCallStreamChunk
+
+        agen = cast(
+            "AsyncGenerator[HonchoLLMCallStreamChunk, None]", wrapper.__aiter__()
+        )
+        first = await agen.__anext__()
+        assert first.content == "hel"
+        await agen.aclose()
+
+        # Span closed once with only the text accumulated before abandonment —
+        # the span is closed, not leaked.
+        assert handle.end_calls == ["hel"]
+        assert wrapper._langfuse_run_handle is None

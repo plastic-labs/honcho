@@ -6,6 +6,7 @@
 # Application-level settings
 [app]
 LOG_LEVEL = "INFO"
+PERFORMANCE_LOG_FORMAT = "compact" # "compact" for single-line logs, "rich" for local panels
 SESSION_OBSERVERS_LIMIT = 10
 GET_CONTEXT_MAX_TOKENS = 100000
 MAX_FILE_SIZE = 5242880  # 5MB
@@ -109,6 +110,7 @@ MAX_INPUT_TOKENS = 25000
 MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 REPRESENTATION_BATCH_MAX_TOKENS = 1024
+REPRESENTATION_BATCH_MAX_AGE_SECONDS = 1800
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
 
 [deriver.model_config]

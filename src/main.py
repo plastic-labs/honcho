@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -250,6 +251,7 @@ async def track_request(
     token = request_context.set(f"api:{request_id}")
 
     try:
+        start_time = time.perf_counter()
         response = await call_next(request)
 
         # Track metrics if enabled
@@ -259,6 +261,7 @@ async def track_request(
                 method=request.method,
                 endpoint=template,
                 status_code=str(response.status_code),
+                duration_seconds=time.perf_counter() - start_time,
             )
 
         return response

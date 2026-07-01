@@ -21,7 +21,6 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import ConfiguredModelSettings, ModelConfig
 from src.exceptions import ValidationException
-from src.telemetry.logging import conditional_observe
 from src.telemetry.reasoning_traces import log_reasoning_trace
 
 from .executor import honcho_llm_call_inner
@@ -31,7 +30,7 @@ from .runtime import (
     effective_temperature,
     plan_attempt,
     resolve_runtime_model_config,
-    update_current_langfuse_observation,
+    start_langfuse_agent_run,
 )
 from .tool_loop import execute_tool_loop
 from .types import (
@@ -54,7 +53,6 @@ async def honcho_llm_call(
     model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
-    track_name: str | None = None,
     response_model: type[M],
     json_mode: bool = False,
     temperature: float | None = None,
@@ -84,7 +82,6 @@ async def honcho_llm_call(
     model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
-    track_name: str | None = None,
     response_model: None = None,
     json_mode: bool = False,
     temperature: float | None = None,
@@ -114,7 +111,6 @@ async def honcho_llm_call(
     model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
-    track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
@@ -138,13 +134,11 @@ async def honcho_llm_call(
 ) -> AsyncIterator[HonchoLLMCallStreamChunk] | StreamingResponseWithMetadata: ...
 
 
-@conditional_observe(name="LLM Call")
 async def honcho_llm_call(
     *,
     model_config: ModelConfig | ConfiguredModelSettings,
     prompt: str,
     max_tokens: int,
-    track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     temperature: float | None = None,
@@ -206,11 +200,6 @@ async def honcho_llm_call(
             call_thinking_budget_tokens=thinking_budget_tokens,
             call_reasoning_effort=reasoning_effort,
         )
-        update_current_langfuse_observation(
-            plan.provider,
-            plan.model,
-            name=track_name,
-        )
         return plan
 
     async def _call_with_provider_selection() -> (
@@ -267,8 +256,9 @@ async def honcho_llm_call(
 
     decorated = _call_with_provider_selection
 
-    if track_name:
-        decorated = ai_track(track_name)(decorated)
+    sentry_track_name = telemetry.track_name if telemetry is not None else None
+    if sentry_track_name:
+        decorated = ai_track(sentry_track_name)(decorated)
 
     def before_retry_callback(retry_state: Any) -> None:
         """Update attempt counter before each retry + log transient failures.
@@ -397,8 +387,8 @@ async def honcho_llm_call(
                 )
 
             wrapped = _toolless_call
-            if track_name:
-                wrapped = ai_track(track_name)(wrapped)
+            if sentry_track_name:
+                wrapped = ai_track(sentry_track_name)(wrapped)
             if enable_retry:
                 wrapped = retry(
                     stop=stop_after_attempt(retry_attempts),
@@ -406,7 +396,9 @@ async def honcho_llm_call(
                     before_sleep=before_retry_callback,
                 )(wrapped)
             result: (
-                HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]
+                HonchoLLMCallResponse[Any]
+                | AsyncIterator[HonchoLLMCallStreamChunk]
+                | StreamingResponseWithMetadata
             ) = await wrapped()
         else:
             result = await decorated()
@@ -429,30 +421,59 @@ async def honcho_llm_call(
             )
         return result
 
-    # execute_tool_loop raises ValidationException on out-of-range
-    # max_tool_iterations; fail-fast is cheaper than silent clamping here.
-    result = await execute_tool_loop(
-        prompt=prompt,
-        max_tokens=max_tokens,
-        messages=messages,
-        tools=tools,
-        tool_choice=tool_choice,
-        tool_executor=tool_executor,
-        max_tool_iterations=max_tool_iterations,
-        response_model=response_model,
-        json_mode=json_mode,
-        temperature=temperature,
-        stop_seqs=stop_seqs,
-        verbosity=verbosity,
-        enable_retry=enable_retry,
-        retry_attempts=retry_attempts,
-        max_input_tokens=max_input_tokens,
-        get_attempt_plan=_get_attempt_plan,
-        before_retry_callback=before_retry_callback,
-        stream_final=stream_final_only,
-        iteration_callback=iteration_callback,
-        telemetry=telemetry,
-    )
+    # One run-level Langfuse trace wraps the whole run; step/LLM/tool spans
+    # nest under it (the run handle keeps `start_as_current_observation` open
+    # via ExitStack, so the run span stays current OTel-wise even though we
+    # never use a `with` block here). The handle is passed into
+    # `execute_tool_loop` so streaming results own it from construction and
+    # close the span after drain — that's how the streamed text shows up as
+    # the trace's output instead of blank. Non-streaming results: we end in
+    # the `finally`.
+    run_label = (telemetry.track_name if telemetry else None) or "Agent"
+    run_handle = start_langfuse_agent_run(run_label, telemetry)
+    if run_handle is not None:
+        # Mirror execute_tool_loop's prompt-only handling: when messages is
+        # omitted it seeds the conversation with a single user message built
+        # from prompt. Record that same effective input so the run span isn't
+        # blank for prompt-only calls.
+        run_handle.update(
+            input=messages if messages else [{"role": "user", "content": prompt}]
+        )
+    try:
+        # execute_tool_loop raises ValidationException on out-of-range
+        # max_tool_iterations; fail-fast is cheaper than silent clamping here.
+        result = await execute_tool_loop(
+            prompt=prompt,
+            max_tokens=max_tokens,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            tool_executor=tool_executor,
+            max_tool_iterations=max_tool_iterations,
+            response_model=response_model,
+            json_mode=json_mode,
+            temperature=temperature,
+            stop_seqs=stop_seqs,
+            verbosity=verbosity,
+            enable_retry=enable_retry,
+            retry_attempts=retry_attempts,
+            max_input_tokens=max_input_tokens,
+            get_attempt_plan=_get_attempt_plan,
+            before_retry_callback=before_retry_callback,
+            stream_final=stream_final_only,
+            iteration_callback=iteration_callback,
+            telemetry=telemetry,
+            langfuse_run_handle=run_handle,
+        )
+    except BaseException:
+        if run_handle is not None:
+            run_handle.end()
+        raise
+    # Streaming wrapper owns the handle and closes it after drain;
+    # non-streaming paths (always a HonchoLLMCallResponse here) close it now
+    # with the final content as output.
+    if run_handle is not None and isinstance(result, HonchoLLMCallResponse):
+        run_handle.end(output=result.content)
     if trace_name and isinstance(result, HonchoLLMCallResponse):
         log_reasoning_trace(
             task_type=trace_name,

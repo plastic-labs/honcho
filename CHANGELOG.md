@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.11] - 2026-06-24
+
+### Added
+
+- `api_request_duration_seconds` Prometheus histogram tracking per-route request latency, labeled by method and endpoint (#837)
+- LLM `provider_params` passthroughs (`extra_body` / `extra_headers` / `extra_query`) are now forwarded to the underlying provider transport across all backends, with shape validation that rejects non-mapping values (#821)
+- `structured_output_mode` model-config option to use `json_object` mode for OpenAI-compatible providers that lack native Structured Outputs support (used by the deriver) (#820)
+- OpenRouter app-attribution headers (`HTTP-Referer` / `X-Openrouter-Title`) are now sent on OpenAI-compatible clients when the configured base URL is OpenRouter, so requests are attributed to "Honcho" in OpenRouter's dashboard (#805)
+- Langfuse traces are now tagged with user and session IDs for easier trace filtering (#814)
+- `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` (default 1800s) lets sub-threshold representation work units flush once their oldest unprocessed queue item ages out. Set it to `0` to keep the legacy behavior where sub-threshold tails wait indefinitely unless `DERIVER_FLUSH_ENABLED=true` (#826)
+
+### Changed
+
+- Peer-scoped JWTs now get read-only access to the sessions their peer is an active member of (session context, summaries, peers, their own per-session config, search, and message reads). Session-scoped JWTs remain confined to their session and cannot reach peer routes (#679)
+- Compacted Honcho's log output, with guarded ms/s metric formatting that falls back to a plain string for non-numeric values (#836)
+- Sentry now drops noisy infra/scrape transactions: the reconciler opens a transaction only once a batch has rows (idle cycles emit none), and a `traces_sampler` returns `0.0` for `/metrics`, `/health`, `/openapi.json`, `/docs`, `/redoc`, and the deriver metrics server. `SENTRY.TRACES_SAMPLE_RATE` still governs real traffic (#834)
+
+### Fixed
+
+- Peer- and session-scoped JWTs were effectively workspace-scoped: authorization walked the route's declared scope and fell through to a workspace match, so a `{w, p: alice}` token could act on any peer in the workspace. JWTs are now authorized by their narrowest claim and never widen to workspace access (#679)
+- The keys API now rejects creating a peer- or session-scoped key without a workspace. Such keys were minted successfully but failed verification on every request (#679)
+- Agent-supplied observation IDs carrying the display-format `id:` prefix are now normalized (prefix and trailing whitespace stripped) before `source_ids` are stored and on `get_reasoning_chain` lookups, fixing corrupted provenance links and broken reasoning-chain traversal (#795)
+- Fixed a `create_tree` keyword-argument mismatch in the Dreamer's surprisal tree construction (#749)
+- Providers that omit output-token counts (observed with Gemini on tool-loop completions) returned `output_tokens=None`, which raised a Pydantic validation error that aborted the call and crashed the Dreamer's induction phase before inductive conclusions were persisted. `None` is now coerced to `0` so token accounting degrades gracefully (#809)
+
 ## [3.0.10] - 2026-06-15
 
 ### Added

@@ -119,6 +119,7 @@ async def save_results_to_s3(
         # Create comprehensive results object
         timestamp = datetime.now(timezone.utc).isoformat()
         github_run_id = os.getenv("GITHUB_RUN_ID", "local")
+        github_run_attempt = os.getenv("GITHUB_RUN_ATTEMPT", "1")
         github_sha = os.getenv("GITHUB_SHA", "unknown")
         github_ref = os.getenv("GITHUB_REF_NAME", "unknown")
 
@@ -132,6 +133,7 @@ async def save_results_to_s3(
             },
             "metadata": {
                 "github_run_id": github_run_id,
+                "github_run_attempt": github_run_attempt,
                 "github_sha": github_sha,
                 "github_ref": github_ref,
             },
@@ -145,31 +147,59 @@ async def save_results_to_s3(
             ],
         }
 
+        # One "folder" per run: <prefix>/<date>/<run>/ holding results.json plus
+        # the reasoning-trace file(s), so a run's summary and full LLM I/O live together.
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         sha_short = github_sha[:7] if github_sha != "unknown" else "unknown"
-        ref_name = github_ref if github_ref != "unknown" else "unknown"
-        key = f"{s3_prefix}/{date_str}-{ref_name}-{sha_short}.json"
+        ref_slug = github_ref.replace("/", "-")  # branch names may contain "/"
+        run_slug = f"{ref_slug}-{sha_short}-{github_run_id}-{github_run_attempt}"
+        run_prefix = f"{s3_prefix}/{date_str}/{run_slug}"
+        results_key = f"{run_prefix}/results.json"
 
         s3_client = boto3.client("s3", region_name=aws_region)  # pyright: ignore
         s3_client.put_object(  # pyright: ignore
             Bucket=s3_bucket,
-            Key=key,
+            Key=results_key,
             Body=json.dumps(comprehensive_results, indent=2).encode("utf-8"),
             ContentType="application/json",
         )
+        logger.info(f"Saved test results to S3 key {results_key}")
+
+        # Upload the reasoning traces (full LLM/deriver I/O) captured this run. The
+        # API and deriver both append to REASONING_TRACES_FILE (file-locked). Use
+        # upload_file so large trace files stream via multipart instead of buffering.
+        traces_path_str = os.getenv("REASONING_TRACES_FILE")
+        if traces_path_str:
+            traces_path = Path(traces_path_str)
+            if traces_path.is_file() and traces_path.stat().st_size > 0:
+                traces_key = f"{run_prefix}/{traces_path.name}"
+                try:
+                    s3_client.upload_file(  # pyright: ignore
+                        str(traces_path),
+                        s3_bucket,
+                        traces_key,
+                        ExtraArgs={"ContentType": "application/x-ndjson"},
+                    )
+                    logger.info(f"Saved reasoning traces to S3 key {traces_key}")
+                except Exception as e:
+                    logger.error(
+                        f"Failed to upload reasoning traces: {e}", exc_info=True
+                    )
+            else:
+                logger.warning(
+                    f"REASONING_TRACES_FILE={traces_path} is missing or empty; no traces uploaded"
+                )
 
         try:
             url: str = s3_client.generate_presigned_url(  # pyright: ignore
                 "get_object",
-                Params={"Bucket": s3_bucket, "Key": key},
+                Params={"Bucket": s3_bucket, "Key": results_key},
                 ExpiresIn=259200,  # 3 days
             )
-            logger.info(f"Saved test results to s3://{s3_bucket}/{key}")
-            return url, key  # pyright: ignore
+            return url, results_key  # pyright: ignore
         except Exception as e:
             logger.warning(f"Could not generate S3 presigned URL: {e}")
-            logger.info(f"Saved test results to s3://{s3_bucket}/{key}")
-            return None, key
+            return None, results_key
 
     except Exception as e:
         logger.error(f"Failed to save results to S3: {e}", exc_info=True)

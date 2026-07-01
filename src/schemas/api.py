@@ -29,6 +29,7 @@ from src.schemas.configuration import (
     SessionPeerConfig,
     WorkspaceConfiguration,
 )
+from src.utils.types import DocumentLevel
 
 # ---------------------------------------------------------------------------
 # Metadata validation helpers
@@ -446,6 +447,14 @@ class Conclusion(BaseModel):
         serialization_alias="observed_id",
     )
     session_name: str | None = Field(default=None, serialization_alias="session_id")
+    level: DocumentLevel = Field(
+        default="explicit",
+        description=(
+            "Reasoning level of the conclusion: 'explicit' (directly extracted "
+            "from messages) or 'deductive'/'inductive'/'contradiction' (derived "
+            "during dreaming)."
+        ),
+    )
     created_at: datetime.datetime
 
     model_config = ConfigDict(  # pyright: ignore

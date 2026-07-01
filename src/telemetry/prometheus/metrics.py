@@ -12,6 +12,7 @@ from prometheus_client import (
     REGISTRY,
     Counter,
     Gauge,
+    Histogram,
     disable_created_metrics,
     generate_latest,
 )
@@ -34,6 +35,12 @@ class NamespacedCounter(Counter):
 
 class NamespacedGauge(Gauge):
     def labels(self, **kwargs: str) -> NamespacedGauge:
+        kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
+        return super().labels(**kwargs)  # type: ignore[return-value]
+
+
+class NamespacedHistogram(Histogram):
+    def labels(self, **kwargs: str) -> NamespacedHistogram:
         kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)  # type: ignore[return-value]
 
@@ -63,6 +70,15 @@ api_requests_counter = NamespacedCounter(
     "api_requests",
     "Total API requests",
     ["namespace", "method", "endpoint", "status_code"],
+)
+
+# Per-route latency. Buckets are a geometric ladder spanning
+# the full range of API classes
+api_request_duration_seconds = NamespacedHistogram(
+    "api_request_duration_seconds",
+    "API request latency in seconds",
+    ["namespace", "method", "endpoint"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 0.75, 1, 2, 5, 10, 20, 30, 60, 120),
 )
 
 messages_created_counter = NamespacedCounter(
@@ -160,6 +176,7 @@ class PrometheusMetrics:
         method: str,
         endpoint: str,
         status_code: str,
+        duration_seconds: float,
     ) -> None:
         try:
             api_requests_counter.labels(
@@ -167,6 +184,10 @@ class PrometheusMetrics:
                 endpoint=endpoint,
                 status_code=status_code,
             ).inc()
+            api_request_duration_seconds.labels(
+                method=method,
+                endpoint=endpoint,
+            ).observe(duration_seconds)
         except Exception as e:
             self._handle_metric_error("record_api_request", e)
 

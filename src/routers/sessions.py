@@ -536,17 +536,28 @@ async def remove_peers_from_session(
 @router.get(
     "/{session_id}/peers/{peer_id}/config",
     response_model=schemas.SessionPeerConfig,
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
-    ],
 )
 async def get_peer_config(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     peer_id: str = Path(...),
+    jwt_params: JWTParams = Depends(
+        require_auth(
+            workspace_name="workspace_id",
+            session_name="session_id",
+            allow_member_read=True,
+        )
+    ),
     db: AsyncSession = read_db,
 ):
-    """Get the configuration for a Peer in a Session."""
+    """Get the configuration for a Peer in a Session.
+
+    Member-read lets a peer-scoped key reach this route, but a peer may only
+    read its own per-session config — not a co-member's. Workspace/admin and
+    session-scoped tokens (which already span the whole session) are unaffected.
+    """
+    if jwt_params.p is not None and jwt_params.p != peer_id:
+        raise AuthenticationException("JWT not permissioned for this resource")
     return await crud.get_peer_config(
         db,
         workspace_name=workspace_id,
@@ -593,7 +604,13 @@ async def set_peer_config(
     "/{session_id}/peers",
     response_model=Page[schemas.Peer],
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_peers(
@@ -616,7 +633,13 @@ async def get_session_peers(
     "/{session_id}/context",
     response_model=schemas.SessionContext,
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_context(
@@ -808,7 +831,13 @@ async def get_session_context(
     "/{session_id}/summaries",
     response_model=schemas.SessionSummaries,
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_summaries(
@@ -849,7 +878,13 @@ async def get_session_summaries(
     "/{session_id}/search",
     response_model=list[schemas.Message],
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def search_session(
