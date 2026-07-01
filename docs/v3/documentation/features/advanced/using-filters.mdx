@@ -614,6 +614,65 @@ messages = session.messages(filters={
 ```
 </CodeGroup>
 
+### Filtering Conclusions
+
+Conclusions are scoped to an observer/observed peer pair (accessed via
+`peer.conclusions` for self-conclusions or `peer.conclusions_of(target)` for
+conclusions about another peer). The observer and observed are filled in
+automatically by the scope, so the `filters` you pass add to them.
+
+The most useful conclusion-specific field is `level`, the reasoning level:
+
+- `explicit` — extracted directly from messages
+- `deductive` / `inductive` / `contradiction` — derived later during dreaming
+
+A common request is to surface only the directly-stated facts and exclude
+anything inferred during dreaming — filter `level` to `explicit`:
+
+<CodeGroup>
+```python Python
+# Only conclusions extracted directly from messages (exclude dream-derived)
+explicit = peer.conclusions.list(filters={"level": "explicit"})
+
+# Only dream-derived conclusions
+derived = peer.conclusions.list(filters={"level": {"in": ["deductive", "inductive"]}})
+
+# Same filtering on semantic search
+results = peer.conclusions.query(
+    "food preferences",
+    filters={"level": "deductive"},
+)
+
+# Conclusions about another peer, explicit only
+bob_explicit = peer.conclusions_of("bob").list(filters={"level": "explicit"})
+```
+
+```typescript TypeScript
+(async () => {
+    // Only conclusions extracted directly from messages (exclude dream-derived)
+    const explicit = await peer.conclusions.list({ filters: { level: "explicit" } });
+
+    // Only dream-derived conclusions
+    const derived = await peer.conclusions.list({
+      filters: { level: { in: ["deductive", "inductive"] } }
+    });
+
+    // Same filtering on semantic search (query, topK, distance, filters)
+    const results = await peer.conclusions.query(
+      "food preferences",
+      10,
+      undefined,
+      { level: "deductive" }
+    );
+
+    // Conclusions about another peer, explicit only
+    const bobExplicit = await peer.conclusionsOf("bob").list({
+      filters: { level: "explicit" }
+    });
+})();
+```
+</CodeGroup>
+
 ## Error Handling
 
 Handle filter errors gracefully:

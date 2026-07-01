@@ -737,12 +737,87 @@ class TestConclusionRoutes:
         assert conclusion["observer_id"] == doc.observer
         assert conclusion["observed_id"] == doc.observed
         assert conclusion["session_id"] == doc.session_name
+        assert conclusion["level"] == "explicit"
         assert "created_at" in conclusion
 
         # Verify internal fields are NOT exposed
         assert "embedding" not in conclusion
         assert "internal_metadata" not in conclusion
         assert "collection" not in conclusion
+
+    @pytest.mark.asyncio
+    async def test_list_conclusions_filter_by_level(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Filtering by `level` returns only conclusions at that reasoning level.
+
+        `level="explicit"` is the "not dreamed on" view — it excludes the
+        deductive/inductive conclusions produced during dreaming.
+        """
+        test_workspace, test_peer = sample_data
+
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_session)
+        await db_session.commit()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        # Two explicit, one deductive, one inductive
+        levels = ["explicit", "explicit", "deductive", "inductive"]
+        for i, level in enumerate(levels):
+            db_session.add(
+                models.Document(
+                    workspace_name=test_workspace.name,
+                    observer=test_peer.name,
+                    observed=test_peer2.name,
+                    content=f"{level} conclusion {i}",
+                    embedding=[0.1] * 1536,
+                    session_name=test_session.name,
+                    level=level,
+                )
+            )
+        await db_session.commit()
+
+        # No level filter -> all four
+        all_resp = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"session_id": test_session.name}},
+        )
+        assert all_resp.status_code == 200
+        assert all_resp.json()["total"] == 4
+
+        # level="explicit" -> only the two non-dreamed conclusions
+        explicit_resp = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"session_id": test_session.name, "level": "explicit"}},
+        )
+        assert explicit_resp.status_code == 200
+        explicit_data = explicit_resp.json()
+        assert explicit_data["total"] == 2
+        assert all(item["level"] == "explicit" for item in explicit_data["items"])
+
+        # level="deductive" -> only the one deductive conclusion
+        deductive_resp = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"session_id": test_session.name, "level": "deductive"}},
+        )
+        assert deductive_resp.status_code == 200
+        deductive_data = deductive_resp.json()
+        assert deductive_data["total"] == 1
+        assert deductive_data["items"][0]["level"] == "deductive"
 
     @pytest.mark.asyncio
     async def test_create_conclusion_success(

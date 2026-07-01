@@ -47,7 +47,11 @@ from .api_types import (
     WorkspaceResponse,
 )
 from .base import PeerBase, SessionBase
-from .conclusions import Conclusion
+from .conclusions import (
+    _SCOPE_RESERVED,
+    Conclusion,
+    _reject_reserved_filter_keys,
+)
 from .http import routes
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
@@ -1460,17 +1464,28 @@ class ConclusionScopeAio:
         size: int = 50,
         session: str | SessionBase | None = None,
         *,
+        filters: dict[str, Any] | None = None,
         reverse: bool = False,
     ) -> AsyncPage[ConclusionResponse, Conclusion]:
-        """List conclusions in this scope asynchronously."""
+        """List conclusions in this scope asynchronously.
+
+        Pass ``filters`` to add criteria merged with this scope's
+        observer/observed (and session, if given) — e.g.
+        ``{"level": "explicit"}`` to get only conclusions extracted directly
+        from messages (i.e. not derived during dreaming). See
+        https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
+        """
+        _reject_reserved_filter_keys(
+            filters, _SCOPE_RESERVED + ("session", "session_id")
+        )
         await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
-        filters: dict[str, Any] = {
+        filters = {
             "observer_id": self._scope.observer,
             "observed_id": self._scope.observed,
+            **({"session_id": resolved_session_id} if resolved_session_id else {}),
+            **(filters or {}),
         }
-        if resolved_session_id:
-            filters["session_id"] = resolved_session_id
 
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
@@ -1504,12 +1519,24 @@ class ConclusionScopeAio:
         query: str,
         top_k: int = 10,
         distance: float | None = None,
+        *,
+        filters: dict[str, Any] | None = None,
     ) -> list[Conclusion]:
-        """Semantic search for conclusions asynchronously."""
+        """Semantic search for conclusions asynchronously.
+
+        Args:
+            query: The search query string
+            top_k: Maximum number of results to return
+            distance: Maximum cosine distance threshold (0.0-1.0)
+            filters: Optional dictionary of additional filter criteria, merged
+                with this scope's observer/observed (e.g. ``{"level": "deductive"}``).
+        """
+        _reject_reserved_filter_keys(filters, _SCOPE_RESERVED)
         await self._scope._honcho._ensure_workspace_async()
-        filters: dict[str, Any] = {
+        filters = {
             "observer_id": self._scope.observer,
             "observed_id": self._scope.observed,
+            **(filters or {}),
         }
 
         body: dict[str, Any] = {
