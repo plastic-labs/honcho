@@ -92,8 +92,12 @@ async def measure_silent_loss_and_visibility(
                     observed="alice",
                     queue_item_message_ids=[1],
                 )
-            except Exception:
+            # Count only the expected save failure; let unrelated exceptions
+            # escape so they fail the benchmark, not inflate visibility.
+            except RuntimeError as exc:
                 raised = True
+                if "observer" not in str(exc) and "RESOURCE_EXHAUSTED" not in str(exc):
+                    raise
 
         # The save failed for the only observer. "Silent loss" = the deriver
         # returned normally (queue would mark it processed) with nothing saved.
