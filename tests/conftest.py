@@ -504,7 +504,9 @@ def mock_openai_embeddings(request: pytest.FixtureRequest):
 
         mock_embed.side_effect = embed_side_effect
 
-        async def mock_simple_batch_embed_func(texts: list[str]) -> list[list[float]]:
+        async def mock_simple_batch_embed_func(
+            texts: list[str], **_kwargs: Any
+        ) -> list[list[float]]:
             return [_content_to_embedding(text) for text in texts]
 
         mock_simple_batch_embed.side_effect = mock_simple_batch_embed_func
