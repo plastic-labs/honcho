@@ -19,6 +19,7 @@ use crate::structured_output::json_object_instruction_for_response_format;
 /// The OpenAI SDK's default API base. Unlike Anthropic this already includes the
 /// `/v1` version segment, so the path appended below is just `/chat/completions`.
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+const OPENROUTER_BASE_URL_PREFIX: &str = "https://openrouter.ai";
 
 /// Run one Chat Completions request: build the body, POST it through the
 /// [`LlmHttp`] transport with a Bearer auth header, and parse the response.
@@ -28,14 +29,12 @@ pub async fn complete<H: LlmHttp>(
     params: &RequestParams<'_>,
 ) -> Result<CompletionResult, LlmHttpError> {
     let body = build_request(params).map_err(passthrough_error)?;
+    let base_url = credentials.effective_base_url(DEFAULT_BASE_URL);
     let url = apply_extra_query(
-        format!(
-            "{}/chat/completions",
-            credentials.effective_base_url(DEFAULT_BASE_URL)
-        ),
+        format!("{base_url}/chat/completions"),
         params.extra_params,
     )?;
-    let headers = build_headers(credentials, params.extra_params)?;
+    let headers = build_headers(credentials, params.extra_params, base_url)?;
     let response = http.post_json(&url, &headers, &body).await?;
     Ok(parse_response(&response))
 }
@@ -47,11 +46,19 @@ fn passthrough_error(error: PassthroughError) -> LlmHttpError {
 fn build_headers(
     credentials: &Credentials,
     extra_params: &Map<String, Value>,
+    base_url: &str,
 ) -> Result<Vec<(String, String)>, LlmHttpError> {
     let mut headers = vec![(
         "Authorization".to_string(),
         format!("Bearer {}", credentials.api_key),
     )];
+    if base_url.starts_with(OPENROUTER_BASE_URL_PREFIX) {
+        headers.push((
+            "HTTP-Referer".to_string(),
+            "https://honcho.dev".to_string(),
+        ));
+        headers.push(("X-Openrouter-Title".to_string(), "Honcho".to_string()));
+    }
     if let Some(mapping) =
         passthrough_mapping("extra_headers", extra_params).map_err(passthrough_error)?
     {
@@ -148,14 +155,9 @@ pub async fn stream<H: LlmStreamHttp>(
         object.insert("stream".to_string(), json!(true));
         object.insert("stream_options".to_string(), json!({"include_usage": true}));
     }
-    let url = apply_extra_query(
-        format!(
-            "{}/chat/completions",
-            credentials.effective_base_url(DEFAULT_BASE_URL)
-        ),
-        params.extra_params,
-    )?;
-    let headers = build_headers(credentials, params.extra_params)?;
+    let base_url = credentials.effective_base_url(DEFAULT_BASE_URL);
+    let url = apply_extra_query(format!("{base_url}/chat/completions"), params.extra_params)?;
+    let headers = build_headers(credentials, params.extra_params, base_url)?;
     http.post_json_stream(&url, &headers, &body).await
 }
 
@@ -923,6 +925,55 @@ mod tests {
             vec![
                 ("Authorization".to_string(), "Bearer sk-openai".to_string()),
                 ("X-Trace".to_string(), "abc".to_string()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_adds_openrouter_attribution_headers_with_operator_precedence() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({
+            "choices": [{"finish_reason": "stop", "message": {"content": "hi"}}],
+        }));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert(
+            "extra_headers".to_string(),
+            json!({"HTTP-Referer": "https://operator.example"}),
+        );
+        let params = RequestParams {
+            model: "openrouter/model",
+            messages: &messages,
+            max_tokens: 64,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        };
+        let credentials = Credentials::with_base_url(
+            "sk-openai",
+            Some("https://openrouter.ai/api/v1".to_string()),
+        );
+
+        complete(&http, &credentials, &params).await.unwrap();
+
+        assert_eq!(
+            http.last_url(),
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert_eq!(
+            http.last_headers(),
+            vec![
+                ("Authorization".to_string(), "Bearer sk-openai".to_string()),
+                (
+                    "HTTP-Referer".to_string(),
+                    "https://operator.example".to_string()
+                ),
+                ("X-Openrouter-Title".to_string(), "Honcho".to_string()),
             ]
         );
     }
