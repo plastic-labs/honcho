@@ -42,6 +42,7 @@ async def measure_batch_survival(batch_n: int = BATCH_N) -> float:
     from src.embedding_client import (
         _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
     )
+    from src.exceptions import ValidationException
     from src.utils.representation import ExplicitObservation, Representation
 
     class _FakeEmbeddingsAPI:
@@ -127,7 +128,10 @@ async def measure_batch_survival(batch_n: int = BATCH_N) -> float:
                     message_level_configuration=Mock(),
                 )
                 return saved["count"] / batch_n
-            except Exception:
+            # BEFORE mode wraps the oversize failure in ValidationException and
+            # drops the whole batch — that's 0% survival. Any other exception is
+            # a harness bug and must escape, not be scored as a failed batch.
+            except ValidationException:
                 return 0.0
 
 

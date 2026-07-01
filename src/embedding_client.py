@@ -291,15 +291,27 @@ class _EmbeddingClient:
             token_ids = self.encoding.encode(text)
             if len(token_ids) > self.max_embedding_tokens:
                 if on_oversize == "truncate":
-                    text = self.encoding.decode(token_ids[: self.max_embedding_tokens])
+                    # decode(ids[:n]) can re-encode to more than n tokens at
+                    # BPE/pre-tokenizer boundaries, so re-encode and trim again
+                    # until it fits: the provider must never receive an over-cap
+                    # input (the bug this guards), and _create_batches budgets on
+                    # the count we return here.
+                    cap = self.max_embedding_tokens
+                    truncated_ids = token_ids[:cap]
+                    while True:
+                        text = self.encoding.decode(truncated_ids)
+                        actual_tokens = len(self.encoding.encode(text))
+                        if actual_tokens <= cap or not truncated_ids:
+                            break
+                        truncated_ids = truncated_ids[: -(actual_tokens - cap)]
                     logger.warning(
                         "truncated oversize embedding input at idx %d: %d->%d tokens",
                         idx,
                         len(token_ids),
-                        self.max_embedding_tokens,
+                        actual_tokens,
                     )
                     prepared_texts.append(text)
-                    token_counts.append(self.max_embedding_tokens)
+                    token_counts.append(actual_tokens)
                     continue
                 raise ValueError(
                     f"Text at index {idx} exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {len(token_ids)} tokens)"
