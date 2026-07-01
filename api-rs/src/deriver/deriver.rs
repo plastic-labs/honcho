@@ -16,7 +16,7 @@ use crate::llm::conversation::{count_message_tokens, truncate_messages_to_fit};
 use crate::llm::credentials::TransportApiKeys;
 use crate::llm::executor::HonchoCaller;
 use crate::llm::http::LlmHttp;
-use crate::llm::{ModelConfig, StructuredOutputMode};
+use crate::llm::ModelConfig;
 use crate::producer::ResolvedConfiguration;
 use crate::representation::Representation;
 use crate::representation_manager::save_representation;
@@ -202,16 +202,12 @@ where
         base_model_config.clone(),
         max_tokens,
     );
-    // Force the PromptRepresentation shape via structured output. The default
-    // remains strict json_schema; json_object mode swaps to prompt-injected schema
-    // for OpenAI-compatible providers that reject Structured Outputs.
+    // Force the PromptRepresentation shape via structured output. The executor
+    // lowers this semantic response model per attempt, after fallback selection,
+    // so mixed primary/fallback structured_output_mode values are honored.
     caller.json_mode = true;
-    caller.response_format = Some(match base_model_config.structured_output_mode {
-        Some(StructuredOutputMode::JsonObject) => {
-            crate::structured_output::prompt_representation_json_object_response_format()
-        }
-        _ => crate::structured_output::prompt_representation_response_format(),
-    });
+    caller.response_format =
+        Some(crate::structured_output::prompt_representation_response_format());
     let response = caller
         .complete_single(&call_messages)
         .await
@@ -387,6 +383,7 @@ pub fn compute_token_breakdown(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::StructuredOutputMode;
     use chrono::{DateTime, Utc};
 
     #[test]
