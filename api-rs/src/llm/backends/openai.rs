@@ -135,7 +135,7 @@ pub fn build_request(params: &RequestParams<'_>) -> Value {
     if let Some(tools) = params.tools.filter(|tools| !tools.is_empty()) {
         body.insert("tools".to_string(), json!(convert_tools(tools)));
         if let Some(tool_choice) = params.tool_choice {
-            body.insert("tool_choice".to_string(), tool_choice.clone());
+            body.insert("tool_choice".to_string(), convert_tool_choice(tool_choice));
         }
     }
     for key in ["top_p", "frequency_penalty", "presence_penalty", "seed"] {
@@ -228,6 +228,27 @@ pub fn extract_reasoning_details(message: &Value) -> Vec<Value> {
 /// Convert canonical tool schemas to OpenAI's function shape, porting
 /// `_convert_tools`. Already-converted tools (first entry `type == "function"`)
 /// and empty lists pass through unchanged.
+/// Translate Honcho's canonical `tool_choice` vocabulary to OpenAI's, mirroring
+/// the Anthropic/Gemini backends so a single `TOOL_CHOICE` value resolves
+/// correctly regardless of which provider a fallback chain lands on. OpenAI has
+/// no `"any"` — it spells the same intent `"required"`. A bare tool-name string
+/// or a `{"name": ...}` object becomes a function selection; `auto`/`none` pass
+/// through. (Port of #850.)
+pub fn convert_tool_choice(tool_choice: &Value) -> Value {
+    match tool_choice {
+        Value::Object(map) => match map.get("name") {
+            Some(name) => json!({"type": "function", "function": {"name": name}}),
+            None => tool_choice.clone(),
+        },
+        Value::String(choice) => match choice.as_str() {
+            "any" | "required" => json!("required"),
+            "auto" | "none" => tool_choice.clone(),
+            name => json!({"type": "function", "function": {"name": name}}),
+        },
+        other => other.clone(),
+    }
+}
+
 pub fn convert_tools(tools: &[Value]) -> Vec<Value> {
     let already_converted = tools
         .first()
@@ -370,6 +391,29 @@ mod tests {
         let converted = vec![json!({"type": "function", "function": {"name": "x"}})];
         assert_eq!(convert_tools(&converted), converted);
         assert_eq!(convert_tools(&[]), Vec::<Value>::new());
+    }
+
+    #[test]
+    fn convert_tool_choice_maps_canonical_vocabulary() {
+        // "any" (canonical, used by Anthropic/Gemini) maps to OpenAI's "required".
+        assert_eq!(convert_tool_choice(&json!("any")), json!("required"));
+        assert_eq!(convert_tool_choice(&json!("required")), json!("required"));
+        // auto/none pass through unchanged.
+        assert_eq!(convert_tool_choice(&json!("auto")), json!("auto"));
+        assert_eq!(convert_tool_choice(&json!("none")), json!("none"));
+        // A bare tool-name string becomes a function selection.
+        assert_eq!(
+            convert_tool_choice(&json!("search")),
+            json!({"type": "function", "function": {"name": "search"}})
+        );
+        // A {"name": ...} object becomes a function selection.
+        assert_eq!(
+            convert_tool_choice(&json!({"name": "search"})),
+            json!({"type": "function", "function": {"name": "search"}})
+        );
+        // An already-OpenAI-shaped object passes through.
+        let native = json!({"type": "function", "function": {"name": "x"}});
+        assert_eq!(convert_tool_choice(&native), native);
     }
 
     #[test]
