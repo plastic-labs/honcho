@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import AsyncIterator, Iterator
-from typing import Self
+
+if sys.version_info < (3, 11):
+    from typing_extensions import Self
+else:
+    from typing import Self
 
 __all__ = [
     "DialecticStreamResponse",
