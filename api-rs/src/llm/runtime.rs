@@ -258,6 +258,7 @@ mod tests {
         let mut fallback = ModelConfig::new("backup-model", Provider::Openai);
         fallback.thinking_budget_tokens = Some(512);
         fallback.thinking_effort = Some("low".to_string());
+        fallback.structured_output_mode = Some(crate::llm::StructuredOutputMode::JsonObject);
         primary.fallback = Some(Box::new(fallback));
 
         // Final attempt -> fallback config's own reasoning params win over caller's.
@@ -266,6 +267,10 @@ mod tests {
         assert_eq!(plan.model, "backup-model");
         assert_eq!(plan.thinking_budget_tokens, Some(512));
         assert_eq!(plan.reasoning_effort.as_deref(), Some("low"));
+        assert_eq!(
+            plan.selected_config.structured_output_mode,
+            Some(crate::llm::StructuredOutputMode::JsonObject)
+        );
         assert!(plan.is_fallback);
     }
 

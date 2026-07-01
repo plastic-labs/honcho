@@ -600,11 +600,7 @@ mod tests {
 
         // The caller-side structured-output step (what the deriver runs) turns the
         // JSON text content into a validated PromptRepresentation.
-        let pr = crate::structured_output::finalize_structured_output(
-            &response.content,
-            crate::structured_output::FailurePolicy::RepairThenEmpty,
-        )
-        .expect("finalize");
+        let pr = crate::structured_output::finalize_structured_output(&response.content);
         assert_eq!(pr.explicit, vec!["likes coffee".to_string()]);
     }
 

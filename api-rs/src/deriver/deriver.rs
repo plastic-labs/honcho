@@ -12,15 +12,15 @@ use serde_json::json;
 
 use crate::db::BatchMessage;
 use crate::dialectic::{Embedder, format_new_turn_with_timestamp};
-use crate::llm::ModelConfig;
 use crate::llm::conversation::{count_message_tokens, truncate_messages_to_fit};
 use crate::llm::credentials::TransportApiKeys;
 use crate::llm::executor::HonchoCaller;
 use crate::llm::http::LlmHttp;
+use crate::llm::{ModelConfig, StructuredOutputMode};
 use crate::producer::ResolvedConfiguration;
 use crate::representation::Representation;
 use crate::representation_manager::save_representation;
-use crate::structured_output::{FailurePolicy, finalize_structured_output};
+use crate::structured_output::finalize_structured_output;
 use crate::telemetry::Emitter;
 use crate::telemetry::events::RepresentationCompletedEvent;
 
@@ -202,14 +202,16 @@ where
         base_model_config.clone(),
         max_tokens,
     );
-    // Force the PromptRepresentation shape via a strict json_schema response_format
-    // (mirroring Python's `response_model=PromptRepresentation`). `json_mode` stays
-    // on so any provider lacking response_format support — e.g. a Gemini fallback —
-    // still gets `response_mime_type: application/json`. Without this the model
-    // ignores json_mode, replies in prose, and the representation comes out empty.
+    // Force the PromptRepresentation shape via structured output. The default
+    // remains strict json_schema; json_object mode swaps to prompt-injected schema
+    // for OpenAI-compatible providers that reject Structured Outputs.
     caller.json_mode = true;
-    caller.response_format =
-        Some(crate::structured_output::prompt_representation_response_format());
+    caller.response_format = Some(match base_model_config.structured_output_mode {
+        Some(StructuredOutputMode::JsonObject) => {
+            crate::structured_output::prompt_representation_json_object_response_format()
+        }
+        _ => crate::structured_output::prompt_representation_response_format(),
+    });
     let response = caller
         .complete_single(&call_messages)
         .await
@@ -220,9 +222,7 @@ where
         content_len = response.content.to_string().len(),
         "deriver: parsing structured output"
     );
-    let prompt_repr =
-        finalize_structured_output(&response.content, FailurePolicy::RepairThenEmpty)
-            .unwrap_or_default();
+    let prompt_repr = finalize_structured_output(&response.content);
     tracing::info!("deriver: structured output parsed; saving representation");
 
     // Only the observed peer's own messages anchor the observations.
@@ -402,8 +402,16 @@ mod tests {
             ("DERIVER_MAX_INPUT_TOKENS", "12000"),
             ("LLM_DEFAULT_MAX_TOKENS", "3000"),
             ("DERIVER_DEDUPLICATE", "false"),
+            (
+                "DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE",
+                "json_object",
+            ),
         ]);
         assert_eq!(s.model_config.model, "gpt-5.4");
+        assert_eq!(
+            s.model_config.structured_output_mode,
+            Some(StructuredOutputMode::JsonObject)
+        );
         assert_eq!(s.max_input_tokens, 12000);
         assert_eq!(s.default_max_tokens, 3000);
         assert!(!s.deduplicate);

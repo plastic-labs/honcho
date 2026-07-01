@@ -14,6 +14,7 @@ use crate::llm::request_builder::{
     passthrough_value_to_string,
 };
 use crate::llm::{CompletionResult, ToolCallResult};
+use crate::structured_output::json_object_instruction_for_response_format;
 
 /// The OpenAI SDK's default API base. Unlike Anthropic this already includes the
 /// `/v1` version segment, so the path appended below is just `/chat/completions`.
@@ -102,6 +103,36 @@ fn merge_extra_body(
         existing_mapping.insert(key.clone(), value.clone());
     }
     Ok(())
+}
+
+fn structured_output_mode(extra_params: &Map<String, Value>) -> Option<&str> {
+    extra_params
+        .get("structured_output_mode")
+        .and_then(Value::as_str)
+}
+
+fn with_json_schema_instructions(messages: &[Value], response_format: &Value) -> Vec<Value> {
+    let instruction = json_object_instruction_for_response_format(response_format);
+    let mut messages = messages.to_vec();
+    if let Some(first) = messages.first_mut()
+        && first.get("role").and_then(Value::as_str) == Some("system")
+        && first.get("content").is_some_and(Value::is_string)
+        && let Some(content) = first
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        && let Some(object) = first.as_object_mut()
+    {
+        object.insert(
+            "content".to_string(),
+            json!(format!("{content}\n\n{instruction}").trim().to_string()),
+        );
+        return messages;
+    }
+    let mut with_instruction = Vec::with_capacity(messages.len() + 1);
+    with_instruction.push(json!({"role": "system", "content": instruction}));
+    with_instruction.extend(messages);
+    with_instruction
 }
 
 /// Open a streaming Chat Completions request: the same body as [`complete`] with
@@ -220,7 +251,21 @@ pub fn build_request(params: &RequestParams<'_>) -> Result<Value, PassthroughErr
         .get("response_format")
         .filter(|value| !value.is_null())
     {
-        body.insert("response_format".to_string(), response_format.clone());
+        if structured_output_mode(params.extra_params) == Some("json_object") {
+            body.insert(
+                "messages".to_string(),
+                json!(with_json_schema_instructions(
+                    params.messages,
+                    response_format
+                )),
+            );
+            body.insert(
+                "response_format".to_string(),
+                json!({"type": "json_object"}),
+            );
+        } else {
+            body.insert("response_format".to_string(), response_format.clone());
+        }
     } else if params
         .extra_params
         .get("json_mode")
@@ -592,6 +637,76 @@ mod tests {
         })
         .unwrap();
         assert!(body.get("response_format").is_none());
+    }
+
+    #[test]
+    fn build_request_json_object_mode_injects_schema_instruction() {
+        let messages = vec![
+            json!({"role": "system", "content": "base system"}),
+            json!({"role": "user", "content": "hi"}),
+        ];
+        let schema = crate::structured_output::prompt_representation_json_object_response_format();
+        let mut extra = Map::new();
+        extra.insert("response_format".to_string(), schema);
+        extra.insert("structured_output_mode".to_string(), json!("json_object"));
+
+        let body = build_request(&RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        })
+        .unwrap();
+
+        assert_eq!(body["response_format"], json!({"type": "json_object"}));
+        let content = body["messages"][0]["content"].as_str().unwrap();
+        assert!(content.starts_with("base system\n\nYou must respond with a single JSON object"));
+        assert!(content.contains("JSON schema:\n{\"$defs\": {\"ExplicitObservationBase\""));
+        assert_eq!(
+            body["messages"][1],
+            json!({"role": "user", "content": "hi"})
+        );
+    }
+
+    #[test]
+    fn build_request_json_object_mode_prepends_instruction_without_string_system() {
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let schema = crate::structured_output::prompt_representation_json_object_response_format();
+        let mut extra = Map::new();
+        extra.insert("response_format".to_string(), schema);
+        extra.insert("structured_output_mode".to_string(), json!("json_object"));
+
+        let body = build_request(&RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 256,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        })
+        .unwrap();
+
+        assert_eq!(body["messages"][0]["role"], json!("system"));
+        assert!(
+            body["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("You must respond with a single JSON object")
+        );
+        assert_eq!(
+            body["messages"][1],
+            json!({"role": "user", "content": "hi"})
+        );
     }
 
     #[test]

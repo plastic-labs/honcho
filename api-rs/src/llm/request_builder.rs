@@ -143,6 +143,9 @@ pub fn build_config_extra_params(config: &ModelConfig) -> Map<String, Value> {
     if let Some(seed) = config.seed {
         extra_params.insert("seed".to_string(), json!(seed));
     }
+    if let Some(mode) = config.structured_output_mode {
+        extra_params.insert("structured_output_mode".to_string(), json!(mode.as_str()));
+    }
     for (key, value) in &config.provider_params {
         extra_params.insert(key.clone(), value.clone());
     }
@@ -175,9 +178,14 @@ mod tests {
         let mut config = ModelConfig::new("gpt-x", Provider::Openai);
         config.top_p = Some(0.9);
         config.seed = Some(7);
+        config.structured_output_mode = Some(crate::llm::StructuredOutputMode::JsonObject);
         let params = build_config_extra_params(&config);
         assert_eq!(params.get("top_p"), Some(&json!(0.9)));
         assert_eq!(params.get("seed"), Some(&json!(7)));
+        assert_eq!(
+            params.get("structured_output_mode"),
+            Some(&json!("json_object"))
+        );
         assert_eq!(params.get("top_k"), None);
     }
 
