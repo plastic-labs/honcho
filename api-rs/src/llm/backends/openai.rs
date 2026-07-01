@@ -10,8 +10,7 @@ use serde_json::{Map, Value, json};
 
 use crate::llm::http::{Credentials, LlmHttp, LlmHttpError, LlmStreamHttp, TextStream};
 use crate::llm::request_builder::{
-    PassthroughError, apply_sdk_passthroughs, merge_header_mapping, passthrough_mapping,
-    passthrough_value_to_string,
+    PassthroughError, merge_header_mapping, passthrough_mapping, passthrough_value_to_string,
 };
 use crate::llm::{CompletionResult, ToolCallResult};
 use crate::structured_output::json_object_instruction_for_response_format;
@@ -30,17 +29,14 @@ pub async fn complete<H: LlmHttp>(
 ) -> Result<CompletionResult, LlmHttpError> {
     let body = build_request(params).map_err(passthrough_error)?;
     let base_url = credentials.effective_base_url(DEFAULT_BASE_URL);
-    let url = apply_extra_query(
-        format!("{base_url}/chat/completions"),
-        params.extra_params,
-    )?;
+    let url = apply_extra_query(format!("{base_url}/chat/completions"), params.extra_params)?;
     let headers = build_headers(credentials, params.extra_params, base_url)?;
     let response = http.post_json(&url, &headers, &body).await?;
     Ok(parse_response(&response))
 }
 
 fn passthrough_error(error: PassthroughError) -> LlmHttpError {
-    LlmHttpError::Transport(error.to_string())
+    LlmHttpError::Validation(error.to_string())
 }
 
 fn build_headers(
@@ -53,10 +49,7 @@ fn build_headers(
         format!("Bearer {}", credentials.api_key),
     )];
     if base_url.starts_with(OPENROUTER_BASE_URL_PREFIX) {
-        headers.push((
-            "HTTP-Referer".to_string(),
-            "https://honcho.dev".to_string(),
-        ));
+        headers.push(("HTTP-Referer".to_string(), "https://honcho.dev".to_string()));
         headers.push(("X-Openrouter-Title".to_string(), "Honcho".to_string()));
     }
     if let Some(mapping) =
@@ -91,23 +84,10 @@ fn merge_extra_body(
     body: &mut Map<String, Value>,
     extra_params: &Map<String, Value>,
 ) -> Result<(), PassthroughError> {
-    let mut passthroughs = Map::new();
-    apply_sdk_passthroughs(&mut passthroughs, extra_params)?;
-    let Some(extra_body) = passthroughs.remove("extra_body") else {
-        return Ok(());
-    };
-    let existing = body
-        .entry("extra_body".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !existing.is_object() {
-        return Err(PassthroughError::new("extra_body", existing));
-    }
-    let existing_mapping = existing.as_object_mut().expect("object checked above");
-    let extra_body = extra_body
-        .as_object()
-        .ok_or_else(|| PassthroughError::new("extra_body", &extra_body))?;
-    for (key, value) in extra_body {
-        existing_mapping.insert(key.clone(), value.clone());
+    if let Some(extra_body) = passthrough_mapping("extra_body", extra_params)? {
+        for (key, value) in extra_body {
+            body.insert(key.clone(), value.clone());
+        }
     }
     Ok(())
 }
@@ -192,7 +172,7 @@ pub struct RequestParams<'a> {
 
 /// Build the JSON body for the Chat Completions API, porting the deterministic
 /// `_build_params` (max-token field selection, temperature, reasoning effort,
-/// proxy `extra_body.reasoning.max_tokens`, stop, converted tools + tool_choice,
+/// proxy `reasoning.max_tokens`, stop, converted tools + tool_choice,
 /// `top_p`/`frequency_penalty`/`presence_penalty`/`seed` passthrough, and the
 /// `response_format`/`json_mode` structured-output enforcement).
 pub fn build_request(params: &RequestParams<'_>) -> Result<Value, PassthroughError> {
@@ -223,10 +203,7 @@ pub fn build_request(params: &RequestParams<'_>) -> Result<Value, PassthroughErr
         body.insert("reasoning_effort".to_string(), json!(effort));
     }
     if let Some(budget) = params.thinking_budget_tokens.filter(|budget| *budget > 0) {
-        body.insert(
-            "extra_body".to_string(),
-            json!({"reasoning": {"max_tokens": budget}}),
-        );
+        body.insert("reasoning".to_string(), json!({"max_tokens": budget}));
     }
     if let Some(stop) = params.stop.filter(|stop| !stop.is_empty()) {
         body.insert("stop".to_string(), json!(stop));
@@ -567,10 +544,7 @@ mod tests {
         assert!(body.get("max_tokens").is_none());
         assert_eq!(body["temperature"], json!(0.3));
         assert_eq!(body["reasoning_effort"], json!("high"));
-        assert_eq!(
-            body["extra_body"],
-            json!({"reasoning": {"max_tokens": 1000}})
-        );
+        assert_eq!(body["reasoning"], json!({"max_tokens": 1000}));
         // Tools are converted to function shape.
         assert_eq!(body["tools"][0]["type"], json!("function"));
         assert_eq!(body["tool_choice"], json!("auto"));
@@ -756,17 +730,16 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(
-            body["extra_body"],
-            json!({"reasoning": {"max_tokens": 200}, "custom": "v"})
-        );
+        assert_eq!(body["reasoning"], json!({"max_tokens": 200}));
+        assert_eq!(body["custom"], json!("v"));
+        assert!(body.get("extra_body").is_none());
     }
 
     #[test]
     fn build_request_rejects_non_mapping_passthrough() {
         let messages = vec![json!({"role": "user", "content": "hi"})];
         let mut extra = Map::new();
-        extra.insert("extra_headers".to_string(), json!("bad"));
+        extra.insert("extra_body".to_string(), json!("bad"));
         let err = build_request(&RequestParams {
             model: "gpt-4o",
             messages: &messages,
@@ -783,7 +756,38 @@ mod tests {
 
         assert_eq!(
             err.to_string(),
-            "provider_params.extra_headers must be a mapping, got string"
+            "provider_params.extra_body must be a mapping, got string"
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_classifies_non_mapping_passthrough_as_validation() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({}));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert("extra_query".to_string(), json!("bad"));
+        let params = RequestParams {
+            model: "gpt-4o",
+            messages: &messages,
+            max_tokens: 64,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        };
+
+        let err = complete(&http, &Credentials::new("sk-openai"), &params)
+            .await
+            .unwrap_err();
+
+        let expected = "provider_params.extra_query must be a mapping, got string";
+        assert!(
+            matches!(err, LlmHttpError::Validation(message) if message == expected)
         );
     }
 

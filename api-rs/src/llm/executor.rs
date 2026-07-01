@@ -25,6 +25,8 @@ use super::{CompletionResult, ModelConfig, Provider};
 /// An error from [`execute_completion`].
 #[derive(Debug)]
 pub enum ExecutorError {
+    /// The request configuration was invalid before any provider call was made.
+    Validation(String),
     /// The underlying provider HTTP call failed.
     Http(LlmHttpError),
 }
@@ -32,6 +34,7 @@ pub enum ExecutorError {
 impl std::fmt::Display for ExecutorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ExecutorError::Validation(message) => write!(f, "validation error: {message}"),
             ExecutorError::Http(error) => write!(f, "{error}"),
         }
     }
@@ -41,7 +44,10 @@ impl std::error::Error for ExecutorError {}
 
 impl From<LlmHttpError> for ExecutorError {
     fn from(error: LlmHttpError) -> Self {
-        ExecutorError::Http(error)
+        match error {
+            LlmHttpError::Validation(message) => ExecutorError::Validation(message),
+            other => ExecutorError::Http(other),
+        }
     }
 }
 
@@ -573,6 +579,34 @@ mod tests {
         .expect("completion");
         assert_eq!(http.last_body()["max_tokens"], json!(256));
         assert_eq!(http.last_body()["top_p"], json!(0.9));
+    }
+
+    #[tokio::test]
+    async fn non_mapping_passthrough_is_executor_validation_error() {
+        let http = ok_http();
+        let creds = Credentials::new("key");
+        let config = ModelConfig::new("gpt-x", Provider::Openai);
+        let mut extra = Map::new();
+        extra.insert("extra_body".to_string(), json!(["bad"]));
+
+        let err = execute_completion(
+            &http,
+            &creds,
+            &config,
+            &messages(),
+            1024,
+            None,
+            None,
+            None,
+            Some(&extra),
+        )
+        .await
+        .unwrap_err();
+
+        let expected = "provider_params.extra_body must be a mapping, got array";
+        assert!(
+            matches!(err, ExecutorError::Validation(message) if message == expected)
+        );
     }
 
     #[tokio::test]

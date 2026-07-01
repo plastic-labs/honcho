@@ -125,11 +125,14 @@ pub async fn complete<H: LlmHttp>(
 }
 
 fn gemini_build_error(error: BuildConfigError) -> LlmHttpError {
-    LlmHttpError::Transport(error.to_string())
+    match error {
+        BuildConfigError::Passthrough(error) => LlmHttpError::Validation(error.to_string()),
+        other => LlmHttpError::Transport(other.to_string()),
+    }
 }
 
 fn passthrough_error(error: PassthroughError) -> LlmHttpError {
-    LlmHttpError::Transport(error.to_string())
+    LlmHttpError::Validation(error.to_string())
 }
 
 fn build_headers(
@@ -977,6 +980,37 @@ mod tests {
                 ("x-goog-api-key".to_string(), "api-key".to_string()),
                 ("X-Goog-User-Project".to_string(), "honcho".to_string()),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn complete_classifies_non_mapping_passthrough_as_validation() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({}));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert("extra_headers".to_string(), json!("bad"));
+        let params = RequestParams {
+            model: "gemini-2.5-flash",
+            messages: &messages,
+            max_tokens: 128,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        };
+
+        let err = complete(&http, &Credentials::new("api-key"), &params)
+            .await
+            .unwrap_err();
+
+        let expected = "provider_params.extra_headers must be a mapping, got string";
+        assert!(
+            matches!(err, LlmHttpError::Validation(message) if message == expected)
         );
     }
 }

@@ -12,8 +12,7 @@ use serde_json::{Map, Value, json};
 
 use crate::llm::http::{Credentials, LlmHttp, LlmHttpError, LlmStreamHttp, TextStream};
 use crate::llm::request_builder::{
-    PassthroughError, apply_sdk_passthroughs, merge_header_mapping, passthrough_mapping,
-    passthrough_value_to_string,
+    PassthroughError, merge_header_mapping, passthrough_mapping, passthrough_value_to_string,
 };
 use crate::llm::{CompletionResult, ToolCallResult};
 
@@ -46,7 +45,7 @@ pub async fn complete<H: LlmHttp>(
 }
 
 fn passthrough_error(error: PassthroughError) -> LlmHttpError {
-    LlmHttpError::Transport(error.to_string())
+    LlmHttpError::Validation(error.to_string())
 }
 
 fn build_headers(
@@ -92,23 +91,10 @@ fn merge_extra_body(
     body: &mut Map<String, Value>,
     extra_params: &Map<String, Value>,
 ) -> Result<(), PassthroughError> {
-    let mut passthroughs = Map::new();
-    apply_sdk_passthroughs(&mut passthroughs, extra_params)?;
-    let Some(extra_body) = passthroughs.remove("extra_body") else {
-        return Ok(());
-    };
-    let existing = body
-        .entry("extra_body".to_string())
-        .or_insert_with(|| Value::Object(Map::new()));
-    if !existing.is_object() {
-        return Err(PassthroughError::new("extra_body", existing));
-    }
-    let existing_mapping = existing.as_object_mut().expect("object checked above");
-    let extra_body = extra_body
-        .as_object()
-        .ok_or_else(|| PassthroughError::new("extra_body", &extra_body))?;
-    for (key, value) in extra_body {
-        existing_mapping.insert(key.clone(), value.clone());
+    if let Some(extra_body) = passthrough_mapping("extra_body", extra_params)? {
+        for (key, value) in extra_body {
+            body.insert(key.clone(), value.clone());
+        }
     }
     Ok(())
 }
@@ -511,7 +497,38 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(body["extra_body"], json!({"service_tier": "auto"}));
+        assert_eq!(body["service_tier"], json!("auto"));
+        assert!(body.get("extra_body").is_none());
+    }
+
+    #[tokio::test]
+    async fn complete_classifies_non_mapping_passthrough_as_validation() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({}));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert("extra_headers".to_string(), json!(["bad"]));
+        let params = RequestParams {
+            model: "claude-3-5-sonnet",
+            messages: &messages,
+            max_tokens: 128,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        };
+
+        let err = complete(&http, &Credentials::new("sk-test"), &params)
+            .await
+            .unwrap_err();
+
+        let expected = "provider_params.extra_headers must be a mapping, got array";
+        assert!(
+            matches!(err, LlmHttpError::Validation(message) if message == expected)
+        );
     }
 
     #[test]
