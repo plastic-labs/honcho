@@ -3951,13 +3951,16 @@ where
 /// requiring representation batches to have reached the cumulative-token
 /// threshold, then claim up to `workers - owned_count` of them in one
 /// transaction. `representation:` keys must meet `batch_max_tokens` (summed over
-/// their unprocessed messages) unless flushing is enabled or the cap is 0; other
-/// task types are always eligible. Returns the `work_unit_key -> aqs_id` map.
+/// their unprocessed messages) or have an oldest unprocessed item at least
+/// `batch_max_age_seconds` old unless flushing is enabled, the cap is 0, or age
+/// flushing is disabled with 0; other task types are always eligible. Returns
+/// the `work_unit_key -> aqs_id` map.
 pub async fn get_and_claim_work_units(
     pool: &PgPool,
     workers: i64,
     owned_count: i64,
     batch_max_tokens: i64,
+    batch_max_age_seconds: i64,
     flush_enabled: bool,
 ) -> Result<HashMap<String, String>, sqlx::Error> {
     let limit = (workers - owned_count).max(0);
@@ -3967,12 +3970,14 @@ pub async fn get_and_claim_work_units(
 
     let apply_threshold = !flush_enabled && batch_max_tokens > 0;
 
-    // No ORDER BY — matches the Python query, whose LIMIT caps the count without
-    // a defined ordering. The threshold filter and the cap parameter are bound
-    // positionally ($1 = limit, $2 = batch_max_tokens).
+    let apply_age_threshold = apply_threshold && batch_max_age_seconds > 0;
+
     let mut sql = String::from(
         "SELECT wu.work_unit_key \
-         FROM (SELECT work_unit_key FROM queue WHERE NOT processed GROUP BY work_unit_key) wu \
+         FROM ( \
+             SELECT work_unit_key, MIN(created_at) AS oldest_created_at \
+             FROM queue WHERE NOT processed GROUP BY work_unit_key \
+         ) wu \
          LEFT JOIN ( \
              SELECT q.work_unit_key, SUM(m.token_count) AS total_tokens \
              FROM queue q JOIN messages m ON q.message_id = m.id \
@@ -3985,18 +3990,29 @@ pub async fn get_and_claim_work_units(
          )",
     );
     if apply_threshold {
-        sql.push_str(
-            " AND (wu.work_unit_key NOT LIKE 'representation:%' \
-             OR COALESCE(ts.total_tokens, 0) >= $2)",
-        );
+        if apply_age_threshold {
+            sql.push_str(
+                " AND (wu.work_unit_key NOT LIKE 'representation:%' \
+                 OR COALESCE(ts.total_tokens, 0) >= $2 \
+                 OR wu.oldest_created_at <= now() - ($3 * INTERVAL '1 second'))",
+            );
+        } else {
+            sql.push_str(
+                " AND (wu.work_unit_key NOT LIKE 'representation:%' \
+                 OR COALESCE(ts.total_tokens, 0) >= $2)",
+            );
+        }
     }
-    sql.push_str(" LIMIT $1");
+    sql.push_str(" ORDER BY wu.oldest_created_at ASC, wu.work_unit_key ASC LIMIT $1");
 
     let mut transaction = pool.begin().await?;
 
     let mut query = sqlx::query_scalar::<_, String>(&sql).bind(limit);
     if apply_threshold {
         query = query.bind(batch_max_tokens);
+        if apply_age_threshold {
+            query = query.bind(batch_max_age_seconds);
+        }
     }
     let available: Vec<String> = query.fetch_all(&mut *transaction).await?;
     if available.is_empty() {

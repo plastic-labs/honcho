@@ -3152,7 +3152,7 @@ async fn get_and_claim_respects_ownership_threshold_and_flush() {
         .expect("pre-claim owned");
 
     // Threshold active (flush off, cap 10): big + summary eligible, small excluded.
-    let claimed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, false)
+    let claimed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, 1800, false)
         .await
         .expect("claim with threshold");
     let mut keys: Vec<String> = claimed.keys().cloned().collect();
@@ -3175,11 +3175,62 @@ async fn get_and_claim_respects_ownership_threshold_and_flush() {
     }
 
     // Flush enabled: the small representation unit is now eligible too.
-    let flushed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, true)
+    let flushed = db::get_and_claim_work_units(&test_db.pool, 10, 1, 10, 1800, true)
         .await
         .expect("claim with flush");
     assert!(flushed.contains_key("representation:ws:sess:small"));
     assert!(flushed.contains_key("representation:ws:sess:big"));
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn get_and_claim_age_flushes_old_sub_threshold_representation_batch() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    let created = db::create_messages(
+        &test_db.pool,
+        "ws",
+        "sess",
+        &[
+            message_with_tokens("bob", "old small", 5),
+            message_with_tokens("bob", "fresh small", 5),
+        ],
+        false,
+        8192,
+    )
+    .await
+    .expect("seed messages");
+
+    insert_queue_row(
+        &test_db.pool,
+        "representation:ws:sess:old-small",
+        "representation",
+        Some(created[0].id),
+    )
+    .await;
+    insert_queue_row(
+        &test_db.pool,
+        "representation:ws:sess:fresh-small",
+        "representation",
+        Some(created[1].id),
+    )
+    .await;
+    sqlx::query(
+        "UPDATE queue SET created_at = now() - INTERVAL '31 minutes' \
+         WHERE work_unit_key = 'representation:ws:sess:old-small'",
+    )
+    .execute(&test_db.pool)
+    .await
+    .expect("age queue item");
+
+    let claimed = db::get_and_claim_work_units(&test_db.pool, 10, 0, 10, 1800, false)
+        .await
+        .expect("claim with age threshold");
+    let keys: Vec<String> = claimed.keys().cloned().collect();
+    assert_eq!(keys, vec!["representation:ws:sess:old-small".to_string()]);
 
     test_db.teardown().await;
 }
@@ -3194,7 +3245,7 @@ async fn get_and_claim_limit_zero_returns_empty() {
         .expect("workspace");
     insert_queue_row(&test_db.pool, "summary:ws:sess:a:bob", "summary", None).await;
     // owned_count == workers -> no capacity.
-    let claimed = db::get_and_claim_work_units(&test_db.pool, 2, 2, 0, false)
+    let claimed = db::get_and_claim_work_units(&test_db.pool, 2, 2, 0, 1800, false)
         .await
         .expect("claim");
     assert!(claimed.is_empty());

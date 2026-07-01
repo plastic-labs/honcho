@@ -74,6 +74,9 @@ pub struct DeriverSettings {
     pub stale_work_unit_cleanup_interval_seconds: f64,
     /// `DERIVER_REPRESENTATION_BATCH_MAX_TOKENS` — forced-batching token cap.
     pub representation_batch_max_tokens: i64,
+    /// `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` — sub-threshold
+    /// representation batches become eligible after this age; 0 disables.
+    pub representation_batch_max_age_seconds: i64,
     /// `DERIVER_FLUSH_ENABLED` — bypass the batch token threshold.
     pub flush_enabled: bool,
     /// `DERIVER_QUEUE_ERROR_RETENTION_SECONDS` — how long errored queue items are
@@ -95,6 +98,7 @@ impl Default for DeriverSettings {
             stale_session_timeout_minutes: 5,
             stale_work_unit_cleanup_interval_seconds: 60.0,
             representation_batch_max_tokens: 1024,
+            representation_batch_max_age_seconds: 1800,
             flush_enabled: false,
             queue_error_retention_seconds: 30 * 24 * 3600,
         }
@@ -140,6 +144,14 @@ impl DeriverSettings {
                 .get(key)
                 .map(String::as_str)
                 .and_then(|value| value.trim().parse::<i64>().ok())
+                .unwrap_or(default)
+        };
+        let parse_nonnegative_i64 = |key: &str, default: i64| -> i64 {
+            values
+                .get(key)
+                .map(String::as_str)
+                .and_then(|value| value.trim().parse::<i64>().ok())
+                .filter(|value| *value >= 0)
                 .unwrap_or(default)
         };
         let parse_bool = |key: &str, default: bool| -> bool {
@@ -194,6 +206,10 @@ impl DeriverSettings {
                 "DERIVER_REPRESENTATION_BATCH_MAX_TOKENS",
                 defaults.representation_batch_max_tokens,
             ),
+            representation_batch_max_age_seconds: parse_nonnegative_i64(
+                "DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS",
+                defaults.representation_batch_max_age_seconds,
+            ),
             flush_enabled: parse_bool("DERIVER_FLUSH_ENABLED", defaults.flush_enabled),
             queue_error_retention_seconds: parse_i64(
                 "DERIVER_QUEUE_ERROR_RETENTION_SECONDS",
@@ -220,6 +236,7 @@ mod tests {
         assert_eq!(s.stale_session_timeout_minutes, 5);
         assert_eq!(s.stale_work_unit_cleanup_interval_seconds, 60.0);
         assert_eq!(s.representation_batch_max_tokens, 1024);
+        assert_eq!(s.representation_batch_max_age_seconds, 1800);
         assert!(!s.flush_enabled);
     }
 
@@ -238,6 +255,7 @@ mod tests {
             ("DERIVER_POLLING_BACKOFF_MULTIPLIER", "3"),
             ("DERIVER_POLLING_JITTER_RATIO", "0"),
             ("DERIVER_REPRESENTATION_BATCH_MAX_TOKENS", "2048"),
+            ("DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS", "30"),
             ("DERIVER_FLUSH_ENABLED", "1"),
         ]);
         assert_eq!(s.workers, 4);
@@ -246,6 +264,7 @@ mod tests {
         assert_eq!(s.polling_backoff_multiplier, 3.0);
         assert_eq!(s.polling_jitter_ratio, 0.0);
         assert_eq!(s.representation_batch_max_tokens, 2048);
+        assert_eq!(s.representation_batch_max_age_seconds, 30);
         assert!(s.flush_enabled);
     }
 
@@ -253,5 +272,11 @@ mod tests {
     fn unparseable_value_falls_back_to_default() {
         let s = DeriverSettings::from_pairs([("DERIVER_WORKERS", "not-a-number")]);
         assert_eq!(s.workers, DeriverSettings::default().workers);
+        let s =
+            DeriverSettings::from_pairs([("DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS", "-1")]);
+        assert_eq!(
+            s.representation_batch_max_age_seconds,
+            DeriverSettings::default().representation_batch_max_age_seconds
+        );
     }
 }

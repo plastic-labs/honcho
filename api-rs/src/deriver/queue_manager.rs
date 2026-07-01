@@ -442,6 +442,7 @@ where
             self.poll_settings.workers as i64,
             0,
             self.poll_settings.representation_batch_max_tokens,
+            self.poll_settings.representation_batch_max_age_seconds,
             self.poll_settings.flush_enabled,
         )
         .await?;
@@ -518,6 +519,7 @@ where
                 workers as i64,
                 owned,
                 self.poll_settings.representation_batch_max_tokens,
+                self.poll_settings.representation_batch_max_age_seconds,
                 self.poll_settings.flush_enabled,
             )
             .await
