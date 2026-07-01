@@ -88,15 +88,16 @@ impl ModelConfig {
     /// `MAX_OUTPUT_TOKENS`, `TEMPERATURE`, `TOP_P`, `TOP_K`, `FREQUENCY_PENALTY`,
     /// `PRESENCE_PENALTY`, `SEED`, `THINKING_BUDGET_TOKENS`, `THINKING_EFFORT`
     /// (alias `REASONING_EFFORT`), `STRUCTURED_OUTPUT_MODE`, `BASE_URL`,
-    /// `API_KEY`. Blank or unparseable values leave the existing value untouched.
+    /// `API_KEY`, `PROVIDER_PARAMS`. Blank or unparseable values leave the existing
+    /// value untouched.
     ///
     /// Fallback chains are parsed: `{prefix}__FALLBACK__MODEL` +
     /// `{prefix}__FALLBACK__TRANSPORT` (both required to form a fallback) plus the
     /// same tuning knobs and `{prefix}__FALLBACK__OVERRIDES__{API_KEY,BASE_URL}`
     /// (Python's `FallbackModelSettings.overrides`). `{prefix}__STOP_SEQUENCES`
-    /// (and the fallback's) is a JSON array of strings, matching pydantic-settings'
-    /// JSON decoding of complex env fields. `CACHE_POLICY` and free-form provider
-    /// params are still not parsed here.
+    /// (and the fallback's) is a JSON array of strings and `PROVIDER_PARAMS` is a
+    /// JSON object, matching pydantic-settings' JSON decoding of complex env fields.
+    /// `CACHE_POLICY` is still not parsed here.
     pub fn with_env_overrides(
         mut self,
         values: &std::collections::HashMap<String, String>,
@@ -170,7 +171,8 @@ fn apply_model_knobs(
         config.thinking_effort = Some(effort);
     }
     if config.transport == Provider::Openai
-        && let Some(mode) = get("STRUCTURED_OUTPUT_MODE").and_then(|m| StructuredOutputMode::parse(&m))
+        && let Some(mode) =
+            get("STRUCTURED_OUTPUT_MODE").and_then(|m| StructuredOutputMode::parse(&m))
     {
         config.structured_output_mode = Some(mode);
     }
@@ -204,6 +206,11 @@ fn apply_model_knobs(
         && let Ok(sequences) = serde_json::from_str::<Vec<String>>(&raw)
     {
         config.stop_sequences = Some(sequences);
+    }
+    if let Some(raw) = get("PROVIDER_PARAMS")
+        && let Ok(Value::Object(params)) = serde_json::from_str::<Value>(&raw)
+    {
+        config.provider_params = params;
     }
 }
 
@@ -411,6 +418,45 @@ mod env_override_tests {
     }
 
     #[test]
+    fn provider_params_parsed_as_json_object() {
+        let values = map(&[(
+            "X__PROVIDER_PARAMS",
+            r#"{"extra_body":{"reasoning":{"effort":"low"}},"extra_headers":{"X-Test":"1"}}"#,
+        )]);
+        let config =
+            ModelConfig::new("base-model", Provider::Openai).with_env_overrides(&values, "X");
+        assert_eq!(
+            config.provider_params.get("extra_body"),
+            Some(&serde_json::json!({"reasoning": {"effort": "low"}}))
+        );
+        assert_eq!(
+            config.provider_params.get("extra_headers"),
+            Some(&serde_json::json!({"X-Test": "1"}))
+        );
+    }
+
+    #[test]
+    fn provider_params_invalid_or_non_object_json_is_ignored() {
+        let existing = serde_json::json!({"extra_body": {"keep": true}});
+        let mut config = ModelConfig::new("base-model", Provider::Openai);
+        config.provider_params = existing.as_object().unwrap().clone();
+
+        let values = map(&[("X__PROVIDER_PARAMS", r#"["not", "an", "object"]"#)]);
+        let config = config.with_env_overrides(&values, "X");
+        assert_eq!(
+            config.provider_params,
+            existing.as_object().unwrap().clone()
+        );
+
+        let values = map(&[("X__PROVIDER_PARAMS", "not-json")]);
+        let config = config.with_env_overrides(&values, "X");
+        assert_eq!(
+            config.provider_params,
+            existing.as_object().unwrap().clone()
+        );
+    }
+
+    #[test]
     fn fallback_chain_parsed_with_overrides() {
         let values = map(&[
             ("X__MODEL", "gpt-primary"),
@@ -419,6 +465,10 @@ mod env_override_tests {
             ("X__FALLBACK__MAX_OUTPUT_TOKENS", "2048"),
             ("X__FALLBACK__THINKING_EFFORT", "low"),
             ("X__FALLBACK__STRUCTURED_OUTPUT_MODE", "json_schema"),
+            (
+                "X__FALLBACK__PROVIDER_PARAMS",
+                r#"{"extra_query":{"trace":"1"}}"#,
+            ),
             ("X__FALLBACK__OVERRIDES__API_KEY", "sk-fallback"),
             (
                 "X__FALLBACK__OVERRIDES__BASE_URL",
@@ -436,6 +486,10 @@ mod env_override_tests {
         assert_eq!(
             fallback.structured_output_mode,
             Some(StructuredOutputMode::JsonSchema)
+        );
+        assert_eq!(
+            fallback.provider_params.get("extra_query"),
+            Some(&serde_json::json!({"trace": "1"}))
         );
         assert_eq!(fallback.api_key.as_deref(), Some("sk-fallback"));
         assert_eq!(
