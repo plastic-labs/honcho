@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 use sqlx::PgPool;
 
 use crate::db::{self, DocumentToCreate};
-use crate::dialectic::Embedder;
+use crate::dialectic::{normalize_observation_id, Embedder};
 use crate::representation::Representation;
 
 /// Levels that carry `source_ids` (and a `source_ids` column value).
@@ -97,7 +97,16 @@ pub fn parse_observation(raw: &Value, level: &str) -> Result<ObservationInput, O
     };
     let content = content_raw.replace('\u{0}', "");
 
-    let source_ids = opt_str_list(raw, "source_ids").map_err(&fail)?;
+    let source_ids = opt_str_list(raw, "source_ids")
+        .map(|ids| {
+            ids.map(|source_ids| {
+                source_ids
+                    .into_iter()
+                    .map(|source_id| normalize_observation_id(&source_id))
+                    .collect::<Vec<String>>()
+            })
+        })
+        .map_err(&fail)?;
     let premises = opt_str_list(raw, "premises").map_err(&fail)?;
     let sources = opt_str_list(raw, "sources").map_err(&fail)?;
     let pattern_type = opt_enum(raw, "pattern_type", &PATTERN_TYPES).map_err(&fail)?;
@@ -346,6 +355,25 @@ mod tests {
         assert!(parse_observation(&one, "contradiction").is_err());
         let two = json!({"content": "x", "source_ids": ["a", "b"]});
         assert!(parse_observation(&two, "contradiction").is_ok());
+    }
+
+    #[test]
+    fn parse_normalizes_source_id_display_prefixes() {
+        let raw = json!({
+            "content": "x",
+            "source_ids": ["id:abc", "ID: abc", " abc ", "a-b_c"],
+        });
+
+        let parsed = parse_observation(&raw, "deductive").unwrap();
+        assert_eq!(
+            parsed.source_ids.unwrap(),
+            vec![
+                "abc".to_string(),
+                "abc".to_string(),
+                "abc".to_string(),
+                "a-b_c".to_string(),
+            ]
+        );
     }
 
     #[test]

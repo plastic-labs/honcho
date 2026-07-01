@@ -50,6 +50,19 @@ pub fn safe_int(value: &Value, default: i64) -> i64 {
     }
 }
 
+pub(crate) fn normalize_observation_id(obs_id: &str) -> String {
+    let trimmed = obs_id.trim();
+    let without_prefix = if trimmed
+        .get(..3)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("id:"))
+    {
+        &trimmed[3..]
+    } else {
+        trimmed
+    };
+    without_prefix.trim().to_string()
+}
+
 /// Python `f"{n:,}"` — group digits in threes with commas.
 fn comma_grouped(n: usize) -> String {
     let digits = n.to_string();
@@ -598,12 +611,13 @@ pub async fn handle_get_reasoning_chain(
     ctx: &ToolContext,
     input: &Value,
 ) -> Result<String, sqlx::Error> {
-    let observation_id = input_str(input, "observation_id").unwrap_or("");
+    let observation_id =
+        normalize_observation_id(input_str(input, "observation_id").unwrap_or(""));
     let direction = input_str(input, "direction").unwrap_or("both");
     format_reasoning_chain(
         pool,
         &ctx.workspace_name,
-        observation_id,
+        &observation_id,
         direction,
         Some(&ctx.observer),
         Some(&ctx.observed),
@@ -1381,6 +1395,14 @@ mod tests {
         assert_eq!(safe_int(&json!(false), 10), 0);
         assert_eq!(safe_int(&Value::Null, 10), 10);
         assert_eq!(safe_int(&json!([1]), 10), 10);
+    }
+
+    #[test]
+    fn normalize_observation_id_strips_only_display_prefix() {
+        assert_eq!(normalize_observation_id("id:abc"), "abc");
+        assert_eq!(normalize_observation_id("ID: abc"), "abc");
+        assert_eq!(normalize_observation_id(" abc "), "abc");
+        assert_eq!(normalize_observation_id("a-b_c"), "a-b_c");
     }
 
     #[test]
