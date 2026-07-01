@@ -267,6 +267,7 @@ impl FilterBuilder {
             (FilterTarget::Conclusion, "workspace_id" | "workspace_name") => Ok("workspace_name"),
             (FilterTarget::Conclusion, "observer_id" | "observer") => Ok("observer"),
             (FilterTarget::Conclusion, "observed_id" | "observed") => Ok("observed"),
+            (FilterTarget::Conclusion, "level") => Ok("level"),
             (FilterTarget::Conclusion, "metadata") => Ok("internal_metadata"),
             (_, "id") => Ok("name"),
             (_, "created_at") => Ok("created_at"),

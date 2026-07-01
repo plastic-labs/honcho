@@ -110,6 +110,7 @@ struct ConclusionRow {
     observer: String,
     observed: String,
     session_name: Option<String>,
+    level: String,
     created_at: DateTime<Utc>,
 }
 
@@ -1773,7 +1774,8 @@ pub async fn list_conclusions(
     let limit_idx = filter.bindings.len() + 2;
     let offset_idx = filter.bindings.len() + 3;
     let sql = format!(
-        "SELECT id, content, observer, observed, session_name, created_at \
+        "SELECT id, content, observer, observed, session_name, \
+                COALESCE(level, 'explicit') AS level, created_at \
          FROM documents {where_sql} \
          ORDER BY created_at {direction} \
          LIMIT ${limit_idx} OFFSET ${offset_idx}"
@@ -2444,7 +2446,7 @@ pub async fn insert_conclusions(
              (id, workspace_name, observer, observed, content, level, times_derived, \
               internal_metadata, session_name, embedding, sync_state) \
              VALUES ($1, $2, $3, $4, $5, 'explicit', 1, '{}'::jsonb, $6, $7::vector, 'synced') \
-             RETURNING id, content, observer, observed, session_name, created_at",
+             RETURNING id, content, observer, observed, session_name, level, created_at",
         )
         .bind(generate_nanoid())
         .bind(workspace_name)
@@ -2479,7 +2481,8 @@ pub async fn query_documents_recent(
     };
     let limit_idx = if session_name.is_some() { 5 } else { 4 };
     let sql = format!(
-        "SELECT id, content, observer, observed, session_name, created_at \
+        "SELECT id, content, observer, observed, session_name, \
+                COALESCE(level, 'explicit') AS level, created_at \
          FROM documents \
          WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
            AND deleted_at IS NULL{session_clause} \
@@ -2557,7 +2560,8 @@ pub async fn query_documents_most_derived(
     limit: i64,
 ) -> Result<Vec<Value>, sqlx::Error> {
     let rows = sqlx::query_as::<_, ConclusionRow>(
-        "SELECT id, content, observer, observed, session_name, created_at \
+        "SELECT id, content, observer, observed, session_name, \
+                COALESCE(level, 'explicit') AS level, created_at \
          FROM documents \
          WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
            AND deleted_at IS NULL \
@@ -2720,7 +2724,8 @@ pub async fn query_documents_pgvector(
     };
 
     let sql = format!(
-        "SELECT id, content, observer, observed, session_name, created_at \
+        "SELECT id, content, observer, observed, session_name, \
+                COALESCE(level, 'explicit') AS level, created_at \
          FROM documents \
          WHERE workspace_name = ${ws_idx} AND observer = ${observer_idx} \
            AND observed = ${observed_idx} \
@@ -4969,6 +4974,7 @@ fn conclusion_json(row: ConclusionRow) -> Value {
         "observer_id": row.observer,
         "observed_id": row.observed,
         "session_id": row.session_name,
+        "level": row.level,
         "created_at": row.created_at
     })
 }

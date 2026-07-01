@@ -1,9 +1,108 @@
 use axum::body::Body;
 use honcho_api_rs::app::{AppState, build_router};
 use honcho_api_rs::auth::{AuthConfig, create_hs256_token_for_test};
+use honcho_api_rs::cache::PeerCache;
+use honcho_api_rs::config::EmbeddingConfig;
+use honcho_api_rs::db;
+use honcho_api_rs::llm::Provider;
+use honcho_api_rs::llm::credentials::TransportApiKeys;
 use http::{Request, StatusCode};
 use serde_json::{Value, json};
+use sqlx::{Connection, Executor, PgConnection, PgPool};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
+
+const SCHEMA: &str = include_str!("fixtures/schema.sql");
+
+struct TestDb {
+    admin_url: String,
+    db_name: String,
+    pool: PgPool,
+}
+
+impl TestDb {
+    async fn setup() -> Option<Self> {
+        let admin_url = std::env::var("TEST_DATABASE_URL").ok()?;
+        let db_name = unique_db_name();
+
+        let mut admin = PgConnection::connect(&admin_url)
+            .await
+            .expect("connect to admin database");
+        admin
+            .execute(format!("CREATE DATABASE \"{db_name}\"").as_str())
+            .await
+            .expect("create test database");
+        admin.close().await.ok();
+
+        let pool = PgPool::connect(&swap_db_name(&admin_url, &db_name))
+            .await
+            .expect("connect to test database");
+        pool.execute(SCHEMA).await.expect("load honcho schema");
+
+        Some(Self {
+            admin_url,
+            db_name,
+            pool,
+        })
+    }
+
+    async fn teardown(self) {
+        self.pool.close().await;
+        let mut admin = PgConnection::connect(&self.admin_url)
+            .await
+            .expect("reconnect to admin database");
+        admin
+            .execute(format!("DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)", self.db_name).as_str())
+            .await
+            .expect("drop test database");
+        admin.close().await.ok();
+    }
+}
+
+fn unique_db_name() -> String {
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("apirs_http_test_{nanos}_{seq}")
+}
+
+fn swap_db_name(url: &str, db_name: &str) -> String {
+    match url.rfind('/') {
+        Some(idx) => format!("{}/{}", &url[..idx], db_name),
+        None => format!("{url}/{db_name}"),
+    }
+}
+
+fn state_with_pool(pool: PgPool) -> AppState {
+    AppState::new(
+        pool,
+        AuthConfig {
+            use_auth: false,
+            jwt_secret: None,
+        },
+        "public".to_string(),
+        true,
+        PeerCache::disabled(),
+        false,
+        8192,
+        EmbeddingConfig {
+            model: "text-embedding-3-small".to_string(),
+            vector_dimensions: 1536,
+            send_dimensions: false,
+            max_tokens: 8192,
+            api_key: None,
+            base_url: None,
+            transport: Provider::Openai,
+        },
+        true,
+        honcho_api_rs::dialectic_config::DialecticSettings::default(),
+        TransportApiKeys::default(),
+    )
+}
 
 #[tokio::test]
 async fn health_route_returns_ok() {
@@ -1825,6 +1924,80 @@ async fn conclusion_query_requires_observer_and_observed() {
         response_json(response).await,
         json!({"detail": "observer and observed must be specified for semantic search"})
     );
+}
+
+#[tokio::test]
+async fn conclusions_list_returns_level_and_filters_by_level() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["alice", "bob"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::get_or_create_collection(&test_db.pool, "ws", "alice", "bob")
+        .await
+        .expect("collection");
+
+    for (id, content, level) in [
+        ("aaaaaaaaaaaaaaaaaaaaa", "explicit memory", "explicit"),
+        ("bbbbbbbbbbbbbbbbbbbbb", "derived memory", "deductive"),
+    ] {
+        sqlx::query(
+            "INSERT INTO documents (id, content, workspace_name, observer, observed, level, sync_state) \
+             VALUES ($1, $2, 'ws', 'alice', 'bob', $3, 'synced')",
+        )
+        .bind(id)
+        .bind(content)
+        .bind(level)
+        .execute(&test_db.pool)
+        .await
+        .expect("insert conclusion");
+    }
+
+    let state = state_with_pool(test_db.pool.clone());
+    let all = build_router(state.clone())
+        .oneshot(
+            Request::post("/v3/workspaces/ws/conclusions/list")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(all.status(), StatusCode::OK);
+    let all_json = response_json(all).await;
+    let levels: Vec<&str> = all_json["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter_map(|item| item["level"].as_str())
+        .collect();
+    assert!(levels.contains(&"explicit"));
+    assert!(levels.contains(&"deductive"));
+
+    let explicit = build_router(state)
+        .oneshot(
+            Request::post("/v3/workspaces/ws/conclusions/list")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"filters": {"level": "explicit"}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(explicit.status(), StatusCode::OK);
+    let explicit_json = response_json(explicit).await;
+    let items = explicit_json["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["content"], json!("explicit memory"));
+    assert_eq!(items[0]["level"], json!("explicit"));
+
+    test_db.teardown().await;
 }
 
 #[tokio::test]
