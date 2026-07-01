@@ -5316,7 +5316,7 @@ async fn create_documents_exact_dedup_collapses_batch_and_reinforces_existing() 
             doc_to_create_with_times("exact match", 6, 5),
             doc_to_create_with_times(" Exact Match ", 7, 8),
             doc_to_create("new fact", 8),
-            doc_to_create(" NEW FACT ", 9),
+            doc_to_create_with_times(" NEW FACT ", 9, 6),
         ],
         "ws",
         "alice",
@@ -5335,7 +5335,17 @@ async fn create_documents_exact_dedup_collapses_batch_and_reinforces_existing() 
     .fetch_one(&test_db.pool)
     .await
     .expect("exact existing");
-    assert_eq!(exact_times, 5);
+    assert_eq!(exact_times, 8);
+
+    let new_fact_times: i32 = sqlx::query_scalar(
+        "SELECT times_derived FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND content = 'new fact' \
+           AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("new fact");
+    assert_eq!(new_fact_times, 6);
 
     let live: Vec<String> = sqlx::query_scalar(
         "SELECT content FROM documents \
@@ -5349,6 +5359,49 @@ async fn create_documents_exact_dedup_collapses_batch_and_reinforces_existing() 
         live,
         vec!["  Exact Match  ".to_string(), "new fact".to_string()]
     );
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
+async fn create_documents_exact_dedup_serializes_concurrent_writers() {
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+    setup_collection_fixtures(&test_db.pool).await;
+
+    let left_pool = test_db.pool.clone();
+    let right_pool = test_db.pool.clone();
+    let left = db::create_documents(
+        &left_pool,
+        vec![doc_to_create_with_times(" Concurrent Exact ", 5, 2)],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    );
+    let right = db::create_documents(
+        &right_pool,
+        vec![doc_to_create_with_times("concurrent exact", 6, 7)],
+        "ws",
+        "alice",
+        "bob",
+        false,
+    );
+
+    let (left_count, right_count) = tokio::join!(left, right);
+    let inserted = left_count.expect("left create") + right_count.expect("right create");
+    assert_eq!(inserted, 1);
+
+    let row: (i64, i32) = sqlx::query_as(
+        "SELECT COUNT(*), MAX(times_derived) FROM documents \
+         WHERE observer = 'alice' AND observed = 'bob' AND deleted_at IS NULL",
+    )
+    .fetch_one(&test_db.pool)
+    .await
+    .expect("live docs");
+    assert_eq!(row.0, 1);
+    assert!(row.1 >= 7);
 
     test_db.teardown().await;
 }

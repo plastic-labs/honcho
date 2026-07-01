@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use sqlx::postgres::{PgArguments, PgRow};
 use sqlx::query::{Query, QueryAs};
 use sqlx::{FromRow, PgPool, Postgres, Row};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 
 use crate::filters::FilterClause;
@@ -3451,8 +3451,46 @@ struct DuplicateCandidate {
     times_derived: i32,
 }
 
+const NORMALIZED_DOCUMENT_CONTENT_SQL: &str =
+    "lower(regexp_replace(content, '^\\s+|\\s+$', '', 'g'))";
+
 fn normalize_document_content(content: &str) -> String {
     content.trim().to_lowercase()
+}
+
+fn exact_dedup_scope_key(workspace_name: &str, observer: &str, observed: &str) -> String {
+    format!("documents_exact_dedup:{workspace_name}:{observer}:{observed}")
+}
+
+async fn lock_exact_dedup_scope(
+    conn: &mut sqlx::PgConnection,
+    workspace_name: &str,
+    observer: &str,
+    observed: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(exact_dedup_scope_key(workspace_name, observer, observed))
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+fn aggregate_exact_content_duplicates(
+    documents: Vec<DocumentToCreate>,
+) -> Vec<(String, DocumentToCreate)> {
+    let mut index_by_normalized: HashMap<String, usize> = HashMap::new();
+    let mut aggregated: Vec<(String, DocumentToCreate)> = Vec::new();
+    for doc in documents {
+        let normalized = normalize_document_content(&doc.content);
+        if let Some(index) = index_by_normalized.get(&normalized).copied() {
+            aggregated[index].1.times_derived =
+                aggregated[index].1.times_derived.max(doc.times_derived);
+        } else {
+            index_by_normalized.insert(normalized.clone(), aggregated.len());
+            aggregated.push((normalized, doc));
+        }
+    }
+    aggregated
 }
 
 /// The nearest non-deleted document within `max_distance` cosine distance of
@@ -3571,29 +3609,32 @@ pub async fn create_documents_returning_levels(
     observed: &str,
     deduplicate: bool,
 ) -> Result<Vec<String>, sqlx::Error> {
+    let documents = aggregate_exact_content_duplicates(documents);
     let mut transaction = pool.begin().await?;
+    if !documents.is_empty() {
+        lock_exact_dedup_scope(&mut transaction, workspace_name, observer, observed).await?;
+    }
     let mut inserted_ids: Vec<String> = Vec::new();
     let mut inserted_levels: Vec<String> = Vec::new();
     let batch_normalized: Vec<String> = documents
         .iter()
-        .map(|doc| normalize_document_content(&doc.content))
-        .collect::<HashSet<_>>()
-        .into_iter()
+        .map(|(normalized, _)| normalized.clone())
         .collect();
     let mut existing_by_normalized: HashMap<String, String> = HashMap::new();
     if !batch_normalized.is_empty() {
-        let rows = sqlx::query(
+        let sql = format!(
             "SELECT id, content FROM documents \
              WHERE workspace_name = $1 AND observer = $2 AND observed = $3 \
                AND deleted_at IS NULL \
-               AND lower(regexp_replace(content, '^\\s+|\\s+$', '', 'g')) = ANY($4)",
-        )
-        .bind(workspace_name)
-        .bind(observer)
-        .bind(observed)
-        .bind(&batch_normalized)
-        .fetch_all(&mut *transaction)
-        .await?;
+               AND {NORMALIZED_DOCUMENT_CONTENT_SQL} = ANY($4)"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(workspace_name)
+            .bind(observer)
+            .bind(observed)
+            .bind(&batch_normalized)
+            .fetch_all(&mut *transaction)
+            .await?;
 
         for row in rows {
             let id: String = row.get("id");
@@ -3603,13 +3644,8 @@ pub async fn create_documents_returning_levels(
                 .or_insert(id);
         }
     }
-    let mut seen_in_batch: HashSet<String> = HashSet::new();
 
-    for mut doc in documents {
-        let normalized_content = normalize_document_content(&doc.content);
-        if !seen_in_batch.insert(normalized_content.clone()) {
-            continue;
-        }
+    for (normalized_content, mut doc) in documents {
         if let Some(existing_id) = existing_by_normalized.get(&normalized_content) {
             sqlx::query(
                 "UPDATE documents SET times_derived = greatest(times_derived + 1, $2) WHERE id = $1",
