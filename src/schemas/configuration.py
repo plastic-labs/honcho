@@ -135,7 +135,7 @@ class WorkspaceConfiguration(BaseModel):
     )
     dream: DreamConfiguration | None = Field(
         default=None,
-        description="Configuration for dream functionality. If reasoning is disabled, dreams will also be disabled and these settings will be ignored.",
+        description="Configuration for dream functionality. If reasoning is disabled, dreams will also be disabled and this setting will be ignored.",
     )
 
 
@@ -159,6 +159,10 @@ class MessageConfiguration(BaseModel):
     reasoning: ReasoningConfiguration | None = Field(
         default=None,
         description="Configuration for reasoning functionality.",
+    )
+    summary: SummaryConfiguration | None = Field(
+        default=None,
+        description="Configuration for summary functionality.",
     )
 
 
