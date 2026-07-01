@@ -126,9 +126,11 @@ async fn test_webhook_rejects_mismatched_workspace_scope() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // The webhook routes are now workspace-scoped via `authorize` (port of #679),
+    // so a mismatched-workspace token is denied with the standard message.
     assert_eq!(
         response_json(response).await,
-        json!({"detail": "Unable to publish test webhook"})
+        json!({"detail": "JWT not permissioned for this resource"})
     );
 }
 
@@ -625,9 +627,11 @@ async fn workspace_write_route_rejects_non_admin_without_workspace_scope() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // A peer-scoped token without its parent workspace is now malformed and
+    // rejected at verify time by the token-shape invariant (port of #679).
     assert_eq!(
         response_json(response).await,
-        json!({"detail": "Unauthorized access to resource"})
+        json!({"detail": "Invalid JWT scope: peer/session token missing workspace"})
     );
 }
 
@@ -735,9 +739,11 @@ async fn peer_create_rejects_mismatched_workspace_or_peer_scope() {
         .await
         .unwrap();
     assert_eq!(peer_response.status(), StatusCode::UNAUTHORIZED);
+    // `{p: peer-b}` carries no workspace, so the token-shape invariant rejects it
+    // at verify time (port of #679).
     assert_eq!(
         response_json(peer_response).await,
-        json!({"detail": "Unauthorized access to resource"})
+        json!({"detail": "Invalid JWT scope: peer/session token missing workspace"})
     );
 }
 
@@ -837,14 +843,18 @@ async fn session_clone_rejects_mismatched_session_scope() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // `{s: session-b}` carries no workspace, so the token-shape invariant rejects
+    // it at verify time (port of #679).
     assert_eq!(
         response_json(response).await,
-        json!({"detail": "JWT not permissioned for this resource"})
+        json!({"detail": "Invalid JWT scope: peer/session token missing workspace"})
     );
 }
 
 #[tokio::test]
-async fn session_create_allows_peer_only_token_until_write_guard() {
+async fn session_create_rejects_peer_only_token_without_workspace() {
+    // A peer-scoped token with no workspace is malformed under the token-shape
+    // invariant (#679) and rejected at verify, before the write guard.
     let token = create_hs256_token_for_test(&json!({"t": "", "p": "peer-a"}), "secret");
     let state = AppState::for_test(AuthConfig {
         use_auth: true,
@@ -861,10 +871,10 @@ async fn session_create_allows_peer_only_token_until_write_guard() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(
         response_json(response).await,
-        json!({"detail": "Rust write routes are disabled"})
+        json!({"detail": "Invalid JWT scope: peer/session token missing workspace"})
     );
 }
 
@@ -907,9 +917,11 @@ async fn session_create_rejects_mismatched_workspace_or_session_scope() {
         .await
         .unwrap();
     assert_eq!(session_response.status(), StatusCode::UNAUTHORIZED);
+    // `{s: session-b}` carries no workspace → rejected by the token-shape
+    // invariant at verify time (port of #679).
     assert_eq!(
         response_json(session_response).await,
-        json!({"detail": "Unauthorized access to resource"})
+        json!({"detail": "Invalid JWT scope: peer/session token missing workspace"})
     );
 }
 
@@ -954,9 +966,11 @@ async fn session_update_rejects_mismatched_workspace_or_session_scope() {
         .await
         .unwrap();
     assert_eq!(session_response.status(), StatusCode::UNAUTHORIZED);
+    // `{s: session-b}` carries no workspace → rejected by the token-shape
+    // invariant at verify time (port of #679).
     assert_eq!(
         response_json(session_response).await,
-        json!({"detail": "JWT not permissioned for this resource"})
+        json!({"detail": "Invalid JWT scope: peer/session token missing workspace"})
     );
 }
 

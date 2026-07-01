@@ -54,6 +54,8 @@ pub enum AuthError {
     MissingToken,
     #[error("Invalid JWT")]
     InvalidJwt,
+    #[error("Invalid JWT scope: peer/session token missing workspace")]
+    InvalidScope,
     #[error("JWT expired")]
     Expired,
     #[error("Resource requires admin privileges")]
@@ -62,13 +64,44 @@ pub enum AuthError {
     PermissionDenied,
 }
 
-pub fn authorize(
+/// Whether a peer- or session-scoped claim lacks its parent workspace.
+///
+/// A peer or session scope is meaningless without a workspace: the route-level
+/// check cannot rule out cross-workspace use (a `{p: "alice"}` token would match
+/// `alice` in any workspace). Truthiness-based — callers pass already-normalized
+/// `Option`s so empty-string claims count as absent. Shared by token
+/// verification (the token-shape invariant) and the keys API (the creation-time
+/// guard) so the two rules cannot drift apart.
+pub fn scope_requires_workspace(
+    peer: Option<&str>,
+    session: Option<&str>,
+    workspace: Option<&str>,
+) -> bool {
+    (peer.is_some() || session.is_some()) && workspace.is_none()
+}
+
+/// The outcome of a pure scope check (no token parsing, no I/O).
+///
+/// `NeedsMembership` defers a peer-scoped-key session-membership lookup to the
+/// caller, which has the DB pool — `authorize_scope` itself stays synchronous.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ScopeOutcome {
+    Grant,
+    Deny(AuthError),
+    NeedsMembership {
+        peer: String,
+        session: String,
+        workspace: String,
+    },
+}
+
+/// Parse the `Authorization` header and verify the token, returning the decoded
+/// claims. In no-auth mode every request is admin. This is the shared preamble
+/// for both the synchronous [`authorize`] and the async member-read path in the
+/// router — the scope decision ([`authorize_scope`]) runs on the result.
+pub fn verify_request(
     config: &AuthConfig,
     authorization_header: Option<&str>,
-    admin_required: bool,
-    workspace_name: Option<&str>,
-    peer_name: Option<&str>,
-    session_name: Option<&str>,
 ) -> Result<JwtParams, AuthError> {
     if !config.use_auth {
         return Ok(JwtParams::admin());
@@ -88,48 +121,116 @@ pub fn authorize(
         .map(|(_, rest)| rest.trim())
         .filter(|rest| !rest.is_empty())
         .ok_or(AuthError::MissingToken)?;
-    let params = verify_hs256_token(
+    verify_hs256_token(
         token,
         config.jwt_secret.as_deref().ok_or(AuthError::InvalidJwt)?,
-    )?;
+    )
+}
 
+/// Authorize verified claims against a route's declared scope, by the token's
+/// *narrowest* scope (port of `src/security.py::auth`, #679).
+///
+/// A narrower-than-workspace token must NOT fall back to workspace access:
+/// `{w: ws, p: alice}` may only act on `alice`, never on a sibling peer. When
+/// `allow_member_read` is set and a peer-scoped token hits a session route it is
+/// not directly scoped to, the decision is deferred via `NeedsMembership` so the
+/// caller can check `is_peer_in_session`.
+pub fn authorize_scope(
+    params: &JwtParams,
+    admin_required: bool,
+    workspace_name: Option<&str>,
+    peer_name: Option<&str>,
+    session_name: Option<&str>,
+    allow_member_read: bool,
+) -> ScopeOutcome {
     if params.is_admin() {
-        return Ok(params);
+        return ScopeOutcome::Grant;
     }
     if admin_required {
-        return Err(AuthError::AdminRequired);
+        return ScopeOutcome::Deny(AuthError::AdminRequired);
     }
-    if let Some(session_name) = session_name {
-        if params.session.as_deref() == Some(session_name) {
-            if let Some(workspace_name) = workspace_name {
-                if params.workspace.as_deref() != Some(workspace_name) {
-                    return Err(AuthError::PermissionDenied);
-                }
-            }
-            return Ok(params);
-        }
+
+    // Self-authorizing routes declare no scope: decode the token here and let
+    // the handler compare the claims against body/path data itself (needed for
+    // routes whose resource identifier is not available to the route guard).
+    if workspace_name.is_none() && peer_name.is_none() && session_name.is_none() {
+        return ScopeOutcome::Grant;
     }
-    if let Some(peer_name) = peer_name {
-        if params.peer.as_deref() == Some(peer_name) {
-            if let Some(workspace_name) = workspace_name {
-                if params.workspace.as_deref() != Some(workspace_name) {
-                    return Err(AuthError::PermissionDenied);
-                }
-            }
-            return Ok(params);
-        }
-    }
+
+    // Every scoped, non-admin path requires the token's workspace to match the
+    // route's. Check it once here so no branch below can forget it and silently
+    // re-open cross-workspace access (the bug this rewrite fixes).
     if let Some(workspace_name) = workspace_name {
-        if params.workspace.as_deref() == Some(workspace_name) {
-            return Ok(params);
+        if params.workspace.as_deref() != Some(workspace_name) {
+            return ScopeOutcome::Deny(AuthError::PermissionDenied);
         }
     }
 
-    if workspace_name.is_some() || peer_name.is_some() || session_name.is_some() {
-        return Err(AuthError::PermissionDenied);
+    if params.session.is_some() {
+        // Session-scoped token: confined to its own session. No cross-scope
+        // access to peer routes.
+        if session_name.is_none() || params.session.as_deref() != session_name {
+            return ScopeOutcome::Deny(AuthError::PermissionDenied);
+        }
+        return ScopeOutcome::Grant;
     }
 
-    Ok(params)
+    if let Some(token_peer) = params.peer.as_deref() {
+        // Peer-scoped token: its own peer routes...
+        if peer_name == Some(token_peer) {
+            return ScopeOutcome::Grant;
+        }
+        // ...plus read-only access to the sessions the peer is a member of.
+        // Gated on `allow_member_read` so only read routes opt in; writes stay
+        // denied. Requires the route's workspace (already matched above) so the
+        // membership lookup is scoped.
+        if allow_member_read {
+            if let (Some(session_name), Some(workspace_name)) = (session_name, workspace_name) {
+                return ScopeOutcome::NeedsMembership {
+                    peer: token_peer.to_string(),
+                    session: session_name.to_string(),
+                    workspace: workspace_name.to_string(),
+                };
+            }
+        }
+        return ScopeOutcome::Deny(AuthError::PermissionDenied);
+    }
+
+    if params.workspace.is_some() {
+        // Workspace tokens reach any route inside their workspace (the workspace
+        // match was verified above).
+        return ScopeOutcome::Grant;
+    }
+
+    ScopeOutcome::Deny(AuthError::PermissionDenied)
+}
+
+/// Verify the request and authorize it against a route scope. Used by every
+/// route that is not a session member-read route (those defer to
+/// [`authorize_scope`] with `allow_member_read = true` plus a DB membership
+/// check). `allow_member_read` is `false` here, so `NeedsMembership` never
+/// occurs; it is treated as a denial to fail closed.
+pub fn authorize(
+    config: &AuthConfig,
+    authorization_header: Option<&str>,
+    admin_required: bool,
+    workspace_name: Option<&str>,
+    peer_name: Option<&str>,
+    session_name: Option<&str>,
+) -> Result<JwtParams, AuthError> {
+    let params = verify_request(config, authorization_header)?;
+    match authorize_scope(
+        &params,
+        admin_required,
+        workspace_name,
+        peer_name,
+        session_name,
+        false,
+    ) {
+        ScopeOutcome::Grant => Ok(params),
+        ScopeOutcome::Deny(error) => Err(error),
+        ScopeOutcome::NeedsMembership { .. } => Err(AuthError::PermissionDenied),
+    }
 }
 
 fn verify_hs256_token(token: &str, secret: &str) -> Result<JwtParams, AuthError> {
@@ -150,8 +251,23 @@ fn verify_hs256_token(token: &str, secret: &str) -> Result<JwtParams, AuthError>
     let payload = URL_SAFE_NO_PAD
         .decode(parts[1])
         .map_err(|_| AuthError::InvalidJwt)?;
-    let params =
+    let mut params =
         serde_json::from_slice::<JwtParams>(&payload).map_err(|_| AuthError::InvalidJwt)?;
+    // Normalize empty-string scope claims to None so a blank `w`/`p`/`s` cannot
+    // masquerade as a present claim in the checks below.
+    params.workspace = params.workspace.filter(|value| !value.is_empty());
+    params.peer = params.peer.filter(|value| !value.is_empty());
+    params.session = params.session.filter(|value| !value.is_empty());
+    // Token-shape invariant: a peer- or session-scoped token MUST also carry its
+    // parent workspace, otherwise the route-level check cannot rule out
+    // cross-workspace use.
+    if scope_requires_workspace(
+        params.peer.as_deref(),
+        params.session.as_deref(),
+        params.workspace.as_deref(),
+    ) {
+        return Err(AuthError::InvalidScope);
+    }
     if let Some(exp) = params.exp.as_deref() {
         let exp_time = parse_iso_datetime_lenient(exp)?;
         if exp_time < Utc::now() {
@@ -322,5 +438,151 @@ mod tests {
         let params =
             authorize(&config, None, true, None, None, None).expect("no-auth must yield admin");
         assert!(params.is_admin());
+    }
+
+    fn params(workspace: Option<&str>, peer: Option<&str>, session: Option<&str>) -> JwtParams {
+        JwtParams {
+            workspace: workspace.map(str::to_string),
+            peer: peer.map(str::to_string),
+            session: session.map(str::to_string),
+            ..JwtParams::default()
+        }
+    }
+
+    #[test]
+    fn peer_scoped_token_denied_on_sibling_peer_route() {
+        // The core of #679: `{w: ws, p: alice}` must NOT act on peer `bob`. The
+        // old logic fell through to the workspace match and granted it.
+        let alice = params(Some("ws"), Some("alice"), None);
+        assert_eq!(
+            authorize_scope(&alice, false, Some("ws"), Some("bob"), None, false),
+            ScopeOutcome::Deny(AuthError::PermissionDenied)
+        );
+        // ...but it may act on its own peer route.
+        assert_eq!(
+            authorize_scope(&alice, false, Some("ws"), Some("alice"), None, false),
+            ScopeOutcome::Grant
+        );
+    }
+
+    #[test]
+    fn session_scoped_token_confined_to_its_session() {
+        let s1 = params(Some("ws"), None, Some("s1"));
+        assert_eq!(
+            authorize_scope(&s1, false, Some("ws"), None, Some("s1"), false),
+            ScopeOutcome::Grant
+        );
+        // Wrong session denied.
+        assert_eq!(
+            authorize_scope(&s1, false, Some("ws"), None, Some("s2"), false),
+            ScopeOutcome::Deny(AuthError::PermissionDenied)
+        );
+        // No cross-scope to peer routes.
+        assert_eq!(
+            authorize_scope(&s1, false, Some("ws"), Some("alice"), None, false),
+            ScopeOutcome::Deny(AuthError::PermissionDenied)
+        );
+    }
+
+    #[test]
+    fn workspace_token_spans_workspace_but_not_across_workspaces() {
+        let ws = params(Some("ws"), None, None);
+        assert_eq!(
+            authorize_scope(&ws, false, Some("ws"), Some("bob"), None, false),
+            ScopeOutcome::Grant
+        );
+        assert_eq!(
+            authorize_scope(&ws, false, Some("other"), None, None, false),
+            ScopeOutcome::Deny(AuthError::PermissionDenied)
+        );
+    }
+
+    #[test]
+    fn peer_member_read_defers_to_membership_only_when_opted_in() {
+        let alice = params(Some("ws"), Some("alice"), None);
+        // Read route opts into member-read: defer to is_peer_in_session.
+        assert_eq!(
+            authorize_scope(&alice, false, Some("ws"), None, Some("s1"), true),
+            ScopeOutcome::NeedsMembership {
+                peer: "alice".to_string(),
+                session: "s1".to_string(),
+                workspace: "ws".to_string(),
+            }
+        );
+        // Same route without member-read (a write route) denies outright.
+        assert_eq!(
+            authorize_scope(&alice, false, Some("ws"), None, Some("s1"), false),
+            ScopeOutcome::Deny(AuthError::PermissionDenied)
+        );
+    }
+
+    #[test]
+    fn admin_grants_anywhere_and_admin_required_denies_non_admin() {
+        assert_eq!(
+            authorize_scope(&JwtParams::admin(), false, Some("ws"), Some("bob"), None, false),
+            ScopeOutcome::Grant
+        );
+        assert_eq!(
+            authorize_scope(&params(Some("ws"), None, None), true, None, None, None, false),
+            ScopeOutcome::Deny(AuthError::AdminRequired)
+        );
+    }
+
+    #[test]
+    fn self_authorizing_route_grants_decode_only() {
+        // No scope declared: the handler compares claims itself.
+        assert_eq!(
+            authorize_scope(&params(Some("ws"), Some("alice"), None), false, None, None, None, false),
+            ScopeOutcome::Grant
+        );
+    }
+
+    #[test]
+    fn verify_rejects_scoped_token_missing_workspace() {
+        let bearer = |claims: Value| format!("Bearer {}", create_hs256_token(&claims, "secret"));
+        // Peer token with no workspace.
+        assert_eq!(
+            authorize(
+                &config(),
+                Some(&bearer(json!({"t": "", "p": "alice"}))),
+                false,
+                Some("ws"),
+                Some("alice"),
+                None,
+            ),
+            Err(AuthError::InvalidScope)
+        );
+        // Session token with no workspace.
+        assert_eq!(
+            authorize(
+                &config(),
+                Some(&bearer(json!({"t": "", "s": "s1"}))),
+                false,
+                Some("ws"),
+                None,
+                Some("s1"),
+            ),
+            Err(AuthError::InvalidScope)
+        );
+        // Empty-string workspace is normalized to absent → still rejected.
+        assert_eq!(
+            authorize(
+                &config(),
+                Some(&bearer(json!({"t": "", "w": "", "p": "alice"}))),
+                false,
+                Some("ws"),
+                Some("alice"),
+                None,
+            ),
+            Err(AuthError::InvalidScope)
+        );
+    }
+
+    #[test]
+    fn scope_requires_workspace_predicate() {
+        assert!(scope_requires_workspace(Some("alice"), None, None));
+        assert!(scope_requires_workspace(None, Some("s1"), None));
+        assert!(!scope_requires_workspace(Some("alice"), None, Some("ws")));
+        assert!(!scope_requires_workspace(None, None, None));
     }
 }

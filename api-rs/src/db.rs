@@ -595,6 +595,34 @@ pub async fn count_active_session_observers_excluding(
     row.try_get("count")
 }
 
+/// Whether a peer is an active member of a session (a `session_peers` row with
+/// `left_at IS NULL`). Used by the auth layer to grant a peer-scoped key
+/// read access to the sessions its peer belongs to (port of #679). Runs on a
+/// fresh pool connection, so a peer added in a not-yet-committed transaction
+/// reads as a non-member — the check fails closed.
+pub async fn is_peer_in_session(
+    pool: &PgPool,
+    workspace_name: &str,
+    session_name: &str,
+    peer_name: &str,
+) -> Result<bool, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT 1 AS present \
+         FROM session_peers \
+         WHERE workspace_name = $1 \
+         AND session_name = $2 \
+         AND peer_name = $3 \
+         AND left_at IS NULL \
+         LIMIT 1",
+    )
+    .bind(workspace_name)
+    .bind(session_name)
+    .bind(peer_name)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
+}
+
 pub async fn add_peers_to_session(
     pool: &PgPool,
     workspace_name: &str,

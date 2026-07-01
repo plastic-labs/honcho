@@ -503,6 +503,61 @@ async fn peer_perspective_filter_keeps_only_in_window_messages() {
 }
 
 #[tokio::test]
+async fn is_peer_in_session_reflects_active_membership() {
+    // Backs the auth-layer member-read path (port of #679): a peer-scoped key may
+    // read a session only while its peer is an active member (left_at IS NULL).
+    let Some(test_db) = TestDb::setup().await else {
+        return;
+    };
+
+    db::get_or_create_workspace(&test_db.pool, "ws", json!({}), json!({}))
+        .await
+        .expect("workspace");
+    for peer in ["alice", "bob", "carol"] {
+        db::get_or_create_peer(&test_db.pool, "ws", peer, None, None)
+            .await
+            .expect("peer");
+    }
+    db::get_or_create_session(&test_db.pool, "ws", "sess", None, None)
+        .await
+        .expect("session");
+
+    // alice is active; bob joined then left; carol never joined.
+    sqlx::query(
+        "INSERT INTO session_peers (workspace_name, session_name, peer_name) \
+         VALUES ('ws', 'sess', 'alice')",
+    )
+    .execute(&test_db.pool)
+    .await
+    .expect("seed alice");
+    sqlx::query(
+        "INSERT INTO session_peers (workspace_name, session_name, peer_name, left_at) \
+         VALUES ('ws', 'sess', 'bob', now())",
+    )
+    .execute(&test_db.pool)
+    .await
+    .expect("seed bob");
+
+    let member = |peer: &'static str, ws: &'static str, session: &'static str| {
+        let pool = test_db.pool.clone();
+        async move {
+            db::is_peer_in_session(&pool, ws, session, peer)
+                .await
+                .expect("membership query")
+        }
+    };
+
+    assert!(member("alice", "ws", "sess").await, "active member");
+    assert!(!member("bob", "ws", "sess").await, "left member");
+    assert!(!member("carol", "ws", "sess").await, "never joined");
+    // Membership is scoped by session and workspace.
+    assert!(!member("alice", "ws", "other").await, "other session");
+    assert!(!member("alice", "other", "sess").await, "other workspace");
+
+    test_db.teardown().await;
+}
+
+#[tokio::test]
 async fn fetch_messages_by_ids_preserves_order_and_drops_missing() {
     let Some(test_db) = TestDb::setup().await else {
         return;

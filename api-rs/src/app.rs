@@ -11,7 +11,10 @@ use sqlx::PgPool;
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 
-use crate::auth::{AuthConfig, AuthError, JwtParams, authorize, create_scoped_key};
+use crate::auth::{
+    AuthConfig, AuthError, JwtParams, ScopeOutcome, authorize, authorize_scope, create_scoped_key,
+    scope_requires_workspace, verify_request,
+};
 use crate::cache::PeerCache;
 use crate::config::EmbeddingConfig;
 use crate::db;
@@ -394,6 +397,19 @@ async fn create_key(
     if !has_non_empty_scope(&query) {
         return Err(ApiError::Validation(
             "At least one of workspace_id, peer_id, or session_id must be provided".to_string(),
+        ));
+    }
+    // A peer- or session-scoped key must carry its parent workspace, else
+    // verify_request rejects it on every request (the workspace is required to
+    // rule out cross-workspace use). Empty strings count as absent, matching
+    // Python truthiness. (Port of #679.)
+    if scope_requires_workspace(
+        query.peer_id.as_deref().filter(|value| !value.is_empty()),
+        query.session_id.as_deref().filter(|value| !value.is_empty()),
+        query.workspace_id.as_deref().filter(|value| !value.is_empty()),
+    ) {
+        return Err(ApiError::Validation(
+            "workspace_id is required when scoping a key to a peer or session".to_string(),
         ));
     }
     let token = create_scoped_key(
@@ -1338,23 +1354,14 @@ async fn test_webhook(
     headers: HeaderMap,
     Path(workspace_id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
-    let params = authorize(
+    authorize(
         &state.auth,
         authorization_header(&headers),
         false,
-        None,
+        Some(&workspace_id),
         None,
         None,
     )?;
-    if !params.admin.unwrap_or(false) {
-        if let Some(scope) = params.workspace.as_deref() {
-            if scope != workspace_id {
-                return Err(ApiError::Authentication(
-                    "Unable to publish test webhook".to_string(),
-                ));
-            }
-        }
-    }
 
     // Mirrors `publish_webhook_event(TestEvent)` → `create_webhook_payload`:
     // {event_type, data{workspace_id}} (TestEvent has no fields beyond the base
@@ -1385,7 +1392,7 @@ async fn chat(
     Path((workspace_id, peer_id)): Path<(String, String)>,
     Json(body): Json<DialecticBody>,
 ) -> Result<Response, ApiError> {
-    authorize(
+    let params = authorize(
         &state.auth,
         authorization_header(&headers),
         false,
@@ -1393,6 +1400,18 @@ async fn chat(
         Some(&peer_id),
         None,
     )?;
+
+    // The session id arrives in the body, so the route guard can't gate on it.
+    // A peer-scoped key may only scope a chat to a session its peer belongs to;
+    // without this check it could read any session's messages (the dialectic
+    // injects session history) by naming it here. Workspace/admin tokens
+    // (`params.peer` is None) are unaffected. (Port of #679.)
+    if let (Some(token_peer), Some(session_id)) =
+        (params.peer.as_deref(), body.session_id.as_deref())
+        && !db::is_peer_in_session(state.pool()?, &workspace_id, session_id, token_peer).await?
+    {
+        return Err(AuthError::PermissionDenied.into());
+    }
 
     if body.query.trim().is_empty() {
         return Err(ApiError::Validation("query is required".to_string()));
@@ -1565,14 +1584,7 @@ async fn get_session_peers(
     Path((workspace_id, session_id)): Path<(String, String)>,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    authorize(
-        &state.auth,
-        authorization_header(&headers),
-        false,
-        Some(&workspace_id),
-        None,
-        Some(&session_id),
-    )?;
+    authorize_member_read(&state, &headers, Some(&workspace_id), None, Some(&session_id)).await?;
     let page = Pagination::new(query.page, query.size);
     let value = db::list_session_peers(state.pool()?, &workspace_id, &session_id, page).await?;
     Ok(Json(value))
@@ -1583,14 +1595,17 @@ async fn get_session_peer_config(
     headers: HeaderMap,
     Path((workspace_id, session_id, peer_id)): Path<(String, String, String)>,
 ) -> Result<Response, ApiError> {
-    authorize(
-        &state.auth,
-        authorization_header(&headers),
-        false,
-        Some(&workspace_id),
-        None,
-        Some(&session_id),
-    )?;
+    let params =
+        authorize_member_read(&state, &headers, Some(&workspace_id), None, Some(&session_id))
+            .await?;
+    // Member-read lets a peer-scoped key reach this route, but a peer may only
+    // read its own per-session config, not a co-member's. Workspace/admin and
+    // session-scoped tokens (`params.peer` is None) are unaffected.
+    if let Some(token_peer) = params.peer.as_deref()
+        && token_peer != peer_id
+    {
+        return Err(AuthError::PermissionDenied.into());
+    }
     match db::get_session_peer_config(state.pool()?, &workspace_id, &session_id, &peer_id).await? {
         Some(value) => Ok(Json(value).into_response()),
         None => Ok((
@@ -1778,15 +1793,14 @@ async fn list_webhook_endpoints(
     Path(workspace_id): Path<String>,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let params = authorize(
+    authorize(
         &state.auth,
         authorization_header(&headers),
         false,
-        None,
+        Some(&workspace_id),
         None,
         None,
     )?;
-    authorize_webhook_workspace(&params, &workspace_id)?;
     let page = Pagination::new(query.page, query.size);
     let value = db::list_webhook_endpoints(state.pool()?, &workspace_id, page).await?;
     Ok(Json(value))
@@ -1798,15 +1812,14 @@ async fn get_or_create_webhook_endpoint(
     Path(workspace_id): Path<String>,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
-    let params = authorize(
+    authorize(
         &state.auth,
         authorization_header(&headers),
         false,
-        None,
+        Some(&workspace_id),
         None,
         None,
     )?;
-    authorize_webhook_workspace(&params, &workspace_id)?;
     ensure_writes_enabled(&state)?;
 
     let url = parse_webhook_create(body)?;
@@ -1835,15 +1848,14 @@ async fn delete_webhook_endpoint(
     headers: HeaderMap,
     Path((workspace_id, endpoint_id)): Path<(String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    let params = authorize(
+    authorize(
         &state.auth,
         authorization_header(&headers),
         false,
-        None,
+        Some(&workspace_id),
         None,
         None,
     )?;
-    authorize_webhook_workspace(&params, &workspace_id)?;
     ensure_writes_enabled(&state)?;
 
     if db::delete_webhook_endpoint(state.pool()?, &workspace_id, &endpoint_id).await? {
@@ -1860,14 +1872,7 @@ async fn get_session_summaries(
     headers: HeaderMap,
     Path((workspace_id, session_id)): Path<(String, String)>,
 ) -> Result<Json<Value>, ApiError> {
-    authorize(
-        &state.auth,
-        authorization_header(&headers),
-        false,
-        Some(&workspace_id),
-        None,
-        Some(&session_id),
-    )?;
+    authorize_member_read(&state, &headers, Some(&workspace_id), None, Some(&session_id)).await?;
     let value = db::get_session_summaries(state.pool()?, &workspace_id, &session_id).await?;
     Ok(Json(value))
 }
@@ -1878,14 +1883,7 @@ async fn get_session_context(
     Path((workspace_id, session_id)): Path<(String, String)>,
     Query(query): Query<GetContextQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    authorize(
-        &state.auth,
-        authorization_header(&headers),
-        false,
-        Some(&workspace_id),
-        None,
-        Some(&session_id),
-    )?;
+    authorize_member_read(&state, &headers, Some(&workspace_id), None, Some(&session_id)).await?;
 
     let token_limit = match query.tokens.as_deref() {
         Some(raw) => parse_context_tokens(raw)?,
@@ -2051,14 +2049,7 @@ async fn search_session(
     Path((workspace_id, session_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    authorize(
-        &state.auth,
-        authorization_header(&headers),
-        false,
-        Some(&workspace_id),
-        None,
-        Some(&session_id),
-    )?;
+    authorize_member_read(&state, &headers, Some(&workspace_id), None, Some(&session_id)).await?;
     run_search(&state, &workspace_id, &[("session_id", &session_id)], body).await
 }
 
@@ -2754,14 +2745,7 @@ async fn list_messages(
     Query(query): Query<ListQuery>,
     body: Option<Json<ListRequest>>,
 ) -> Result<Json<Value>, ApiError> {
-    authorize(
-        &state.auth,
-        authorization_header(&headers),
-        false,
-        Some(&workspace_id),
-        None,
-        Some(&session_id),
-    )?;
+    authorize_member_read(&state, &headers, Some(&workspace_id), None, Some(&session_id)).await?;
     let filter = build_filter_clause(
         FilterTarget::Message,
         body.as_ref().and_then(|Json(body)| body.filters.as_ref()),
@@ -2833,14 +2817,7 @@ async fn get_message(
     headers: HeaderMap,
     Path((workspace_id, session_id, message_id)): Path<(String, String, String)>,
 ) -> Result<Response, ApiError> {
-    authorize(
-        &state.auth,
-        authorization_header(&headers),
-        false,
-        Some(&workspace_id),
-        None,
-        Some(&session_id),
-    )?;
+    authorize_member_read(&state, &headers, Some(&workspace_id), None, Some(&session_id)).await?;
     match db::get_message(state.pool()?, &workspace_id, &session_id, &message_id).await? {
         Some(value) => Ok(Json(value).into_response()),
         None => Ok((
@@ -3165,6 +3142,44 @@ fn authorization_header(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
+}
+
+/// Authorize a read-only session route that additionally grants a peer-scoped
+/// key access when its peer is an active member of the session (port of the
+/// `allow_member_read` routes in #679). The membership lookup needs the DB, so
+/// this wraps the pure [`authorize_scope`] decision with an `is_peer_in_session`
+/// check — but only when the token is peer-scoped, so a plain 401 (bad/missing
+/// token) still short-circuits before any pool access.
+async fn authorize_member_read(
+    state: &AppState,
+    headers: &HeaderMap,
+    workspace_name: Option<&str>,
+    peer_name: Option<&str>,
+    session_name: Option<&str>,
+) -> Result<JwtParams, ApiError> {
+    let params = verify_request(&state.auth, authorization_header(headers))?;
+    match authorize_scope(
+        &params,
+        false,
+        workspace_name,
+        peer_name,
+        session_name,
+        true,
+    ) {
+        ScopeOutcome::Grant => Ok(params),
+        ScopeOutcome::Deny(error) => Err(error.into()),
+        ScopeOutcome::NeedsMembership {
+            peer,
+            session,
+            workspace,
+        } => {
+            if db::is_peer_in_session(state.pool()?, &workspace, &session, &peer).await? {
+                Ok(params)
+            } else {
+                Err(AuthError::PermissionDenied.into())
+            }
+        }
+    }
 }
 
 fn has_non_empty_scope(query: &CreateKeyQuery) -> bool {
@@ -4804,20 +4819,6 @@ async fn ensure_session_peer_config_observer_limit(
     Ok(())
 }
 
-fn authorize_webhook_workspace(params: &JwtParams, workspace_id: &str) -> Result<(), AuthError> {
-    if params.admin.unwrap_or(false) {
-        return Ok(());
-    }
-    if params
-        .workspace
-        .as_deref()
-        .is_some_and(|workspace| workspace != workspace_id)
-    {
-        return Err(AuthError::PermissionDenied);
-    }
-    Ok(())
-}
-
 fn session_write_error(error: sqlx::Error, workspace_id: &str, session_id: &str) -> ApiError {
     match error {
         sqlx::Error::RowNotFound => ApiError::NotFound(format!(
@@ -4829,8 +4830,7 @@ fn session_write_error(error: sqlx::Error, workspace_id: &str, session_id: &str)
 
 #[cfg(test)]
 mod tests {
-    use crate::app::{authorize_webhook_workspace, peer_card_value_to_list, validate_webhook_url};
-    use crate::auth::{AuthError, JwtParams};
+    use crate::app::{peer_card_value_to_list, validate_webhook_url};
     use serde_json::json;
 
     #[test]
@@ -4904,49 +4904,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn webhook_workspace_auth_matches_unscoped_python_route() {
-        assert!(
-            authorize_webhook_workspace(
-                &JwtParams {
-                    workspace: None,
-                    ..JwtParams::default()
-                },
-                "workspace-a",
-            )
-            .is_ok()
-        );
-        assert!(
-            authorize_webhook_workspace(
-                &JwtParams {
-                    workspace: Some("workspace-a".to_string()),
-                    ..JwtParams::default()
-                },
-                "workspace-a",
-            )
-            .is_ok()
-        );
-        assert!(
-            authorize_webhook_workspace(
-                &JwtParams {
-                    admin: Some(true),
-                    workspace: Some("workspace-b".to_string()),
-                    ..JwtParams::default()
-                },
-                "workspace-a",
-            )
-            .is_ok()
-        );
-
-        let error = authorize_webhook_workspace(
-            &JwtParams {
-                workspace: Some("workspace-b".to_string()),
-                ..JwtParams::default()
-            },
-            "workspace-a",
-        )
-        .expect_err("mismatched workspace scope should fail");
-
-        assert_eq!(error, AuthError::PermissionDenied);
-    }
 }
