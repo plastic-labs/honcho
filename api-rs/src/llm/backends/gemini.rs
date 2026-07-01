@@ -21,6 +21,7 @@
 use serde_json::{Map, Value, json};
 
 use crate::llm::http::{Credentials, LlmHttp, LlmHttpError, LlmStreamHttp, TextStream};
+use crate::llm::request_builder::{PassthroughError, merge_header_mapping, passthrough_mapping};
 use crate::llm::{CompletionResult, ToolCallResult};
 
 /// The google-genai default API base (no version segment — `complete` appends
@@ -55,10 +56,31 @@ const ALLOWED_SCHEMA_KEYS: &[&str] = &[
     "title",
 ];
 
-/// Returned when a request sets both thinking-budget and thinking-effort, which
-/// Gemini cannot accept together (matches the Python `ValidationException`).
 #[derive(Debug, PartialEq, Eq)]
-pub struct ConflictingThinkingParams;
+pub enum BuildConfigError {
+    ConflictingThinkingParams,
+    Passthrough(PassthroughError),
+}
+
+impl std::fmt::Display for BuildConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuildConfigError::ConflictingThinkingParams => write!(
+                f,
+                "gemini request cannot set both thinking_budget_tokens and thinking_effort"
+            ),
+            BuildConfigError::Passthrough(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for BuildConfigError {}
+
+impl From<PassthroughError> for BuildConfigError {
+    fn from(error: PassthroughError) -> Self {
+        BuildConfigError::Passthrough(error)
+    }
+}
 
 /// Inputs for [`build_request`] / [`complete`], mirroring the portable subset of
 /// the SDK call inputs (`response_format`/`response_schema` excluded; `json_mode`
@@ -87,11 +109,7 @@ pub async fn complete<H: LlmHttp>(
     credentials: &Credentials,
     params: &RequestParams<'_>,
 ) -> Result<CompletionResult, LlmHttpError> {
-    let body = build_request(params).map_err(|_| {
-        LlmHttpError::Transport(
-            "gemini request cannot set both thinking_budget_tokens and thinking_effort".to_string(),
-        )
-    })?;
+    let body = build_request(params).map_err(gemini_build_error)?;
     let model_path = if params.model.starts_with("models/") {
         params.model.to_string()
     } else {
@@ -101,9 +119,30 @@ pub async fn complete<H: LlmHttp>(
         "{}/v1beta/{model_path}:generateContent",
         credentials.effective_base_url(DEFAULT_BASE_URL),
     );
-    let headers = [("x-goog-api-key".to_string(), credentials.api_key.clone())];
+    let headers = build_headers(credentials, params.extra_params)?;
     let response = http.post_json(&url, &headers, &body).await?;
     Ok(parse_response(&response))
+}
+
+fn gemini_build_error(error: BuildConfigError) -> LlmHttpError {
+    LlmHttpError::Transport(error.to_string())
+}
+
+fn passthrough_error(error: PassthroughError) -> LlmHttpError {
+    LlmHttpError::Transport(error.to_string())
+}
+
+fn build_headers(
+    credentials: &Credentials,
+    extra_params: &Map<String, Value>,
+) -> Result<Vec<(String, String)>, LlmHttpError> {
+    let mut headers = vec![("x-goog-api-key".to_string(), credentials.api_key.clone())];
+    if let Some(mapping) =
+        passthrough_mapping("extra_headers", extra_params).map_err(passthrough_error)?
+    {
+        merge_header_mapping(&mut headers, mapping);
+    }
+    Ok(headers)
 }
 
 /// Open a streaming `streamGenerateContent` request (SSE via `?alt=sse`),
@@ -114,11 +153,7 @@ pub async fn stream<H: LlmStreamHttp>(
     credentials: &Credentials,
     params: &RequestParams<'_>,
 ) -> Result<TextStream, LlmHttpError> {
-    let body = build_request(params).map_err(|_| {
-        LlmHttpError::Transport(
-            "gemini request cannot set both thinking_budget_tokens and thinking_effort".to_string(),
-        )
-    })?;
+    let body = build_request(params).map_err(gemini_build_error)?;
     let model_path = if params.model.starts_with("models/") {
         params.model.to_string()
     } else {
@@ -128,7 +163,7 @@ pub async fn stream<H: LlmStreamHttp>(
         "{}/v1beta/{model_path}:streamGenerateContent?alt=sse",
         credentials.effective_base_url(DEFAULT_BASE_URL),
     );
-    let headers = [("x-goog-api-key".to_string(), credentials.api_key.clone())];
+    let headers = build_headers(credentials, params.extra_params)?;
     http.post_json_stream(&url, &headers, &body).await
 }
 
@@ -138,7 +173,7 @@ pub async fn stream<H: LlmStreamHttp>(
 /// (where the REST API expects them) and everything else nests under
 /// `generation_config`. Keys stay snake_case (proto3 JSON accepts proto field
 /// names on input). Errors when both thinking params are set, like Python.
-pub fn build_request(params: &RequestParams<'_>) -> Result<Value, ConflictingThinkingParams> {
+pub fn build_request(params: &RequestParams<'_>) -> Result<Value, BuildConfigError> {
     let (contents, system_instruction) = convert_messages(params.messages);
     let config = build_config(&ConfigParams {
         max_tokens: params.max_tokens,
@@ -190,7 +225,10 @@ pub fn convert_messages(messages: &[Value]) -> (Vec<Value>, Option<String>) {
     let mut contents: Vec<Value> = Vec::new();
 
     for message in messages {
-        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
         if role == "system" {
             if let Some(content) = message.get("content").and_then(Value::as_str) {
                 system_messages.push(content.to_string());
@@ -216,7 +254,9 @@ pub fn convert_messages(messages: &[Value]) -> (Vec<Value>, Option<String>) {
                 let mut parts: Vec<Value> = Vec::new();
                 for block in blocks {
                     if block.get("type").and_then(Value::as_str) == Some("text") {
-                        parts.push(json!({"text": block.get("text").cloned().unwrap_or(Value::Null)}));
+                        parts.push(
+                            json!({"text": block.get("text").cloned().unwrap_or(Value::Null)}),
+                        );
                     }
                 }
                 if !parts.is_empty() {
@@ -342,7 +382,7 @@ fn is_truthy(value: &Value) -> bool {
 /// `_build_config` (max tokens, temperature, stop, tools, tool_config, thinking
 /// config, `json_mode`, and tuning passthrough). Errors when both thinking
 /// params are set, matching Python. The `response_schema` path is excluded.
-pub fn build_config(params: &ConfigParams<'_>) -> Result<Value, ConflictingThinkingParams> {
+pub fn build_config(params: &ConfigParams<'_>) -> Result<Value, BuildConfigError> {
     let mut config = Map::new();
     config.insert("max_output_tokens".to_string(), json!(params.max_tokens));
 
@@ -372,7 +412,7 @@ pub fn build_config(params: &ConfigParams<'_>) -> Result<Value, ConflictingThink
         thinking_config.insert("thinking_level".to_string(), json!(effort));
     }
     if thinking_config.len() > 1 {
-        return Err(ConflictingThinkingParams);
+        return Err(BuildConfigError::ConflictingThinkingParams);
     }
     if !thinking_config.is_empty() {
         config.insert(
@@ -390,6 +430,12 @@ pub fn build_config(params: &ConfigParams<'_>) -> Result<Value, ConflictingThink
     ] {
         if let Some(value) = params.extra_params.get(key) {
             config.insert(key.to_string(), value.clone());
+        }
+    }
+
+    if let Some(extra_body) = passthrough_mapping("extra_body", params.extra_params)? {
+        for (key, value) in extra_body {
+            config.insert(key.clone(), value.clone());
         }
     }
 
@@ -620,7 +666,7 @@ mod tests {
             thinking_effort: Some("high"),
             extra_params: &Map::new(),
         });
-        assert_eq!(err, Err(ConflictingThinkingParams));
+        assert_eq!(err, Err(BuildConfigError::ConflictingThinkingParams));
     }
 
     #[test]
@@ -639,6 +685,51 @@ mod tests {
         })
         .unwrap();
         assert_eq!(config["response_mime_type"], json!("application/json"));
+    }
+
+    #[test]
+    fn build_config_merges_provider_extra_body_operator_wins() {
+        let mut extra = Map::new();
+        extra.insert(
+            "extra_body".to_string(),
+            json!({"temperature": 0.1, "custom_config": "v"}),
+        );
+        let config = build_config(&ConfigParams {
+            max_tokens: 100,
+            temperature: Some(0.8),
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_budget_tokens: None,
+            thinking_effort: None,
+            extra_params: &extra,
+        })
+        .unwrap();
+
+        assert_eq!(config["temperature"], json!(0.1));
+        assert_eq!(config["custom_config"], json!("v"));
+    }
+
+    #[test]
+    fn build_config_rejects_non_mapping_passthrough() {
+        let mut extra = Map::new();
+        extra.insert("extra_body".to_string(), json!(["bad"]));
+        let err = build_config(&ConfigParams {
+            max_tokens: 100,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_budget_tokens: None,
+            thinking_effort: None,
+            extra_params: &extra,
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "provider_params.extra_body must be a mapping, got array"
+        );
     }
 
     #[test]
@@ -724,7 +815,10 @@ mod tests {
         let (contents, system) = convert_messages(&messages);
         assert_eq!(system.as_deref(), Some("be brief\n\nalso be kind"));
         assert_eq!(contents.len(), 2);
-        assert_eq!(contents[0], json!({"role": "user", "parts": [{"text": "hi"}]}));
+        assert_eq!(
+            contents[0],
+            json!({"role": "user", "parts": [{"text": "hi"}]})
+        );
         // assistant -> model
         assert_eq!(
             contents[1],
@@ -761,7 +855,8 @@ mod tests {
             json!({"role": "system", "content": "sys"}),
             json!({"role": "user", "content": "q"}),
         ];
-        let tools = vec![json!({"name": "search", "description": "d", "input_schema": {"type": "object"}})];
+        let tools =
+            vec![json!({"name": "search", "description": "d", "input_schema": {"type": "object"}})];
         let stop = vec!["STOP".to_string()];
         let body = build_request(&RequestParams {
             model: "gemini-x",
@@ -839,5 +934,49 @@ mod tests {
         assert_eq!(result.input_tokens, 7);
         assert_eq!(result.output_tokens, 3);
         assert_eq!(result.finish_reason, "STOP");
+    }
+
+    #[tokio::test]
+    async fn complete_forwards_extra_headers_and_ignores_extra_query() {
+        use crate::llm::http::mock::MockHttp;
+
+        let http = MockHttp::ok(json!({
+            "candidates": [{"content": {"parts": [{"text": "answer"}]}}],
+        }));
+        let messages = vec![json!({"role": "user", "content": "hi"})];
+        let mut extra = Map::new();
+        extra.insert(
+            "extra_headers".to_string(),
+            json!({"X-Goog-User-Project": "honcho"}),
+        );
+        extra.insert("extra_query".to_string(), json!({"ignored": "true"}));
+        let params = RequestParams {
+            model: "gemini-2.5-flash",
+            messages: &messages,
+            max_tokens: 128,
+            temperature: None,
+            stop: None,
+            tools: None,
+            tool_choice: None,
+            thinking_effort: None,
+            thinking_budget_tokens: None,
+            extra_params: &extra,
+        };
+
+        complete(&http, &Credentials::new("api-key"), &params)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            http.last_url(),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+        );
+        assert_eq!(
+            http.last_headers(),
+            vec![
+                ("x-goog-api-key".to_string(), "api-key".to_string()),
+                ("X-Goog-User-Project".to_string(), "honcho".to_string()),
+            ]
+        );
     }
 }
