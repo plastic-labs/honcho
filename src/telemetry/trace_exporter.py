@@ -23,6 +23,7 @@ from src.llm.capture import (
     compute_content_hash,
 )
 from src.telemetry import trace_session
+from src.telemetry.events import emit_trace
 from src.telemetry.events.trace import LLMCallTracedEvent, TraceContentEvent
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ class TraceExporter:
         # --- Tool schemas (Honcho-authored, content-addressed) ---
         tool_schema_refs: list[str] = []
         for schema in call.tool_schemas:
-            ref, truncated = self._emit_derived_content(
+            ref, truncated = self._emit_hashed_content(
                 run_key, ROLE_TOOL_SCHEMA, schema, honcho_authored=True
             )
             was_truncated = was_truncated or truncated
@@ -68,14 +69,14 @@ class TraceExporter:
         # --- Output content / thinking ---
         output_content_ref: str | None = None
         if call.output_content not in (None, ""):
-            output_content_ref, truncated = self._emit_derived_content(
+            output_content_ref, truncated = self._emit_hashed_content(
                 run_key, ROLE_OUTPUT, call.output_content
             )
             was_truncated = was_truncated or truncated
 
         output_thinking_ref: str | None = None
         if call.thinking_content:
-            output_thinking_ref, truncated = self._emit_derived_content(
+            output_thinking_ref, truncated = self._emit_hashed_content(
                 run_key, ROLE_THINKING, call.thinking_content
             )
             was_truncated = was_truncated or truncated
@@ -86,7 +87,7 @@ class TraceExporter:
             if block.get("signature")
         ]
 
-        self._emit_trace(
+        emit_trace(
             LLMCallTracedEvent(
                 trace_id=call.trace_id,
                 span_id=call.span_id,
@@ -117,7 +118,7 @@ class TraceExporter:
             )
         )
 
-    def _emit_derived_content(
+    def _emit_hashed_content(
         self,
         run_key: str,
         role: str,
@@ -151,7 +152,7 @@ class TraceExporter:
         """Emit one trace.content, deduped per run (skip if already shipped)."""
         if not trace_session.mark_emitted(run_key, content_hash):
             return
-        self._emit_trace(
+        emit_trace(
             TraceContentEvent(
                 content_hash=content_hash,
                 role=role,
@@ -160,12 +161,6 @@ class TraceExporter:
                 honcho_authored=honcho_authored,
             )
         )
-
-    @staticmethod
-    def _emit_trace(event: LLMCallTracedEvent | TraceContentEvent) -> None:
-        from src.telemetry.events import emit_trace
-
-        emit_trace(event)
 
 
 __all__ = ["TraceExporter"]

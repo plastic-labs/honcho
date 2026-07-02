@@ -244,6 +244,7 @@ class StreamingResponseWithMetadata:
             self._langfuse_run_handle is not None or self._capture_finalizer is not None
         )
         accumulated_text: list[str] = []
+        last_finish_reason: str | None = None
         stream_error: BaseException | None = None
         try:
             async for chunk in self._stream:
@@ -251,6 +252,8 @@ class StreamingResponseWithMetadata:
                     # Take the LATEST value, not the sum — providers report
                     # the cumulative usage in the final chunk, not deltas.
                     final_stream_output_tokens = chunk.output_tokens
+                if chunk.finish_reasons:
+                    last_finish_reason = chunk.finish_reasons[-1]
                 if accumulate and chunk.content:
                     accumulated_text.append(chunk.content)
                 yield chunk
@@ -277,7 +280,7 @@ class StreamingResponseWithMetadata:
             if finalizer is not None:
                 self._capture_finalizer = None
                 finish_reason = (
-                    "stop"
+                    (last_finish_reason or "stop")
                     if stream_error is None
                     else (
                         "cancelled"

@@ -56,12 +56,6 @@ def mark_emitted(run_key: str, content_hash: str) -> bool:
         return True
 
 
-def end_run(run_key: str) -> None:
-    """Free a run's hash set. Safe to call for an unknown key."""
-    with _lock:
-        _runs.pop(run_key, None)
-
-
 def reset() -> None:
     """Drop all tracked runs — used on shutdown and in tests."""
     with _lock:

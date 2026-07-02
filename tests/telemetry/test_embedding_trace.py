@@ -52,9 +52,11 @@ def test_embedding_traced_event_carries_correlation(
     assert len(capture_emits) == 1
     ev = capture_emits[0]
     assert isinstance(ev, EmbeddingCallTracedEvent)
-    # run_id is the dialectic invocation id (== trace_id == span_id), so the
-    # embedding joins that trace.
-    assert ev.trace_id == "run-1" and ev.span_id == "run-1"
+    # The embedding gets its own span under the run: trace_id/parent are the
+    # run_id, span_id is a fresh id so sibling embeddings don't collide.
+    assert ev.trace_id == "run-1"
+    assert ev.parent_span_id == "run-1"
+    assert ev.span_id and ev.span_id != "run-1"
     assert ev.session_id == "sess-1"
     assert ev.call_purpose == "dialectic.prefetch"
     assert ev.parent_category == "dialectic"
@@ -104,4 +106,6 @@ def test_sessionless_embedding_has_no_session(
     ev = capture_emits[0]
     assert isinstance(ev, EmbeddingCallTracedEvent)
     assert ev.session_id is None
-    assert ev.trace_id is None  # no run_id → uncorrelated, acceptable
+    # No run_id → the span self-roots (trace_id == span_id) with no parent.
+    assert ev.parent_span_id is None
+    assert ev.span_id and ev.trace_id == ev.span_id

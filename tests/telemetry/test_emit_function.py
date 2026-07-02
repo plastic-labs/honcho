@@ -383,8 +383,10 @@ class TestInitializeTelemetryAsync:
             mock_ce_init.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_skip_cloudevents_when_disabled(self):
-        """initialize_telemetry_async() skips CloudEvents when disabled."""
+    async def test_skip_when_telemetry_disabled(self):
+        """TELEMETRY.ENABLED is the master switch — no init when it's off, even
+        with the Langfuse exporter configured (no traces for open-source users
+        who leave telemetry off)."""
         from src.telemetry import initialize_telemetry_async
 
         with (
@@ -395,6 +397,7 @@ class TestInitializeTelemetryAsync:
             ) as mock_ce_init,
         ):
             mock_settings.TELEMETRY.ENABLED = False
+            mock_settings.langfuse_exporter_enabled = True
 
             await initialize_telemetry_async()
 

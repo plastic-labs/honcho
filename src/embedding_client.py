@@ -9,6 +9,7 @@ from typing import Any, Literal, NamedTuple, TypeVar
 import tiktoken
 from google import genai
 from google.genai import types as genai_types
+from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 
 from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
@@ -123,18 +124,19 @@ def _publish_embedding_event(
             )
         )
 
-        # Trace stream (ground-truth) — gated on payload tracing. Joins the
-        # embedding to the driving agent run: dialectic sets run_id == trace_id
-        # == span_id, so an embedding made in its prefetch nests under that
-        # run's trace and carries its session.
+        # Trace stream (ground-truth) — gated on payload tracing. Each embedding
+        # gets its own span nested under the driving agent run (parent_span_id =
+        # run_id), so multiple embeddings in one run don't share a span id.
         if settings.TELEMETRY.TRACE_PAYLOADS:
             from src.telemetry.events import EmbeddingCallTracedEvent, emit_trace
 
             run_id = get_embedding_run_id()
+            span_id = generate_nanoid()
             emit_trace(
                 EmbeddingCallTracedEvent(
-                    trace_id=run_id,
-                    span_id=run_id,
+                    trace_id=run_id or span_id,
+                    span_id=span_id,
+                    parent_span_id=run_id,
                     session_id=get_embedding_session_id(),
                     call_purpose=purpose_slug,
                     parent_category=get_embedding_parent_category(),

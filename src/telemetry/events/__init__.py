@@ -215,21 +215,20 @@ async def initialize_telemetry_events() -> None:
     from src.config import settings
     from src.telemetry.emitter import initialize_emitter
 
-    # Langfuse as a projection over the captured LLM stream. Registered
-    # independently of CloudEvents telemetry (it historically ran inline,
-    # decoupled from the CloudEvents emitter) — so it works even when
-    # TELEMETRY.ENABLED is off. Registering the exporter makes has_exporters()
-    # true, which turns on CapturedLLMCall building (O(N) via the hash memo).
+    if not settings.TELEMETRY.ENABLED:
+        logger.info("CloudEvents telemetry disabled")
+        return
+
+    # Langfuse as a projection over the captured LLM stream. Gated behind the
+    # telemetry master switch above, so disabling telemetry disables Langfuse
+    # too. Registering the exporter makes has_exporters() true, which is what
+    # turns on CapturedLLMCall building.
     if settings.langfuse_exporter_enabled:
         from src.llm.capture import register_exporter
         from src.telemetry.langfuse_exporter import LangfuseExporter
 
         register_exporter(LangfuseExporter())
         logger.info("Langfuse exporter registered (LANGFUSE_EXPORTER_MODE=exporter)")
-
-    if not settings.TELEMETRY.ENABLED:
-        logger.info("CloudEvents telemetry disabled")
-        return
 
     await initialize_emitter(
         endpoint=settings.TELEMETRY.ENDPOINT,

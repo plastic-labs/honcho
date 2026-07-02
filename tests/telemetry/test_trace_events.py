@@ -96,12 +96,6 @@ class TestTraceSessionDedup:
         assert trace_session.mark_emitted("run-1", "h1") is True
         assert trace_session.mark_emitted("run-2", "h1") is True  # different run
 
-    def test_end_run_frees_state(self):
-        trace_session.mark_emitted("run-1", "h1")
-        trace_session.end_run("run-1")
-        # After end, the hash ships again (new run window).
-        assert trace_session.mark_emitted("run-1", "h1") is True
-
     def test_lru_evicts_least_recently_used_run(self, monkeypatch: pytest.MonkeyPatch):
         # Shrink the window so eviction is testable without _MAX_RUNS runs.
         monkeypatch.setattr(trace_session, "_MAX_RUNS", 2)
