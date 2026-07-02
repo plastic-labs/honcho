@@ -29,17 +29,33 @@ def _redact_cache_url(url: str) -> str:
 
     Given ``redis://:password@host:port/db`` returns
     ``redis://:***@host:port/db``.  If the URL has no userinfo
-    component it is returned unchanged.
+    component it is returned unchanged.  This function never raises:
+    if the URL is malformed it returns the original string so that
+    logging inside ``except`` blocks cannot crash startup.
+
+    Args:
+        url: The Redis connection URL to redact.
+
+    Returns:
+        The URL with its password masked, or the original URL if it
+        has no password or cannot be parsed.
     """
-    parsed = urlparse(url)
-    if parsed.password is None:
+    try:
+        parsed = urlparse(url)
+        if parsed.password is None:
+            return url
+        userinfo = parsed.username or ""
+        hostname = parsed.hostname or ""
+        # Preserve IPv6 brackets (urlparse strips them from .hostname)
+        if hostname and ":" in hostname and not hostname.startswith("["):
+            hostname = f"[{hostname}]"
+        netloc = f"{userinfo}:***@{hostname}"
+        if parsed.port is not None:
+            netloc += f":{parsed.port}"
+        parsed = parsed._replace(netloc=netloc)
+        return urlunparse(parsed)
+    except (ValueError, TypeError):
         return url
-    userinfo = parsed.username or ""
-    netloc = f"{userinfo}:***@{parsed.hostname or ''}"
-    if parsed.port is not None:
-        netloc += f":{parsed.port}"
-    parsed = parsed._replace(netloc=netloc)
-    return urlunparse(parsed)
 
 
 def is_cache_enabled() -> bool:
