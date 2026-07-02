@@ -102,6 +102,11 @@ def initialize_sentry(
         integrations=integrations,
     )
 
+    # Tag every event with the configured namespace so errors can be filtered by
+    # instance. Set on the global scope so it applies regardless of the current
+    # isolation/task scope.
+    sentry_sdk.get_global_scope().set_tag("namespace", settings.NAMESPACE)
+
 
 def with_sentry_transaction(
     name: str, op: str
