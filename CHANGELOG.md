@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
+- Entra ID (Azure AD) token authentication for `azure_openai` transport via `use_entra_id` config field (#651)
+- Azure OpenAI transport (`transport = "azure_openai"`) with a new `overrides.api_version` field. Every model config (deriver, dialectic levels, summary, dream specialists, embedding, fallback) can now target a native Azure OpenAI resource or an Azure-compatible gateway. Uses `AsyncAzureOpenAI` with `azure_endpoint=` + `api_version=` so the SDK constructs the `/openai/deployments/{model}/...?api-version=` URLs Azure expects. Reuses `OpenAIBackend` because the two clients share the same completion/embedding surface.
+- New `src/llm/` package as the single owner of provider runtime: clients, backends, history adapters, tool loop, request builder, credentials, and caching policy
+- `AttemptPlan` dataclass captures per-retry provider selection (client, model, reasoning_effort, thinking_budget_tokens, selected_config) and pins it across stream-final retries so streaming doesn't bounce back to primary after the tool loop has settled on fallback
+- Gemini JSON-schema sanitizer for `function_declarations` — strips keywords Gemini's validator rejects (`additionalProperties`, `allOf`, etc.) while preserving semantics for all other backends
+- Dreamer specialists derive `effective_max_tokens` from `model_config.max_output_tokens` with a per-specialist default fallback
+- Regression tests covering fallback-config thinking-param reach, provider_params → extra_params boundary, OpenAI reasoning-model parameter routing, Gemini blocked finish_reason handling, and fail-fast `max_tool_iterations` validation
 - Messages are now embedded via a background task rather than blocking API request
 - Read-only DB session mode (`get_read_db` / `tracked_db(..., read_only=True)`) so reads don't hold a transaction open across the work
 - `CORS_ORIGINS` env var to configure CORS allowed origins without editing source; defaults match the prior hardcoded list, so self-hosted deployments behind custom domains can whitelist their frontend (#697)
