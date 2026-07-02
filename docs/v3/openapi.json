@@ -9,7 +9,7 @@
       "url": "https://honcho.dev/",
       "email": "hello@plasticlabs.ai"
     },
-    "version": "3.0.7"
+    "version": "3.0.11"
   },
   "servers": [
     {
@@ -1574,7 +1574,7 @@
       "get": {
         "tags": ["sessions"],
         "summary": "Get Peer Config",
-        "description": "Get the configuration for a Peer in a Session.",
+        "description": "Get the configuration for a Peer in a Session.\n\nMember-read lets a peer-scoped key reach this route, but a peer may only\nread its own per-session config — not a co-member's. Workspace/admin and\nsession-scoped tokens (which already span the whole session) are unaffected.",
         "operationId": "get_peer_config_v3_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_get",
         "security": [{ "HTTPBearer": [] }],
         "parameters": [
@@ -2782,6 +2782,13 @@
           "session_id": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Session Id"
+          },
+          "level": {
+            "type": "string",
+            "enum": ["explicit", "deductive", "inductive", "contradiction"],
+            "title": "Level",
+            "description": "Reasoning level of the conclusion: 'explicit' (directly extracted from messages) or 'deductive'/'inductive'/'contradiction' (derived during dreaming).",
+            "default": "explicit"
           },
           "created_at": {
             "type": "string",
