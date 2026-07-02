@@ -1178,7 +1178,7 @@ class TelemetrySettings(HonchoSettings):
 
     # --- Full-fidelity payload tracing (llm.call.traced / trace.content) ---
     # Master toggle for replay-grade content capture. Default-off.
-    TRACE_PAYLOADS: bool = False
+    TRACE_PAYLOADS_ENABLED: bool = False
 
     # Per-message cap (bytes) for captured content; oversized string content is
     # clipped (with a marker) and the call is flagged was_truncated.

@@ -246,7 +246,7 @@ async def initialize_telemetry_events() -> None:
     )
 
     # Full-fidelity payload tracing — opt-in, separate emitter + content exporter.
-    if settings.TELEMETRY.TRACE_PAYLOADS:
+    if settings.TELEMETRY.TRACE_PAYLOADS_ENABLED:
         from src.llm.capture import register_exporter
         from src.telemetry.emitter import initialize_trace_emitter
         from src.telemetry.trace_exporter import TraceExporter

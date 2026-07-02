@@ -127,7 +127,7 @@ def _publish_embedding_event(
         # Trace stream (ground-truth) — gated on payload tracing. Each embedding
         # gets its own span nested under the driving agent run (parent_span_id =
         # run_id), so multiple embeddings in one run don't share a span id.
-        if settings.TELEMETRY.TRACE_PAYLOADS:
+        if settings.TELEMETRY.TRACE_PAYLOADS_ENABLED:
             from src.telemetry.events import EmbeddingCallTracedEvent, emit_trace
 
             run_id = get_embedding_run_id()

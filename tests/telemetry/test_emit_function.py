@@ -318,7 +318,7 @@ class TestInitializeTelemetryEvents:
             # so we don't fall into the trace branch and start a *real* trace
             # emitter + register a real TraceExporter (a MagicMock here is
             # truthy) — that global state would leak into other tests.
-            mock_settings.TELEMETRY.TRACE_PAYLOADS = False
+            mock_settings.TELEMETRY.TRACE_PAYLOADS_ENABLED = False
             mock_init.return_value = AsyncMock()
 
             await initialize_telemetry_events()

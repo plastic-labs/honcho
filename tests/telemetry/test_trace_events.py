@@ -127,7 +127,7 @@ def trace_on(monkeypatch: pytest.MonkeyPatch) -> Iterator[_FakeTraceEmitter]:
     from src.config import settings
     from src.telemetry import emitter as emitter_mod
 
-    monkeypatch.setattr(settings.TELEMETRY, "TRACE_PAYLOADS", True)
+    monkeypatch.setattr(settings.TELEMETRY, "TRACE_PAYLOADS_ENABLED", True)
     fake = _FakeTraceEmitter()
     monkeypatch.setattr(emitter_mod, "_trace_emitter", fake)
     trace_session.reset()

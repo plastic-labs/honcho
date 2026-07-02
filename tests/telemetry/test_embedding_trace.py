@@ -2,7 +2,7 @@
 """Tests for embedding calls joining the trace stream.
 
 `_publish_embedding_event` emits an `EmbeddingCallTracedEvent` (gated on
-TRACE_PAYLOADS) in addition to the metrics-grade completed event, carrying the
+TRACE_PAYLOADS_ENABLED) in addition to the metrics-grade completed event, carrying the
 span-tree correlation from the embedding ContextVars so an embedding made inside
 an agent run nests under that run's trace.
 """
@@ -30,7 +30,7 @@ def capture_emits(monkeypatch: pytest.MonkeyPatch):
 def test_embedding_traced_event_carries_correlation(
     capture_emits: list[object], monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(settings.TELEMETRY, "TRACE_PAYLOADS", True)
+    monkeypatch.setattr(settings.TELEMETRY, "TRACE_PAYLOADS_ENABLED", True)
     with embedding_call_purpose(
         "dialectic.prefetch",
         workspace_name="ws",
@@ -69,7 +69,7 @@ def test_embedding_traced_event_carries_correlation(
 def test_no_trace_event_when_payloads_off(
     capture_emits: list[object], monkeypatch: pytest.MonkeyPatch
 ):
-    monkeypatch.setattr(settings.TELEMETRY, "TRACE_PAYLOADS", False)
+    monkeypatch.setattr(settings.TELEMETRY, "TRACE_PAYLOADS_ENABLED", False)
     with embedding_call_purpose("dialectic.prefetch", run_id="run-1"):
         _publish_embedding_event(
             provider="openai",
@@ -88,7 +88,7 @@ def test_sessionless_embedding_has_no_session(
     capture_emits: list[object], monkeypatch: pytest.MonkeyPatch
 ):
     # A deriver/reconciler embedding (no session scope) traces with session None.
-    monkeypatch.setattr(settings.TELEMETRY, "TRACE_PAYLOADS", True)
+    monkeypatch.setattr(settings.TELEMETRY, "TRACE_PAYLOADS_ENABLED", True)
     with embedding_call_purpose(
         "deriver", workspace_name="ws", parent_category="deriver"
     ):

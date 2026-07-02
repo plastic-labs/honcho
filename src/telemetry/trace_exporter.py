@@ -1,7 +1,7 @@
 """CloudEvents exporter: turns a CapturedLLMCall into trace events.
 
 Registered into the `src/llm/capture.py` exporter registry at startup when
-`TELEMETRY.TRACE_PAYLOADS` is on. For each captured call it emits:
+`TELEMETRY.TRACE_PAYLOADS_ENABLED` is on. For each captured call it emits:
 - one `trace.content` per unique message/output/thinking/tool-schema (deduped
   per run so each ships once), and
 - one `llm.call.traced` carrying the span-tree correlation + content refs +
@@ -35,7 +35,7 @@ class TraceExporter:
     def export(self, call: CapturedLLMCall) -> None:
         # Double-gate (the exporter is only registered when on, but a config
         # flip or a stray registration shouldn't leak payloads).
-        if not settings.TELEMETRY.TRACE_PAYLOADS:
+        if not settings.TELEMETRY.TRACE_PAYLOADS_ENABLED:
             return
         purposes = settings.TELEMETRY.TRACE_PURPOSES
         if purposes and call.call_purpose not in purposes:
