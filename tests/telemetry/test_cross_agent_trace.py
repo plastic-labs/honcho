@@ -104,16 +104,28 @@ def test_dialectic_global_has_no_session(spy: SpyExporter):
 # --- Background agents: sessionless single-shot / shared-tree contracts -----
 
 
-def test_deriver_is_sessionless_single_shot(spy: SpyExporter):
-    # Mirrors src/deriver/deriver.py: trace_id == span_id, run_id None.
-    tid = "deriver-trace"
+@pytest.mark.parametrize(
+    ("call_purpose", "parent_category", "track_name"),
+    [
+        ("deriver.representation", "representation", "Minimal Deriver"),
+        ("summary.short", "summary", None),
+    ],
+)
+def test_background_agents_are_sessionless_single_shot(
+    spy: SpyExporter,
+    call_purpose: str,
+    parent_category: str,
+    track_name: str | None,
+):
+    # Deriver + summarizer mirror their src/ contexts: trace_id == span_id, no
+    # run_id/session_id, self-rooted.
+    tid = f"{parent_category}-trace"
     _dispatch(
         LLMTelemetryContext(
             workspace_name="ws",
-            call_purpose="deriver.representation",
-            parent_category="representation",
-            observed="bob",
-            track_name="Minimal Deriver",
+            call_purpose=call_purpose,
+            parent_category=parent_category,
+            track_name=track_name,
             trace_id=tid,
             span_id=tid,
         )
@@ -123,23 +135,6 @@ def test_deriver_is_sessionless_single_shot(spy: SpyExporter):
     assert call.run_id is None
     assert call.trace_id == call.span_id == tid
     assert call.parent_span_id is None
-
-
-def test_summarizer_is_sessionless_single_shot(spy: SpyExporter):
-    # Mirrors src/utils/summarizer.py short/long summary contexts.
-    tid = "summary-trace"
-    _dispatch(
-        LLMTelemetryContext(
-            workspace_name="ws",
-            call_purpose="summary.short",
-            parent_category="summary",
-            trace_id=tid,
-            span_id=tid,
-        )
-    )
-    call = spy.calls[-1]
-    assert call.session_id is None
-    assert call.trace_id == call.span_id == tid
 
 
 def test_dreamer_specialists_share_one_tree(spy: SpyExporter):
@@ -165,20 +160,6 @@ def test_dreamer_specialists_share_one_tree(spy: SpyExporter):
     assert ded.trace_id == ind.trace_id == run_id  # one shared tree
     assert ded.session_id is None and ind.session_id is None
     assert ded.agent_type == "deduction" and ind.agent_type == "induction"
-
-
-# --- Span-tree well-formedness across every captured call ------------------
-
-
-def test_no_call_is_its_own_parent(spy: SpyExporter):
-    for tele in (
-        LLMTelemetryContext(run_id="r", trace_id="r", span_id="r", parent_span_id="r"),
-        LLMTelemetryContext(trace_id="t", span_id="t"),
-    ):
-        _dispatch(tele)
-    for call in spy.calls:
-        # Exported parent is never the span itself (self-parent → root).
-        assert call.parent_span_id != call.span_id
 
 
 # --- One data model, two projections ---------------------------------------

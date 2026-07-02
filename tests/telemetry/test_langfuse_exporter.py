@@ -246,20 +246,21 @@ def test_error_finish_marks_generation_level(_exporter_env: FakeClient):
     assert gen.kwargs["level"] == "ERROR"
 
 
-def test_inline_mode_emits_nothing(
-    _exporter_env: FakeClient, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("attr", "value"),
+    [
+        ("LANGFUSE_EXPORTER_MODE", "inline"),  # exporter off in inline mode
+        ("LANGFUSE_PUBLIC_KEY", None),  # exporter off without a public key
+    ],
+)
+def test_exporter_disabled_emits_nothing(
+    _exporter_env: FakeClient,
+    monkeypatch: pytest.MonkeyPatch,
+    attr: str,
+    value: object,
 ):
     client = _exporter_env
-    monkeypatch.setattr(settings, "LANGFUSE_EXPORTER_MODE", "inline")
-    LangfuseExporter().export(_call(run_id="r1", trace_id="r1", iteration=1))
-    assert client.observations == []
-
-
-def test_disabled_without_public_key(
-    _exporter_env: FakeClient, monkeypatch: pytest.MonkeyPatch
-):
-    client = _exporter_env
-    monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", None)
+    monkeypatch.setattr(settings, attr, value)
     LangfuseExporter().export(_call(run_id="r1", trace_id="r1", iteration=1))
     assert client.observations == []
 
