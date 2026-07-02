@@ -545,7 +545,7 @@ WEBHOOK_MAX_WORKSPACE_LIMIT=10
 ### Vector Store
 
 ```bash
-VECTOR_STORE_TYPE=pgvector  # Options: pgvector, turbopuffer, lancedb
+VECTOR_STORE_TYPE=pgvector  # Options: pgvector, turbopuffer, lancedb, chromadb
 VECTOR_STORE_MIGRATED=false
 VECTOR_STORE_NAMESPACE=honcho
 # Embedding dim is configured via EMBEDDING_VECTOR_DIMENSIONS — see the
@@ -557,7 +557,25 @@ VECTOR_STORE_TURBOPUFFER_REGION=us-east-1
 
 # LanceDB-specific
 VECTOR_STORE_LANCEDB_PATH=./lancedb_data
+
+# ChromaDB-specific
+VECTOR_STORE_CHROMA_CLIENT_MODE=persistent  # Options: persistent, http, cloud
+VECTOR_STORE_CHROMA_PATH=./chroma_data      # persistent mode
+VECTOR_STORE_CHROMA_HOST=localhost          # http mode (self-hosted server)
+VECTOR_STORE_CHROMA_PORT=8000               # http mode
+VECTOR_STORE_CHROMA_SSL=false               # http mode
+VECTOR_STORE_CHROMA_API_KEY=your-chroma-api-key  # cloud mode (required)
+VECTOR_STORE_CHROMA_TENANT=your-tenant-id        # cloud mode (optional)
+VECTOR_STORE_CHROMA_DATABASE=your-database       # cloud mode (optional)
 ```
+
+The ChromaDB backend requires the `chromadb` extra, which is not installed by default:
+
+```bash
+uv sync --extra chromadb
+```
+
+ChromaDB's `persistent` mode stores data on local disk (embedded, like LanceDB) and is intended for development and small deployments: Honcho creates one Chroma collection per `(observer, observed)` peer pair, and embedded Chroma serializes writes across collections through a single SQLite file and keeps a bounded number of collection indices warm in memory. For production volume, use `cloud` (Chroma Cloud) or `http` against a self-hosted distributed Chroma deployment — both are designed for many collections.
 
 ## Monitoring
 
