@@ -6,11 +6,13 @@ so telemetry can never break the LLM call path.
 
 from __future__ import annotations
 
+import base64
+import contextlib
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Protocol, cast, runtime_checkable
 
 from src.config import settings
 
@@ -35,11 +37,25 @@ def canonical_json(obj: Any) -> str:
     )
 
 
-def compute_content_hash(role: str, content: Any, tool_call_id: str | None) -> str:
-    """Content hash covering the FULL message identity, not just the text."""
+def compute_content_hash(
+    role: str,
+    content: Any,
+    tool_call_id: str | None,
+    tool_calls: list[dict[str, Any]] | None = None,
+) -> str:
+    """Content hash covering the FULL message identity, not just the text.
+
+    Includes `tool_calls` so two assistant turns with identical (often empty)
+    content but different tool calls don't collide in the dedup store.
+    """
     digest = hashlib.sha256(
         canonical_json(
-            {"role": role, "content": content, "tool_call_id": tool_call_id}
+            {
+                "role": role,
+                "content": content,
+                "tool_call_id": tool_call_id,
+                "tool_calls": tool_calls or [],
+            }
         ).encode("utf-8")
     ).hexdigest()
     return f"sha256:{digest}"
@@ -66,11 +82,11 @@ def clip_for_trace(content: Any) -> tuple[Any, bool]:
 
 @dataclass(slots=True)
 class CapturedMessage:
-    """One input message, canonicalized + content-addressed.
+    """One input message, normalized to a provider-agnostic shape.
 
-    `content` is the  structured message Honcho holds, not flattened text.
-    `content_hash` is computed over this exact `content` so the ref and the
-    shipped `trace.content` always agree.
+    `content` is the message text; `tool_calls` holds any tool calls in a
+    unified `{id, name, input}` shape regardless of provider. `content_hash`
+    covers all identity fields so the ref and the shipped `trace.content` agree.
     """
 
     role: str
@@ -78,6 +94,7 @@ class CapturedMessage:
     tool_call_id: str | None
     content_hash: str
     truncated: bool = False
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -128,14 +145,98 @@ class CapturedLLMCall:
     input_truncated: bool = False
 
 
+def _normalize_message(
+    message: dict[str, Any], transport: str | None
+) -> tuple[Any, str | None, list[dict[str, Any]]]:
+    """Normalize a provider-native message to (content, tool_call_id, tool_calls).
+
+    Providers stash tool calls and results outside `content` (openai's
+    `tool_calls`, gemini's `parts`), so a naive `content` read loses them. This
+    lifts them into a unified shape: `content` becomes text, `tool_calls` is a
+    list of `{id, name, input}`, and tool results surface as `content` keyed by
+    `tool_call_id`.
+    """
+    content: Any = message.get("content")
+    tool_call_id: str | None = message.get("tool_call_id")
+    tool_calls: list[dict[str, Any]] = []
+
+    if transport == "openai":
+        for tc in cast("list[dict[str, Any]]", message.get("tool_calls") or []):
+            fn = cast("dict[str, Any]", tc.get("function") or {})
+            args = fn.get("arguments")
+            if isinstance(args, str):
+                with contextlib.suppress(json.JSONDecodeError):
+                    args = json.loads(args)
+            tool_calls.append(
+                {"id": tc.get("id"), "name": fn.get("name"), "input": args}
+            )
+
+    elif transport == "gemini":
+        parts = message.get("parts")
+        if isinstance(parts, list):
+            texts: list[str] = []
+            results: list[Any] = []
+            for raw_part in cast("list[Any]", parts):
+                if not isinstance(raw_part, dict):
+                    continue
+                part = cast("dict[str, Any]", raw_part)
+                text = part.get("text")
+                if isinstance(text, str):
+                    texts.append(text)
+                elif "function_call" in part:
+                    fc = cast("dict[str, Any]", part["function_call"] or {})
+                    tool_calls.append(
+                        {"id": None, "name": fc.get("name"), "input": fc.get("args")}
+                    )
+                elif "function_response" in part:
+                    fr = cast("dict[str, Any]", part["function_response"] or {})
+                    resp = fr.get("response")
+                    if isinstance(resp, dict):
+                        results.append(cast("dict[str, Any]", resp).get("result"))
+                    else:
+                        results.append(resp)
+                    if tool_call_id is None:
+                        tool_call_id = fr.get("name")
+            content = "\n".join(texts) if texts else (results[0] if results else None)
+
+    elif transport == "anthropic" and isinstance(content, list):
+        texts = []
+        for raw_block in cast("list[Any]", content):
+            if not isinstance(raw_block, dict):
+                continue
+            block = cast("dict[str, Any]", raw_block)
+            btype = block.get("type")
+            text = block.get("text")
+            if btype == "text" and isinstance(text, str):
+                texts.append(text)
+            elif btype == "tool_use":
+                tool_calls.append(
+                    {
+                        "id": block.get("id"),
+                        "name": block.get("name"),
+                        "input": block.get("input"),
+                    }
+                )
+            elif btype == "tool_result":
+                if tool_call_id is None:
+                    tool_call_id = block.get("tool_use_id")
+                inner = block.get("content")
+                texts.append(inner if isinstance(inner, str) else canonical_json(inner))
+        content = "\n".join(texts) if texts else None
+
+    return content, tool_call_id, tool_calls
+
+
 def build_captured_messages(
     messages: list[dict[str, Any]],
     memo: dict[int, CapturedMessage] | None,
+    transport: str | None = None,
 ) -> tuple[list[CapturedMessage], bool]:
     """Create a list of CapturedMessage from LLM response messages.
 
     Conversation is append-only. Uses hashed message content to deduplicate
-    across turns. Content is truncated first, then hashed.
+    across turns. Messages are normalized per provider, then content is
+    truncated and hashed.
     """
     captured: list[CapturedMessage] = []
     any_truncated = False
@@ -147,16 +248,16 @@ def build_captured_messages(
             any_truncated = any_truncated or cached.truncated
             continue
         role = str(message.get("role", ""))
-        raw_content = message.get("content")
-        tool_call_id = message.get("tool_call_id")
+        raw_content, tool_call_id, tool_calls = _normalize_message(message, transport)
         content, truncated = clip_for_trace(raw_content)
         any_truncated = any_truncated or truncated
         captured_message = CapturedMessage(
             role=role,
             content=content,
             tool_call_id=tool_call_id,
-            content_hash=compute_content_hash(role, content, tool_call_id),
+            content_hash=compute_content_hash(role, content, tool_call_id, tool_calls),
             truncated=truncated,
+            tool_calls=tool_calls,
         )
         if memo is not None:
             memo[key] = captured_message
@@ -181,7 +282,9 @@ def build_captured_call(
 ) -> CapturedLLMCall:
     """Assemble a `CapturedLLMCall` from telemetry + the provider result."""
     memo = telemetry.hash_memo if telemetry is not None else None
-    captured_messages, input_truncated = build_captured_messages(messages, memo)
+    captured_messages, input_truncated = build_captured_messages(
+        messages, memo, transport
+    )
 
     output_tool_calls = [
         _tool_call_to_dict(tc) for tc in (result.tool_calls if result else [])
@@ -227,14 +330,22 @@ def build_captured_call(
 
 
 def _tool_call_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
-    """Normalize a ToolCallResult to a replay-grade dict."""
+    """Normalize a ToolCallResult to a JSON-safe dict for the trace stream.
+
+    `thought_signature` arrives as raw bytes from Gemini; base64-encode it so
+    CloudEvents JSON serialization can't choke on non-UTF8 bytes (which would
+    silently drop the whole event via the best-effort emit path).
+    """
     out: dict[str, Any] = {
         "id": tool_call.id,
         "name": tool_call.name,
         "input": tool_call.input,
     }
-    if tool_call.thought_signature is not None:
-        out["thought_signature"] = tool_call.thought_signature
+    sig = tool_call.thought_signature
+    if sig is not None:
+        out["thought_signature"] = (
+            base64.b64encode(sig).decode("ascii") if isinstance(sig, bytes) else sig
+        )
     return out
 
 

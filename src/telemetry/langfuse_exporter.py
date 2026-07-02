@@ -372,6 +372,8 @@ class LangfuseExporter:
             entry: dict[str, Any] = {"role": message.role, "content": message.content}
             if message.tool_call_id is not None:
                 entry["tool_call_id"] = message.tool_call_id
+            if message.tool_calls:
+                entry["tool_calls"] = message.tool_calls
             out.append(entry)
         return out
 

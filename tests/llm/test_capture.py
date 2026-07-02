@@ -142,9 +142,14 @@ class TestBuildCapturedMessages:
         calls = {"n": 0}
         real = compute_content_hash
 
-        def counting(role: str, content: object, tool_call_id: str | None) -> str:
+        def counting(
+            role: str,
+            content: object,
+            tool_call_id: str | None,
+            tool_calls: list[dict[str, object]] | None = None,
+        ) -> str:
             calls["n"] += 1
-            return real(role, content, tool_call_id)
+            return real(role, content, tool_call_id, tool_calls)
 
         monkeypatch.setattr(capture, "compute_content_hash", counting)
 
@@ -157,6 +162,109 @@ class TestBuildCapturedMessages:
         assert calls["n"] == 2  # both hashed
         build_captured_messages([m1, m2, m3], memo)
         assert calls["n"] == 3  # only the newly-appended m3 hashed (not re-hashed)
+
+
+class TestNormalizeToolCalls:
+    """Tool calls live outside `content` for openai/gemini — capture must lift
+    them into the unified `tool_calls` shape (the PR concern)."""
+
+    def test_openai_assistant_tool_calls_captured(self):
+        msg = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "search_memory",
+                        "arguments": '{"query": "coffee"}',
+                    },
+                }
+            ],
+        }
+        captured, _ = build_captured_messages([msg], memo=None, transport="openai")
+        assert captured[0].tool_calls == [
+            {"id": "call_1", "name": "search_memory", "input": {"query": "coffee"}}
+        ]
+
+    def test_gemini_model_parts_captured(self):
+        msg = {
+            "role": "model",
+            "parts": [
+                {"text": "let me look"},
+                {"function_call": {"name": "grep_messages", "args": {"text": "x"}}},
+            ],
+        }
+        captured, _ = build_captured_messages([msg], memo=None, transport="gemini")
+        assert captured[0].content == "let me look"
+        assert captured[0].tool_calls == [
+            {"id": None, "name": "grep_messages", "input": {"text": "x"}}
+        ]
+
+    def test_gemini_tool_result_recovered(self):
+        # Gemini tool results live in `parts` (no `content` key) and were dropped.
+        msg = {
+            "role": "user",
+            "parts": [
+                {
+                    "function_response": {
+                        "name": "grep_messages",
+                        "response": {"result": "3 hits"},
+                    }
+                }
+            ],
+        }
+        captured, _ = build_captured_messages([msg], memo=None, transport="gemini")
+        assert captured[0].content == "3 hits"
+        assert captured[0].tool_call_id == "grep_messages"
+
+    def test_anthropic_tool_use_blocks_normalized(self):
+        msg = {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "searching"},
+                {
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "search_memory",
+                    "input": {"q": "x"},
+                },
+            ],
+        }
+        captured, _ = build_captured_messages([msg], memo=None, transport="anthropic")
+        assert captured[0].content == "searching"
+        assert captured[0].tool_calls == [
+            {"id": "tu_1", "name": "search_memory", "input": {"q": "x"}}
+        ]
+
+    def test_hash_distinguishes_tool_calls(self):
+        # Two empty-content assistant turns with different tool calls must not
+        # collide in the dedup store (they did before tool_calls entered the hash).
+        base = {"role": "assistant", "content": None}
+        a = {
+            **base,
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "search_memory", "arguments": "{}"},
+                }
+            ],
+        }
+        b = {
+            **base,
+            "tool_calls": [
+                {
+                    "id": "c2",
+                    "type": "function",
+                    "function": {"name": "search_messages", "arguments": "{}"},
+                }
+            ],
+        }
+        (ca,), _ = build_captured_messages([a], memo=None, transport="openai")
+        (cb,), _ = build_captured_messages([b], memo=None, transport="openai")
+        assert ca.content_hash != cb.content_hash
 
 
 class TestBuildCapturedCall:
@@ -331,3 +439,50 @@ class TestExporterRegistry:
         # Must not raise — telemetry never breaks the LLM path.
         capture.dispatch_captured_call(call)
         capture.clear_exporters()
+
+
+class TestThoughtSignatureSerialization:
+    """Gemini `thought_signature` is bytes; it must not break trace serialization."""
+
+    def test_bytes_signature_base64_encoded_and_serializes(self):
+        import json
+
+        from src.telemetry.events.trace import LLMCallTracedEvent
+
+        result = CompletionResult(
+            content=None,
+            finish_reason="STOP",
+            tool_calls=[
+                ToolCallResult(
+                    id="call_1",
+                    name="grep_messages",
+                    input={"text": "coffee"},
+                    thought_signature=b"\x0a\x1f\x88\xff\x00sig",
+                )
+            ],
+        )
+        call = build_captured_call(
+            telemetry=LLMTelemetryContext(trace_id="t1", span_id="s1"),
+            transport="gemini",
+            provider_label=None,
+            model="gemini-2.5-flash",
+            messages=[{"role": "user", "content": "q"}],
+            tools=None,
+            tool_choice=None,
+            result=result,
+            attempt=1,
+            was_fallback=False,
+            was_stream=False,
+            finish_reason="STOP",
+        )
+        sig = call.output_tool_calls[0]["thought_signature"]
+        assert isinstance(sig, str)  # base64, not raw bytes
+
+        # The traced event must serialize to JSON without raising (the emit path
+        # calls model_dump(mode="json"), which threw UnicodeDecodeError on bytes).
+        event = LLMCallTracedEvent(
+            model="gemini-2.5-flash",
+            transport="gemini",
+            output_tool_calls=call.output_tool_calls,
+        )
+        json.dumps(event.model_dump(mode="json"))

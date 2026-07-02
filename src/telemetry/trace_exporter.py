@@ -55,6 +55,7 @@ class TraceExporter:
                 content=message.content,
                 tool_call_id=message.tool_call_id,
                 honcho_authored=message.role == "system",
+                tool_calls=message.tool_calls,
             )
 
         # --- Tool schemas (Honcho-authored, content-addressed) ---
@@ -148,6 +149,7 @@ class TraceExporter:
         content: Any,
         tool_call_id: str | None,
         honcho_authored: bool,
+        tool_calls: list[dict[str, Any]] | None = None,
     ) -> None:
         """Emit one trace.content, deduped per run (skip if already shipped)."""
         if not trace_session.mark_emitted(run_key, content_hash):
@@ -159,6 +161,7 @@ class TraceExporter:
                 content=content,
                 tool_call_id=tool_call_id,
                 honcho_authored=honcho_authored,
+                tool_calls=tool_calls or [],
             )
         )
 

@@ -137,10 +137,11 @@ class TraceContentEvent(BaseEvent):
 
     content_hash: str
     role: str
-    # The STRUCTURED message Honcho holds — multi-part blocks, tool results,
-    # cache hints — never flattened text.
+    # Message text, normalized across providers.
     content: Any = None
     tool_call_id: str | None = None
+    # Tool calls in a unified {id, name, input} shape (provider-agnostic).
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     # Tags Honcho-authored content (system prompts, scaffold) so tenant-facing
     # views can withhold globally-shared content (the §6.3 access invariant —
     # dedup is global, the content store has no tenant column).
