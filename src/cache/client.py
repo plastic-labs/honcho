@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from typing import Any, cast
+from urllib.parse import urlparse, urlunparse
 
 import sentry_sdk
 from cashews import cache
@@ -20,8 +21,25 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-
 _cache_lock = asyncio.Lock()
+
+
+def _redact_cache_url(url: str) -> str:
+    """Mask the password in a Redis connection URL before logging.
+
+    Given ``redis://:password@host:port/db`` returns
+    ``redis://:***@host:port/db``.  If the URL has no userinfo
+    component it is returned unchanged.
+    """
+    parsed = urlparse(url)
+    if parsed.password is None:
+        return url
+    userinfo = parsed.username or ""
+    netloc = f"{userinfo}:***@{parsed.hostname or ''}"
+    if parsed.port is not None:
+        netloc += f":{parsed.port}"
+    parsed = parsed._replace(netloc=netloc)
+    return urlunparse(parsed)
 
 
 def is_cache_enabled() -> bool:
@@ -55,7 +73,7 @@ async def init_cache() -> None:
         except Exception as setup_err:
             logger.warning(
                 "Cache setup failed for %s: %s. Falling back to in-memory cache",
-                settings.CACHE.URL,
+                _redact_cache_url(settings.CACHE.URL),
                 setup_err,
             )
             if settings.SENTRY.ENABLED:
@@ -83,7 +101,10 @@ async def init_cache() -> None:
                 with attempt:
                     async with asyncio.timeout(2):
                         await cache.ping()
-                        logger.info("Connected to cache at %s", settings.CACHE.URL)
+                        logger.info(
+                            "Connected to cache at %s",
+                            _redact_cache_url(settings.CACHE.URL),
+                        )
         except (
             redis_exc.TimeoutError,
             redis_exc.ConnectionError,
@@ -92,7 +113,7 @@ async def init_cache() -> None:
         ) as e:
             logger.warning(
                 "Failed to connect to cache at %s: %s. Falling back to in-memory cache",
-                settings.CACHE.URL,
+                _redact_cache_url(settings.CACHE.URL),
                 e,
             )
             if settings.SENTRY.ENABLED:
@@ -103,7 +124,7 @@ async def init_cache() -> None:
         except Exception as e:
             logger.warning(
                 "Unexpected cache error at %s: %s. Falling back to in-memory cache",
-                settings.CACHE.URL,
+                _redact_cache_url(settings.CACHE.URL),
                 e,
             )
             if settings.SENTRY.ENABLED:
