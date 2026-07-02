@@ -8,7 +8,12 @@ from typing import Any
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel, ValidationError
 
-from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
+from src.llm.backend import (
+    CompletionResult,
+    StreamChunk,
+    ToolCallResult,
+    request_timeout_from_extra_params,
+)
 from src.llm.request_builder import apply_sdk_passthroughs
 from src.llm.structured_output import repair_response_model_json
 
@@ -73,6 +78,10 @@ class AnthropicBackend:
             # Operator escape hatch: forward Anthropic SDK passthrough kwargs
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
+
+        timeout = request_timeout_from_extra_params(extra_params)
+        if timeout is not None:
+            params["timeout"] = timeout
 
         use_json_prefill = (
             bool(response_format or self._json_mode(extra_params))
@@ -155,6 +164,10 @@ class AnthropicBackend:
             # Operator escape hatch: forward Anthropic SDK passthrough kwargs
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
+
+        timeout = request_timeout_from_extra_params(extra_params)
+        if timeout is not None:
+            params["timeout"] = timeout
         use_json_prefill = (
             bool(response_format or is_json_mode)
             and not thinking_budget_tokens
