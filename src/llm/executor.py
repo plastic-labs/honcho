@@ -139,7 +139,7 @@ def _outcome_from_error(
 
 
 def _tool_call_result_to_dict(tool_call: ToolCallResult) -> dict[str, Any]:
-    result = {
+    result: dict[str, Any] = {
         "id": tool_call.id,
         "name": tool_call.name,
         "input": tool_call.input,
