@@ -485,7 +485,7 @@ Then modify the values as needed. The TOML file is organized into sections:
 - `[webhook]` - Webhook configuration
 - `[metrics]` - Prometheus pull-based metrics
 - `[telemetry]` - CloudEvents telemetry for analytics
-- `[vector_store]` - Vector store configuration (pgvector, turbopuffer, or lancedb)
+- `[vector_store]` - Vector store configuration (pgvector, turbopuffer, lancedb, or qdrant)
 - `[sentry]` - Error tracking and monitoring settings
 
 ### Using Environment Variables
