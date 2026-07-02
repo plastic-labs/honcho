@@ -16,7 +16,7 @@ class TestRedactCacheUrl:
         )
 
     def test_user_and_password(self):
-        result = _redact_cache_url("redis://user:***@10.0.0.1:6380/2")
+        result = _redact_cache_url("redis://user:s3cret@10.0.0.1:6380/2")
         assert "***" in result
         assert "s3cret" not in result
         assert "user" in result
@@ -28,15 +28,15 @@ class TestRedactCacheUrl:
         assert "secret" not in result
 
     def test_complex_password(self):
-        result = _redact_cache_url("redis://:p@ssw0rd!#$@host:6379/0")
+        result = _redact_cache_url("redis://:p%40ssw0rd!%24@host:6379/0")
         assert "***" in result
-        assert "p@ssw0rd" not in result
+        assert "p%40ssw0rd" not in result
 
     def test_password_never_leaked(self):
         """The original password must never appear in the redacted output."""
         for url in [
             "redis://:hunter2@localhost:6379/0",
-            "redis://admin:***@localhost:6379/0",
+            "redis://admin:hunter2@localhost:6379/0",
             "rediss://:hunter2@[::1]:6380/1",
         ]:
             assert "hunter2" not in _redact_cache_url(url)
@@ -45,8 +45,8 @@ class TestRedactCacheUrl:
 
     def test_user_without_password_unchanged(self):
         assert (
-            _redact_cache_url("redis://user@localhost:***@localhost:6379/0")
-            == "redis://localhost:6379/0"
+            _redact_cache_url("redis://user@localhost:6379/0")
+            == "redis://user@localhost:6379/0"
         )
 
     def test_in_memory_url_unchanged(self):
