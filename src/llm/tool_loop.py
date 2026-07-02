@@ -30,7 +30,12 @@ from src.utils.types import (
     set_last_tool_metadata,
 )
 
-from .executor import honcho_llm_call_inner
+from .capture import (
+    build_captured_call,
+    dispatch_captured_call,
+    has_exporters,
+)
+from .executor import honcho_llm_call_inner, infer_provider_label
 from .registry import history_adapter_for_provider
 from .runtime import (
     AttemptPlan,
@@ -81,17 +86,67 @@ def _step_label(base: LLMTelemetryContext | None) -> str:
 
 
 def _telemetry_for_iteration(
-    base: LLMTelemetryContext | None, iteration: int
+    base: LLMTelemetryContext | None,
+    iteration: int,
+    *,
+    step_seq: int,
 ) -> LLMTelemetryContext | None:
-    """Return a copy of `base` with `iteration` set, or None if no base.
+    """Return a copy of `base` with per-step correlation set, or None if no base.
 
     We always copy rather than mutate the caller-supplied context so callers
     that pass the same context into multiple `honcho_llm_call` invocations
-    don't see drift across concurrent runs.
+    don't see drift across concurrent runs. `parent_span_id` is set to the
+    span being looped over (`base.span_id`) so nested generations are correctly
+    treated as children of the run span.
     """
     if base is None:
         return None
-    return dataclasses.replace(base, iteration=iteration)
+    return dataclasses.replace(
+        base,
+        iteration=iteration,
+        step_seq=step_seq,
+        parent_span_id=base.span_identity(),
+    )
+
+
+def _make_stream_capture_finalizer(
+    telemetry: LLMTelemetryContext | None,
+    plan: AttemptPlan,
+    messages: list[dict[str, Any]],
+) -> Callable[[str, str], None] | None:
+    """Build the streamed-call capture finalizer, or None when capture is off.
+
+    Snapshots the input messages now and returns a closure the streaming wrapper
+    calls on drain with `(streamed_text, finish_reason)`. Tool calls already ran
+    in the loop, so the final streamed turn is text-only. Returns None when no
+    exporter is registered.
+    """
+    if not has_exporters():
+        return None
+    captured_messages = list(messages)
+
+    def _finalize(text: str, finish_reason: str) -> None:
+        from .backend import CompletionResult as BackendCompletionResult
+
+        result = BackendCompletionResult(content=text, finish_reason=finish_reason)
+        dispatch_captured_call(
+            build_captured_call(
+                telemetry=telemetry,
+                transport=str(plan.provider),
+                provider_label=infer_provider_label(plan.provider, plan.model, plan),
+                model=plan.model,
+                messages=captured_messages,
+                tools=None,
+                tool_choice=None,
+                result=result,
+                attempt=plan.attempt,
+                was_fallback=plan.is_fallback,
+                was_stream=True,
+                finish_reason=finish_reason,
+            )
+        )
+
+    return _finalize
 
 
 def _emit_agent_iteration(
@@ -328,6 +383,12 @@ async def execute_tool_loop(
         messages.copy() if messages else [{"role": "user", "content": prompt}]
     )
 
+    # Seed one hash memo for the whole span. dataclasses.replace copies the dict reference into
+    # every per-iteration telemetry copy, so each appended message is content-hashed exactly once
+    # across the span.
+    if telemetry is not None and telemetry.hash_memo is None:
+        telemetry = dataclasses.replace(telemetry, hash_memo={})
+
     iteration = 0
     all_tool_calls: list[dict[str, Any]] = []
     total_input_tokens = 0
@@ -349,7 +410,7 @@ async def execute_tool_loop(
     while iteration < max_tool_iterations:
         step = start_langfuse_agent_step(
             _step_label(telemetry),
-            _telemetry_for_iteration(telemetry, iteration + 1),
+            _telemetry_for_iteration(telemetry, iteration + 1, step_seq=iteration + 1),
         )
         try:
             # Reset attempt counter so each iteration starts with the primary provider.
@@ -392,7 +453,9 @@ async def execute_tool_loop(
                     messages=captured_messages,
                     selected_config=plan.selected_config,
                     plan=plan,
-                    telemetry=_telemetry_for_iteration(telemetry, iteration_for_call),
+                    telemetry=_telemetry_for_iteration(
+                        telemetry, iteration_for_call, step_seq=iteration_for_call
+                    ),
                 )
 
             call_func: Callable[[], Awaitable[HonchoLLMCallResponse[Any]]]
@@ -453,6 +516,13 @@ async def execute_tool_loop(
                     # pin to this exact client/model so we don't bounce back to
                     # primary after the tool loop settled on fallback.
                     winning_plan = get_attempt_plan()
+                    # +2 (not +1): the in-loop call we just made used iteration+1,
+                    # so the streamed tail needs the next ordinal — otherwise its
+                    # trace resource id collides with that call's. Mirrors the
+                    # synthesis path's distinct-next-value behavior.
+                    stream_telemetry = _telemetry_for_iteration(
+                        telemetry, iteration + 2, step_seq=iteration + 2
+                    )
                     stream = stream_final_response(
                         winning_plan=winning_plan,
                         prompt=prompt,
@@ -466,7 +536,7 @@ async def execute_tool_loop(
                         enable_retry=enable_retry,
                         retry_attempts=retry_attempts,
                         before_retry_callback=before_retry_callback,
-                        telemetry=_telemetry_for_iteration(telemetry, iteration + 1),
+                        telemetry=stream_telemetry,
                     )
                     return StreamingResponseWithMetadata(
                         stream=stream,
@@ -479,6 +549,9 @@ async def execute_tool_loop(
                         iterations=iteration + 1,
                         hit_input_token_cap=hit_input_token_cap,
                         langfuse_run_handle=langfuse_run_handle,
+                        capture_finalizer=_make_stream_capture_finalizer(
+                            stream_telemetry, winning_plan, conversation_messages
+                        ),
                     )
 
                 response.tool_calls_made = all_tool_calls
@@ -612,6 +685,9 @@ async def execute_tool_loop(
         # Snapshot the plan the loop settled on — streaming retries pin to
         # this exact client/model rather than re-running provider selection.
         winning_plan = get_attempt_plan()
+        stream_telemetry = _telemetry_for_iteration(
+            telemetry, synthesis_iteration, step_seq=synthesis_iteration
+        )
         stream = stream_final_response(
             winning_plan=winning_plan,
             prompt=prompt,
@@ -625,7 +701,7 @@ async def execute_tool_loop(
             enable_retry=enable_retry,
             retry_attempts=retry_attempts,
             before_retry_callback=before_retry_callback,
-            telemetry=_telemetry_for_iteration(telemetry, synthesis_iteration),
+            telemetry=stream_telemetry,
         )
         return StreamingResponseWithMetadata(
             stream=stream,
@@ -638,6 +714,9 @@ async def execute_tool_loop(
             iterations=iteration + 1,
             hit_input_token_cap=hit_input_token_cap,
             langfuse_run_handle=langfuse_run_handle,
+            capture_finalizer=_make_stream_capture_finalizer(
+                stream_telemetry, winning_plan, conversation_messages
+            ),
         )
 
     current_attempt.set(1)
@@ -663,7 +742,9 @@ async def execute_tool_loop(
             messages=conversation_messages,
             selected_config=plan.selected_config,
             plan=plan,
-            telemetry=_telemetry_for_iteration(telemetry, synthesis_iteration),
+            telemetry=_telemetry_for_iteration(
+                telemetry, synthesis_iteration, step_seq=synthesis_iteration
+            ),
         )
 
     if enable_retry:
@@ -680,7 +761,9 @@ async def execute_tool_loop(
     # trace. Imperative pair with a try/finally for the .end().
     synthesis_step = start_langfuse_agent_step(
         _step_label(telemetry),
-        _telemetry_for_iteration(telemetry, synthesis_iteration),
+        _telemetry_for_iteration(
+            telemetry, synthesis_iteration, step_seq=synthesis_iteration
+        ),
     )
     try:
         final_response = await final_call_func()
@@ -692,7 +775,9 @@ async def execute_tool_loop(
     # totals onto final_response below — otherwise the event's per-iteration
     # token counts would double-count the running totals.
     _emit_agent_iteration(
-        _telemetry_for_iteration(telemetry, synthesis_iteration),
+        _telemetry_for_iteration(
+            telemetry, synthesis_iteration, step_seq=synthesis_iteration
+        ),
         synthesis_iteration,
         final_response,
     )

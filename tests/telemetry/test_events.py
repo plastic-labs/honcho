@@ -759,10 +759,11 @@ class TestAgentToolSummaryCreatedEvent:
     def test_get_resource_id(
         self, sample_summary_created_event: AgentToolSummaryCreatedEvent
     ):
-        """get_resource_id() returns run_id:iteration:summary_created format."""
+        """get_resource_id() keys on message_id:summary_type (run_id/iteration are
+        None for the non-agentic summarizer and can't identify the summary)."""
         assert (
             sample_summary_created_event.get_resource_id()
-            == "ghi11111:1:summary_created"
+            == "msg_020:short:summary_created"
         )
 
     def test_summary_type_values(self, fixed_timestamp: datetime):

@@ -42,6 +42,8 @@ async def initialize_telemetry_async() -> None:
     from src.config import settings
     from src.telemetry.events import initialize_telemetry_events
 
+    # Master switch for every trace sink, Langfuse included: telemetry off
+    # initializes nothing.
     if settings.TELEMETRY.ENABLED:
         await initialize_telemetry_events()
 

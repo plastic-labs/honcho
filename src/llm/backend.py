@@ -14,7 +14,8 @@ class ToolCallResult:
     id: str
     name: str
     input: dict[str, Any]
-    thought_signature: str | None = None
+    # Gemini returns this as raw bytes; other providers omit it.
+    thought_signature: str | bytes | None = None
 
 
 @dataclass(slots=True)

@@ -1,6 +1,8 @@
 import logging
 import time
 
+from nanoid import generate as generate_nanoid
+
 from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
@@ -142,6 +144,7 @@ async def process_representation_tasks_batch(
     model_config = base_model_config
 
     # Single LLM call
+    trace_id = generate_nanoid()
     llm_start = time.perf_counter()
     response = await honcho_llm_call(
         model_config=model_config,
@@ -159,6 +162,8 @@ async def process_representation_tasks_batch(
             parent_category="representation",
             observed=observed,
             track_name="Minimal Deriver",
+            trace_id=trace_id,
+            span_id=trace_id,
         ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000

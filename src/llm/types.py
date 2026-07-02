@@ -6,14 +6,21 @@ of the migration toward src/llm/ owning all non-embedding LLM orchestration.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
-from typing import Any, Generic, Literal, TypeVar
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from anthropic import AsyncAnthropic
 from google import genai
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from src.llm.capture import CapturedMessage
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -65,12 +72,23 @@ class LLMTelemetryContext:
     parent_category: str | None = None
     run_id: str | None = None
     iteration: int | None = None
+    # OpenTelemetry-style span-tree correlation.
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    # Monotonic executor-call ordinal WITHIN a span (total ordering of its
+    # steps).
+    step_seq: int = 0
+    # Retry/fallback attempt within an iteration.
+    attempt: int = 1
     # Optional peer context (dream agents pass observer/observed; dialectic
     # passes peer_name). Kept here so AgentIterationEvent can populate
     # them without a separate threading path.
     observer: str | None = None
     observed: str | None = None
     peer_name: str | None = None
+    # Used to group traces (should not use session_name because it is not unique)
+    session_id: str | None = None
     # Tool-related context: agent_type is the human-readable identifier of the
     # agent — dialectic/deduction/induction. Used by agent iteration
     # event and tool call event.
@@ -81,6 +99,19 @@ class LLMTelemetryContext:
     # Also used to label the sentry `ai_track` decorator and as the source for
     # the run-level `langfuse_agent_run` label.
     track_name: str | None = None
+    # Per-span memo for O(N) message capture in CapturedLLMCall
+    hash_memo: dict[int, CapturedMessage] | None = field(
+        default=None, compare=False, repr=False
+    )
+
+    def span_identity(self) -> str | None:
+        """Effective span id: the new `span_id`, falling back to legacy `run_id`."""
+        return self.span_id or self.run_id
+
+    def exported_parent_span_id(self) -> str | None:
+        """`parent_span_id` for EXPORT, collapsing the self-parent sentinel to None."""
+        pid = self.parent_span_id
+        return None if pid is not None and pid == self.span_id else pid
 
 
 IterationCallback = Callable[[IterationData], None]
@@ -147,6 +178,13 @@ class StreamingResponseWithMetadata:
     as the run span's output and the span is closed. Without this transfer,
     streaming traces would show blank output because the synchronous return
     happens before any chunks arrive.
+
+    `capture_finalizer` (optional) closes the replay-grade content capture for
+    a streamed call. The synchronous return happens before any chunks arrive,
+    so the streamed text only exists once the stream drains — the wrapper calls
+    the finalizer with `(accumulated_text, finish_reason)` in its `finally`.
+    A partial/aborted stream still finalizes, with `finish_reason` =
+    "cancelled"/"error".
     """
 
     _stream: AsyncIterator[HonchoLLMCallStreamChunk]
@@ -159,6 +197,7 @@ class StreamingResponseWithMetadata:
     iterations: int
     hit_input_token_cap: bool
     _langfuse_run_handle: Any | None
+    _capture_finalizer: Callable[[str, str], None] | None
 
     def __init__(
         self,
@@ -172,6 +211,7 @@ class StreamingResponseWithMetadata:
         iterations: int = 0,
         hit_input_token_cap: bool = False,
         langfuse_run_handle: Any | None = None,
+        capture_finalizer: Callable[[str, str], None] | None = None,
     ):
         self._stream = stream
         self.tool_calls_made = tool_calls_made
@@ -183,6 +223,7 @@ class StreamingResponseWithMetadata:
         self.iterations = iterations
         self.hit_input_token_cap = hit_input_token_cap
         self._langfuse_run_handle = langfuse_run_handle
+        self._capture_finalizer = capture_finalizer
 
     def __aiter__(self) -> AsyncIterator[HonchoLLMCallStreamChunk]:
         # Wrap the underlying iterator to capture final-stream output_tokens
@@ -196,16 +237,23 @@ class StreamingResponseWithMetadata:
         self,
     ) -> AsyncIterator[HonchoLLMCallStreamChunk]:
         final_stream_output_tokens = 0
-        # Only accumulate when a Langfuse run handle is attached — for non-
-        # traced streams the buffer is dead weight.
-        accumulate = self._langfuse_run_handle is not None
+        # Accumulate the streamed text when either consumer needs it: the
+        # Langfuse run span (stamped as output on drain) or the content-capture
+        # finalizer.
+        accumulate = (
+            self._langfuse_run_handle is not None or self._capture_finalizer is not None
+        )
         accumulated_text: list[str] = []
+        last_finish_reason: str | None = None
+        stream_error: BaseException | None = None
         try:
             async for chunk in self._stream:
                 if chunk.output_tokens is not None:
                     # Take the LATEST value, not the sum — providers report
                     # the cumulative usage in the final chunk, not deltas.
                     final_stream_output_tokens = chunk.output_tokens
+                if chunk.finish_reasons:
+                    last_finish_reason = chunk.finish_reasons[-1]
                 if accumulate and chunk.content:
                     accumulated_text.append(chunk.content)
                 yield chunk
@@ -214,14 +262,36 @@ class StreamingResponseWithMetadata:
             # see the true cost.
             if final_stream_output_tokens > 0:
                 self.output_tokens += final_stream_output_tokens
+        except BaseException as exc:
+            stream_error = exc
+            raise
         finally:
+            text = "".join(accumulated_text)
             # Close the run span once, stamping the streamed text as its
             # output. In `finally` so an early-exit caller still closes
             # the span rather than leaking it.
             handle = self._langfuse_run_handle
             if handle is not None:
                 self._langfuse_run_handle = None
-                handle.end(output="".join(accumulated_text) or None)
+                handle.end(output=text or None)
+            # Finalize the content capture with the full streamed text. Even a
+            # partial/aborted stream captures, tagged with the right outcome.
+            finalizer = self._capture_finalizer
+            if finalizer is not None:
+                self._capture_finalizer = None
+                finish_reason = (
+                    (last_finish_reason or "stop")
+                    if stream_error is None
+                    else (
+                        "cancelled"
+                        if isinstance(stream_error, asyncio.CancelledError)
+                        else "error"
+                    )
+                )
+                try:
+                    finalizer(text, finish_reason)
+                except Exception:  # pragma: no cover - best-effort telemetry
+                    logger.debug("Stream capture finalizer failed", exc_info=True)
 
 
 __all__ = [

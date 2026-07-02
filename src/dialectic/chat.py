@@ -50,6 +50,9 @@ async def agentic_chat(
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
             )
+        # Read the opaque Session.id while the instance is still bound; the ORM
+        # object detaches once this read-only session closes below.
+        session_id = session.id if session else None
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
 
@@ -68,6 +71,7 @@ async def agentic_chat(
     agent = DialecticAgent(
         workspace_name=workspace_name,
         session_name=session_name,
+        session_id=session_id,
         observer=observer,
         observed=observed,
         observer_peer_card=observer_peer_card,
@@ -111,6 +115,9 @@ async def agentic_chat_stream(
             session = await crud.get_session(
                 db, workspace_name=workspace_name, session_name=session_name
             )
+        # Read the opaque Session.id while the instance is still bound; the ORM
+        # object detaches once this read-only session closes below.
+        session_id = session.id if session else None
         workspace = await crud.get_workspace(db, workspace_name=workspace_name)
         configuration = get_configuration(None, session, workspace)
 
@@ -129,6 +136,7 @@ async def agentic_chat_stream(
     agent = DialecticAgent(
         workspace_name=workspace_name,
         session_name=session_name,
+        session_id=session_id,
         observer=observer,
         observed=observed,
         observer_peer_card=observer_peer_card,
