@@ -4,7 +4,11 @@ from typing import Any
 import pytest
 
 from src.config import EmbeddingModelConfig
-from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
+from src.embedding_client import (
+    _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
+    _resolve_tokenizer,  # pyright: ignore[reportPrivateUsage]
+)
+from src.exceptions import ValidationException
 
 
 class FakeOpenAIEmbeddingsAPI:
@@ -27,6 +31,17 @@ class FakeOpenAIEmbeddingsAPI:
         else:
             data = [SimpleNamespace(embedding=self.embedding)]
         return SimpleNamespace(data=data)
+
+
+class FakeEncoding:
+    def __init__(self, token_count: int) -> None:
+        self.token_count: int = token_count
+
+    def encode(self, _text: str) -> list[int]:
+        return list(range(self.token_count))
+
+    def decode(self, tokens: list[int]) -> str:
+        return " ".join(str(token) for token in tokens)
 
 
 @pytest.mark.asyncio
@@ -239,6 +254,209 @@ async def test_openai_simple_batch_embed_forwards_dimensions(
     assert len(fake.calls) == 1
     assert fake.calls[0]["dimensions"] == 768
     assert fake.calls[0]["input"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_embedding_client_uses_configured_tiktoken_tokenizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
+    encoding_calls: list[str] = []
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    def fake_encoding_for_model(model: str) -> FakeEncoding:
+        raise KeyError(model)
+
+    def fake_get_encoding(name: str) -> FakeEncoding:
+        encoding_calls.append(name)
+        return FakeEncoding(token_count=3 if name == "custom" else 1)
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+    monkeypatch.setattr(
+        "src.embedding_client.tiktoken.encoding_for_model",
+        fake_encoding_for_model,
+    )
+    monkeypatch.setattr("src.embedding_client.tiktoken.get_encoding", fake_get_encoding)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="baai/bge-m3",
+            api_key="test-key",
+            tokenizer="tiktoken:custom",
+        ),
+        vector_dimensions=4,
+        max_input_tokens=2,
+        max_tokens_per_request=1000,
+        send_dimensions=False,
+    )
+
+    with pytest.raises(ValueError, match="got 3 tokens"):
+        await client.simple_batch_embed(["non-english text"])
+
+    assert encoding_calls == ["custom"]
+
+
+def test_blank_tokenizer_spec_uses_default_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def fake_encoding_for_model(model: str) -> FakeEncoding:
+        calls.append(("encoding_for_model", model))
+        return FakeEncoding(token_count=2)
+
+    def fake_get_encoding(name: str) -> FakeEncoding:
+        calls.append(("get_encoding", name))
+        return FakeEncoding(token_count=1)
+
+    monkeypatch.setattr(
+        "src.embedding_client.tiktoken.encoding_for_model",
+        fake_encoding_for_model,
+    )
+    monkeypatch.setattr("src.embedding_client.tiktoken.get_encoding", fake_get_encoding)
+
+    tokenizer = _resolve_tokenizer("text-embedding-3-small", " ")
+
+    assert tokenizer.encode("hello") == [0, 1]
+    assert calls == [("encoding_for_model", "text-embedding-3-small")]
+
+
+def test_huggingface_tokenizer_spec_wraps_encode_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeEncoded:
+        def __init__(self) -> None:
+            self.ids: list[int] = [10, 20, 30]
+
+    class FakeHFTokenizer:
+        def encode(self, text: str) -> FakeEncoded:
+            calls.append(("encode", text))
+            return FakeEncoded()
+
+        def decode(self, tokens: list[int]) -> str:
+            calls.append(("decode", ",".join(str(token) for token in tokens)))
+            return "decoded"
+
+    class FakeTokenizerFactory:
+        @staticmethod
+        def from_pretrained(model_name: str) -> FakeHFTokenizer:
+            calls.append(("from_pretrained", model_name))
+            return FakeHFTokenizer()
+
+        @staticmethod
+        def from_file(path: str) -> FakeHFTokenizer:
+            calls.append(("from_file", path))
+            return FakeHFTokenizer()
+
+    def fake_import_module(name: str) -> SimpleNamespace:
+        assert name == "tokenizers"
+        return SimpleNamespace(Tokenizer=FakeTokenizerFactory)
+
+    monkeypatch.setattr("src.embedding_client.import_module", fake_import_module)
+
+    tokenizer = _resolve_tokenizer("unused", "hf:BAAI/bge-m3")
+
+    assert tokenizer.encode("hello") == [10, 20, 30]
+    assert tokenizer.decode([10, 20]) == "decoded"
+    assert calls == [
+        ("from_pretrained", "BAAI/bge-m3"),
+        ("encode", "hello"),
+        ("decode", "10,20"),
+    ]
+
+
+def test_file_tokenizer_spec_wraps_encode_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeEncoded:
+        def __init__(self) -> None:
+            self.ids: list[int] = [4, 5]
+
+    class FakeHFTokenizer:
+        def encode(self, text: str) -> FakeEncoded:
+            calls.append(("encode", text))
+            return FakeEncoded()
+
+        def decode(self, tokens: list[int]) -> str:
+            calls.append(("decode", ",".join(str(token) for token in tokens)))
+            return "decoded-file"
+
+    class FakeTokenizerFactory:
+        @staticmethod
+        def from_pretrained(model_name: str) -> FakeHFTokenizer:
+            calls.append(("from_pretrained", model_name))
+            return FakeHFTokenizer()
+
+        @staticmethod
+        def from_file(path: str) -> FakeHFTokenizer:
+            calls.append(("from_file", path))
+            return FakeHFTokenizer()
+
+    def fake_import_module(name: str) -> SimpleNamespace:
+        assert name == "tokenizers"
+        return SimpleNamespace(Tokenizer=FakeTokenizerFactory)
+
+    monkeypatch.setattr("src.embedding_client.import_module", fake_import_module)
+
+    tokenizer = _resolve_tokenizer("unused", "file:/tmp/tokenizer.json")
+
+    assert tokenizer.encode("hello") == [4, 5]
+    assert tokenizer.decode([4, 5]) == "decoded-file"
+    assert calls == [
+        ("from_file", "/tmp/tokenizer.json"),
+        ("encode", "hello"),
+        ("decode", "4,5"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("spec", "message"),
+    [
+        ("tiktoken:", "requires a name"),
+        ("hf:", "requires a model name"),
+        ("file:", "requires a tokenizer path"),
+        ("sentencepiece:model", "must be unset or start with"),
+    ],
+)
+def test_invalid_tokenizer_specs_raise_validation_exception(
+    spec: str,
+    message: str,
+) -> None:
+    with pytest.raises(ValidationException, match=message):
+        _resolve_tokenizer("unused", spec)
+
+
+def test_unknown_tiktoken_tokenizer_raises_validation_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_get_encoding(name: str) -> FakeEncoding:
+        raise ValueError(f"unknown encoding {name}")
+
+    monkeypatch.setattr("src.embedding_client.tiktoken.get_encoding", fake_get_encoding)
+
+    with pytest.raises(ValidationException, match="unknown tiktoken encoding"):
+        _resolve_tokenizer("unused", "tiktoken:not-real")
+
+
+def test_missing_tokenizers_extra_raises_validation_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_import_module(name: str) -> None:
+        assert name == "tokenizers"
+        raise ImportError(name)
+
+    monkeypatch.setattr("src.embedding_client.import_module", fake_import_module)
+
+    with pytest.raises(ValidationException, match="honcho\\[tokenizers\\]"):
+        _resolve_tokenizer("unused", "hf:BAAI/bge-m3")
 
 
 @pytest.mark.asyncio

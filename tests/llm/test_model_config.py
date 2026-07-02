@@ -207,6 +207,7 @@ def test_resolve_embedding_model_config_reads_override_env(
     configured = ConfiguredEmbeddingModelSettings(
         transport="openai",
         model="text-embedding-3-small",
+        tokenizer="tiktoken:o200k_base",
         overrides=ModelOverrideSettings(
             api_key_env="EMBEDDING_LOCAL_API_KEY",
             base_url="http://localhost:8000/v1",
@@ -217,6 +218,22 @@ def test_resolve_embedding_model_config_reads_override_env(
 
     assert resolved.api_key == "embed-key"
     assert resolved.base_url == "http://localhost:8000/v1"
+    assert resolved.tokenizer == "tiktoken:o200k_base"
+
+
+def test_embedding_settings_reads_tokenizer_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in list(os.environ):
+        if name.startswith("EMBEDDING_MODEL_CONFIG"):
+            monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setenv("EMBEDDING_MODEL_CONFIG__TOKENIZER", "tiktoken:o200k_base")
+
+    settings = EmbeddingSettings()
+
+    assert settings.MODEL_CONFIG.model == "text-embedding-3-small"
+    assert settings.MODEL_CONFIG.tokenizer == "tiktoken:o200k_base"
 
 
 def test_dialectic_level_settings_accepts_nested_model_config() -> None:
@@ -324,9 +341,9 @@ def test_app_settings_explicit_vector_store_dimensions_warns_and_overrides() -> 
     messages = [
         str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)
     ]
-    assert any(
-        "VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages
-    ), f"expected deprecation warning, got {messages!r}"
+    assert any("VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages), (
+        f"expected deprecation warning, got {messages!r}"
+    )
     assert settings.EMBEDDING.VECTOR_DIMENSIONS == 2048
     assert settings.VECTOR_STORE.DIMENSIONS == 2048, (
         "EMBEDDING.VECTOR_DIMENSIONS should always overwrite the operator-supplied "
@@ -426,6 +443,7 @@ def test_env_template_uses_nested_model_config_keys() -> None:
     env_template = env_template_path.read_text()
 
     assert "EMBEDDING_MODEL_CONFIG__MODEL" in env_template
+    assert "EMBEDDING_MODEL_CONFIG__TOKENIZER" in env_template
     assert "EMBEDDING_VECTOR_DIMENSIONS" in env_template
     assert "DERIVER_MODEL_CONFIG__MODEL" in env_template
     assert "DIALECTIC_LEVELS__minimal__MODEL_CONFIG__MODEL" in env_template
