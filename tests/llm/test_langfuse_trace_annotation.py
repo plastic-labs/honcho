@@ -95,23 +95,14 @@ def langfuse_client(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture
 def langfuse_enabled(monkeypatch: pytest.MonkeyPatch):
-    """Turn the integration on with a known NAMESPACE (the tenant / user_id)."""
+    """Turn the integration on with a known NAMESPACE (the tenant / user_id).
+
+    Pins LANGFUSE_EXPORTER_MODE='inline' — this module tests the legacy inline
+    span machinery, which is gated to inline mode (the default is now 'exporter',
+    where these functions no-op in favor of the LangfuseExporter)."""
     monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setattr(settings, "LANGFUSE_EXPORTER_MODE", "inline")
     monkeypatch.setattr(settings, "NAMESPACE", "acme-tenant")
-
-
-@contextlib.contextmanager
-def _inside_agent_run():
-    """Set the `_in_agent_run` ContextVar for the body, resetting it after.
-
-    Simulates execution nested inside a run handle without opening one (which
-    would itself call propagate_attributes and pollute the capture).
-    """
-    token = runtime._in_agent_run.set(True)
-    try:
-        yield
-    finally:
-        runtime._in_agent_run.reset(token)
 
 
 class TestAnnotateDisabled:
@@ -130,10 +121,11 @@ class TestAnnotateDisabled:
 
 
 class TestAnnotateInsideRun:
-    """A generation nested inside an active run handle: the run owns the trace
-    attrs, so this call must NOT propagate. It still stamps model + per-step
-    metadata + name on the generation (the multi-turn regression fix —
-    provider/model used to be dropped on every iteration after the first)."""
+    """A generation nested under a run (it carries a `parent_span_id`): the run
+    owns the trace attrs, so this call must NOT propagate. It still stamps model
+    + per-step metadata + name on the generation (the multi-turn regression fix —
+    provider/model used to be dropped on every iteration after the first).
+    Nesting is derived from the explicit `parent_span_id`, not a contextvar."""
 
     def test_nested_generation_does_not_propagate(
         self,
@@ -146,15 +138,18 @@ class TestAnnotateInsideRun:
             call_purpose="dialectic.answer",
             agent_type="dialectic",
             run_id="run-abc",
+            span_id="run-abc",
+            # A non-null parent_span_id is what marks this generation as nested
+            # under the run span (replaces the old `_in_agent_run` contextvar).
+            parent_span_id="run-abc",
             iteration=2,
             peer_name="alice",
             track_name="Dialectic Agent",
         )
 
-        with _inside_agent_run():
-            runtime.annotate_current_langfuse_trace(
-                "anthropic", "claude-x", telemetry=telemetry
-            )
+        runtime.annotate_current_langfuse_trace(
+            "anthropic", "claude-x", telemetry=telemetry
+        )
 
         # Run handle owns user_id/session_id/trace_name — re-propagating here
         # would clobber the run's session, so we don't propagate at all.
@@ -300,23 +295,45 @@ class TestAgentRun:
         finally:
             handle.end()
 
-    def test_marks_in_agent_run_for_nested_calls(
+    def test_run_keyed_on_span_id_and_nesting_via_parent_span_id(
         self,
         langfuse_enabled: None,
         langfuse_client: dict[str, dict[str, Any]],
         capture_propagate: dict[str, Any],
     ):
-        # While the run handle is live, nested generations see _in_agent_run
-        # set so they stay silent (the run owns the trace attrs); end() resets it.
-        assert runtime._in_agent_run.get() is False
+        # The `_in_agent_run` contextvar is retired — nesting is now derived
+        # from the explicit `parent_span_id` field on the telemetry context.
+        assert not hasattr(runtime, "_in_agent_run")
+
+        # The run handle opens keyed on span_id (falling back to run_id).
         handle = runtime.start_langfuse_agent_run(
             "Dialectic Agent",
-            LLMTelemetryContext(run_id="r1", track_name="Dialectic Agent"),
+            LLMTelemetryContext(
+                run_id="r1", span_id="r1", track_name="Dialectic Agent"
+            ),
         )
         assert handle is not None
-        assert runtime._in_agent_run.get() is True
         handle.end()
-        assert runtime._in_agent_run.get() is False
+
+        # A root call (no parent_span_id) propagates trace attrs; a nested call
+        # (parent_span_id set) stays silent.
+        capture_propagate.clear()
+        runtime.annotate_current_langfuse_trace(
+            "anthropic",
+            "claude-x",
+            telemetry=LLMTelemetryContext(run_id="r2", span_id="r2"),
+        )
+        assert capture_propagate.get("session_id") == "r2"
+
+        capture_propagate.clear()
+        runtime.annotate_current_langfuse_trace(
+            "anthropic",
+            "claude-x",
+            telemetry=LLMTelemetryContext(
+                run_id="r2", span_id="r2", parent_span_id="r2"
+            ),
+        )
+        assert capture_propagate == {}
 
     def test_end_is_idempotent(
         self,
@@ -497,3 +514,49 @@ class TestStepIO:
         assert langfuse_client["run_span"]["output"] == {
             "tool_calls": ["grep_messages", "search_memory"]
         }
+
+
+class TestAnnotateGenerationIOGating:
+    """`annotate_current_generation_io` writes to the ACTIVE @observe generation
+    span (the `conditional_observe` wrapper), which only exists in inline mode.
+    In exporter mode — the default — there is no active span, so calling
+    `update_current_generation()` would make the Langfuse SDK log "No active span
+    in current context" on every LLM call. The helper must therefore no-op in
+    exporter mode (the LangfuseExporter projects I/O from the captured stream).
+    Regression guard for the gate that was on LANGFUSE_PUBLIC_KEY instead of
+    langfuse_inline_enabled."""
+
+    def test_noops_in_exporter_mode_even_with_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        langfuse_client: dict[str, dict[str, Any]],
+    ):
+        # Key present but exporter mode (the production default).
+        monkeypatch.setattr(settings, "LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setattr(settings, "LANGFUSE_EXPORTER_MODE", "exporter")
+
+        runtime.annotate_current_generation_io(
+            input=[{"role": "user", "content": "hi"}],
+            output="hello",
+            usage_details={"input": 1, "output": 1},
+        )
+
+        # No active generation span in exporter mode → must not touch it.
+        assert langfuse_client["generation"] == {}
+
+    def test_writes_in_inline_mode(
+        self,
+        langfuse_enabled: None,  # pins inline mode + a key
+        langfuse_client: dict[str, dict[str, Any]],
+    ):
+        messages = [{"role": "user", "content": "hi"}]
+        runtime.annotate_current_generation_io(
+            input=messages,
+            output="hello",
+            usage_details={"input": 1, "output": 1},
+        )
+
+        gen = langfuse_client["generation"]
+        assert gen["input"] == messages
+        assert gen["output"] == "hello"
+        assert gen["usage_details"] == {"input": 1, "output": 1}

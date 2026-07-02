@@ -75,7 +75,11 @@ def conditional_observe(
     capture_output: bool | None = None,
 ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
     """
-    Conditionally apply the @observe decorator only when LANGFUSE_PUBLIC_KEY is present.
+    Conditionally apply the @observe decorator only in legacy inline mode
+    (``langfuse_inline_enabled`` — i.e. a key is set AND
+    ``LANGFUSE_EXPORTER_MODE == "inline"``). In exporter mode the LangfuseExporter
+    rebuilds every observation from the captured trace stream, so a live
+    @observe span here would double-emit.
 
     Can be used in two ways:
     1. As a decorator: @conditional_observe
@@ -105,7 +109,10 @@ def conditional_observe(
     """
 
     def decorator(f: Callable[P, R]) -> Callable[P, R]:
-        if not settings.LANGFUSE_PUBLIC_KEY:
+        # Only auto-instrument with @observe in legacy inline mode. In exporter
+        # mode the LangfuseExporter produces every observation from the captured
+        # trace stream, so a live @observe span here would double-emit.
+        if not settings.langfuse_inline_enabled:
             return f
         # `observe` treats None as "use SDK default", so passing the optionals
         # straight through is equivalent to omitting them.
