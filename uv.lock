@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-19T14:44:24.535479Z"
+exclude-newer = "2026-06-27T20:44:32.746059Z"
 exclude-newer-span = "P5D"
 
 [manifest]
@@ -1270,7 +1270,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "2.1.2"
+version = "2.2.0"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "httpx" },
