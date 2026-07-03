@@ -685,3 +685,4 @@ We welcome contributions to Honcho! Please read our [Contributing Guide](./CONTR
 ## License
 
 Honcho is licensed under the AGPL-3.0 License. Learn more at the [License file](./LICENSE).
+
