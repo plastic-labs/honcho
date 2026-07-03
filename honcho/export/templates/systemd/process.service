@@ -1,0 +1,19 @@
+[Unit]
+PartOf={{ process_master_name }}.target
+
+[Service]
+User={{ user }}
+WorkingDirectory={{ app_root }}
+{% for k, v in process.env.items() -%}
+Environment={{ k }}={{ v | shellquote }}
+{% endfor -%}
+ExecStart={{ shell }} -lc '{{ process.cmd }}'
+Restart=always
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=%n
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

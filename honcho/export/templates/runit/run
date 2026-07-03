@@ -1,0 +1,6 @@
+#!{{ shell }}
+exec 2>&1
+ENVDIR=$PWD/env
+cd {{ app_root }}
+exec chpst -u {{ user }} -e "$ENVDIR" \
+  {{ process.cmd }}

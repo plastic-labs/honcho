@@ -1,0 +1,9 @@
+[run]
+branch = True
+source = honcho
+omit = honcho/compat.py
+
+[paths]
+source =
+   honcho
+   .tox/*/lib/python*/site-packages/honcho

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 [project]
 name = "honcho"
 version = "3.0.11"
@@ -138,3 +139,68 @@ name = "testpypi"
 url = "https://test.pypi.org/simple/"
 publish-url = "https://test.pypi.org/legacy/"
 explicit = true
+=======
+[build-system]
+requires = ["setuptools", "setuptools_scm[toml]"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "honcho"
+description = "Honcho: a Python clone of Foreman. For managing Procfile-based applications."
+readme = "README.rst"
+authors = [
+  {name = "Nick Stenning", email = "nick@whiteink.com"}
+]
+keywords = ["sysadmin", "process", "procfile"]
+urls."Source" = "https://github.com/nickstenning/honcho"
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dependencies = [
+    'backports.entry-points-selectable; python_version<"3.10"',
+    'colorama; sys_platform=="win32"',
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+export = ["jinja2>=3.1.2,<4"]
+docs = ["sphinx"]
+
+[project.scripts]
+honcho = "honcho.command:main"
+
+[project.entry-points.honcho_exporters]
+runit = "honcho.export.runit:Export"
+supervisord = "honcho.export.supervisord:Export"
+systemd = "honcho.export.systemd:Export"
+upstart = "honcho.export.upstart:Export"
+
+[tool.ruff]
+extend-exclude = [
+    "doc/conf.py",
+    "honcho/_version.py",
+]
+lint.select = ["E4", "E7", "E9", "F", "I", "N", "RUF"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["honcho*"]
+exclude = ["tests*"]
+
+[tool.setuptools_scm]
+write_to = "honcho/_version.py"
+>>>>>>> upstream/main

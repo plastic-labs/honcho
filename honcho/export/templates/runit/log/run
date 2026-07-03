@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+LOG={{ log }}/{{ process.name|dashrepl }}
+
+if [ ! -d "$LOG" ]; then
+    mkdir -p -m 2750 "$LOG"
+    chown {{ user }} "$LOG"
+fi
+
+exec chpst -u {{ user }} svlogd "$LOG"

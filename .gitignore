@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 .worktrees/
 api/**/*.db
 api/data
@@ -193,3 +194,15 @@ metrics.jsonl
 AGENTS.md
 lancedb_data/
 grafana-data/
+=======
+*.egg-info
+*.pyc
+*.pyo
+/.cache
+/.coverage
+/.env
+/.tox
+/build
+/dist
+/honcho/_version.py
+>>>>>>> upstream/main

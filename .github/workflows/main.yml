@@ -1,0 +1,77 @@
+---
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  package:
+    name: Build & verify package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: hynek/build-and-inspect-python-package@v2
+        id: baipp
+
+    outputs:
+      python-versions: ${{ steps.baipp.outputs.supported_python_classifiers_json_array }}
+
+  tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    needs: package
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - pypy3.9
+          - pypy3.10
+          - ${{ fromJson(needs.package.outputs.python-versions) }}
+
+    steps:
+      - name: Download pre-built packages
+        uses: actions/download-artifact@v4
+        with:
+          name: Packages
+          path: dist
+
+      - run: tar xf dist/*.tar.gz --strip-components=1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+
+      - uses: hynek/setup-cached-uv@v2
+
+      - name: Run tox
+        env:
+          RUFF_OUTPUT_FORMAT: github
+        run: >
+          uvx --with=tox-uv --with=tox-gh-actions
+          tox run --installpkg dist/*.whl
+
+      - name: Coverage report
+        if: ${{ matrix.python-version == '3.12' }}
+        run: |
+          uvx coverage report
+          uvx coverage xml
+
+      - name: Upload coverage to Codecov
+        if: ${{ matrix.python-version == '3.12' }}
+        uses: codecov/codecov-action@v4
+        with:
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
