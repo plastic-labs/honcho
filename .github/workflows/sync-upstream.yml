@@ -1,95 +1,19 @@
-name: Sync Upstream Releases and Build Docker Image
-
+name: Sync Upstream
 on:
   schedule:
-    # Check upstream every 6 hours
     - cron: '0 */6 * * *'
-  workflow_dispatch:  # Manual trigger anytime
-
+  workflow_dispatch:
 jobs:
-  sync-and-build:
+  sync:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout leonurium/9router
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GH_TOKEN }}
-
-      - name: Configure Git
-        run: |
+      - run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-      - name: Fetch upstream & check status
-        id: sync
-        run: |
-          UPSTREAM="decolua/9router"
-          OUR_REMOTE="origin"
-          OUR_BRANCH="master"
-          # Fetch upstream
-          git remote add upstream "https://github.com/${UPSTREAM}.git" 2>/dev/null || true
-          git fetch upstream --tags --force
-          # Get latest upstream tag via GitHub API (more reliable than git ls-remote)
-          UPSTREAM_TAG=$(curl -s "https://api.github.com/repos/${UPSTREAM}/releases/latest" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name','v0.0.0'))")
-          echo "Upstream latest tag: ${UPSTREAM_TAG}"
-          # Get current (leonurium) version from package.json
-          CURRENT_VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
-          echo "Current leonurium version: ${CURRENT_VERSION}"
-          # Compare versions
-          # Compare versions — only outputs go to GITHUB_OUTPUT, notices go to stdout
-          if python3 -c "from packaging import version; v1=version.parse('$CURRENT_VERSION'); v2=version.parse('${UPSTREAM_TAG}'); exit(0 if v1>=v2 else 1)"; then
-            echo "VERSION_SKIP=true" >> $GITHUB_OUTPUT
-            echo "::notice::Version ${CURRENT_VERSION} >= ${UPSTREAM_TAG} — no update needed"
-          else
-            echo "VERSION_SKIP=false" >> $GITHUB_OUTPUT
-            echo "::notice::Version ${CURRENT_VERSION} < ${UPSTREAM_TAG} — update required"
-          fi
-          echo "UPSTREAM_TAG=${UPSTREAM_TAG}" >> $GITHUB_OUTPUT
-          echo "NEW_VERSION=${UPSTREAM_TAG}" >> $GITHUB_OUTPUT
-      - name: Rebase leonurium onto upstream
-        if: steps.sync.outputs.VERSION_SKIP == 'false'
-        run: |
-          UPSTREAM="decolua/9router"
-          git rebase upstream/master
-          echo "REBASE_DONE=true" >> $GITHUB_OUTPUT
-      - name: Force-push rebased code
-        if: steps.sync.outputs.VERSION_SKIP == 'false'
-        run: |
-          git push origin master --force-with-lease
-          echo "PUSH_DONE=true" >> $GITHUB_OUTPUT
-      - name: Set up QEMU
-        if: steps.sync.outputs.VERSION_SKIP == 'false'
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        if: steps.sync.outputs.VERSION_SKIP == 'false'
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        if: steps.sync.outputs.VERSION_SKIP == 'false'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract metadata
-        if: steps.sync.outputs.VERSION_SKIP == 'false'
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/9router
-          tags: |
-            type=semver,pattern={{version}},value=${{ steps.sync.outputs.NEW_VERSION }}
-            type=raw,value=latest
-      - name: Build and push
-        if: steps.sync.outputs.VERSION_SKIP == 'false'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          git remote add upstream https://github.com/plastic-labs/honcho
+          git fetch upstream
+          git merge upstream/main
+          git push origin main
