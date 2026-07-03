@@ -57,6 +57,15 @@ async def measure_silent_loss_and_visibility(
     from src.llm import HonchoLLMCallResponse
     from src.utils.representation import ExplicitObservationBase, PromptRepresentation
 
+    # RepresentationSaveError only exists on the fix branch; pre-fix `main`
+    # swallows the failure and never raises, so the name is absent there. Fall
+    # back to the base HonchoException so this script runs unmodified on either
+    # checkout — on `main` the except below simply never fires.
+    try:
+        from src.exceptions import RepresentationSaveError as _SaveFailure
+    except ImportError:  # pragma: no cover - pre-fix main
+        from src.exceptions import HonchoException as _SaveFailure
+
     silent = 0
     alertable = 0
     for i in range(trials):
@@ -92,12 +101,12 @@ async def measure_silent_loss_and_visibility(
                     observed="alice",
                     queue_item_message_ids=[1],
                 )
-            # Count only the expected save failure; let unrelated exceptions
-            # escape so they fail the benchmark, not inflate visibility.
-            except RuntimeError as exc:
+            # Count only the expected fail-loud save failure. Keying off the
+            # typed exception (not the message text) means an unrelated
+            # regression raises a different type, escapes, and fails the
+            # benchmark instead of inflating the visibility rate.
+            except _SaveFailure:
                 raised = True
-                if "observer" not in str(exc) and "RESOURCE_EXHAUSTED" not in str(exc):
-                    raise
 
         # The save failed for the only observer. "Silent loss" = the deriver
         # returned normally (queue would mark it processed) with nothing saved.

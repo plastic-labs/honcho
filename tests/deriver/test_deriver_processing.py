@@ -9,6 +9,7 @@ from src import crud, models
 from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.deriver.deriver import process_representation_tasks_batch
+from src.exceptions import RepresentationSaveError
 from src.llm import HonchoLLMCallResponse
 from src.utils.representation import (
     ExplicitObservationBase,
@@ -102,6 +103,7 @@ class TestDeriverProcessing:
         )
 
         failing_save = AsyncMock(side_effect=RuntimeError("429 RESOURCE_EXHAUSTED"))
+        emitted: list[Any] = []
         with (
             patch(
                 "src.deriver.deriver.honcho_llm_call",
@@ -109,7 +111,8 @@ class TestDeriverProcessing:
                 return_value=mock_response,
             ),
             patch.object(RepresentationManager, "save_representation", failing_save),
-            pytest.raises(RuntimeError, match="save_representation failed"),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
+            pytest.raises(RepresentationSaveError, match="save_representation failed"),
         ):
             await process_representation_tasks_batch(
                 messages=[message],
@@ -118,6 +121,13 @@ class TestDeriverProcessing:
                 observed="alice",
                 queue_item_message_ids=[1],
             )
+
+        # Telemetry must be emitted *before* the raise so a total save failure is
+        # still visible to metrics consumers. Guards against emit() being moved
+        # after the raise, which would reintroduce invisible total failures.
+        assert emitted, "expected telemetry to be emitted before the raised failure"
+        assert emitted[-1].observer_count == 0
+        assert emitted[-1].failed_observer_count == 1
 
     async def test_partial_observer_failure_is_processed_and_surfaced(self):
         """When some observers save and one fails, the batch does NOT raise (the unit
