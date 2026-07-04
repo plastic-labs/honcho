@@ -29,19 +29,24 @@ def _redact_cache_url(url: str) -> str:
 
     Given ``redis://:password@host:port/db`` returns
     ``redis://:***@host:port/db``.  If the URL has no userinfo
-    component it is returned unchanged.  This function never raises:
-    if the URL is malformed it returns the original string so that
-    logging inside ``except`` blocks cannot crash startup.
+    component it is returned unchanged.  This function never raises
+    and never returns a password: an invalid port is omitted from the
+    output, and a URL that cannot be parsed at all is replaced by a
+    generic placeholder rather than echoed back, so that logging
+    inside ``except`` blocks can neither crash startup nor leak the
+    credential this helper exists to hide.
 
     Args:
         url: The Redis connection URL to redact.
 
     Returns:
-        The URL with its password masked, or the original URL if it
-        has no password or cannot be parsed.
+        The URL with its password masked, the original URL if it has
+        no password, or ``"<redacted-unparseable-url>"`` if parsing
+        fails entirely.
     """
     try:
         parsed = urlparse(url)
+        # .password only splits netloc and never raises, unlike .port
         if parsed.password is None:
             return url
         userinfo = parsed.username or ""
@@ -50,12 +55,20 @@ def _redact_cache_url(url: str) -> str:
         if hostname and ":" in hostname and not hostname.startswith("["):
             hostname = f"[{hostname}]"
         netloc = f"{userinfo}:***@{hostname}"
-        if parsed.port is not None:
-            netloc += f":{parsed.port}"
+        try:
+            port = parsed.port
+        except ValueError:
+            # Invalid or out-of-range port: omit it rather than let the
+            # outer fallback echo the raw URL (and its password) back.
+            port = None
+        if port is not None:
+            netloc += f":{port}"
         parsed = parsed._replace(netloc=netloc)
         return urlunparse(parsed)
     except (ValueError, TypeError):
-        return url
+        # Unparseable URL: never return the raw input — it may contain
+        # the very password this helper exists to hide.
+        return "<redacted-unparseable-url>"
 
 
 def is_cache_enabled() -> bool:

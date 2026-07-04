@@ -62,17 +62,27 @@ class TestRedactCacheUrl:
 
     # --- Malformed URLs (must NOT raise) ---
 
-    def test_invalid_port_does_not_raise(self):
-        """Regression test for the bug found in review: accessing
+    def test_invalid_port_redacts_password(self):
+        """Regression test for two review findings: accessing
         ``parsed.port`` on a URL with a non-numeric port raises
-        ``ValueError``.  The helper must catch this and return the
-        original URL rather than crashing startup inside an except block.
+        ``ValueError`` (must not crash startup inside an except block),
+        and the fallback must never echo the raw URL back — the
+        password has to be masked even when the port is unparseable.
         """
-        url = "redis://:pass@host:notaport/0"
-        result = _redact_cache_url(url)
-        # Must not raise; password should still be redacted if possible,
-        # but the key requirement is that it returns a string, not raises.
-        assert isinstance(result, str)
+        result = _redact_cache_url("redis://:pass@host:notaport/0")
+        assert "pass" not in result
+        assert "***" in result
+
+    def test_out_of_range_port_redacts_password(self):
+        result = _redact_cache_url("redis://:supersecret@host:99999/0")
+        assert "supersecret" not in result
+        assert "***" in result
+
+    def test_unparseable_url_never_echoed(self):
+        # Unbalanced IPv6 bracket makes urlparse itself raise; the
+        # fallback must return a placeholder, not the raw input.
+        result = _redact_cache_url("redis://:secret@[::1:6379/0")
+        assert "secret" not in result
 
     def test_garbage_input_does_not_raise(self):
         assert isinstance(_redact_cache_url("not a url at all"), str)
