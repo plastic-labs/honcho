@@ -1,5 +1,7 @@
 """Unit tests for the cache client's _redact_cache_url helper."""
 
+import pytest
+
 from src.cache.client import _redact_cache_url
 
 
@@ -40,6 +42,32 @@ class TestRedactCacheUrl:
             "rediss://:hunter2@[::1]:6380/1",
         ]:
             assert "hunter2" not in _redact_cache_url(url)
+
+    # --- Secrets in query parameters ---
+    # redis-py accepts ?password= (querystring options become client
+    # kwargs) and cashews accepts ?secret= (HMAC signing key), so both
+    # are real configuration paths that must not reach the logs.
+
+    @pytest.mark.parametrize("param", ["password", "secret", "PASSWORD"])
+    def test_query_param_secret_masked(self, param: str):
+        result = _redact_cache_url(f"redis://host:6379/0?{param}=s3cret")
+        assert "s3cret" not in result
+        assert f"{param}=***" in result
+
+    def test_query_param_masking_preserves_other_params(self):
+        result = _redact_cache_url("redis://host:6379/0?db=1&password=s3cret&ssl=true")
+        assert "s3cret" not in result
+        assert "db=1" in result
+        assert "ssl=true" in result
+
+    def test_userinfo_and_query_secret_both_masked(self):
+        result = _redact_cache_url("redis://:hunter2@host:6379/0?secret=s3cret")
+        assert "hunter2" not in result
+        assert "s3cret" not in result
+
+    def test_non_secret_query_params_unchanged(self):
+        url = "redis://localhost:6379/0?suppress=true"
+        assert _redact_cache_url(url) == url
 
     # --- No-password URLs (returned unchanged) ---
 
@@ -83,6 +111,13 @@ class TestRedactCacheUrl:
         # fallback must return a placeholder, not the raw input.
         result = _redact_cache_url("redis://:secret@[::1:6379/0")
         assert "secret" not in result
+
+    def test_missing_scheme_never_echoed(self):
+        # Without "redis://" urlparse sees no netloc, so the userinfo
+        # (and its password) is invisible to .password — the string
+        # must not be echoed back.
+        result = _redact_cache_url(":hunter2@host:6379/0")
+        assert "hunter2" not in result
 
     def test_garbage_input_does_not_raise(self):
         assert isinstance(_redact_cache_url("not a url at all"), str)

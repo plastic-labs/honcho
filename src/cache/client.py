@@ -24,46 +24,89 @@ logger = logging.getLogger(__name__)
 _cache_lock = asyncio.Lock()
 
 
+# Query parameters that carry secrets when configured via URL:
+# redis-py accepts ``?password=`` (all querystring options become client
+# kwargs) and cashews accepts ``?secret=`` (HMAC key for value signing).
+_SENSITIVE_QUERY_PARAMS = frozenset({"password", "secret"})
+
+
+def _mask_sensitive_query(query: str) -> str:
+    """Mask values of secret-bearing query parameters.
+
+    Operates on the raw query string (no decode/re-encode round trip)
+    so non-secret parameters are preserved byte-for-byte.
+
+    Args:
+        query: The raw query string from a parsed URL.
+
+    Returns:
+        The query string with sensitive values replaced by ``***``, or
+        the original string if no sensitive parameter is present.
+    """
+    if not query:
+        return query
+    parts: list[str] = []
+    changed = False
+    for part in query.split("&"):
+        name, sep, _value = part.partition("=")
+        if sep and name.lower() in _SENSITIVE_QUERY_PARAMS:
+            parts.append(f"{name}=***")
+            changed = True
+        else:
+            parts.append(part)
+    return "&".join(parts) if changed else query
+
+
 def _redact_cache_url(url: str) -> str:
-    """Mask the password in a Redis connection URL before logging.
+    """Mask credentials in a Redis connection URL before logging.
 
     Given ``redis://:password@host:port/db`` returns
-    ``redis://:***@host:port/db``.  If the URL has no userinfo
-    component it is returned unchanged.  This function never raises
-    and never returns a password: an invalid port is omitted from the
-    output, and a URL that cannot be parsed at all is replaced by a
-    generic placeholder rather than echoed back, so that logging
+    ``redis://:***@host:port/db``; secret-bearing query parameters
+    (``?password=``, ``?secret=``) are masked as well.  A URL carrying
+    no credentials is returned unchanged.  This function never raises
+    and never returns a credential: an invalid port is omitted from
+    the output, and a URL that cannot be parsed at all is replaced by
+    a generic placeholder rather than echoed back, so that logging
     inside ``except`` blocks can neither crash startup nor leak the
-    credential this helper exists to hide.
+    secrets this helper exists to hide.
 
     Args:
         url: The Redis connection URL to redact.
 
     Returns:
-        The URL with its password masked, the original URL if it has
-        no password, or ``"<redacted-unparseable-url>"`` if parsing
+        The URL with its credentials masked, the original URL if it
+        carries none, or ``"<redacted-unparseable-url>"`` if parsing
         fails entirely.
     """
     try:
         parsed = urlparse(url)
+        query = _mask_sensitive_query(parsed.query)
         # .password only splits netloc and never raises, unlike .port
-        if parsed.password is None:
+        if parsed.password is None and query == parsed.query:
+            # A string with an "@" but no parsed authority (e.g. a URL
+            # missing its scheme, ":pass@host:6379/0") may still carry
+            # userinfo that urlparse could not see — never echo it.
+            if "@" in url and not parsed.netloc:
+                return "<redacted-unparseable-url>"
             return url
-        userinfo = parsed.username or ""
-        hostname = parsed.hostname or ""
-        # Preserve IPv6 brackets (urlparse strips them from .hostname)
-        if hostname and ":" in hostname and not hostname.startswith("["):
-            hostname = f"[{hostname}]"
-        netloc = f"{userinfo}:***@{hostname}"
-        try:
-            port = parsed.port
-        except ValueError:
-            # Invalid or out-of-range port: omit it rather than let the
-            # outer fallback echo the raw URL (and its password) back.
-            port = None
-        if port is not None:
-            netloc += f":{port}"
-        parsed = parsed._replace(netloc=netloc)
+        netloc = parsed.netloc
+        if parsed.password is not None:
+            userinfo = parsed.username or ""
+            hostname = parsed.hostname or ""
+            # Preserve IPv6 brackets (urlparse strips them from .hostname)
+            if hostname and ":" in hostname and not hostname.startswith("["):
+                hostname = f"[{hostname}]"
+            netloc = f"{userinfo}:***@{hostname}"
+            try:
+                port = parsed.port
+            except ValueError:
+                # Invalid or out-of-range port: omit it rather than let
+                # the outer fallback echo the raw URL (and its password)
+                # back.
+                port = None
+            if port is not None:
+                netloc += f":{port}"
+        parsed = parsed._replace(netloc=netloc, query=query)
         return urlunparse(parsed)
     except (ValueError, TypeError):
         # Unparseable URL: never return the raw input — it may contain
