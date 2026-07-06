@@ -1341,12 +1341,12 @@ class DreamSettings(HonchoSettings):
 
 
 class VectorStoreSettings(HonchoSettings):
-    """Settings for vector store (pgvector, Turbopuffer, or LanceDB)."""
+    """Settings for vector store (pgvector, Turbopuffer, LanceDB, or Milvus)."""
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
 
     # Vector store type to use
-    TYPE: Literal["pgvector", "turbopuffer", "lancedb"] = "pgvector"
+    TYPE: Literal["pgvector", "turbopuffer", "lancedb", "milvus"] = "pgvector"
 
     MIGRATED: bool = False
 
@@ -1371,6 +1371,14 @@ class VectorStoreSettings(HonchoSettings):
 
     # LanceDB-specific settings (local embedded mode)
     LANCEDB_PATH: str = "./lancedb_data"
+
+    # Milvus-specific settings. The default URI uses Milvus Lite local storage.
+    MILVUS_URI: str = "./milvus.db"
+    MILVUS_TOKEN: str | None = None
+    MILVUS_DB_NAME: str | None = None
+    MILVUS_CONSISTENCY_LEVEL: (
+        Literal["Strong", "Session", "Bounded", "Eventually"] | None
+    ) = None
 
     RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
         300  # 5 minutes

@@ -80,6 +80,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/alembic/",
     "tests/unified/",
     "tests/live_llm/",
+    # Vector-store provider tests exercise SDK behavior directly and do not need DB setup.
+    "tests/vector_store/",
     # Pure llm unit tests should stay isolated from the broader app/runtime fixtures.
     "tests/llm/",
     # LLM transport tests mock providers directly and don't need database/runtime setup.

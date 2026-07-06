@@ -205,6 +205,10 @@ def _create_store_by_type(store_type: str) -> VectorStore:
         from src.vector_store.lancedb import LanceDBVectorStore
 
         return LanceDBVectorStore()
+    elif store_type == "milvus":
+        from src.vector_store.milvus import MilvusVectorStore
+
+        return MilvusVectorStore()
     else:
         raise ValueError(f"Unknown vector store type: {store_type}")
 
@@ -215,7 +219,7 @@ def get_external_vector_store() -> VectorStore | None:
     Get the configured external vector store instance (singleton).
 
     Returns None if TYPE='pgvector' since pgvector operations happen via ORM directly.
-    External vector stores include Turbopuffer and LanceDB.
+    External vector stores include Turbopuffer, LanceDB, and Milvus.
 
     Returns:
         The external vector store instance, or None if using pgvector (ORM handles it).
