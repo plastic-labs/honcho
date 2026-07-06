@@ -376,8 +376,8 @@ class MilvusVectorStore(VectorStore):
 
         results: list[VectorQueryResult] = []
         for hit in batches[0] if batches else []:
-            distance = float(hit.get("distance", 0.0))
-            if max_distance is not None and distance > max_distance:
+            cosine_distance = self._hit_cosine_distance(hit)
+            if max_distance is not None and cosine_distance > max_distance:
                 continue
 
             entity = cast(dict[str, Any], hit.get("entity") or {})
@@ -385,7 +385,7 @@ class MilvusVectorStore(VectorStore):
             results.append(
                 VectorQueryResult(
                     id=vector_id,
-                    score=distance,
+                    score=cosine_distance,
                     metadata=self._entity_metadata(entity),
                 )
             )
@@ -396,6 +396,14 @@ class MilvusVectorStore(VectorStore):
             namespace,
         )
         return results
+
+    def _hit_cosine_distance(self, hit: dict[str, Any]) -> float:
+        """Return Honcho cosine distance from a Milvus search hit."""
+        if "distance" in hit:
+            return float(hit["distance"])
+        if "score" in hit:
+            return 1.0 - float(hit["score"])
+        return 0.0
 
     def _output_fields(self, include_attributes: bool | list[str]) -> list[str] | None:
         """Translate Honcho projection settings to Milvus output fields."""
