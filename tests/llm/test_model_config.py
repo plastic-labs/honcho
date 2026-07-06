@@ -324,9 +324,9 @@ def test_app_settings_explicit_vector_store_dimensions_warns_and_overrides() -> 
     messages = [
         str(w.message) for w in captured if issubclass(w.category, DeprecationWarning)
     ]
-    assert any(
-        "VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages
-    ), f"expected deprecation warning, got {messages!r}"
+    assert any("VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages), (
+        f"expected deprecation warning, got {messages!r}"
+    )
     assert settings.EMBEDDING.VECTOR_DIMENSIONS == 2048
     assert settings.VECTOR_STORE.DIMENSIONS == 2048, (
         "EMBEDDING.VECTOR_DIMENSIONS should always overwrite the operator-supplied "
@@ -340,11 +340,15 @@ def test_app_settings_accepts_non_1536_with_any_vector_store_configuration() -> 
     Construction must succeed for every combination at config time."""
     from typing import Literal
 
-    combos: list[tuple[Literal["pgvector", "turbopuffer", "lancedb"], bool]] = [
+    combos: list[
+        tuple[Literal["pgvector", "turbopuffer", "lancedb", "milvus"], bool]
+    ] = [
         ("pgvector", True),
         ("pgvector", False),
         ("lancedb", True),
         ("lancedb", False),
+        ("milvus", True),
+        ("milvus", False),
         ("turbopuffer", True),
         ("turbopuffer", False),
     ]
