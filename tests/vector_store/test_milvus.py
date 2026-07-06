@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -21,6 +22,29 @@ logging.getLogger("milvus_lite.server_manager").disabled = True
 def _helper_store() -> MilvusVectorStore:
     """Create a MilvusVectorStore instance without opening a client."""
     return object.__new__(MilvusVectorStore)
+
+
+class _ScoreOnlySearchClient:
+    def has_collection(self, *, collection_name: str) -> bool:
+        assert collection_name
+        return True
+
+    def search(self, **kwargs: Any) -> list[list[dict[str, Any]]]:
+        assert kwargs["search_params"] == {"metric_type": "COSINE"}
+        return [
+            [
+                {
+                    "id": "vec_close",
+                    "score": 0.9,
+                    "entity": {"message_id": "msg_1"},
+                },
+                {
+                    "id": "vec_far",
+                    "score": 0.2,
+                    "entity": {"message_id": "msg_2"},
+                },
+            ]
+        ]
 
 
 def test_collection_name_is_valid_stable_and_bounded() -> None:
@@ -70,6 +94,25 @@ def test_projection_settings_map_to_milvus_output_fields() -> None:
     assert store._output_fields(["id", "message_id"]) == [  # pyright: ignore[reportPrivateUsage]
         "message_id"
     ]
+
+
+@pytest.mark.asyncio
+async def test_query_converts_milvus_score_to_cosine_distance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings.EMBEDDING, "VECTOR_DIMENSIONS", 4)
+    store = _helper_store()
+    store.client = cast(Any, _ScoreOnlySearchClient())
+
+    results = await store.query(
+        "honcho.msg.test",
+        [1.0, 0.0, 0.0, 0.0],
+        max_distance=0.5,
+    )
+
+    assert [result.id for result in results] == ["vec_close"]
+    assert abs(results[0].score - 0.1) < 1e-12
+    assert results[0].metadata == {"message_id": "msg_1"}
 
 
 @pytest.mark.asyncio
