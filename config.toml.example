@@ -273,7 +273,7 @@ DEFAULT_LOCK_TTL_SECONDS = 5
 
 # Vector store settings
 [vector_store]
-# Vector store type: "pgvector", "turbopuffer", or "lancedb"
+# Vector store type: "pgvector", "turbopuffer", "lancedb", or "milvus"
 TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
@@ -282,4 +282,10 @@ NAMESPACE = "honcho"
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
 LANCEDB_PATH = "./lancedb_data"
+# Milvus Lite local storage by default. Use http://localhost:19530 for Milvus
+# server, or a Zilliz Cloud URI with TOKEN.
+MILVUS_URI = "./milvus.db"
+# MILVUS_TOKEN = ""
+# MILVUS_DB_NAME = ""
+# MILVUS_CONSISTENCY_LEVEL = "Session"
 RECONCILIATION_INTERVAL_SECONDS = 300
