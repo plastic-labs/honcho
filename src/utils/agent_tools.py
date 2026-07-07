@@ -845,6 +845,18 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["create_observations_inductive"],
 ]
 
+# Tools for the card-refresh specialist (card_refresh dream type).
+# Card-only maintenance: discovery plus update_peer_card. Deliberately
+# excludes every observation-mutating tool (create_observations*,
+# delete_observations) — a card refresh must never touch observations.
+CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
+    # Discovery tools
+    TOOLS["get_recent_observations"],
+    TOOLS["search_memory"],
+    # Action tool
+    TOOLS["update_peer_card"],
+]
+
 
 async def create_observations(
     observations: list[schemas.ObservationInput],

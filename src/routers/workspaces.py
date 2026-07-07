@@ -231,6 +231,7 @@ async def schedule_dream(
         observed=observed,
         dream_type=dream_type,
         session_name=request.session_id,
+        rebuild=request.rebuild,
         # Manual route — explicit sentinels for the DreamRunEvent
         # scheduling-context fields. Auto-schedule threads concrete
         # threshold/delay reasons (see src/dreamer/dream_scheduler.py);
