@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 from sqlalchemy.sql.functions import func
@@ -893,6 +893,10 @@ async def create_observations(
         embeddings = await embedding_client.simple_batch_embed(contents)
     except ValueError as e:
         raise ValidationException(str(e)) from e
+    except Exception as e:
+        raise ValidationException(
+            f"Failed to generate embeddings: {e}"
+        ) from e
 
     # Create document objects and track embeddings for vector store
     honcho_documents: list[models.Document] = []
@@ -1039,10 +1043,10 @@ async def create_observations(
                     )
                     await db.commit()
 
-    except IntegrityError as e:
+    except (DataError, IntegrityError) as e:
         await db.rollback()
         raise ValidationException(
-            "Failed to create observations due to integrity constraint violation"
+            "Failed to create observations due to a data or integrity constraint violation"
         ) from e
 
     logger.debug(

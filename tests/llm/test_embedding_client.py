@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 from src.config import EmbeddingModelConfig
+from src.config import settings
 from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
 
 
@@ -211,7 +212,7 @@ async def test_openai_embed_omits_dimensions_when_send_dimensions_false(
 ) -> None:
     client, fake = _build_openai_client(
         monkeypatch,
-        embedding=[0.1] * 1536,
+        embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
         model="text-embedding-3-small",
         send_dimensions=False,
         vector_dimensions=1536,
