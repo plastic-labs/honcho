@@ -989,8 +989,10 @@ async def create_observations(
             )
             await db.commit()
         except Exception:
+            await db.rollback()
             logger.exception(
-                "Failed to mark observations as synced in pgvector mode"
+                "Failed to mark observations as synced for workspace %s",
+                workspace_name,
             )
     else:
         # External vector store - upsert each collection's embeddings
