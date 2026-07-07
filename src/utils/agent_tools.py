@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -1011,6 +1011,7 @@ async def get_recent_history(
     session_name: str | None,
     observed: str | None = None,
     token_limit: int = 8192,
+    allowed_sessions: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Retrieve recent conversation history.
@@ -1042,7 +1043,11 @@ async def get_recent_history(
         # Return in chronological order
         return list(reversed(messages))
     elif observed:
+        # Fail closed on an empty allowlist
+        if allowed_sessions is not None and not allowed_sessions:
+            return []
         # Get recent messages from the observed peer across all sessions
+        # (restricted to the session allowlist when one is provided)
         stmt = (
             select(models.Message)
             .where(models.Message.workspace_name == workspace_name)
@@ -1050,6 +1055,8 @@ async def get_recent_history(
             .order_by(models.Message.created_at.desc())
             .limit(50)  # Limit to recent messages
         )
+        if allowed_sessions is not None:
+            stmt = stmt.where(models.Message.session_name.in_(allowed_sessions))
         result = await db.execute(stmt)
         messages = list(result.scalars().all())
         # Return in chronological order
@@ -1067,6 +1074,7 @@ async def search_memory(
     limit: int,
     levels: list[str] | None = None,
     embedding: list[float] | None = None,
+    session_names: list[str] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -1087,10 +1095,17 @@ async def search_memory(
     Returns:
         Representation object containing relevant observations
     """
-    # Build filter for levels if specified
-    filters: dict[str, Any] | None = None
+    # Fail closed on an empty allowlist — downstream stores drop empty IN
+    # clauses, which would silently widen scope.
+    if session_names is not None and not session_names:
+        return Representation()
+
+    # Build filters for levels / session allowlist if specified
+    filters: dict[str, Any] = {}
     if levels:
-        filters = {"level": {"in": levels}}
+        filters["level"] = {"in": levels}
+    if session_names is not None:
+        filters["session_name"] = {"in": session_names}
 
     documents = await crud.query_documents(
         db=None,
@@ -1099,7 +1114,7 @@ async def search_memory(
         observed=observed,
         query=query,
         top_k=limit,
-        filters=filters,
+        filters=filters or None,
         embedding=embedding,
     )
 
@@ -1112,6 +1127,7 @@ async def get_observation_context(
     session_name: str | None,
     message_ids: list[str],
     observer: str | None = None,
+    allowed_sessions: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Retrieve messages for given message IDs along with surrounding context.
@@ -1136,12 +1152,18 @@ async def get_observation_context(
 
     # Pre-fetch peer session scope if needed
     allowed_session_names: list[str] | None = None
-    if observer and not session_name:
-        from src.crud.message import get_peer_session_names
+    if not session_name and (observer or allowed_sessions is not None):
+        if observer:
+            from src.crud.message import get_peer_session_names
 
-        allowed_session_names = await get_peer_session_names(
-            db, workspace_name, observer
-        )
+            allowed_session_names = await get_peer_session_names(
+                db, workspace_name, observer
+            )
+            if allowed_sessions is not None:
+                scope = set(allowed_sessions)
+                allowed_session_names = [s for s in allowed_session_names if s in scope]
+        else:
+            allowed_session_names = list(allowed_sessions or [])
         if not allowed_session_names:
             return []
 
@@ -1284,6 +1306,10 @@ class ToolContext:
     db_lock: asyncio.Lock
     # Optional resolved configuration for checking feature flags
     configuration: ResolvedConfiguration | None = None
+    # Optional session allowlist (dialectic filters). When set, message and
+    # conclusion recall is restricted to these sessions (intersected with
+    # observer membership); empty list fails closed.
+    session_names: list[str] | None = None
     # Telemetry context fields
     run_id: str | None = None
     agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
@@ -1638,6 +1664,7 @@ async def _handle_get_recent_history(
             session_name=ctx.session_name,
             observed=ctx.observed,
             token_limit=ctx.history_token_limit,
+            allowed_sessions=ctx.session_names,
         )
         if not history:
             return "No conversation history available"
@@ -1683,15 +1710,24 @@ async def _handle_search_memory(
         "query_tokens": _estimate_tokens_safe(query),
     }
 
-    documents = await crud.query_documents(
-        db=None,
-        workspace_name=ctx.workspace_name,
-        observer=ctx.observer,
-        observed=ctx.observed,
-        query=query,
-        top_k=top_k,
-        embedding=query_embedding,
-    )
+    # Restrict conclusion recall to the session allowlist when one is set.
+    # Empty allowlist fails closed (downstream stores drop empty IN clauses).
+    documents: Sequence[models.Document]
+    if ctx.session_names is not None and not ctx.session_names:
+        documents = []
+    else:
+        documents = await crud.query_documents(
+            db=None,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            query=query,
+            top_k=top_k,
+            embedding=query_embedding,
+            filters={"session_name": {"in": ctx.session_names}}
+            if ctx.session_names is not None
+            else None,
+        )
     mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
@@ -1713,6 +1749,7 @@ async def _handle_search_memory(
                 context_window=0,
                 embedding=query_embedding,
                 observer=ctx.observer,
+                allowed_sessions=ctx.session_names,
             )
             if snippets:
                 message_output = _format_message_snippets(
@@ -1754,6 +1791,7 @@ async def _handle_get_observation_context(
             session_name=ctx.session_name,
             message_ids=tool_input["message_ids"],
             observer=ctx.observer,
+            allowed_sessions=ctx.session_names,
         )
         if not messages:
             return f"No messages found for IDs {tool_input['message_ids']}"
@@ -1796,6 +1834,7 @@ async def _handle_search_messages(
         context_window=2,
         embedding=query_embedding,
         observer=ctx.observer,
+        allowed_sessions=ctx.session_names,
     )
     search_meta: dict[str, Any] = {
         "top_k": limit,
@@ -1832,6 +1871,7 @@ async def _handle_grep_messages(
         limit=limit,
         context_window=context_window,
         observer=ctx.observer,
+        allowed_sessions=ctx.session_names,
     )
     if not snippets:
         return f"No messages found containing '{text}'"
@@ -1896,6 +1936,7 @@ async def _handle_get_messages_by_date_range(
             limit=limit,
             order=order,
             observer=ctx.observer,
+            allowed_sessions=ctx.session_names,
         )
         msg_count = len(messages)
         messages_text = (
@@ -1968,6 +2009,7 @@ async def _handle_search_messages_temporal(
         before_date=before_date,
         limit=limit,
         context_window=context_window,
+        allowed_sessions=ctx.session_names,
         embedding=query_embedding,
         observer=ctx.observer,
     )
@@ -2224,6 +2266,14 @@ async def _handle_get_reasoning_chain(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_reasoning_chain tool."""
+    # Reasoning chains traverse provenance across sessions by design, so a
+    # session allowlist cannot be enforced on the traversal without exposing
+    # out-of-scope premises/conclusions. Fail closed rather than leak.
+    if ctx.session_names is not None:
+        return (
+            "Reasoning-chain traversal is unavailable for session-scoped "
+            "queries. Use search_memory and message tools instead."
+        )
     observation_id = tool_input.get("observation_id")
     if not observation_id:
         return "ERROR: 'observation_id' is required"
@@ -2349,6 +2399,7 @@ async def create_tool_executor(
     run_id: str | None = None,
     agent_type: str | None = None,
     parent_category: str | None = None,
+    session_names: list[str] | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2389,6 +2440,7 @@ async def create_tool_executor(
         history_token_limit=history_token_limit,
         db_lock=shared_lock,
         configuration=configuration,
+        session_names=session_names,
         run_id=run_id,
         agent_type=agent_type,
         parent_category=parent_category,

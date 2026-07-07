@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.config import settings
+from src.crud.message import get_peer_session_names
 from src.crud.session import is_peer_in_session
 from src.dependencies import db, read_db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
@@ -26,6 +27,7 @@ from src.exceptions import (
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
+from src.utils.filter import extract_session_allowlist
 from src.utils.scopes import is_scope_peer_name, validate_no_scope_peer_names
 from src.utils.search import search
 from src.utils.types import embedding_call_purpose
@@ -218,6 +220,24 @@ async def chat(
             ):
                 raise AuthenticationException("JWT not permissioned for this resource")
 
+    # Parse the session allowlist from filters (422 on unsupported keys/shapes).
+    session_allowlist = extract_session_allowlist(options.filters)
+    if (
+        session_allowlist is not None
+        and options.session_id
+        and options.session_id not in session_allowlist
+    ):
+        raise ValidationException("session_id must be included in filters.session_id")
+    # A peer-scoped key may only name sessions its peer belongs to — the
+    # allowlist widens message recall the same way session_id does above.
+    if jwt_params.p is not None and session_allowlist:
+        async with tracked_db("peers.chat.session_scope_auth", read_only=True) as s_db:
+            member_sessions = set(
+                await get_peer_session_names(s_db, workspace_id, jwt_params.p)
+            )
+        if not set(session_allowlist) <= member_sessions:
+            raise AuthenticationException("JWT not permissioned for this resource")
+
     # Get or create the peer to ensure it exists
     async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
         peers_result = await crud.get_or_create_peers(
@@ -255,6 +275,7 @@ async def chat(
                     observer=peer_id,
                     observed=options.target if options.target is not None else peer_id,
                     reasoning_level=options.reasoning_level,
+                    session_names=session_allowlist,
                 )
             ),
             media_type="text/event-stream",
@@ -269,6 +290,7 @@ async def chat(
         # and it's answered from the omniscient Honcho perspective
         observed=options.target if options.target is not None else peer_id,
         reasoning_level=options.reasoning_level,
+        session_names=session_allowlist,
     )
 
     # Prometheus metrics
@@ -309,6 +331,15 @@ async def get_representation(
             "Scope peers cannot be a representation target: no representation is formed of a scope."
         )
 
+    # Parse the session allowlist from filters (422 on unsupported keys/shapes).
+    session_allowlist = extract_session_allowlist(options.filters)
+    if (
+        session_allowlist is not None
+        and options.session_id
+        and options.session_id not in session_allowlist
+    ):
+        raise ValidationException("session_id must be included in filters.session_id")
+
     try:
         embedding: list[float] | None = None
         if options.search_query:
@@ -327,7 +358,9 @@ async def get_representation(
             workspace_id,
             observer=peer_id,
             observed=options.target if options.target is not None else peer_id,
-            session_name=options.session_id,
+            session_names=[options.session_id]
+            if options.session_id is not None
+            else session_allowlist,
             include_semantic_query=options.search_query,
             embedding=embedding,
             semantic_search_top_k=options.search_top_k,
@@ -490,7 +523,7 @@ async def get_peer_context(
             workspace_id,
             observer=peer_id,
             observed=observed,
-            session_name=None,  # Peer context is global, not session-scoped
+            session_names=None,  # Peer context is global, not session-scoped
             include_semantic_query=search_query,
             embedding=embedding,
             semantic_search_top_k=search_top_k,
