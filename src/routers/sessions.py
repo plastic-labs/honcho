@@ -43,7 +43,7 @@ async def _get_working_representation_task(
     *,
     observer: str,
     observed: str,
-    session_name: str | None,
+    session_names: list[str] | None,
     search_top_k: int | None,
     search_max_distance: float | None,
     include_most_derived: bool,
@@ -59,7 +59,7 @@ async def _get_working_representation_task(
         last_message: Optional last message for semantic query
         observer: Name of the observer peer
         observed: Name of the observed peer
-        session_name: Optional session to filter by
+        session_names: Optional session allowlist to filter by
         search_top_k: Number of semantic-search-retrieved observations to include in the representation
         search_max_distance: Maximum distance to search for semantically relevant observations
         include_most_derived: Whether to include the most derived observations in the representation
@@ -74,7 +74,7 @@ async def _get_working_representation_task(
         db=db,
         observer=observer,
         observed=observed,
-        session_name=session_name,
+        session_names=session_names,
         include_semantic_query=last_message,
         semantic_search_top_k=search_top_k,
         semantic_search_max_distance=search_max_distance,
@@ -765,7 +765,7 @@ async def get_session_context(
         search_query,
         observer=observer,
         observed=observed,
-        session_name=session_id if limit_to_session else None,
+        session_names=[session_id] if limit_to_session else None,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,
