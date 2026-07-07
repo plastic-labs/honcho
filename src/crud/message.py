@@ -689,19 +689,29 @@ async def _semantic_search_messages(
     after_date: datetime | None = None,
     before_date: datetime | None = None,
     observer: str | None = None,
+    allowed_sessions: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Run semantic message search with optional temporal filters.
 
     When observer is provided and session_name is None, results are
-    scoped to sessions the observer has any membership record in.
+    scoped to sessions the observer has any membership record in. When
+    allowed_sessions is provided, that membership scope is further
+    intersected with the allowlist (fail-closed: empty result on empty
+    intersection).
     """
     # Pre-fetch peer session scope if needed (short-lived DB session)
     allowed_session_names: list[str] | None = None
-    if observer and not session_name:
-        async with tracked_db(f"{operation_name}.peer_scope", read_only=True) as db:
-            allowed_session_names = await get_peer_session_names(
-                db, workspace_name, observer
-            )
+    if not session_name and (observer or allowed_sessions is not None):
+        if observer:
+            async with tracked_db(f"{operation_name}.peer_scope", read_only=True) as db:
+                allowed_session_names = await get_peer_session_names(
+                    db, workspace_name, observer
+                )
+            if allowed_sessions is not None:
+                scope = set(allowed_sessions)
+                allowed_session_names = [s for s in allowed_session_names if s in scope]
+        else:
+            allowed_session_names = list(allowed_sessions or [])
         if not allowed_session_names:
             return []
 
@@ -758,6 +768,7 @@ async def search_messages(
     context_window: int = 2,
     embedding: list[float] | None = None,
     observer: str | None = None,
+    allowed_sessions: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity and return conversation snippets.
@@ -799,6 +810,7 @@ async def search_messages(
         context_window=context_window,
         operation_name="message.search_messages",
         observer=observer,
+        allowed_sessions=allowed_sessions,
     )
 
 
@@ -846,6 +858,7 @@ async def grep_messages(
     limit: int = 10,
     context_window: int = 2,
     observer: str | None = None,
+    allowed_sessions: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages containing specific text (case-insensitive substring match).
@@ -869,10 +882,18 @@ async def grep_messages(
     async with tracked_db("message.grep_messages", read_only=True) as db:
         # Pre-fetch peer session scope if needed
         allowed_session_names = None
-        if observer and not session_name:
-            allowed_session_names = await get_peer_session_names(
-                db, workspace_name, observer
-            )
+        if not session_name and (observer or allowed_sessions is not None):
+            if observer:
+                allowed_session_names = await get_peer_session_names(
+                    db, workspace_name, observer
+                )
+                if allowed_sessions is not None:
+                    scope = set(allowed_sessions)
+                    allowed_session_names = [
+                        s for s in allowed_session_names if s in scope
+                    ]
+            else:
+                allowed_session_names = list(allowed_sessions or [])
             if not allowed_session_names:
                 return []
 
@@ -898,6 +919,7 @@ async def get_messages_by_date_range(
     limit: int = 20,
     order: str = "desc",
     observer: str | None = None,
+    allowed_sessions: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Get messages within a date range.
@@ -918,10 +940,16 @@ async def get_messages_by_date_range(
     """
     # Pre-fetch peer session scope if needed
     allowed_session_names = None
-    if observer and not session_name:
-        allowed_session_names = await get_peer_session_names(
-            db, workspace_name, observer
-        )
+    if not session_name and (observer or allowed_sessions is not None):
+        if observer:
+            allowed_session_names = await get_peer_session_names(
+                db, workspace_name, observer
+            )
+            if allowed_sessions is not None:
+                scope = set(allowed_sessions)
+                allowed_session_names = [s for s in allowed_session_names if s in scope]
+        else:
+            allowed_session_names = list(allowed_sessions or [])
         if not allowed_session_names:
             return []
 
@@ -957,6 +985,7 @@ async def search_messages_temporal(
     context_window: int = 2,
     embedding: list[float] | None = None,
     observer: str | None = None,
+    allowed_sessions: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity with optional date filtering.
@@ -1001,4 +1030,5 @@ async def search_messages_temporal(
         context_window=context_window,
         operation_name="message.search_messages_temporal",
         observer=observer,
+        allowed_sessions=allowed_sessions,
     )
