@@ -44,6 +44,14 @@ from .peer_card import get_peer_card, set_peer_card
 from .representation import (
     get_working_representation,
 )
+from .scope import (
+    add_sessions_to_scope,
+    get_or_create_scopes,
+    get_scope,
+    get_scope_session_names,
+    get_scopes,
+    remove_session_from_scope,
+)
 from .session import (
     SessionDeletionResult,
     clone_session,
@@ -120,6 +128,13 @@ __all__ = [
     "set_peer_card",
     # Representation
     "get_working_representation",
+    # Scope
+    "add_sessions_to_scope",
+    "get_or_create_scopes",
+    "get_scope",
+    "get_scope_session_names",
+    "get_scopes",
+    "remove_session_from_scope",
     # Session
     "SessionDeletionResult",
     "get_sessions",
