@@ -774,6 +774,14 @@ class ScheduleDreamRequest(BaseModel):
     session_id: str | None = Field(
         None, description="Session ID to scope the dream to if specified"
     )
+    rebuild: bool = Field(
+        False,
+        description=(
+            "card_refresh dreams only: rebuild the peer card solely from "
+            "observations currently in the collection, without injecting the "
+            "existing card (use after removals)"
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
