@@ -1357,6 +1357,21 @@ async def _handle_create_observations_impl(
                 )
             )
             continue
+        # Session-purity invariant: explicit observations record what was
+        # directly derived from a session's messages. Agents that are not
+        # processing messages (dreamer specialists, dialectic) must not mint
+        # them — consolidation output belongs at a derived level.
+        if not ctx.current_messages and validated.level == "explicit":
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=validated.content[:50],
+                    error=(
+                        "Only message ingestion can create 'explicit' observations; "
+                        "use a derived level (deductive/inductive/contradiction)"
+                    ),
+                )
+            )
+            continue
         observations.append(validated)
 
     if not observations:

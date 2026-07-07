@@ -1,4 +1,5 @@
 import datetime
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -924,3 +925,320 @@ class TestDocumentCRUD:
         assert len(documents) == 2
         assert documents[0].content in ["Observation 1", "Observation 2"]
         assert documents[1].content in ["Observation 1", "Observation 2"]
+
+
+class TestSessionPurityInvariant:
+    """Regression tests for the explicit-document session-purity invariant.
+
+    Explicit documents are session-pure records of what was derived from one
+    session's messages (the Scopes copy-by-session model depends on this):
+
+    - an explicit document must always carry a non-null session_name
+    - dedup/merge (exact and semantic) must never cross document levels
+    - dedup/merge must never cross sessions for explicit documents
+    """
+
+    async def _setup(
+        self,
+        db_session: AsyncSession,
+        test_workspace: models.Workspace,
+        test_peer: models.Peer,
+    ) -> tuple[models.Peer, models.Session, models.Session]:
+        """Create an observed peer, two sessions, and the collection."""
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        session_a = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        session_b = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([session_a, session_b])
+        await db_session.flush()
+
+        collection = models.Collection(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        db_session.add(collection)
+        await db_session.flush()
+        return test_peer2, session_a, session_b
+
+    def _doc(
+        self,
+        content: str,
+        *,
+        session_name: str | None,
+        level: str = "explicit",
+        message_id: int = 1,
+    ) -> schemas.DocumentCreate:
+        return schemas.DocumentCreate(
+            content=content,
+            embedding=[0.1] * 1536,
+            session_name=session_name,
+            level=level,  # pyright: ignore[reportArgumentType]
+            metadata=schemas.DocumentMetadata(
+                message_ids=[message_id],
+                message_created_at="2026-01-01T00:00:00Z",
+            ),
+        )
+
+    async def _live_docs(
+        self,
+        db_session: AsyncSession,
+        workspace_name: str,
+        observer: str,
+        observed: str,
+    ) -> list[models.Document]:
+        return list(
+            (
+                await db_session.execute(
+                    select(models.Document).where(
+                        models.Document.workspace_name == workspace_name,
+                        models.Document.observer == observer,
+                        models.Document.observed == observed,
+                        models.Document.deleted_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    @pytest.mark.asyncio
+    async def test_explicit_without_session_is_refused(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """An explicit document with session_name=None must not be written;
+        derived levels remain allowed without a session (dream output)."""
+        test_workspace, test_peer = sample_data
+        test_peer2, _, _ = await self._setup(db_session, test_workspace, test_peer)
+
+        accepted = await crud.create_documents(
+            db_session,
+            [
+                self._doc("Global explicit fact", session_name=None),
+                self._doc(
+                    "Dream-derived conclusion",
+                    session_name=None,
+                    level="deductive",
+                    message_id=2,
+                ),
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        assert [d.content for d in accepted] == ["Dream-derived conclusion"]
+        live = await self._live_docs(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        assert len(live) == 1
+        assert live[0].level == "deductive"
+
+    @pytest.mark.asyncio
+    async def test_exact_dedup_never_merges_explicit_across_sessions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """The same explicit fact stated in two sessions produces two
+        session-pure documents; the other session's row is not reinforced."""
+        test_workspace, test_peer = sample_data
+        test_peer2, session_a, session_b = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [self._doc("User likes coffee", session_name=session_a.name)],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        accepted = await crud.create_documents(
+            db_session,
+            [
+                self._doc(
+                    "user likes coffee ", session_name=session_b.name, message_id=2
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        assert len(accepted) == 1
+        live = await self._live_docs(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        assert len(live) == 2
+        assert {doc.session_name for doc in live} == {session_a.name, session_b.name}
+        assert all(doc.times_derived == 1 for doc in live)
+
+    @pytest.mark.asyncio
+    async def test_exact_dedup_never_merges_across_levels(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """An explicit fact must not be dropped/reinforced against a derived
+        document that happens to share its content."""
+        test_workspace, test_peer = sample_data
+        test_peer2, session_a, _ = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                self._doc(
+                    "User likes coffee", session_name=session_a.name, level="deductive"
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        accepted = await crud.create_documents(
+            db_session,
+            [self._doc("User likes coffee", session_name=session_a.name, message_id=2)],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        assert len(accepted) == 1
+        live = await self._live_docs(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        assert len(live) == 2
+        assert {doc.level for doc in live} == {"explicit", "deductive"}
+        assert all(doc.times_derived == 1 for doc in live)
+
+    @pytest.mark.asyncio
+    async def test_exact_dedup_still_merges_derived_levels_across_sessions(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Derived levels are consolidations, not session-pure records:
+        cross-session exact dedup still reinforces the existing row."""
+        test_workspace, test_peer = sample_data
+        test_peer2, session_a, session_b = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                self._doc(
+                    "Probably a morning person",
+                    session_name=session_a.name,
+                    level="deductive",
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+        accepted = await crud.create_documents(
+            db_session,
+            [
+                self._doc(
+                    "probably a morning person",
+                    session_name=session_b.name,
+                    level="deductive",
+                    message_id=2,
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        assert len(accepted) == 0
+        live = await self._live_docs(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+        assert len(live) == 1
+        assert live[0].times_derived == 2
+
+    @pytest.mark.asyncio
+    async def test_semantic_dedup_scoped_to_level_and_session(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """is_rejected_duplicate must constrain candidate search to the same
+        level, and to the same session for explicit documents."""
+        test_workspace, test_peer = sample_data
+        test_peer2, session_a, _ = await self._setup(
+            db_session, test_workspace, test_peer
+        )
+
+        explicit_doc = self._doc("User likes coffee", session_name=session_a.name)
+        with patch(
+            "src.crud.document.query_documents", new=AsyncMock(return_value=[])
+        ) as mock_query:
+            rejected = await is_rejected_duplicate(
+                db_session,
+                explicit_doc,
+                test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        assert rejected is False
+        assert mock_query.await_args is not None
+        assert mock_query.await_args.kwargs["filters"] == {
+            "level": "explicit",
+            "session_name": session_a.name,
+        }
+
+        deductive_doc = self._doc(
+            "User likes coffee", session_name=None, level="deductive"
+        )
+        with patch(
+            "src.crud.document.query_documents", new=AsyncMock(return_value=[])
+        ) as mock_query:
+            rejected = await is_rejected_duplicate(
+                db_session,
+                deductive_doc,
+                test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        assert rejected is False
+        assert mock_query.await_args is not None
+        assert mock_query.await_args.kwargs["filters"] == {"level": "deductive"}
+
+    @pytest.mark.asyncio
+    async def test_semantic_dedup_refuses_sessionless_explicit(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A session-less explicit document has no valid merge partner: it is
+        never treated as a duplicate and no candidate search runs."""
+        test_workspace, test_peer = sample_data
+        test_peer2, _, _ = await self._setup(db_session, test_workspace, test_peer)
+
+        doc = self._doc("User likes coffee", session_name=None)
+        with patch(
+            "src.crud.document.query_documents", new=AsyncMock(return_value=[])
+        ) as mock_query:
+            rejected = await is_rejected_duplicate(
+                db_session,
+                doc,
+                test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        assert rejected is False
+        mock_query.assert_not_awaited()
