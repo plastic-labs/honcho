@@ -858,7 +858,8 @@ async def create_observations(
 
     Raises:
         ResourceNotFoundException: If any session or peer is not found
-        ValidationException: If embedding generation fails or integrity constraint is violated
+        ValidationException: If embedding validation fails or a data/integrity constraint is violated
+        HonchoException: If the embedding provider returns an error or is unreachable
     """
     if not observations:
         return []
@@ -976,16 +977,21 @@ async def create_observations(
 
     # If no external vector store (pgvector mode), mark as synced immediately
     if external_vector_store is None:
-        await db.execute(
-            update(models.Document)
-            .where(models.Document.id.in_(all_doc_ids))
-            .values(
-                sync_state="synced",
-                last_sync_at=func.now(),
-                sync_attempts=0,
+        try:
+            await db.execute(
+                update(models.Document)
+                .where(models.Document.id.in_(all_doc_ids))
+                .values(
+                    sync_state="synced",
+                    last_sync_at=func.now(),
+                    sync_attempts=0,
+                )
             )
-        )
-        await db.commit()
+            await db.commit()
+        except Exception:
+            logger.exception(
+                "Failed to mark observations as synced in pgvector mode"
+            )
     else:
         # External vector store - upsert each collection's embeddings
         for (

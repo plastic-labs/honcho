@@ -27,6 +27,8 @@ def _build_openai_client(
     send_dimensions: bool,
     vector_dimensions: int,
     base_url: str = "http://localhost:8000/v1",
+    max_input_tokens: int = 8192,
+    max_tokens_per_request: int = 300_000,
 ) -> tuple[_EmbeddingClient, list[dict[str, Any]]]:
     calls: list[dict[str, Any]] = []
 
@@ -50,8 +52,8 @@ def _build_openai_client(
             base_url=base_url,
         ),
         vector_dimensions=vector_dimensions,
-        max_input_tokens=8192,
-        max_tokens_per_request=300_000,
+        max_input_tokens=max_input_tokens,
+        max_tokens_per_request=max_tokens_per_request,
         send_dimensions=send_dimensions,
     )
     return client, calls
@@ -312,30 +314,14 @@ def test_resolve_send_dimensions_never_returns_false_regardless(
 async def test_simple_batch_embed_respects_token_budget_per_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[dict[str, Any]] = []
-
-    async def fake_post(self: Any, url: str, **kwargs: Any) -> httpx.Response:
-        json_body: Any = kwargs.get("json")
-        input_data = json_body if isinstance(json_body, dict) else {}
-        inputs: list[str] = input_data.get("input", []) if isinstance(input_data.get("input"), list) else []
-        calls.append({"json": json_body})
-        return _fake_httpx_response(
-            {"data": [{"embedding": [0.5] * 4} for _ in inputs]}
-        )
-
-    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-
-    client = _EmbeddingClient(
-        EmbeddingModelConfig(
-            transport="openai",
-            model="text-embedding-3-small",
-            api_key="test-key",
-            base_url="http://localhost:8000/v1",
-        ),
+    client, calls = _build_openai_client(
+        monkeypatch,
+        embedding=[0.5] * 4,
+        model="text-embedding-3-small",
+        send_dimensions=False,
         vector_dimensions=4,
         max_input_tokens=100,
         max_tokens_per_request=120,
-        send_dimensions=False,
     )
 
     long_a = ("alpha " * 80).strip()
@@ -350,22 +336,14 @@ async def test_simple_batch_embed_respects_token_budget_per_request(
 async def test_simple_batch_embed_rejects_oversized_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_post(self: Any, url: str, **kwargs: Any) -> httpx.Response:
-        return _fake_httpx_response({"data": [{"embedding": [0.1] * 4}]})
-
-    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-
-    client = _EmbeddingClient(
-        EmbeddingModelConfig(
-            transport="openai",
-            model="text-embedding-3-small",
-            api_key="test-key",
-            base_url="http://localhost:8000/v1",
-        ),
+    client, _calls = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 4,
+        model="text-embedding-3-small",
+        send_dimensions=False,
         vector_dimensions=4,
         max_input_tokens=10,
         max_tokens_per_request=1000,
-        send_dimensions=False,
     )
 
     too_long = ("word " * 50).strip()
@@ -376,22 +354,14 @@ async def test_simple_batch_embed_rejects_oversized_input(
 def test_prepare_chunks_returns_ordered_chunks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_post(self: Any, url: str, **kwargs: Any) -> httpx.Response:
-        return _fake_httpx_response({"data": [{"embedding": [0.1] * 4}]})
-
-    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-
-    client = _EmbeddingClient(
-        EmbeddingModelConfig(
-            transport="openai",
-            model="text-embedding-3-small",
-            api_key="test-key",
-            base_url="http://localhost:8000/v1",
-        ),
+    client, _calls = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 4,
+        model="text-embedding-3-small",
+        send_dimensions=False,
         vector_dimensions=4,
         max_input_tokens=10,
         max_tokens_per_request=1000,
-        send_dimensions=False,
     )
 
     short_text = "hello"
