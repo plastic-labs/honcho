@@ -14,6 +14,7 @@ from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
+from src.utils.scopes import validate_no_scope_peer_names
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
@@ -225,7 +226,16 @@ async def create_messages(
 
     Returns:
         List of created message objects
+
+    Raises:
+        ValidationException: If a message is authored by a scope peer
     """
+    # Scope peers are silent observers — they can never author messages.
+    validate_no_scope_peer_names(
+        (message.peer_name for message in messages),
+        action="Scope peers cannot author messages.",
+    )
+
     # Get or create session with peers in messages list
     peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
     await get_or_create_session(

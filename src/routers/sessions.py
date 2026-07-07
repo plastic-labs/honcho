@@ -24,6 +24,7 @@ from src.security import JWTParams, require_auth
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
 from src.utils.representation import Representation
+from src.utils.scopes import validate_no_scope_peer_names
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
 from src.utils.types import embedding_call_purpose
@@ -33,6 +34,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/sessions",
     tags=["sessions"],
+)
+
+# Guidance appended to guardrail errors when a scope peer is passed to the
+# generic session-peer surface. Scope membership is managed only through the
+# scopes facade so the observer mechanics stay internal.
+_SCOPES_ROUTE_GUIDANCE = (
+    "Scope membership is managed via the scopes routes "
+    "(/workspaces/{workspace_id}/scopes/{scope_id}/sessions) or the `scopes` "
+    "field at session creation."
 )
 
 
@@ -309,6 +319,13 @@ async def get_or_create_session(
             )
         session.name = jwt_params.s
 
+    # Scope peers may not be added through the generic peers mapping; use the
+    # `scopes` field (which handles scope-peer creation and observer config).
+    if session.peer_names:
+        validate_no_scope_peer_names(
+            session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
+        )
+
     # Handle session creation with proper error handling
     try:
         result = await crud.get_or_create_session(
@@ -440,7 +457,11 @@ async def add_peers_to_session(
     ),
     db: AsyncSession = db,
 ):
-    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically."""
+    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically.
+
+    Scope peers cannot be added here; scope membership is managed via the scopes routes.
+    """
+    validate_no_scope_peer_names(peers.keys(), action=_SCOPES_ROUTE_GUIDANCE)
     try:
         result = await crud.get_or_create_session(
             db,
@@ -476,7 +497,10 @@ async def set_session_peers(
     Set the Peers in a Session. If a Peer does not yet exist, it will be created automatically.
 
     This will fully replace the current set of Peers in the Session.
+
+    Scope peers cannot be set here; scope membership is managed via the scopes routes.
     """
+    validate_no_scope_peer_names(peers.keys(), action=_SCOPES_ROUTE_GUIDANCE)
     try:
         await crud.set_peers_for_session(
             db,
@@ -512,7 +536,11 @@ async def remove_peers_from_session(
     ),
     db: AsyncSession = db,
 ):
-    """Remove Peers by ID from a Session."""
+    """Remove Peers by ID from a Session.
+
+    Scope peers cannot be removed here; scope membership is managed via the scopes routes.
+    """
+    validate_no_scope_peer_names(peers, action=_SCOPES_ROUTE_GUIDANCE)
     try:
         await crud.remove_peers_from_session(
             db,
