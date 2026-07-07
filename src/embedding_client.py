@@ -226,6 +226,21 @@ class _EmbeddingClient:
             )
         return embedding
 
+    async def _openai_post_embeddings(
+        self, http_client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        resp = await http_client.post(
+            f"{self._openai_base_url}/embeddings",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {self._openai_api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        if not resp.is_success:
+            resp.raise_for_status()
+        return resp.json()
+
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
 
@@ -266,19 +281,7 @@ class _EmbeddingClient:
             payload: dict[str, Any] = {"model": self.model, "input": [query]}
             if self.send_dimensions:
                 payload["dimensions"] = self.vector_dimensions
-            resp = await http_client.post(
-                f"{self._openai_base_url}/embeddings",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {self._openai_api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
-            if not resp.is_success:
-                raise RuntimeError(
-                    f"Embedding API error: {resp.status_code} {resp.text}"
-                )
-            data = resp.json()
+            data = await self._openai_post_embeddings(http_client, payload)
             return self._validate_embedding_dimensions(data["data"][0]["embedding"])
 
         return await _emit_embedding_call(
@@ -482,19 +485,7 @@ class _EmbeddingClient:
                 }
                 if self.send_dimensions:
                     payload["dimensions"] = self.vector_dimensions
-                resp = await http_client.post(
-                    f"{self._openai_base_url}/embeddings",
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self._openai_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-                if not resp.is_success:
-                    raise RuntimeError(
-                        f"Embedding API error: {resp.status_code} {resp.text}"
-                    )
-                resp_data = resp.json()
+                resp_data = await self._openai_post_embeddings(http_client, payload)
                 for item, emb in zip(batch, resp_data["data"], strict=True):
                     result[item.text_id][item.chunk_index] = (
                         self._validate_embedding_dimensions(emb["embedding"])

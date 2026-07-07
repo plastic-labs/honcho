@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any, cast
 
+import httpx
 from sqlalchemy import delete, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DataError, IntegrityError
@@ -18,6 +19,7 @@ from src.crud.session import get_session
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import (
+    HonchoException,
     ResourceNotFoundException,
     ValidationException,
     VectorStoreError,
@@ -893,9 +895,20 @@ async def create_observations(
         embeddings = await embedding_client.simple_batch_embed(contents)
     except ValueError as e:
         raise ValidationException(str(e)) from e
+    except httpx.HTTPStatusError as e:
+        raise HonchoException(
+            f"Embedding provider returned error: {e.response.status_code}",
+            status_code=503,
+        ) from e
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as e:
+        raise HonchoException(
+            "Embedding provider is temporarily unavailable",
+            status_code=503,
+        ) from e
     except Exception as e:
-        raise ValidationException(
-            f"Failed to generate embeddings: {e}"
+        raise HonchoException(
+            f"Failed to generate embeddings: {e}",
+            status_code=500,
         ) from e
 
     # Create document objects and track embeddings for vector store
@@ -947,107 +960,107 @@ async def create_observations(
     try:
         db.add_all(honcho_documents)
         await db.commit()
-        # Refresh all documents to get generated IDs and timestamps
-        for doc in honcho_documents:
-            await db.refresh(doc)
-
-        # Store embeddings in external vector store after documents are committed (IDs now available)
-        external_vector_store = get_external_vector_store()
-        all_doc_ids = [doc.id for doc in honcho_documents]
-
-        # If no external vector store (pgvector mode), mark as synced immediately
-        if external_vector_store is None:
-            await db.execute(
-                update(models.Document)
-                .where(models.Document.id.in_(all_doc_ids))
-                .values(
-                    sync_state="synced",
-                    last_sync_at=func.now(),
-                    sync_attempts=0,
-                )
-            )
-            await db.commit()
-        else:
-            # External vector store - upsert each collection's embeddings
-            for (
-                observer,
-                observed,
-            ), docs_with_embeddings in collection_embeddings.items():
-                namespace = external_vector_store.get_vector_namespace(
-                    "document",
-                    workspace_name,
-                    observer,
-                    observed,
-                )
-
-                # Build vector records with metadata for filtering
-                vector_records: list[VectorRecord] = []
-                doc_ids: list[str] = []
-                for doc, embedding in docs_with_embeddings:
-                    doc_ids.append(doc.id)
-                    vector_records.append(
-                        VectorRecord(
-                            id=doc.id,
-                            embedding=embedding,
-                            metadata={
-                                "workspace_name": workspace_name,
-                                "observer": observer,
-                                "observed": observed,
-                                "session_name": doc.session_name,
-                                "level": doc.level,
-                            },
-                        )
-                    )
-
-                # Upsert to external vector store and update sync state
-                try:
-                    await external_vector_store.upsert_many(namespace, vector_records)
-                    # Success: mark as synced
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id.in_(doc_ids))
-                        .values(
-                            sync_state="synced",
-                            last_sync_at=func.now(),
-                            sync_attempts=0,
-                        )
-                    )
-                    await db.commit()
-
-                except VectorStoreError:
-                    logger.warning(
-                        "Vector store unavailable for namespace %s; leaving observations unsynced",
-                        namespace,
-                    )
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id.in_(doc_ids))
-                        .values(
-                            sync_attempts=models.Document.sync_attempts + 1,
-                            last_sync_at=func.now(),
-                        )
-                    )
-                    await db.commit()
-
-                except Exception:
-                    logger.exception(
-                        "Unexpected error upserting vectors for %s", namespace
-                    )
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id.in_(doc_ids))
-                        .values(
-                            sync_attempts=models.Document.sync_attempts + 1,
-                            last_sync_at=func.now(),
-                        )
-                    )
-                    await db.commit()
-
     except (DataError, IntegrityError) as e:
         await db.rollback()
         raise ValidationException(
             "Failed to create observations due to a data or integrity constraint violation"
         ) from e
+
+    # Refresh all documents to get generated IDs and timestamps
+    for doc in honcho_documents:
+        await db.refresh(doc)
+
+    # Store embeddings in external vector store after documents are committed (IDs now available)
+    external_vector_store = get_external_vector_store()
+    all_doc_ids = [doc.id for doc in honcho_documents]
+
+    # If no external vector store (pgvector mode), mark as synced immediately
+    if external_vector_store is None:
+        await db.execute(
+            update(models.Document)
+            .where(models.Document.id.in_(all_doc_ids))
+            .values(
+                sync_state="synced",
+                last_sync_at=func.now(),
+                sync_attempts=0,
+            )
+        )
+        await db.commit()
+    else:
+        # External vector store - upsert each collection's embeddings
+        for (
+            observer,
+            observed,
+        ), docs_with_embeddings in collection_embeddings.items():
+            namespace = external_vector_store.get_vector_namespace(
+                "document",
+                workspace_name,
+                observer,
+                observed,
+            )
+
+            # Build vector records with metadata for filtering
+            vector_records: list[VectorRecord] = []
+            doc_ids: list[str] = []
+            for doc, embedding in docs_with_embeddings:
+                doc_ids.append(doc.id)
+                vector_records.append(
+                    VectorRecord(
+                        id=doc.id,
+                        embedding=embedding,
+                        metadata={
+                            "workspace_name": workspace_name,
+                            "observer": observer,
+                            "observed": observed,
+                            "session_name": doc.session_name,
+                            "level": doc.level,
+                        },
+                    )
+                )
+
+            # Upsert to external vector store and update sync state
+            try:
+                await external_vector_store.upsert_many(namespace, vector_records)
+                # Success: mark as synced
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id.in_(doc_ids))
+                    .values(
+                        sync_state="synced",
+                        last_sync_at=func.now(),
+                        sync_attempts=0,
+                    )
+                )
+                await db.commit()
+
+            except VectorStoreError:
+                logger.warning(
+                    "Vector store unavailable for namespace %s; leaving observations unsynced",
+                    namespace,
+                )
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id.in_(doc_ids))
+                    .values(
+                        sync_attempts=models.Document.sync_attempts + 1,
+                        last_sync_at=func.now(),
+                    )
+                )
+                await db.commit()
+
+            except Exception:
+                logger.exception(
+                    "Unexpected error upserting vectors for %s", namespace
+                )
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id.in_(doc_ids))
+                    .values(
+                        sync_attempts=models.Document.sync_attempts + 1,
+                        last_sync_at=func.now(),
+                    )
+                )
+                await db.commit()
 
     logger.debug(
         "Created %d observations in workspace %s",
