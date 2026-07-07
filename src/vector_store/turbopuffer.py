@@ -252,6 +252,9 @@ class TurbopufferVectorStore(VectorStore):
                 # Membership filter using "In" operator
                 in_values = cast(Sequence[Any], value["in"])
                 filter_list.append((key, "In", in_values))
+            elif isinstance(value, list | tuple | set):
+                # Bare-list sugar: same membership semantics as {"in": [...]}
+                filter_list.append((key, "In", list(cast(Sequence[Any], value))))
             else:
                 # Simple equality filter using "Eq" operator
                 filter_list.append((key, "Eq", cast(Any, value)))

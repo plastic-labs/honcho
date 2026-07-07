@@ -1,7 +1,8 @@
 import datetime
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from logging import getLogger
 from typing import Any, TypeVar
+from typing import cast as typing_cast
 
 from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, or_
 from sqlalchemy.types import Numeric
@@ -237,6 +238,16 @@ def _build_field_condition(
     # Handle wildcard - matches everything, so no condition needed
     if value == "*":
         return None
+
+    # Bare-list sugar on regular columns: {"session_id": ["a", "b"]} is
+    # shorthand for {"session_id": {"in": ["a", "b"]}}. JSONB columns are
+    # excluded — a bare list there keeps JSONB containment semantics.
+    if isinstance(value, list | tuple | set) and column_name not in (
+        "h_metadata",
+        "configuration",
+        "internal_metadata",
+    ):
+        value = {"in": list(typing_cast(Sequence[Any], value))}
 
     # Handle comparison operators vs regular values
     if isinstance(value, dict):
