@@ -12,13 +12,15 @@ no-op if the same flag was already set at an outer level.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 import typer
 
 from honcho import Honcho
 
-from honcho_cli.config import CLIConfig, get_client_kwargs
+from honcho_cli import oauth
+from honcho_cli.config import CLIConfig, OAuthTokens, get_client_kwargs
 from honcho_cli.output import print_error, set_json_mode
 from honcho_cli.validation import validate_resource_id
 
@@ -50,6 +52,41 @@ def get_resolved_config():
     return config
 
 
+def maybe_refresh_token(config: CLIConfig) -> None:
+    """Refresh an expired OAuth access token in place and persist it.
+
+    No-op when a manual api_key is set or the access token is still valid. On
+    refresh failure the grant is gone — prints a re-login hint and exits.
+    """
+    if config.api_key:  # manual key takes precedence; nothing to refresh
+        return
+    tokens = config.oauth
+    if tokens is None or tokens.access_valid():
+        return
+    if not tokens.refresh_token:
+        print_error("SESSION_EXPIRED", "OAuth session expired. Run `honcho init` to log in again.")
+        raise typer.Exit(1)
+
+    endpoints = oauth.resolve_endpoints(config.base_url)
+    if tokens.client_id:
+        endpoints = replace(endpoints, client_id=tokens.client_id)
+    try:
+        refreshed = oauth.refresh_access_token(endpoints, tokens.refresh_token)
+    except oauth.OAuthFlowError:
+        print_error("SESSION_EXPIRED", "OAuth session expired. Run `honcho init` to log in again.")
+        raise typer.Exit(1)
+
+    # rotation-safe: persist the (possibly new) refresh token before it's reused;
+    # keep the old one if the server didn't rotate (refresh_token is optional)
+    config.oauth = OAuthTokens.from_response(
+        refreshed,
+        client_id=tokens.client_id,
+        scope_fallback=tokens.scope,
+        refresh_fallback=tokens.refresh_token,
+    )
+    config.save()
+
+
 def get_client(*, require_workspace: bool = True):
     """Create a Honcho client from resolved config.
 
@@ -65,6 +102,7 @@ def get_client(*, require_workspace: bool = True):
             "No workspace scoped. Pass --workspace/-w or set HONCHO_WORKSPACE_ID.",
         )
         raise typer.Exit(1)
+    maybe_refresh_token(config)
     return Honcho(**get_client_kwargs(config)), config
 
 

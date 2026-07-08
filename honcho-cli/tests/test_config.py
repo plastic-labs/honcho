@@ -2,9 +2,10 @@
 
 import json
 import os
+import time
 
 import pytest
-from honcho_cli.config import CLIConfig
+from honcho_cli.config import CLIConfig, OAuthTokens
 
 
 @pytest.fixture
@@ -102,6 +103,60 @@ def test_api_key_redaction_shows_last4_only(api_key, expected):
 def test_api_key_redaction_empty_omitted():
     """Empty api_key is omitted from redacted output entirely."""
     assert "api_key" not in CLIConfig(api_key="").redacted()
+
+
+class TestOAuth:
+    def _tokens(self, expires_at: float) -> OAuthTokens:
+        return OAuthTokens(
+            access_token="hch-at-x",
+            refresh_token="hch-rt-x",
+            access_expires_at=expires_at,
+            client_id="honcho-cli",
+            scope="write",
+        )
+
+    def test_round_trips_oauth_block(self, cfg_path):
+        CLIConfig(base_url="http://localhost:8000", oauth=self._tokens(9999999999)).save()
+        loaded = CLIConfig.load()
+        assert loaded.oauth is not None
+        assert loaded.oauth.access_token == "hch-at-x"
+        assert loaded.oauth.refresh_token == "hch-rt-x"
+        assert loaded.oauth.client_id == "honcho-cli"
+
+    def test_oauth_persists_camelcase_keys(self, cfg_path):
+        CLIConfig(base_url="http://localhost:8000", oauth=self._tokens(1234)).save()
+        on_disk = json.loads(cfg_path.read_text())["oauth"]
+        assert set(on_disk) == {"accessToken", "refreshToken", "accessExpiresAt", "clientId", "scope"}
+
+    def test_save_preserves_foreign_keys_with_oauth(self, cfg_path):
+        cfg_path.write_text(json.dumps({"hosts": {"claude_code": {"peerName": "u"}}}))
+        CLIConfig(base_url="http://localhost:8000", oauth=self._tokens(1234)).save()
+        on_disk = json.loads(cfg_path.read_text())
+        assert on_disk["hosts"] == {"claude_code": {"peerName": "u"}}
+        assert "oauth" in on_disk
+
+    def test_empty_oauth_is_dropped(self, cfg_path):
+        cfg_path.write_text(json.dumps({"oauth": {"accessToken": "old"}}))
+        CLIConfig(base_url="http://localhost:8000").save()
+        assert "oauth" not in json.loads(cfg_path.read_text())
+
+    def test_resolved_api_key_prefers_manual_key(self, cfg_path):
+        cfg = CLIConfig(api_key="manual", oauth=self._tokens(9999999999))
+        assert cfg.resolved_api_key() == "manual"
+
+    def test_resolved_api_key_falls_back_to_oauth(self, cfg_path):
+        cfg = CLIConfig(oauth=self._tokens(9999999999))
+        assert cfg.resolved_api_key() == "hch-at-x"
+
+    def test_access_valid_expiry_and_skew(self):
+        assert self._tokens(time.time() + 3600).access_valid()
+        assert not self._tokens(time.time() - 10).access_valid()
+        # inside the default 60s skew window → treated as invalid
+        assert not self._tokens(time.time() + 30).access_valid()
+
+    def test_redacted_masks_oauth_token(self):
+        red = CLIConfig(oauth=self._tokens(1234)).redacted()
+        assert red["oauth"] == "***at-x"
 
 
 def test_save_sets_600_permissions(cfg_path):
