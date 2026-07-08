@@ -87,6 +87,12 @@ messages_created_counter = NamespacedCounter(
     ["namespace", "workspace_name"],
 )
 
+embed_now_tasks_shed_counter = NamespacedCounter(
+    "embed_now_tasks_shed",
+    "Immediate-embed background tasks skipped because MAX_PENDING_EMBED_TASKS was reached",
+    ["namespace"],
+)
+
 dialectic_calls_counter = NamespacedCounter(
     "dialectic_calls",
     "Total dialectic calls",
@@ -203,6 +209,12 @@ class PrometheusMetrics:
             ).inc(count)
         except Exception as e:
             self._handle_metric_error("record_messages_created", e)
+
+    def record_embed_now_task_shed(self) -> None:
+        try:
+            embed_now_tasks_shed_counter.labels().inc()
+        except Exception as e:
+            self._handle_metric_error("record_embed_now_task_shed", e)
 
     def record_dialectic_call(
         self,

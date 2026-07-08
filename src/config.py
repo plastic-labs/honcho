@@ -754,6 +754,10 @@ class EmbeddingSettings(HonchoSettings):
     # Caps concurrent message-embedding fan-out on the API request path (the
     # immediate-embed background task). The reconciler is unaffected.
     MAX_CONCURRENT_EMBEDDINGS: Annotated[int, Field(default=10, gt=0, le=100)] = 10
+    # Caps in-flight immediate-embed background tasks per API process. When
+    # saturated, message creation skips the fast path entirely and the
+    # reconciler embeds on its next cycle. 0 disables the fast path.
+    MAX_PENDING_EMBED_TASKS: Annotated[int, Field(default=50, ge=0)] = 50
 
     @model_validator(mode="before")
     @classmethod
