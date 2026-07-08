@@ -857,7 +857,20 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=100, gt=0, le=1000)
     ] = 100
 
-    REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
+    # Minimum tokens a representation work unit must accumulate (summed over
+    # its own unprocessed messages) before it becomes claimable. Bypassed by
+    # FLUSH_ENABLED and by REPRESENTATION_BATCH_MAX_AGE_SECONDS age-flushing.
+    # 0 disables the accumulation gate entirely (equivalent to FLUSH_ENABLED
+    # for claiming): work units are claimable as soon as anything is pending.
+    REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS: Annotated[
+        int,
+        Field(default=512, ge=0, le=16_384),
+    ] = 512
+    # Cumulative-token cap on the conversation window (queued messages plus
+    # interleaved context) fed to a single deriver LLM call when draining a
+    # claimed work unit. The first unprocessed message is always included,
+    # even if it alone exceeds the cap.
+    REPRESENTATION_BATCH_LLM_MAX_TOKENS: Annotated[
         int,
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
@@ -881,11 +894,33 @@ class DeriverSettings(HonchoSettings):
             )
         return data  # pyright: ignore[reportUnknownVariableType]
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_batch_max_tokens(cls, data: Any) -> Any:
+        """Fail fast on the removed REPRESENTATION_BATCH_MAX_TOKENS setting.
+
+        The old single setting was split into
+        REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS (claim gate) and
+        REPRESENTATION_BATCH_LLM_MAX_TOKENS (per-LLM-call window cap).
+        `extra="ignore"` would otherwise silently drop the old key and revert
+        both roles to defaults — an operator-hostile failure mode for a
+        batching knob — so reject it loudly instead.
+        """
+        legacy_in_data = isinstance(data, dict) and any(
+            str(key).upper() == "REPRESENTATION_BATCH_MAX_TOKENS"
+            for key in cast(dict[str, Any], data)
+        )
+        if legacy_in_data or "DERIVER_REPRESENTATION_BATCH_MAX_TOKENS" in os.environ:
+            raise ValueError(
+                "REPRESENTATION_BATCH_MAX_TOKENS has been split into REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS (minimum tokens a work unit must accumulate before it is claimed) and REPRESENTATION_BATCH_LLM_MAX_TOKENS (token cap on the context window per deriver LLM call). Set those instead."
+            )
+        return data  # pyright: ignore[reportUnknownVariableType]
+
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
-        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
+        if self.REPRESENTATION_BATCH_LLM_MAX_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
-                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+                f"REPRESENTATION_BATCH_LLM_MAX_TOKENS ({self.REPRESENTATION_BATCH_LLM_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
 

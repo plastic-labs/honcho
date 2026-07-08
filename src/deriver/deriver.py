@@ -58,7 +58,7 @@ async def process_representation_tasks_batch(
         queue_item_message_ids: Message IDs from queue items being processed
         hit_batch_token_cap: queue batcher clamped this batch to fit
         was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
-        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_LLM_MAX_TOKENS snapshot
     """
     if not messages:
         return
