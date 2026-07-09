@@ -191,9 +191,14 @@ def _prompt_auth_method(has_creds: bool, device_available: bool) -> str:
     default = str(options.index("keep") + 1) if "keep" in options else "1"
     choice = typer.prompt("  Choice", default=default, show_default=True, prompt_suffix=": ").strip()
     try:
-        return options[int(choice) - 1]
-    except (ValueError, IndexError):
+        idx = int(choice)
+    except ValueError:
         return options[0]
+    # explicit 1..len bounds — bare `options[idx - 1]` would let "0"/negatives
+    # wrap to the tail of the list via Python's negative indexing
+    if 1 <= idx <= len(options):
+        return options[idx - 1]
+    return options[0]
 
 
 def _device_login(base_url: str) -> OAuthTokens:

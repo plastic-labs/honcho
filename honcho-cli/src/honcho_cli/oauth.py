@@ -118,6 +118,18 @@ def supports_device_login(base_url: str, *, timeout: float = 5.0) -> bool:
     return isinstance(grants, list) and DEVICE_GRANT_TYPE in grants
 
 
+def _post(url: str, data: dict[str, str]) -> httpx.Response:
+    """POST form data, surfacing transport failures as ``OAuthFlowError``.
+
+    Connection refusals, DNS failures, and timeouts would otherwise escape as
+    raw ``httpx.HTTPError`` past callers that only catch ``OAuthFlowError``.
+    """
+    try:
+        return httpx.post(url, data=data)
+    except httpx.HTTPError as e:
+        raise OAuthFlowError("connection_error", f"could not reach {url}: {e}") from e
+
+
 def _error_from_response(resp: httpx.Response) -> tuple[str, str | None]:
     """Pull ``(error, error_description)`` out of an OAuth error body."""
     try:
@@ -131,9 +143,9 @@ def _error_from_response(resp: httpx.Response) -> tuple[str, str | None]:
 
 def request_device_code(endpoints: Endpoints) -> DeviceCode:
     """Request a device + user code pair (RFC 8628 §3.1)."""
-    resp = httpx.post(
+    resp = _post(
         endpoints.device_auth_url,
-        data={
+        {
             "client_id": endpoints.client_id,
             "scope": endpoints.scope,
             "source": DEVICE_SOURCE,
@@ -195,9 +207,9 @@ def poll_for_token(
         if monotonic() >= deadline:
             raise AuthorizationTimeout("expired_token", "Timed out waiting for approval")
         sleep(interval)
-        resp = httpx.post(
+        resp = _post(
             endpoints.token_url,
-            data={
+            {
                 "grant_type": DEVICE_GRANT_TYPE,
                 "device_code": device.device_code,
                 "client_id": endpoints.client_id,
@@ -230,9 +242,9 @@ def refresh_access_token(endpoints: Endpoints, refresh_token: str) -> TokenRespo
     returned ``refresh_token`` before reusing it — replaying a superseded one
     revokes the grant.
     """
-    resp = httpx.post(
+    resp = _post(
         endpoints.token_url,
-        data={
+        {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": endpoints.client_id,
