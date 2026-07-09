@@ -93,6 +93,12 @@ embed_now_tasks_shed_counter = NamespacedCounter(
     ["namespace"],
 )
 
+embed_now_tasks_in_flight_gauge = NamespacedGauge(
+    "embed_now_tasks_in_flight",
+    "Immediate-embed background tasks currently in flight for this process",
+    ["namespace"],
+)
+
 dialectic_calls_counter = NamespacedCounter(
     "dialectic_calls",
     "Total dialectic calls",
@@ -215,6 +221,12 @@ class PrometheusMetrics:
             embed_now_tasks_shed_counter.labels().inc()
         except Exception as e:
             self._handle_metric_error("record_embed_now_task_shed", e)
+
+    def set_embed_now_tasks_in_flight(self, count: int) -> None:
+        try:
+            embed_now_tasks_in_flight_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_embed_now_tasks_in_flight", e)
 
     def record_dialectic_call(
         self,

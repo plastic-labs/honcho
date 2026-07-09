@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import BackgroundTasks
 from nanoid import generate as generate_nanoid
+from prometheus_client import REGISTRY
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -124,6 +125,27 @@ class TestEmbedTaskGate:
             with pytest.raises(RuntimeError):
                 await tasks()
         assert embed_task_gate.in_flight == 0
+
+    async def test_gauge_mirrors_in_flight_count(self) -> None:
+        """With metrics enabled, the Prometheus gauge tracks the gate's
+        in-flight count through schedule and release."""
+
+        def gauge_value() -> float | None:
+            return REGISTRY.get_sample_value(
+                "embed_now_tasks_in_flight", {"namespace": "test"}
+            )
+
+        tasks = BackgroundTasks()
+        with (
+            patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 2),
+            patch.object(settings.METRICS, "ENABLED", True),
+            patch.object(settings.METRICS, "NAMESPACE", "test"),
+            patch("src.reconciler.embed_now.embed_messages_now", new=AsyncMock()),
+        ):
+            assert embed_task_gate.try_schedule(tasks, ["msg_1"]) is True
+            assert gauge_value() == 1
+            await tasks()
+            assert gauge_value() == 0
 
     async def test_zero_cap_disables_fast_path(self) -> None:
         """MAX_PENDING_EMBED_TASKS=0 rejects every schedule attempt."""

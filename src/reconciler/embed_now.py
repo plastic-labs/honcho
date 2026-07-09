@@ -95,6 +95,8 @@ class EmbedTaskGate:
                 prometheus_metrics.record_embed_now_task_shed()
             return False
         self.in_flight += 1
+        if settings.METRICS.ENABLED:
+            prometheus_metrics.set_embed_now_tasks_in_flight(self.in_flight)
         background_tasks.add_task(self._run, message_ids)
         return True
 
@@ -103,6 +105,8 @@ class EmbedTaskGate:
             await embed_messages_now(message_ids)
         finally:
             self.in_flight -= 1
+            if settings.METRICS.ENABLED:
+                prometheus_metrics.set_embed_now_tasks_in_flight(self.in_flight)
 
 
 embed_task_gate = EmbedTaskGate()
