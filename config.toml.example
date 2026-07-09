@@ -109,7 +109,8 @@ LOG_OBSERVATIONS = false
 MAX_INPUT_TOKENS = 25000
 MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
-REPRESENTATION_BATCH_MAX_TOKENS = 1024
+REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS = 512  # Min tokens a work unit accumulates before the deriver claims it; 0 disables the gate
+REPRESENTATION_BATCH_TARGET_INPUT_TOKENS = 1024  # Max context-window tokens per deriver LLM call
 REPRESENTATION_BATCH_MAX_AGE_SECONDS = 1800
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
 

@@ -7,7 +7,8 @@ def _make_deriver_settings(
     *,
     MAX_INPUT_TOKENS: int = 25000,
     MAX_CUSTOM_INSTRUCTIONS_TOKENS: int = 2000,
-    REPRESENTATION_BATCH_MAX_TOKENS: int = 1024,
+    REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS: int = 512,
+    REPRESENTATION_BATCH_TARGET_INPUT_TOKENS: int = 1024,
     REPRESENTATION_BATCH_MAX_AGE_SECONDS: int = 1800,
 ) -> DeriverSettings:
     return DeriverSettings(
@@ -17,7 +18,8 @@ def _make_deriver_settings(
         ),
         MAX_INPUT_TOKENS=MAX_INPUT_TOKENS,
         MAX_CUSTOM_INSTRUCTIONS_TOKENS=MAX_CUSTOM_INSTRUCTIONS_TOKENS,
-        REPRESENTATION_BATCH_MAX_TOKENS=REPRESENTATION_BATCH_MAX_TOKENS,
+        REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS,
+        REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=REPRESENTATION_BATCH_TARGET_INPUT_TOKENS,
         REPRESENTATION_BATCH_MAX_AGE_SECONDS=REPRESENTATION_BATCH_MAX_AGE_SECONDS,
     )
 
@@ -50,3 +52,51 @@ def test_representation_batch_age_can_be_disabled_with_zero() -> None:
 def test_representation_batch_age_rejects_negative_values() -> None:
     with pytest.raises(ValueError, match="greater than or equal to 0"):
         _make_deriver_settings(REPRESENTATION_BATCH_MAX_AGE_SECONDS=-1)
+
+
+def test_representation_batch_work_unit_target_can_be_disabled_with_zero() -> None:
+    settings = _make_deriver_settings(REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=0)
+
+    assert settings.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS == 0
+
+
+def test_representation_batch_work_unit_target_rejects_negative_values() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        _make_deriver_settings(REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=-1)
+
+
+def test_representation_batch_tokens_can_diverge() -> None:
+    settings = _make_deriver_settings(
+        REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=4096,
+        REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=1024,
+    )
+
+    assert settings.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS == 4096
+    assert settings.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS == 1024
+
+
+def test_representation_batch_target_input_cannot_exceed_max_input_tokens() -> None:
+    with pytest.raises(ValueError, match="cannot exceed max deriver input tokens"):
+        _make_deriver_settings(
+            MAX_INPUT_TOKENS=1000,
+            REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=2048,
+        )
+
+
+def test_legacy_representation_batch_max_tokens_is_rejected() -> None:
+    with pytest.raises(ValueError, match="has been split into"):
+        DeriverSettings(
+            MODEL_CONFIG=ConfiguredModelSettings(
+                model="gpt-5.4-mini",
+                transport="openai",
+            ),
+            REPRESENTATION_BATCH_MAX_TOKENS=1024,  # pyright: ignore[reportCallIssue]
+        )
+
+
+def test_legacy_representation_batch_max_tokens_env_var_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DERIVER_REPRESENTATION_BATCH_MAX_TOKENS", "1024")
+    with pytest.raises(ValueError, match="has been split into"):
+        _make_deriver_settings()
