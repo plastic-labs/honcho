@@ -870,7 +870,7 @@ class DeriverSettings(HonchoSettings):
     # interleaved context) fed to a single deriver LLM call when draining a
     # claimed work unit. The first unprocessed message is always included,
     # even if it alone exceeds the cap.
-    REPRESENTATION_BATCH_LLM_MAX_TOKENS: Annotated[
+    REPRESENTATION_BATCH_TARGET_INPUT_TOKENS: Annotated[
         int,
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
@@ -901,7 +901,7 @@ class DeriverSettings(HonchoSettings):
 
         The old single setting was split into
         REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS (claim gate) and
-        REPRESENTATION_BATCH_LLM_MAX_TOKENS (per-LLM-call window cap).
+        REPRESENTATION_BATCH_TARGET_INPUT_TOKENS (per-LLM-call window cap).
         `extra="ignore"` would otherwise silently drop the old key and revert
         both roles to defaults — an operator-hostile failure mode for a
         batching knob — so reject it loudly instead.
@@ -912,15 +912,15 @@ class DeriverSettings(HonchoSettings):
         )
         if legacy_in_data or "DERIVER_REPRESENTATION_BATCH_MAX_TOKENS" in os.environ:
             raise ValueError(
-                "REPRESENTATION_BATCH_MAX_TOKENS has been split into REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS (minimum tokens a work unit must accumulate before it is claimed) and REPRESENTATION_BATCH_LLM_MAX_TOKENS (token cap on the context window per deriver LLM call). Set those instead."
+                "REPRESENTATION_BATCH_MAX_TOKENS has been split into REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS (minimum tokens a work unit must accumulate before it is claimed) and REPRESENTATION_BATCH_TARGET_INPUT_TOKENS (token cap on the context window per deriver LLM call). Set those instead."
             )
         return data  # pyright: ignore[reportUnknownVariableType]
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
-        if self.REPRESENTATION_BATCH_LLM_MAX_TOKENS > self.MAX_INPUT_TOKENS:
+        if self.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
-                f"REPRESENTATION_BATCH_LLM_MAX_TOKENS ({self.REPRESENTATION_BATCH_LLM_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+                f"REPRESENTATION_BATCH_TARGET_INPUT_TOKENS ({self.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
 

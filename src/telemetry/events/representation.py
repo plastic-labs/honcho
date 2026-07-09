@@ -104,7 +104,7 @@ class RepresentationCompletedEvent(BaseEvent):
     # Cap configuration + hit flags ()
     batch_max_tokens: int = Field(
         default=0,
-        description="settings.DERIVER.REPRESENTATION_BATCH_LLM_MAX_TOKENS at fetch time",
+        description="settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS at fetch time",
     )
     max_input_tokens: int = Field(
         default=0, description="settings.DERIVER.MAX_INPUT_TOKENS at call time"

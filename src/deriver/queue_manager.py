@@ -818,7 +818,7 @@ class QueueManager:
                 f"{task_type} tasks are not supported for get_queue_item_batch"
             )
 
-        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_LLM_MAX_TOKENS
+        batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         was_flush_enabled = settings.DERIVER.FLUSH_ENABLED
         parsed_key = parse_work_unit_key(work_unit_key)
         messages_context: list[models.Message] = []

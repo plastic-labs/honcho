@@ -359,7 +359,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create messages with token counts that exceed batch limit
-        limit = settings.DERIVER.REPRESENTATION_BATCH_LLM_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         token_counts = [limit // 2, limit // 2, limit // 2]
 
         # Create and save messages to the database first
@@ -479,7 +479,7 @@ class TestQueueProcessing:
 
         session, peers = sample_session_with_peers
         peer = peers[0]
-        cap = settings.DERIVER.REPRESENTATION_BATCH_LLM_MAX_TOKENS
+        cap = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
 
         # M1 + M2 sum to exactly the cap; M3 pushes over it. After SQL,
         # messages_context = [M1, M2]; the cap is genuinely binding *on the
@@ -581,7 +581,7 @@ class TestQueueProcessing:
         session, peers = sample_session_with_peers
         peer_a = peers[0]
         peer_b = peers[1] if len(peers) > 1 else peers[0]
-        cap = settings.DERIVER.REPRESENTATION_BATCH_LLM_MAX_TOKENS
+        cap = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
 
         # Layout: 4 messages, ordered.
         #   M1 (peer_a, queue, 200)
@@ -745,7 +745,7 @@ class TestQueueProcessing:
 
         # Mock the token limit to 2000 for this test
         with patch.object(
-            settings.DERIVER, "REPRESENTATION_BATCH_LLM_MAX_TOKENS", 2000
+            settings.DERIVER, "REPRESENTATION_BATCH_TARGET_INPUT_TOKENS", 2000
         ):
             # Test alice's work unit
             alice_work_unit_key = alice_queue_items[0].work_unit_key
@@ -922,7 +922,7 @@ class TestQueueProcessing:
 
         # Mock the token limit to 1500 for this test
         with patch.object(
-            settings.DERIVER, "REPRESENTATION_BATCH_LLM_MAX_TOKENS", 1500
+            settings.DERIVER, "REPRESENTATION_BATCH_TARGET_INPUT_TOKENS", 1500
         ):
             # Test alice's work unit
             # With per-work-unit anchoring + preceding context:
@@ -1137,7 +1137,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create messages where first message exceeds the batch limit
-        limit = settings.DERIVER.REPRESENTATION_BATCH_LLM_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         token_counts = [limit + 1000, 100, 200]  # First message way over limit
 
         # Create and save messages to the database first
@@ -1254,7 +1254,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create messages that test the exact boundary
-        limit = settings.DERIVER.REPRESENTATION_BATCH_LLM_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         token_counts = [
             limit // 2,
             limit // 2,
