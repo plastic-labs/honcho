@@ -13,6 +13,23 @@ from src.llm.request_builder import apply_sdk_passthroughs
 from src.llm.structured_output import repair_response_model_json
 
 
+def _schema_instruction(
+    response_format: type[BaseModel], *, tools_present: bool
+) -> str:
+    """Build the structured-output instruction appended to the last message.
+
+    When tools are in play the wording is conditional so the model remains
+    free to emit tool_use blocks (callers also skip the '{' prefill then).
+    """
+    schema_json = json.dumps(response_format.model_json_schema(), indent=2)
+    if tools_present:
+        return (
+            "\n\nIf not responding with a tool call, respond with valid JSON "
+            f"matching this schema:\n{schema_json}"
+        )
+    return f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+
+
 class AnthropicBackend:
     """Provider backend wrapping the native Anthropic SDK."""
 
@@ -74,26 +91,28 @@ class AnthropicBackend:
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
 
+        # The '{' prefill forces a JSON-first response, which suppresses
+        # tool_use blocks — skip it when tools are available and rely on the
+        # conditional instruction + repair fallback instead.
         use_json_prefill = (
             bool(response_format or self._json_mode(extra_params))
             and not thinking_budget_tokens
+            and not tools
             and self._supports_assistant_prefill(model)
         )
         if use_json_prefill and params["messages"]:
             if response_format and isinstance(response_format, type):
-                schema_json = json.dumps(response_format.model_json_schema(), indent=2)
                 self._append_text_to_last_message(
                     params["messages"],
-                    f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
+                    _schema_instruction(response_format, tools_present=False),
                 )
             params["messages"].append({"role": "assistant", "content": "{"})
         elif (
             response_format and isinstance(response_format, type) and params["messages"]
         ):
-            schema_json = json.dumps(response_format.model_json_schema(), indent=2)
             self._append_text_to_last_message(
                 params["messages"],
-                f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
+                _schema_instruction(response_format, tools_present=bool(tools)),
             )
 
         response = await self._client.messages.create(**params)
@@ -155,26 +174,27 @@ class AnthropicBackend:
             # Operator escape hatch: forward Anthropic SDK passthrough kwargs
             # from ModelConfig.provider_params. Shallow merge with operator-wins.
             apply_sdk_passthroughs(params, extra_params)
+        # See complete(): no '{' prefill when tools are available, so
+        # tool_use blocks stay reachable on the streamed path too.
         use_json_prefill = (
             bool(response_format or is_json_mode)
             and not thinking_budget_tokens
+            and not tools
             and self._supports_assistant_prefill(model)
         )
         if use_json_prefill and params["messages"]:
             if response_format and isinstance(response_format, type):
-                schema_json = json.dumps(response_format.model_json_schema(), indent=2)
                 self._append_text_to_last_message(
                     params["messages"],
-                    f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
+                    _schema_instruction(response_format, tools_present=False),
                 )
             params["messages"].append({"role": "assistant", "content": "{"})
         elif (
             response_format and isinstance(response_format, type) and params["messages"]
         ):
-            schema_json = json.dumps(response_format.model_json_schema(), indent=2)
             self._append_text_to_last_message(
                 params["messages"],
-                f"\n\nRespond with valid JSON matching this schema:\n{schema_json}",
+                _schema_instruction(response_format, tools_present=bool(tools)),
             )
         if thinking_budget_tokens:
             params["thinking"] = {
@@ -251,7 +271,9 @@ class AnthropicBackend:
         )
 
         content: Any = text_content
-        if response_format is not None:
+        # Tool-call turns carry no consumable content — the tool loop ignores
+        # it — so parsing (and its repair-LLM fallback) would be wasted work.
+        if response_format is not None and not tool_calls:
             raw_content = f"{{{text_content}" if prefilled_json else text_content
             try:
                 if prefilled_json:
