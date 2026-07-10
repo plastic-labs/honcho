@@ -271,8 +271,7 @@ class AnthropicBackend:
         )
 
         content: Any = text_content
-        # Tool-call turns carry no consumable content — the tool loop ignores
-        # it — so parsing (and its repair-LLM fallback) would be wasted work.
+        # Tool-call turns carry no consumable content
         if response_format is not None and not tool_calls:
             raw_content = f"{{{text_content}" if prefilled_json else text_content
             try:

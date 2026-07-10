@@ -579,10 +579,9 @@ class DialecticOptions(BaseModel):
         description=(
             "Optional JSON Schema (root type 'object') the response must conform"
             " to. When provided, `content` is a JSON string matching this schema."
-            " Only a conservative subset of JSON Schema is supported; schemas"
-            " using unsupported constructs ($ref, allOf, ...) are rejected with"
-            " 422. Constraint keywords (minItems, maxLength, ...) are hints to"
-            " the model, not enforced server-side."
+            " Only a conservative subset of JSON Schema is supported; unsupported"
+            "  schemas are rejected with 422. Constraint keywords (minItems, "
+            " maxLength, ...) are hints to the model, not enforced server-side."
         ),
     )
 

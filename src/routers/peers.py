@@ -199,8 +199,7 @@ async def chat(
             ):
                 raise AuthenticationException("JWT not permissioned for this resource")
 
-    # Convert the caller's JSON Schema eagerly so malformed schemas fail with
-    # 422 before any side effects (peer creation, LLM calls).
+    # Convert the caller's JSON Schema so malformed schemas fail immediately with 422
     response_model: type[BaseModel] | None = None
     if options.response_format is not None:
         try:
