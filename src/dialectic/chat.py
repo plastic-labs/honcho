@@ -24,6 +24,7 @@ async def agentic_chat(
     observer: str,
     observed: str,
     reasoning_level: ReasoningLevel = "low",
+    session_names: list[str] | None = None,
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -35,6 +36,7 @@ async def agentic_chat(
         observer: The peer making the query
         observed: The peer being queried about
         reasoning_level: Level of reasoning to apply
+        session_names: Optional session allowlist restricting all recall
 
     Returns:
         The synthesized answer string
@@ -77,6 +79,7 @@ async def agentic_chat(
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
+        session_names=session_names,
     )
 
     return await agent.answer(query)
@@ -89,6 +92,7 @@ async def agentic_chat_stream(
     observer: str,
     observed: str,
     reasoning_level: ReasoningLevel = "low",
+    session_names: list[str] | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream an answer to a query about a peer using the agentic dialectic.
@@ -100,6 +104,7 @@ async def agentic_chat_stream(
         observer: The peer making the query
         observed: The peer being queried about
         reasoning_level: Level of reasoning to apply
+        session_names: Optional session allowlist restricting all recall
 
     Yields:
         Chunks of the response text as they are generated
@@ -142,6 +147,7 @@ async def agentic_chat_stream(
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
+        session_names=session_names,
     )
 
     async for chunk in agent.answer_stream(query):

@@ -7,11 +7,12 @@ from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
+from src import crud, models, schemas
 from src.config import settings
-from src.dependencies import db, read_db
+from src.crud.message import get_peer_session_names
+from src.dependencies import db, read_db, tracked_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
-from src.exceptions import AuthenticationException
+from src.exceptions import AuthenticationException, ValidationException
 from src.security import JWTParams, require_auth
 from src.utils.search import search
 
@@ -141,16 +142,38 @@ async def delete_workspace(
 )
 async def search_workspace(
     workspace_id: str = Path(...),
-    body: schemas.MessageSearchOptions = Body(
+    body: schemas.WorkspaceMessageSearchOptions = Body(
         ..., description="Message search parameters"
     ),
 ):
     """
     Search messages in a Workspace using optional filters. Use `limit` to control the number of
     results returned.
+
+    Pass `scope` to restrict the search to a scope's member sessions. A scope
+    with no member sessions returns no results (fail-closed).
     """
     # take user-provided filter and add workspace_id to it
     filters = body.filters or {}
+    if body.scope is not None:
+        if "session_id" in filters:
+            raise ValidationException(
+                "`scope` and a 'session_id' filter are mutually exclusive"
+            )
+        async with tracked_db(
+            "workspaces.search.resolve_scope", read_only=True
+        ) as scope_db:
+            [scope_peer] = await crud.resolve_scope_peers(
+                scope_db, workspace_id, [body.scope]
+            )
+            scope_sessions = await get_peer_session_names(
+                scope_db, workspace_id, scope_peer
+            )
+        if not scope_sessions:
+            # A scope with no member sessions matches nothing, not everything.
+            no_results: list[models.Message] = []
+            return no_results
+        filters["session_id"] = {"in": scope_sessions}
     filters["workspace_id"] = workspace_id
     return await search(body.query, filters=filters, limit=body.limit)
 

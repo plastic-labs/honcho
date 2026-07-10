@@ -211,6 +211,28 @@ class PeerRepresentationGet(BaseModel):
     session_id: str | None = Field(
         None, description="Optional session ID within which to scope the representation"
     )
+    filters: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional filters to scope the representation. This endpoint "
+            "supports only the 'session_id' key: a session id, a list of "
+            'session ids, or {"in": [...]}. When session_id is also set, it '
+            "must be included in the allowlist."
+        ),
+    )
+    scope: str | list[str] | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) to confine the representation. "
+            "A single scope reads the scope's own representation of the target "
+            "peer, formed only from the scope's member sessions. A list of "
+            "scopes restricts the representation to conclusions from the union "
+            "of the scopes' member sessions (explicit allowlist, fail-closed: "
+            "an empty union yields an empty representation). Mutually "
+            "exclusive with `filters` and `session_id`. Requires a workspace- "
+            "or admin-level key."
+        ),
+    )
     target: str | None = Field(
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
@@ -667,6 +689,20 @@ class MessageSearchOptions(BaseModel):
         return v.replace("\x00", "")
 
 
+class WorkspaceMessageSearchOptions(MessageSearchOptions):
+    """Workspace-level message search options, extended with `scope`."""
+
+    scope: str | None = Field(
+        default=None,
+        description=(
+            "Optional (unprefixed) scope name restricting search to the "
+            "scope's member sessions. A scope with no member sessions returns "
+            "no results. Mutually exclusive with a 'session_id' key in "
+            "`filters`."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dialectic schemas
 # ---------------------------------------------------------------------------
@@ -675,6 +711,29 @@ class MessageSearchOptions(BaseModel):
 class DialecticOptions(BaseModel):
     session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"
+    )
+    filters: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional filters to scope recall. This endpoint supports only the "
+            "'session_id' key: a session id, a list of session ids, or "
+            '{"in": [...]}. Recall (conclusions and messages) is restricted to '
+            "the allowlist; unsupported keys are rejected. When session_id is "
+            "also set, it must be included in the allowlist."
+        ),
+    )
+    scope: str | list[str] | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) to confine recall. A single "
+            "scope answers from the scope's own representation of the target "
+            "peer: conclusion recall is confined to what the scope observed "
+            "and message recall to the scope's member sessions. A list of "
+            "scopes restricts recall to the union of the scopes' member "
+            "sessions (explicit allowlist, fail-closed: an empty union "
+            "recalls nothing). Mutually exclusive with `filters` and "
+            "`session_id`. Requires a workspace- or admin-level key."
+        ),
     )
     target: str | None = Field(
         None,

@@ -17,6 +17,7 @@ from src.deriver.enqueue import enqueue_deletion
 from src.embedding_client import embedding_client
 from src.exceptions import (
     AuthenticationException,
+    AuthorizationException,
     ResourceNotFoundException,
     ValidationException,
 )
@@ -53,7 +54,7 @@ async def _get_working_representation_task(
     *,
     observer: str,
     observed: str,
-    session_name: str | None,
+    session_names: list[str] | None,
     search_top_k: int | None,
     search_max_distance: float | None,
     include_most_derived: bool,
@@ -69,7 +70,7 @@ async def _get_working_representation_task(
         last_message: Optional last message for semantic query
         observer: Name of the observer peer
         observed: Name of the observed peer
-        session_name: Optional session to filter by
+        session_names: Optional session allowlist to filter by
         search_top_k: Number of semantic-search-retrieved observations to include in the representation
         search_max_distance: Maximum distance to search for semantically relevant observations
         include_most_derived: Whether to include the most derived observations in the representation
@@ -84,7 +85,7 @@ async def _get_working_representation_task(
         db=db,
         observer=observer,
         observed=observed,
-        session_name=session_name,
+        session_names=session_names,
         include_semantic_query=last_message,
         semantic_search_top_k=search_top_k,
         semantic_search_max_distance=search_max_distance,
@@ -660,19 +661,17 @@ async def get_session_peers(
 @router.get(
     "/{session_id}/context",
     response_model=schemas.SessionContext,
-    dependencies=[
-        Depends(
-            require_auth(
-                workspace_name="workspace_id",
-                session_name="session_id",
-                allow_member_read=True,
-            )
-        )
-    ],
 )
 async def get_session_context(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
+    jwt_params: JWTParams = Depends(
+        require_auth(
+            workspace_name="workspace_id",
+            session_name="session_id",
+            allow_member_read=True,
+        )
+    ),
     db: AsyncSession = read_db,
     tokens: int | None = Query(
         None,
@@ -696,6 +695,10 @@ async def get_session_context(
     peer_perspective: str | None = Query(
         None,
         description="A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
+    ),
+    scope: str | None = Query(
+        None,
+        description="An (unprefixed) scope name to use as the perspective source: the representation and peer card of `peer_target` are read from the scope's observations instead of the global (or `peer_perspective`) view. Must be provided with `peer_target`; mutually exclusive with `peer_perspective`. Requires a workspace- or admin-level key.",
     ),
     limit_to_session: bool = Query(
         default=False,
@@ -740,6 +743,29 @@ async def get_session_context(
             "peer_target must be provided if peer_perspective is provided"
         )
 
+    # Scope peers may not appear on the generic perspective surface; the
+    # `scope` parameter is the supported path to a scoped perspective.
+    validate_no_scope_peer_names(
+        [name for name in (peer_target, peer_perspective) if name is not None],
+        action="Use the `scope` parameter instead.",
+    )
+
+    if scope is not None:
+        if peer_perspective:
+            raise ValidationException(
+                "`scope` and `peer_perspective` are mutually exclusive"
+            )
+        if not peer_target:
+            raise ValidationException(
+                "peer_target must be provided if scope is provided"
+            )
+        # A scope's perspective spans sessions beyond this one, so scoped
+        # reads require a workspace- or admin-level key.
+        if jwt_params.p is not None or jwt_params.s is not None:
+            raise AuthorizationException(
+                "`scope` requires a workspace- or admin-level key"
+            )
+
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(
@@ -773,6 +799,12 @@ async def get_session_context(
     observer = peer_perspective or peer_target
     observed = peer_target
 
+    # A scope swaps the perspective source: the scope peer becomes the
+    # observer for both the working representation and the peer card, so the
+    # scoped collection and scoped card are read instead of the global ones.
+    if scope is not None:
+        [observer] = await crud.resolve_scope_peers(db, workspace_id, [scope])
+
     # Pre-compute embedding outside the DB session (best-effort)
     embedding: list[float] | None = None
     if search_query:
@@ -793,7 +825,7 @@ async def get_session_context(
         search_query,
         observer=observer,
         observed=observed,
-        session_name=session_id if limit_to_session else None,
+        session_names=[session_id] if limit_to_session else None,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,

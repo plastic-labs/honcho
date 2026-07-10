@@ -55,6 +55,7 @@ from src.schemas.api import (
     WorkspaceBase,
     WorkspaceCreate,
     WorkspaceGet,
+    WorkspaceMessageSearchOptions,
     WorkspaceUpdate,
 )
 from src.schemas.configuration import (
@@ -155,6 +156,7 @@ __all__ = [
     "WorkspaceBase",
     "WorkspaceCreate",
     "WorkspaceGet",
+    "WorkspaceMessageSearchOptions",
     "WorkspaceUpdate",
     # internal
     "DocumentBase",
