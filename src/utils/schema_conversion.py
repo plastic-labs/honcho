@@ -183,9 +183,7 @@ def _convert_schema(
     _fail(f"unsupported type '{node_type}'", path)
 
 
-def _validate_node(
-    raw_node: Any, path: str, ctx: _Ctx, depth: int
-) -> dict[str, Any]:
+def _validate_node(raw_node: Any, path: str, ctx: _Ctx, depth: int) -> dict[str, Any]:
     """Enforce size budgets and node shape; reject unsupported constructs."""
     # node_count is cumulative across the whole walk; depth tracks only the
     # current branch.
@@ -193,9 +191,7 @@ def _validate_node(
     if ctx.node_count > ctx.max_nodes:
         raise ValueError(f"schema exceeds the maximum of {ctx.max_nodes} nodes")
     if depth > ctx.max_depth:
-        raise ValueError(
-            f"schema nesting exceeds the maximum depth of {ctx.max_depth}"
-        )
+        raise ValueError(f"schema nesting exceeds the maximum depth of {ctx.max_depth}")
     if isinstance(raw_node, bool):
         # A special case of the object requirement, with its own message:
         # boolean schemas are legal JSON Schema, just deliberately unsupported.
@@ -283,12 +279,10 @@ def _convert_enum(raw_values: Any, path: str) -> Any:
     for value in cast(list[Any], raw_values):
         if value is None:
             has_null = True
-        elif isinstance(value, (str, int, bool)):
+        elif isinstance(value, str | int | bool):
             literal_values.append(value)
         else:
-            _fail(
-                "enum values must be strings, integers, booleans, or null", path
-            )
+            _fail("enum values must be strings, integers, booleans, or null", path)
     if not literal_values:
         return type(None)
     annotation: Any = Literal[tuple(literal_values)]
