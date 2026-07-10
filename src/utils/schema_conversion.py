@@ -17,9 +17,6 @@ from typing import Any, Literal, NoReturn, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-_MAX_DEPTH = 20
-_MAX_NODES = 500
-
 _UNSUPPORTED_KEYS = (
     "$ref",
     "$defs",
@@ -66,6 +63,8 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 class _Ctx:
     """Mutable state shared across one conversion walk."""
 
+    max_depth: int
+    max_nodes: int
     used_names: set[str] = field(default_factory=set)
     node_count: int = 0
 
@@ -74,6 +73,8 @@ def json_response_schema_to_pydantic(
     schema: dict[str, Any],
     *,
     model_name: str = "ResponseFormat",
+    max_depth: int = 20,
+    max_nodes: int = 500,
 ) -> type[BaseModel]:
     """Convert a JSON Schema dict (root type ``object``) into a Pydantic model.
 
@@ -93,6 +94,12 @@ def json_response_schema_to_pydantic(
     Args:
         schema: The JSON Schema object. Root must resolve to type ``object``.
         model_name: Name for the generated root model class.
+        max_depth: Maximum nesting depth. Guard against excessive or
+            malicious schemas (e.g. pathologically deep nesting); exceeding
+            it raises ``ValueError``.
+        max_nodes: Maximum total nodes visited across the whole schema.
+            Guard against excessive or malicious schemas (e.g. enormous
+            property fan-out); exceeding it raises ``ValueError``.
 
     Returns:
         A dynamically created Pydantic model class.
@@ -116,7 +123,7 @@ def json_response_schema_to_pydantic(
     if not is_object_root:
         raise ValueError("root schema must have type 'object'")
 
-    ctx = _Ctx()
+    ctx = _Ctx(max_depth=max_depth, max_nodes=max_nodes)
     annotation = _convert_schema(root, "", model_name, ctx, depth=0)
     # An object root always converts to a model class; this is a safety net.
     if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
@@ -141,11 +148,11 @@ def _convert_schema(
 ) -> Any:
     """Convert one schema node into a type annotation."""
     ctx.node_count += 1
-    if ctx.node_count > _MAX_NODES:
-        raise ValueError(f"schema exceeds the maximum of {_MAX_NODES} nodes")
-    if depth > _MAX_DEPTH:
+    if ctx.node_count > ctx.max_nodes:
+        raise ValueError(f"schema exceeds the maximum of {ctx.max_nodes} nodes")
+    if depth > ctx.max_depth:
         raise ValueError(
-            f"schema nesting exceeds the maximum depth of {_MAX_DEPTH}"
+            f"schema nesting exceeds the maximum depth of {ctx.max_depth}"
         )
     if isinstance(raw_node, bool):
         _fail("boolean schemas are not supported", path)

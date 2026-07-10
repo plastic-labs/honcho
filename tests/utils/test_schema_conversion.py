@@ -372,3 +372,17 @@ class TestZodCompatibility:
         )
         assert instance.preferences[0].sentiment == "loves"  # pyright: ignore
         assert instance.note is None  # pyright: ignore
+
+
+class TestCustomGuardLimits:
+    def test_custom_max_depth(self):
+        schema: dict = {"type": "string"}
+        for _ in range(5):
+            schema = _object({"inner": schema})
+        with pytest.raises(ValueError, match="maximum depth of 3"):
+            json_response_schema_to_pydantic(schema, max_depth=3)
+
+    def test_custom_max_nodes(self):
+        schema = _object({f"f{i}": {"type": "string"} for i in range(20)})
+        with pytest.raises(ValueError, match="maximum of 10 nodes"):
+            json_response_schema_to_pydantic(schema, max_nodes=10)
