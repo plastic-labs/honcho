@@ -170,9 +170,9 @@ jobs:
       # (their endpoints aren't reachable from CI), and points REASONING_TRACES_FILE
       # at a shared path so the API + deriver record full LLM I/O for auditing — the
       # runner uploads it to S3. Written after the fetch steps so these win over the
-      # values loaded from Secrets Manager (last $GITHUB_ENV write wins). Note:
-      # $GITHUB_ENV can only set values (a blank is still present in os.environ);
-      # keys that must be truly *removed* are unset in the Run unified tests step.
+      # values loaded from Secrets Manager (last $GITHUB_ENV write wins). Stale
+      # config keys loaded from the staging secret (e.g. settings that have since
+      # been renamed or removed onx main) must always be ignored by the app config.
       - name: Configure test environment
         run: |
           echo "AUTH_USE_AUTH=false" >> "$GITHUB_ENV"
@@ -193,14 +193,7 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run unified tests
-        run: |
-          # DERIVER_REPRESENTATION_BATCH_MAX_TOKENS was removed from config
-          # (split into ..._WORK_UNIT_TARGET_TOKENS and ..._TARGET_INPUT_TOKENS)
-          # and src/config.py fails fast if it is present in the environment,
-          # but the staging secret still carries it. Drop this once the staging
-          # secrets no longer contain the legacy key.
-          unset DERIVER_REPRESENTATION_BATCH_MAX_TOKENS
-          uv run python -m tests.unified.run
+        run: uv run python -m tests.unified.run
 
   cleanup-machine:
     name: Cleanup Fly Machine and Runner

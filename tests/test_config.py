@@ -83,20 +83,3 @@ def test_representation_batch_target_input_cannot_exceed_max_input_tokens() -> N
         )
 
 
-def test_legacy_representation_batch_max_tokens_is_rejected() -> None:
-    with pytest.raises(ValueError, match="has been split into"):
-        DeriverSettings(
-            MODEL_CONFIG=ConfiguredModelSettings(
-                model="gpt-5.4-mini",
-                transport="openai",
-            ),
-            REPRESENTATION_BATCH_MAX_TOKENS=1024,  # pyright: ignore[reportCallIssue]
-        )
-
-
-def test_legacy_representation_batch_max_tokens_env_var_is_rejected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("DERIVER_REPRESENTATION_BATCH_MAX_TOKENS", "1024")
-    with pytest.raises(ValueError, match="has been split into"):
-        _make_deriver_settings()
