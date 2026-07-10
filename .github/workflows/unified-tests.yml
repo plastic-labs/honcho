@@ -172,7 +172,7 @@ jobs:
       # runner uploads it to S3. Written after the fetch steps so these win over the
       # values loaded from Secrets Manager (last $GITHUB_ENV write wins). Stale
       # config keys loaded from the staging secret (e.g. settings that have since
-      # been renamed or removed onx main) must always be ignored by the app config.
+      # been renamed or removed on main) must always be ignored by the app config.
       - name: Configure test environment
         run: |
           echo "AUTH_USE_AUTH=false" >> "$GITHUB_ENV"
