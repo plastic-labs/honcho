@@ -81,5 +81,3 @@ def test_representation_batch_target_input_cannot_exceed_max_input_tokens() -> N
             MAX_INPUT_TOKENS=1000,
             REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=2048,
         )
-
-
