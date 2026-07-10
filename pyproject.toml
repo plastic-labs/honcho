@@ -59,6 +59,9 @@ dev = [
     "pytest-xdist>=3.8.0",
 ]
 
+[tool.uv]
+exclude-newer = "5 days"
+
 [tool.uv.workspace]
 members = [
     "sdks/python",
