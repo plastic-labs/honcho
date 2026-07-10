@@ -6,7 +6,7 @@ sends a JSON Schema dict, and the resulting model is passed as
 JSON.
 
 Only a conservative subset of JSON Schema is supported (see
-``json_schema_to_pydantic``). Conversion doubles as validation: any
+``json_response_schema_to_pydantic``). Conversion doubles as validation: any
 unsupported construct raises ``ValueError`` with the offending path, which the
 router surfaces as a 422.
 """
@@ -70,7 +70,7 @@ class _Ctx:
     node_count: int = 0
 
 
-def json_schema_to_pydantic(
+def json_response_schema_to_pydantic(
     schema: dict[str, Any],
     *,
     model_name: str = "ResponseFormat",

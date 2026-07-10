@@ -27,7 +27,7 @@ from src.exceptions import (
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
-from src.utils.schema_conversion import json_schema_to_pydantic
+from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.search import search
 from src.utils.types import embedding_call_purpose
 
@@ -203,7 +203,7 @@ async def chat(
     response_model: type[BaseModel] | None = None
     if options.response_format is not None:
         try:
-            response_model = json_schema_to_pydantic(options.response_format)
+            response_model = json_response_schema_to_pydantic(options.response_format)
         except ValueError as e:
             raise ValidationException(f"Invalid response_format: {e}") from None
 

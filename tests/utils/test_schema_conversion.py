@@ -5,7 +5,7 @@ import re
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from src.utils.schema_conversion import json_schema_to_pydantic
+from src.utils.schema_conversion import json_response_schema_to_pydantic
 
 
 def _object(properties: dict, **extra) -> dict:
@@ -14,7 +14,7 @@ def _object(properties: dict, **extra) -> dict:
 
 class TestPrimitives:
     def test_flat_object_with_primitives(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {
                     "name": {"type": "string"},
@@ -32,25 +32,25 @@ class TestPrimitives:
         assert instance.age == 36  # pyright: ignore
 
     def test_required_field_missing_fails(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object({"name": {"type": "string"}}, required=["name"])
         )
         with pytest.raises(ValidationError):
             model.model_validate({})
 
     def test_optional_field_defaults_to_none(self):
-        model = json_schema_to_pydantic(_object({"nickname": {"type": "string"}}))
+        model = json_response_schema_to_pydantic(_object({"nickname": {"type": "string"}}))
         instance = model.model_validate({})
         assert instance.nickname is None  # pyright: ignore
 
     def test_default_value(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object({"count": {"type": "integer", "default": 3}})
         )
         assert model.model_validate({}).count == 3  # pyright: ignore
 
     def test_null_type(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object({"nothing": {"type": "null"}}, required=["nothing"])
         )
         assert model.model_validate({"nothing": None}).nothing is None  # pyright: ignore
@@ -58,7 +58,7 @@ class TestPrimitives:
 
 class TestNesting:
     def test_nested_object(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {
                     "address": _object(
@@ -80,7 +80,7 @@ class TestNesting:
         assert instance.address.geo.lat == 37.8  # pyright: ignore
 
     def test_array_of_objects(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {
                     "items": {
@@ -97,7 +97,7 @@ class TestNesting:
         assert instance.items[0].food == "sushi"  # pyright: ignore
 
     def test_array_without_items_accepts_anything(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object({"stuff": {"type": "array"}}, required=["stuff"])
         )
         instance = model.model_validate({"stuff": [1, "two", {"three": 3}]})
@@ -105,7 +105,7 @@ class TestNesting:
 
     def test_nested_model_name_collision(self):
         # Two sibling objects whose name hints collide must not clash.
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {
                     "a": _object({"x b": _object({"v": {"type": "string"}})}),
@@ -121,7 +121,7 @@ class TestNesting:
 
 class TestEnumsAndUnions:
     def test_string_enum(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {"sentiment": {"enum": ["loves", "hates"]}},
                 required=["sentiment"],
@@ -132,7 +132,7 @@ class TestEnumsAndUnions:
             model.model_validate({"sentiment": "meh"})
 
     def test_int_enum_and_null_member(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object({"level": {"enum": [1, 2, None]}}, required=["level"])
         )
         assert model.model_validate({"level": None}).level is None  # pyright: ignore
@@ -140,10 +140,10 @@ class TestEnumsAndUnions:
 
     def test_invalid_enum_value_type(self):
         with pytest.raises(ValueError, match="enum values"):
-            json_schema_to_pydantic(_object({"bad": {"enum": [[1]]}}))
+            json_response_schema_to_pydantic(_object({"bad": {"enum": [[1]]}}))
 
     def test_anyof_with_null_is_optional(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {
                     "maybe": {
@@ -157,7 +157,7 @@ class TestEnumsAndUnions:
         assert model.model_validate({"maybe": "x"}).maybe == "x"  # pyright: ignore
 
     def test_oneof_union(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {"value": {"oneOf": [{"type": "integer"}, {"type": "string"}]}},
                 required=["value"],
@@ -166,7 +166,7 @@ class TestEnumsAndUnions:
         assert model.model_validate({"value": 5}).value == 5  # pyright: ignore
 
     def test_type_list_form(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {"name": {"type": ["string", "null"]}}, required=["name"]
             )
@@ -191,17 +191,17 @@ class TestRejections:
     )
     def test_unsupported_constructs(self, construct: str, schema: dict):
         with pytest.raises(ValueError, match=re.escape(construct)):
-            json_schema_to_pydantic(schema)
+            json_response_schema_to_pydantic(schema)
 
     def test_error_message_includes_path(self):
         with pytest.raises(
             ValueError, match=r"'\$ref' at properties\.address"
         ):
-            json_schema_to_pydantic(_object({"address": {"$ref": "#/x"}}))
+            json_response_schema_to_pydantic(_object({"address": {"$ref": "#/x"}}))
 
     def test_schema_valued_additional_properties(self):
         with pytest.raises(ValueError, match="additionalProperties"):
-            json_schema_to_pydantic(
+            json_response_schema_to_pydantic(
                 _object(
                     {
                         "map": {
@@ -214,42 +214,42 @@ class TestRejections:
 
     def test_boolean_schema(self):
         with pytest.raises(ValueError, match="boolean schemas"):
-            json_schema_to_pydantic(_object({"anything": True}))
+            json_response_schema_to_pydantic(_object({"anything": True}))
 
     def test_unknown_type(self):
         with pytest.raises(ValueError, match="unsupported type 'date'"):
-            json_schema_to_pydantic(_object({"when": {"type": "date"}}))
+            json_response_schema_to_pydantic(_object({"when": {"type": "date"}}))
 
     def test_root_must_be_object(self):
         with pytest.raises(ValueError, match="root schema"):
-            json_schema_to_pydantic({"type": "string"})
+            json_response_schema_to_pydantic({"type": "string"})
 
     def test_root_must_be_dict(self):
         with pytest.raises(ValueError, match="JSON Schema object"):
-            json_schema_to_pydantic(["not", "a", "schema"])  # pyright: ignore
+            json_response_schema_to_pydantic(["not", "a", "schema"])  # pyright: ignore
 
     def test_no_recognizable_type(self):
         with pytest.raises(ValueError, match="no recognizable type"):
-            json_schema_to_pydantic(_object({"mystery": {}}))
+            json_response_schema_to_pydantic(_object({"mystery": {}}))
 
     def test_depth_limit(self):
         schema: dict = {"type": "string"}
         for _ in range(25):
             schema = _object({"inner": schema})
         with pytest.raises(ValueError, match="maximum depth"):
-            json_schema_to_pydantic(schema)
+            json_response_schema_to_pydantic(schema)
 
     def test_node_limit(self):
         schema = _object(
             {f"field_{i}": {"type": "string"} for i in range(600)}
         )
         with pytest.raises(ValueError, match="maximum of 500 nodes"):
-            json_schema_to_pydantic(schema)
+            json_response_schema_to_pydantic(schema)
 
 
 class TestLenientAcceptance:
     def test_additional_properties_false_ignored(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {"known": {"type": "string"}},
                 required=["known"],
@@ -260,7 +260,7 @@ class TestLenientAcceptance:
         assert instance.model_dump() == {"known": "x"}
 
     def test_root_dollar_schema_ignored(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
@@ -270,21 +270,21 @@ class TestLenientAcceptance:
         assert issubclass(model, BaseModel)
 
     def test_empty_properties(self):
-        model = json_schema_to_pydantic({"type": "object", "properties": {}})
+        model = json_response_schema_to_pydantic({"type": "object", "properties": {}})
         assert model.model_validate({}).model_dump() == {}
 
     def test_missing_properties_with_object_type(self):
-        model = json_schema_to_pydantic({"type": "object"})
+        model = json_response_schema_to_pydantic({"type": "object"})
         assert model.model_validate({"anything": 1}).model_dump() == {}
 
     def test_missing_type_with_properties_treated_as_object(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             {"properties": {"a": {"type": "string"}}, "required": ["a"]}
         )
         assert model.model_validate({"a": "x"}).a == "x"  # pyright: ignore
 
     def test_required_naming_unknown_property_ignored(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object({"a": {"type": "string"}}, required=["a", "ghost"])
         )
         assert model.model_validate({"a": "x"}).a == "x"  # pyright: ignore
@@ -292,7 +292,7 @@ class TestLenientAcceptance:
 
 class TestFieldMetadata:
     def test_description_propagates(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {"food": {"type": "string", "description": "A food item"}}
             )
@@ -301,7 +301,7 @@ class TestFieldMetadata:
         assert generated["properties"]["food"]["description"] == "A food item"
 
     def test_constraint_hints_pass_through_unenforced(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {
                     "tags": {
@@ -320,7 +320,7 @@ class TestFieldMetadata:
         assert len(instance.tags) == 4  # pyright: ignore
 
     def test_non_identifier_key_alias_round_trip(self):
-        model = json_schema_to_pydantic(
+        model = json_response_schema_to_pydantic(
             _object(
                 {"my-key": {"type": "string"}, "_private": {"type": "integer"}},
                 required=["my-key"],
@@ -363,7 +363,7 @@ class TestZodCompatibility:
             "required": ["preferences", "summary"],
             "additionalProperties": False,
         }
-        model = json_schema_to_pydantic(schema)
+        model = json_response_schema_to_pydantic(schema)
         instance = model.model_validate(
             {
                 "preferences": [{"food": "sushi", "sentiment": "loves"}],
