@@ -7,7 +7,18 @@ from typing import cast as typing_cast
 
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
+from sqlalchemy import (
+    Select,
+    and_,
+    case,
+    cast,
+    delete,
+    exists,
+    func,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -276,8 +287,8 @@ async def get_or_create_session(
 
     # Add the session to any requested scopes: create-or-get each scope peer
     # and record an observer membership (observe_others=true, observe_me=false).
-    # No backfill happens here — membership only affects messages ingested
-    # after this point (backfill is DEV-1999).
+    # If the session already has messages, a backfill task is enqueued after
+    # commit (below) so its existing documents are copied into the scope.
     scopes_result = None
     if session.scopes:
         scopes_result = await get_or_create_scopes(
@@ -307,6 +318,30 @@ async def get_or_create_session(
         await peers_result.post_commit()
     if scopes_result is not None:
         await scopes_result.post_commit()
+
+    # Backfill (DEV-1999): a pre-existing session added to scopes at
+    # create-or-get time may already have messages; those need a
+    # backfill-by-copy task per scope. Fresh sessions need nothing.
+    if session.scopes:
+        has_messages = await db.scalar(
+            select(
+                exists(
+                    select(models.Message.id)
+                    .where(models.Message.workspace_name == workspace_name)
+                    .where(models.Message.session_name == session.name)
+                )
+            )
+        )
+        if has_messages:
+            # Imported lazily: src.deriver.enqueue imports crud at module level.
+            from src.deriver.enqueue import enqueue_scope_backfill
+
+            for scope_name in session.scopes:
+                await enqueue_scope_backfill(
+                    workspace_name,
+                    scope_peer=scope_peer_name(scope_name),
+                    session_name=session.name,
+                )
 
     # Only update cache if session data changed or was newly created
     if needs_cache_update:

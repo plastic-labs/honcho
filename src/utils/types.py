@@ -251,7 +251,14 @@ class GetOrCreateResult(Generic[T]):
 
 
 TaskType = Literal[
-    "webhook", "summary", "representation", "dream", "deletion", "reconciler"
+    "webhook",
+    "summary",
+    "representation",
+    "dream",
+    "deletion",
+    "reconciler",
+    "scope_backfill",
+    "scope_removal",
 ]
 VectorSyncState = Literal["synced", "pending", "failed"]
 DocumentLevel = Literal["explicit", "deductive", "inductive", "contradiction"]

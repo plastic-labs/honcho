@@ -8,9 +8,10 @@ that keeps the observer/observed mechanics hidden.
 All scopes routes require a workspace-level (or admin) key: scopes are an
 app-level admin surface, so peer- and session-scoped keys are rejected.
 
-Note: backfill of pre-existing documents and reconciliation on removal land
-in a follow-up (DEV-1999) — for now, scope membership only affects messages
-ingested *after* the membership change.
+Retroactive membership changes are handled asynchronously (DEV-1999): adding
+a session that already has messages enqueues a backfill-by-copy job, removing
+a session enqueues a removal-reconciliation job. Track backfill progress via
+``GET /scopes/{scope_id}/status``.
 """
 
 import logging
@@ -107,8 +108,9 @@ async def add_sessions_to_scope(
     All named sessions must already exist (404 otherwise). Returns the scope's
     full member session list after the addition.
 
-    Note: membership only affects messages ingested after this call — backfill
-    of pre-existing documents lands in a follow-up (DEV-1999).
+    Note: any added session that already has messages triggers an asynchronous
+    backfill-by-copy of its existing documents into the scope; track progress
+    via ``GET /scopes/{scope_id}/status``.
     """
     session_ids = await crud.add_sessions_to_scope(
         db,
@@ -134,8 +136,10 @@ async def remove_session_from_scope(
     """
     Remove a Session from a Scope.
 
-    Note: documents already derived while the session was a member are left in
-    place — reconciliation on removal lands in a follow-up (DEV-1999).
+    Note: documents copied/derived while the session was a member are
+    reconciled asynchronously — the session's explicit copies are soft-deleted
+    from the scope, dependent derived documents follow (fail-closed), and the
+    scope's card is rebuilt from the remaining evidence.
     """
     await crud.remove_session_from_scope(
         db,
@@ -158,3 +162,24 @@ async def get_scope_sessions(
     """Get the IDs of the Sessions that are members of a Scope."""
     session_ids = await crud.get_scope_session_names(db, workspace_id, scope_id)
     return schemas.ScopeSessions(session_ids=session_ids)
+
+
+@router.get(
+    "/{scope_id}/status",
+    response_model=schemas.ScopeStatus,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def get_scope_status(
+    workspace_id: str = Path(...),
+    scope_id: str = Path(...),
+    db: AsyncSession = read_db,
+):
+    """
+    Get the backfill/reconciliation job status for a Scope.
+
+    Returns a per-session map of the backfill job state (pending / completed /
+    failed) with the number of documents copied once complete. Empty when no
+    backfill has ever been enqueued for the scope.
+    """
+    backfill_status = await crud.get_scope_backfill_status(db, workspace_id, scope_id)
+    return schemas.ScopeStatus(backfill_status=backfill_status)
