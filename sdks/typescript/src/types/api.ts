@@ -74,7 +74,6 @@ export interface PeerChatParams {
   session_id?: string
   target?: string
   reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
-  response_format?: Record<string, unknown>
 }
 
 export interface PeerChatResponse {

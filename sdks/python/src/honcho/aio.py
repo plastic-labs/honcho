@@ -26,9 +26,9 @@ import logging
 import warnings
 from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, validate_call
+from pydantic import ConfigDict, Field, validate_call
 
 from .api_types import (
     ConclusionResponse,
@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from .conclusions import ConclusionScope
 
 from .conclusions import ConclusionCreateParams
-from .peer import Peer, TResponseFormat, serialize_response_format
+from .peer import Peer
 from .session import Session
 
 logger = logging.getLogger(__name__)
@@ -577,30 +577,6 @@ class PeerAio(AsyncMetadataConfigMixin):
         )
         self._peer._configuration = configuration
 
-    @overload
-    async def chat(
-        self,
-        query: str,
-        *,
-        target: str | PeerBase | None = None,
-        session: str | SessionBase | None = None,
-        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
-        | None = None,
-        response_format: type[TResponseFormat],
-    ) -> TResponseFormat | None: ...
-
-    @overload
-    async def chat(
-        self,
-        query: str,
-        *,
-        target: str | PeerBase | None = None,
-        session: str | SessionBase | None = None,
-        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
-        | None = None,
-        response_format: dict[str, Any] | None = None,
-    ) -> str | None: ...
-
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def chat(
         self,
@@ -610,14 +586,8 @@ class PeerAio(AsyncMetadataConfigMixin):
         session: str | SessionBase | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
-        response_format: type[BaseModel] | dict[str, Any] | None = None,
-    ) -> BaseModel | str | None:
-        """Query the peer's representation asynchronously.
-
-        See Peer.chat for parameter details. When response_format is a Pydantic
-        model class, the answer is parsed into an instance of it; when it is a
-        JSON Schema dict, the answer is a JSON string.
-        """
+    ) -> str | None:
+        """Query the peer's representation asynchronously."""
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
@@ -629,9 +599,6 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
-        response_format_schema = serialize_response_format(response_format)
-        if response_format_schema is not None:
-            body["response_format"] = response_format_schema
 
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_chat(self._peer.workspace_id, self._peer.id),
@@ -640,8 +607,6 @@ class PeerAio(AsyncMetadataConfigMixin):
         content = data.get("content")
         if not content:
             return None
-        if isinstance(response_format, type):
-            return response_format.model_validate_json(content)
         return content
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -653,14 +618,8 @@ class PeerAio(AsyncMetadataConfigMixin):
         session: str | SessionBase | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
-        response_format: type[BaseModel] | dict[str, Any] | None = None,
     ) -> AsyncDialecticStreamResponse:
-        """Query the peer's representation with streaming asynchronously.
-
-        See Peer.chat_stream for parameter details. With response_format set,
-        chunks stay raw text that accumulates to a JSON string; parse it after
-        the stream completes.
-        """
+        """Query the peer's representation with streaming asynchronously."""
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
@@ -672,9 +631,6 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
-        response_format_schema = serialize_response_format(response_format)
-        if response_format_schema is not None:
-            body["response_format"] = response_format_schema
 
         async def stream_response() -> AsyncGenerator[str, None]:
             async for content in parse_sse_astream(

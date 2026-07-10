@@ -1,4 +1,3 @@
-import { ZodType, z } from 'zod'
 import { API_VERSION } from './api-version'
 import { ConclusionScope } from './conclusions'
 import type { HonchoHTTPClient } from './http/client'
@@ -230,29 +229,12 @@ export class Peer {
     )
   }
 
-  /**
-   * Convert a responseFormat option (Zod schema or raw JSON Schema object)
-   * to the JSON Schema dict the API expects.
-   */
-  private static toResponseFormatSchema(
-    responseFormat: ZodType | Record<string, unknown> | undefined
-  ): Record<string, unknown> | undefined {
-    if (!responseFormat) {
-      return undefined
-    }
-    if (responseFormat instanceof ZodType) {
-      return z.toJSONSchema(responseFormat) as Record<string, unknown>
-    }
-    return responseFormat
-  }
-
   private async _chat(params: {
     query: string
     stream?: boolean
     target?: string
     session_id?: string
     reasoning_level?: string
-    response_format?: Record<string, unknown>
   }): Promise<PeerChatResponse> {
     await this._ensureWorkspace()
     return this._http.post<PeerChatResponse>(
@@ -266,7 +248,6 @@ export class Peer {
     target?: string
     session_id?: string
     reasoning_level?: string
-    response_format?: Record<string, unknown>
   }): Promise<Response> {
     await this._ensureWorkspace()
     return this._http.stream(
@@ -381,33 +362,14 @@ export class Peer {
    * })
    * ```
    */
-  async chat<T>(
-    query: string,
-    options: {
-      target?: string | Peer
-      session?: string | Session
-      reasoningLevel?: string
-      responseFormat: ZodType<T>
-    }
-  ): Promise<T | null>
   async chat(
     query: string,
     options?: {
       target?: string | Peer
       session?: string | Session
       reasoningLevel?: string
-      responseFormat?: Record<string, unknown>
     }
-  ): Promise<string | null>
-  async chat<T>(
-    query: string,
-    options?: {
-      target?: string | Peer
-      session?: string | Session
-      reasoningLevel?: string
-      responseFormat?: ZodType<T> | Record<string, unknown>
-    }
-  ): Promise<T | string | null> {
+  ): Promise<string | null> {
     const targetId = options?.target
       ? typeof options.target === 'string'
         ? options.target
@@ -424,13 +386,7 @@ export class Peer {
       target: targetId,
       session: resolvedSessionId,
       reasoningLevel: options?.reasoningLevel,
-      responseFormat: options?.responseFormat,
     })
-
-    const zodSchema =
-      options?.responseFormat instanceof ZodType
-        ? options.responseFormat
-        : undefined
 
     const response = await this._chat({
       query: chatParams.query,
@@ -438,13 +394,9 @@ export class Peer {
       target: chatParams.target,
       session_id: chatParams.session,
       reasoning_level: chatParams.reasoningLevel,
-      response_format: Peer.toResponseFormatSchema(options?.responseFormat),
     })
     if (!response.content) {
       return null
-    }
-    if (zodSchema) {
-      return zodSchema.parse(JSON.parse(response.content))
     }
     return response.content
   }
@@ -490,7 +442,6 @@ export class Peer {
       target?: string | Peer
       session?: string | Session
       reasoningLevel?: string
-      responseFormat?: ZodType | Record<string, unknown>
     }
   ): Promise<DialecticStreamResponse> {
     const targetId = options?.target
@@ -509,7 +460,6 @@ export class Peer {
       target: targetId,
       session: resolvedSessionId,
       reasoningLevel: options?.reasoningLevel,
-      responseFormat: options?.responseFormat,
     })
 
     const response = await this._chatStream({
@@ -517,7 +467,6 @@ export class Peer {
       target: chatParams.target,
       session_id: chatParams.session,
       reasoning_level: chatParams.reasoningLevel,
-      response_format: Peer.toResponseFormatSchema(options?.responseFormat),
     })
 
     return createDialecticStream(response)

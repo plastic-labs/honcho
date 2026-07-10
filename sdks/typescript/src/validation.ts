@@ -312,11 +312,6 @@ export const ChatQuerySchema = z
     reasoningLevel: z
       .enum(['minimal', 'low', 'medium', 'high', 'max'])
       .optional(),
-    // A Zod schema (checked first — it is itself an object) or a raw JSON
-    // Schema object describing the desired response structure.
-    responseFormat: z
-      .union([z.instanceof(z.ZodType), z.record(z.string(), z.unknown())])
-      .optional(),
   })
   .strict()
 
