@@ -1296,7 +1296,7 @@ FOOD_PREFS_SCHEMA = {
 def test_chat_with_response_format(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
-    mock_llm_call_functions: dict,
+    mock_llm_call_functions: dict[str, Any],
 ):
     """A valid response_format converts to a Pydantic model and is passed to
     the dialectic as response_model."""
@@ -1327,7 +1327,7 @@ def test_chat_with_response_format(
 def test_chat_with_response_format_streaming(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
-    mock_llm_call_functions: dict,
+    mock_llm_call_functions: dict[str, Any],
 ):
     test_workspace, test_peer = sample_data
 
@@ -1365,8 +1365,8 @@ def test_chat_with_response_format_streaming(
 def test_chat_with_invalid_response_format(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
-    mock_llm_call_functions: dict,
-    bad_schema: dict,
+    mock_llm_call_functions: dict[str, Any],
+    bad_schema: dict[str, Any],
 ):
     """Unsupported schemas are rejected with 422 before the dialectic runs."""
     test_workspace, test_peer = sample_data

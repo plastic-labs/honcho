@@ -1,6 +1,7 @@
 """Unit tests for src/utils/schema_conversion.py."""
 
 import re
+from typing import Any
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -8,7 +9,7 @@ from pydantic import BaseModel, ValidationError
 from src.utils.schema_conversion import json_response_schema_to_pydantic
 
 
-def _object(properties: dict, **extra) -> dict:
+def _object(properties: dict[str, Any], **extra: Any) -> dict[str, Any]:
     return {"type": "object", "properties": properties, **extra}
 
 
@@ -39,7 +40,9 @@ class TestPrimitives:
             model.model_validate({})
 
     def test_optional_field_defaults_to_none(self):
-        model = json_response_schema_to_pydantic(_object({"nickname": {"type": "string"}}))
+        model = json_response_schema_to_pydantic(
+            _object({"nickname": {"type": "string"}})
+        )
         instance = model.model_validate({})
         assert instance.nickname is None  # pyright: ignore
 
@@ -145,11 +148,7 @@ class TestEnumsAndUnions:
     def test_anyof_with_null_is_optional(self):
         model = json_response_schema_to_pydantic(
             _object(
-                {
-                    "maybe": {
-                        "anyOf": [{"type": "string"}, {"type": "null"}]
-                    }
-                },
+                {"maybe": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
                 required=["maybe"],
             )
         )
@@ -167,9 +166,7 @@ class TestEnumsAndUnions:
 
     def test_type_list_form(self):
         model = json_response_schema_to_pydantic(
-            _object(
-                {"name": {"type": ["string", "null"]}}, required=["name"]
-            )
+            _object({"name": {"type": ["string", "null"]}}, required=["name"])
         )
         assert model.model_validate({"name": None}).name is None  # pyright: ignore
 
@@ -189,14 +186,12 @@ class TestRejections:
             ),
         ],
     )
-    def test_unsupported_constructs(self, construct: str, schema: dict):
+    def test_unsupported_constructs(self, construct: str, schema: dict[str, Any]):
         with pytest.raises(ValueError, match=re.escape(construct)):
             json_response_schema_to_pydantic(schema)
 
     def test_error_message_includes_path(self):
-        with pytest.raises(
-            ValueError, match=r"'\$ref' at properties\.address"
-        ):
+        with pytest.raises(ValueError, match=r"'\$ref' at properties\.address"):
             json_response_schema_to_pydantic(_object({"address": {"$ref": "#/x"}}))
 
     def test_schema_valued_additional_properties(self):
@@ -233,16 +228,14 @@ class TestRejections:
             json_response_schema_to_pydantic(_object({"mystery": {}}))
 
     def test_depth_limit(self):
-        schema: dict = {"type": "string"}
+        schema: dict[str, Any] = {"type": "string"}
         for _ in range(25):
             schema = _object({"inner": schema})
         with pytest.raises(ValueError, match="maximum depth"):
             json_response_schema_to_pydantic(schema)
 
     def test_node_limit(self):
-        schema = _object(
-            {f"field_{i}": {"type": "string"} for i in range(600)}
-        )
+        schema = _object({f"field_{i}": {"type": "string"} for i in range(600)})
         with pytest.raises(ValueError, match="maximum of 500 nodes"):
             json_response_schema_to_pydantic(schema)
 
@@ -293,9 +286,7 @@ class TestLenientAcceptance:
 class TestFieldMetadata:
     def test_description_propagates(self):
         model = json_response_schema_to_pydantic(
-            _object(
-                {"food": {"type": "string", "description": "A food item"}}
-            )
+            _object({"food": {"type": "string", "description": "A food item"}})
         )
         generated = model.model_json_schema()
         assert generated["properties"]["food"]["description"] == "A food item"
@@ -376,7 +367,7 @@ class TestZodCompatibility:
 
 class TestCustomGuardLimits:
     def test_custom_max_depth(self):
-        schema: dict = {"type": "string"}
+        schema: dict[str, Any] = {"type": "string"}
         for _ in range(5):
             schema = _object({"inner": schema})
         with pytest.raises(ValueError, match="maximum depth of 3"):

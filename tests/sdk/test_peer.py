@@ -651,7 +651,7 @@ async def test_peer_chat_response_format_pydantic(client_fixture: tuple[Honcho, 
     if client_type == "async":
         peer = await honcho_client.aio.peer(id="test-rf-async-peer")
 
-        async def mock_post(*args: object, **kwargs: object) -> dict[str, object]:
+        async def mock_post(*_args: object, **_kwargs: object) -> dict[str, object]:
             return {"content": content}
 
         with patch.object(
@@ -686,7 +686,7 @@ async def test_peer_chat_response_format_dict(client_fixture: tuple[Honcho, str]
     if client_type == "async":
         peer = await honcho_client.aio.peer(id="test-rf-dict-async-peer")
 
-        async def mock_post(*args: object, **kwargs: object) -> dict[str, object]:
+        async def mock_post(*_args: object, **_kwargs: object) -> dict[str, object]:
             return {"content": content}
 
         with patch.object(
@@ -721,7 +721,7 @@ async def test_peer_chat_response_format_empty_content(
     if client_type == "async":
         peer = await honcho_client.aio.peer(id="test-rf-empty-async-peer")
 
-        async def mock_post(*args: object, **kwargs: object) -> dict[str, object]:
+        async def mock_post(*_args: object, **_kwargs: object) -> dict[str, object]:
             return {"content": None}
 
         with patch.object(
@@ -753,7 +753,7 @@ async def test_peer_chat_stream_response_format(client_fixture: tuple[Honcho, st
         peer = await honcho_client.aio.peer(id="test-rf-stream-async-peer")
 
         async def mock_astream(
-            *args: object, **kwargs: object
+            *_args: object, **_kwargs: object
         ) -> AsyncIterator[bytes]:
             yield b'data: {"delta": {"content": "{\\"favorite\\":"}}\n'
             yield b'data: {"delta": {"content": "\\"sushi\\",\\"confidence\\":0.9}"}}\n'
@@ -771,7 +771,7 @@ async def test_peer_chat_stream_response_format(client_fixture: tuple[Honcho, st
     else:
         peer = honcho_client.peer(id="test-rf-stream-peer")
 
-        def mock_stream(*args: object, **kwargs: object) -> Iterator[bytes]:
+        def mock_stream(*_args: object, **_kwargs: object) -> Iterator[bytes]:
             yield b'data: {"delta": {"content": "{\\"favorite\\":"}}\n'
             yield b'data: {"delta": {"content": "\\"sushi\\",\\"confidence\\":0.9}"}}\n'
             yield b'data: {"done": true}\n'

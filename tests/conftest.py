@@ -675,7 +675,7 @@ def mock_llm_call_functions(request: pytest.FixtureRequest):
         # Mock agentic_chat to return a string (matching actual return type).
         # With a response_model (structured output) the real function returns
         # a JSON string, so mirror that for SDK clients that parse content.
-        async def _agentic_chat_response(*args: object, **kwargs: object) -> str:
+        async def _agentic_chat_response(*_args: object, **kwargs: object) -> str:
             if kwargs.get("response_model") is not None:
                 return "{}"
             return "Test dialectic response"

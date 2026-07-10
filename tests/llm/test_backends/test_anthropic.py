@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -247,7 +248,7 @@ async def test_anthropic_backend_ignores_thinking_effort() -> None:
     assert "reasoning_effort" not in call
 
 
-def _make_client(content_blocks: list) -> Mock:
+def _make_client(content_blocks: list[Any]) -> Mock:
     client = Mock()
     client.messages.create = AsyncMock(
         return_value=SimpleNamespace(
@@ -321,7 +322,9 @@ async def test_anthropic_backend_prefill_unchanged_without_tools() -> None:
 
 
 @pytest.mark.asyncio
-async def test_anthropic_backend_skips_parsing_on_tool_call_turns(monkeypatch) -> None:
+async def test_anthropic_backend_skips_parsing_on_tool_call_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A tool-call response with response_format set must not attempt JSON
     parsing (whose failure would trigger a wasted repair LLM call)."""
     client = _make_client(
@@ -335,7 +338,7 @@ async def test_anthropic_backend_skips_parsing_on_tool_call_turns(monkeypatch) -
         ]
     )
 
-    def _fail_repair(*args, **kwargs):
+    def _fail_repair(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("repair must not run for tool-call turns")
 
     monkeypatch.setattr(
@@ -360,8 +363,8 @@ async def test_anthropic_backend_stream_no_prefill_when_tools_present() -> None:
     """The streaming path applies the same tools guard."""
 
     class _FakeStream:
-        def __init__(self):
-            self._chunks = [
+        def __init__(self) -> None:
+            self._chunks: list[SimpleNamespace] = [
                 SimpleNamespace(
                     type="content_block_delta",
                     delta=SimpleNamespace(text='{"answer":"ok"}'),
@@ -371,7 +374,7 @@ async def test_anthropic_backend_stream_no_prefill_when_tools_present() -> None:
         async def __aenter__(self):
             return self
 
-        async def __aexit__(self, *args):
+        async def __aexit__(self, *_args: object) -> bool:
             return False
 
         def __aiter__(self):
