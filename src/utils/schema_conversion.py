@@ -146,61 +146,26 @@ def _union(members: tuple[Any, ...]) -> Any:
 def _convert_schema(
     raw_node: Any, path: str, name_hint: str, ctx: _Ctx, depth: int
 ) -> Any:
-    """Convert one schema node into a type annotation."""
-    ctx.node_count += 1
-    if ctx.node_count > ctx.max_nodes:
-        raise ValueError(f"schema exceeds the maximum of {ctx.max_nodes} nodes")
-    if depth > ctx.max_depth:
-        raise ValueError(
-            f"schema nesting exceeds the maximum depth of {ctx.max_depth}"
-        )
-    if isinstance(raw_node, bool):
-        _fail("boolean schemas are not supported", path)
-    if not isinstance(raw_node, dict):
-        _fail("schema must be an object", path)
-    node = cast(dict[str, Any], raw_node)
-    for key in _UNSUPPORTED_KEYS:
-        if key in node:
-            _fail(f"unsupported construct '{key}'", path)
-    if isinstance(node.get("additionalProperties"), dict):
-        _fail("additionalProperties with a schema is not supported", path)
+    """Convert one schema node into a type annotation.
+
+    Dispatch order matters: enum (a value constraint) wins over unions,
+    which win over "type"-based conversion.
+    """
+    node = _validate_node(raw_node, path, ctx, depth)
 
     if "enum" in node:
         return _convert_enum(node["enum"], path)
 
-    for union_key in ("anyOf", "oneOf"):
-        if union_key in node:
-            members = node[union_key]
-            if not isinstance(members, list) or not members:
-                _fail(f"'{union_key}' must be a non-empty array", path)
-            converted = tuple(
-                _convert_schema(
-                    member,
-                    _child_path(path, f"{union_key}[{i}]"),
-                    f"{name_hint}Option{i}",
-                    ctx,
-                    depth + 1,
-                )
-                for i, member in enumerate(cast(list[Any], members))
-            )
-            return _union(converted)
+    if "anyOf" in node or "oneOf" in node:
+        return _convert_union(node, path, name_hint, ctx, depth)
 
     node_type = node.get("type")
     if isinstance(node_type, list):
-        if not node_type:
-            _fail("'type' array must not be empty", path)
-        variants = tuple(
-            _convert_schema(
-                {**{k: v for k, v in node.items() if k != "type"}, "type": t},
-                path,
-                name_hint,
-                ctx,
-                depth,
-            )
-            for t in cast(list[Any], node_type)
+        return _convert_type_list(
+            node, cast(list[Any], node_type), path, name_hint, ctx, depth
         )
-        return _union(variants)
 
+    # Tolerate an omitted "type" when "properties" makes the intent clear.
     if node_type is None and "properties" in node:
         node_type = "object"
 
@@ -208,13 +173,7 @@ def _convert_schema(
         return _build_object_model(node, path, name_hint, ctx, depth)
 
     if node_type == "array":
-        items = node.get("items")
-        if items is None:
-            return list[Any]
-        item_annotation = _convert_schema(
-            items, _child_path(path, "items"), f"{name_hint}Item", ctx, depth + 1
-        )
-        return list[item_annotation]
+        return _convert_array(node, path, name_hint, ctx, depth)
 
     if node_type in _PRIMITIVE_TYPES:
         return _PRIMITIVE_TYPES[node_type]
@@ -224,10 +183,102 @@ def _convert_schema(
     _fail(f"unsupported type '{node_type}'", path)
 
 
+def _validate_node(
+    raw_node: Any, path: str, ctx: _Ctx, depth: int
+) -> dict[str, Any]:
+    """Enforce size budgets and node shape; reject unsupported constructs."""
+    # node_count is cumulative across the whole walk; depth tracks only the
+    # current branch.
+    ctx.node_count += 1
+    if ctx.node_count > ctx.max_nodes:
+        raise ValueError(f"schema exceeds the maximum of {ctx.max_nodes} nodes")
+    if depth > ctx.max_depth:
+        raise ValueError(
+            f"schema nesting exceeds the maximum depth of {ctx.max_depth}"
+        )
+    if isinstance(raw_node, bool):
+        # A special case of the object requirement, with its own message:
+        # boolean schemas are legal JSON Schema, just deliberately unsupported.
+        _fail("boolean schemas are not supported", path)
+    if not isinstance(raw_node, dict):
+        _fail("schema must be an object", path)
+    node = cast(dict[str, Any], raw_node)
+    for key in _UNSUPPORTED_KEYS:
+        if key in node:
+            _fail(f"unsupported construct '{key}'", path)
+    if isinstance(node.get("additionalProperties"), dict):
+        _fail("additionalProperties with a schema is not supported", path)
+    return node
+
+
+def _convert_union(
+    node: dict[str, Any], path: str, name_hint: str, ctx: _Ctx, depth: int
+) -> Any:
+    """Convert anyOf/oneOf, treated identically: a plain union of the member
+    schemas (a {"type": "null"} member makes the union optional)."""
+    union_key = "anyOf" if "anyOf" in node else "oneOf"
+    members = node[union_key]
+    if not isinstance(members, list) or not members:
+        _fail(f"'{union_key}' must be a non-empty array", path)
+    converted = tuple(
+        _convert_schema(
+            member,
+            _child_path(path, f"{union_key}[{i}]"),
+            f"{name_hint}Option{i}",
+            ctx,
+            depth + 1,
+        )
+        for i, member in enumerate(cast(list[Any], members))
+    )
+    return _union(converted)
+
+
+def _convert_type_list(
+    node: dict[str, Any],
+    types: list[Any],
+    path: str,
+    name_hint: str,
+    ctx: _Ctx,
+    depth: int,
+) -> Any:
+    """Convert the type: ["string", "null"] sugar — re-convert the node once
+    per entry (keeping sibling keys, at the same depth since it's the same
+    source node) and union the results."""
+    if not types:
+        _fail("'type' array must not be empty", path)
+    variants = tuple(
+        _convert_schema(
+            {**{k: v for k, v in node.items() if k != "type"}, "type": t},
+            path,
+            name_hint,
+            ctx,
+            depth,
+        )
+        for t in types
+    )
+    return _union(variants)
+
+
+def _convert_array(
+    node: dict[str, Any], path: str, name_hint: str, ctx: _Ctx, depth: int
+) -> Any:
+    """Convert an array schema into a list annotation."""
+    items = node.get("items")
+    # A missing "items" constraint means any element type is allowed.
+    if items is None:
+        return list[Any]
+    item_annotation = _convert_schema(
+        items, _child_path(path, "items"), f"{name_hint}Item", ctx, depth + 1
+    )
+    return list[item_annotation]
+
+
 def _convert_enum(raw_values: Any, path: str) -> Any:
     if not isinstance(raw_values, list) or not raw_values:
         _fail("'enum' must be a non-empty array", path)
     literal_values: list[Any] = []
+    # None is not Literal-legal, so collect it separately and union NoneType
+    # back in at the end (an all-null enum degenerates to NoneType).
     has_null = False
     for value in cast(list[Any], raw_values):
         if value is None:
@@ -256,6 +307,8 @@ def _build_object_model(
         isinstance(entry, str) for entry in cast(list[Any], raw_required)
     ):
         _fail("'required' must be an array of strings", path)
+    # Entries naming properties that don't exist are tolerated; they just
+    # have no effect.
     required = set(cast(list[str], raw_required))
 
     fields: dict[str, tuple[Any, Any]] = {}
@@ -269,6 +322,8 @@ def _build_object_model(
             ctx,
             depth + 1,
         )
+        # Non-identifier keys ("my-key") get a sanitized field name, with the
+        # original key preserved as the alias for validation/serialization.
         field_name = _field_name(prop_key, fields)
         alias = prop_key if field_name != prop_key else None
         fields[field_name] = _make_field(
@@ -305,6 +360,8 @@ def _make_field(
     if hints:
         kwargs["json_schema_extra"] = hints
 
+    # Precedence: an explicit default wins (even for required fields), then
+    # required, then optional — which widens to `T | None` defaulting to None.
     if "default" in prop_schema:
         return annotation, Field(default=prop_schema["default"], **kwargs)
     if is_required:
@@ -337,10 +394,13 @@ def _field_name(prop_key: str, existing: dict[str, Any]) -> str:
 
 
 def _unique_model_name(name_hint: str, ctx: _Ctx) -> str:
+    # PascalCase the hint (e.g. "ResponseFormat address geo" -> "ResponseFormatAddressGeo").
     parts = re.split(r"[^A-Za-z0-9]+", name_hint)
     name = "".join(part[:1].upper() + part[1:] for part in parts if part)
+    # Class names can't be empty or start with a digit.
     if not name or name[0].isdigit():
         name = f"Model{name}"
+    # Distinct hints can sanitize to the same name; suffix _2, _3, ... to disambiguate.
     candidate = name
     suffix = 2
     while candidate in ctx.used_names:
