@@ -7,6 +7,7 @@ from functools import cache
 from typing import Any, cast
 
 from openai import BadRequestError, LengthFinishReasonError
+from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
@@ -149,6 +150,18 @@ class OpenAIBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> CompletionResult:
+        if extra_params and extra_params.get("api_mode") == "responses":
+            return await self._complete_responses(
+                model=model,
+                messages=messages,
+                max_tokens=max_output_tokens or max_tokens,
+                tools=tools,
+                tool_choice=tool_choice,
+                response_format=response_format,
+                thinking_effort=thinking_effort,
+                extra_params=extra_params,
+            )
+
         params = self._build_params(
             model=model,
             messages=messages,
@@ -251,6 +264,20 @@ class OpenAIBackend:
         max_output_tokens: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
+        if extra_params and extra_params.get("api_mode") == "responses":
+            async for chunk in self._stream_responses(
+                model=model,
+                messages=messages,
+                max_tokens=max_output_tokens or max_tokens,
+                tools=tools,
+                tool_choice=tool_choice,
+                response_format=response_format,
+                thinking_effort=thinking_effort,
+                extra_params=extra_params,
+            ):
+                yield chunk
+            return
+
         params = self._build_params(
             model=model,
             messages=messages,
@@ -303,6 +330,341 @@ class OpenAIBackend:
 
         if not usage_chunk_received and finish_reason:
             yield StreamChunk(is_done=True, finish_reason=finish_reason)
+
+    async def _complete_responses(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        response_format: type[BaseModel] | dict[str, Any] | None,
+        thinking_effort: str | None,
+        extra_params: dict[str, Any],
+    ) -> CompletionResult:
+        params = self._build_responses_params(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            thinking_effort=thinking_effort,
+            extra_params=extra_params,
+        )
+        text_parts: list[str] = []
+        output_items: list[Any] = []
+        completed_response: Any = None
+        async with self._client.responses.stream(**params) as stream:
+            async for event in stream:
+                event_type = self._response_value(event, "type")
+                if event_type == "response.output_text.delta":
+                    delta = self._response_value(event, "delta")
+                    if isinstance(delta, str):
+                        text_parts.append(delta)
+                elif event_type == "response.output_item.done":
+                    item = self._response_value(event, "item")
+                    if item is not None:
+                        output_items.append(item)
+                elif event_type == "response.completed":
+                    completed_response = self._response_value(event, "response")
+            response = await stream.get_final_response()
+        # ChatGPT's Codex Responses endpoint currently omits ``output`` from
+        # response.completed, even though it streams all deltas/items. Rebuild
+        # that losslessly while retaining status/usage from the completed event.
+        if text_parts or output_items:
+            metadata = completed_response or response
+            response = {
+                "output_text": "".join(text_parts),
+                "output": output_items,
+                "status": self._response_value(metadata, "status"),
+                "usage": self._response_value(metadata, "usage"),
+            }
+        return self._normalize_responses_response(
+            response,
+            response_format=response_format,
+            model=model,
+        )
+
+    async def _stream_responses(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        response_format: type[BaseModel] | dict[str, Any] | None,
+        thinking_effort: str | None,
+        extra_params: dict[str, Any],
+    ) -> AsyncIterator[StreamChunk]:
+        params = self._build_responses_params(
+            model=model,
+            messages=messages,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            thinking_effort=thinking_effort,
+            extra_params=extra_params,
+        )
+        emitted_done = False
+        async with self._client.responses.stream(**params) as stream:
+            async for event in stream:
+                event_type = self._response_value(event, "type")
+                if event_type == "response.output_text.delta":
+                    delta = self._response_value(event, "delta")
+                    if isinstance(delta, str) and delta:
+                        yield StreamChunk(content=delta)
+                elif event_type == "response.completed":
+                    response = self._response_value(event, "response")
+                    usage = self._response_value(response, "usage")
+                    output_tokens = self._response_value(usage, "output_tokens")
+                    yield StreamChunk(
+                        is_done=True,
+                        finish_reason="stop",
+                        output_tokens=(
+                            int(output_tokens) if isinstance(output_tokens, int) else None
+                        ),
+                    )
+                    emitted_done = True
+            if not emitted_done:
+                response = await stream.get_final_response()
+                usage = self._response_value(response, "usage")
+                output_tokens = self._response_value(usage, "output_tokens")
+                yield StreamChunk(
+                    is_done=True,
+                    finish_reason=self._responses_finish_reason(response),
+                    output_tokens=(
+                        int(output_tokens) if isinstance(output_tokens, int) else None
+                    ),
+                )
+
+    def _build_responses_params(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None,
+        tool_choice: str | dict[str, Any] | None,
+        response_format: type[BaseModel] | dict[str, Any] | None,
+        thinking_effort: str | None,
+        extra_params: dict[str, Any],
+    ) -> dict[str, Any]:
+        instructions, response_input = self._messages_to_responses_input(messages)
+        params: dict[str, Any] = {
+            "model": model,
+            "input": response_input,
+            "store": False,
+        }
+        if not extra_params.get("omit_max_output_tokens"):
+            params["max_output_tokens"] = max_tokens
+        if instructions:
+            params["instructions"] = instructions
+        if thinking_effort:
+            params["reasoning"] = {"effort": thinking_effort}
+        if tools:
+            params["tools"] = self._convert_responses_tools(tools)
+            converted_choice = self._convert_tool_choice(tool_choice)
+            if converted_choice is not None:
+                params["tool_choice"] = converted_choice
+        text_config = self._responses_text_config(response_format, extra_params)
+        if text_config:
+            params["text"] = text_config
+        for passthrough in ("extra_headers", "extra_query", "extra_body"):
+            value = extra_params.get(passthrough)
+            if value:
+                if not isinstance(value, dict):
+                    raise ValidationException(
+                        f"provider_params.{passthrough} must be a mapping, "
+                        + f"got {type(value).__name__}"
+                    )
+                params[passthrough] = value
+        return params
+
+    @classmethod
+    def _messages_to_responses_input(
+        cls, messages: list[dict[str, Any]]
+    ) -> tuple[str, list[dict[str, Any]]]:
+        instructions: list[str] = []
+        response_input: list[dict[str, Any]] = []
+        for message in messages:
+            role = str(message.get("role") or "user")
+            content = message.get("content")
+            if role in {"system", "developer"}:
+                if isinstance(content, str) and content:
+                    instructions.append(content)
+                continue
+            if role == "tool":
+                response_input.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": str(message.get("tool_call_id") or ""),
+                        "output": content if isinstance(content, str) else json.dumps(content),
+                    }
+                )
+                continue
+            if isinstance(content, str) and content:
+                response_input.append({"role": role, "content": content})
+            raw_tool_calls = message.get("tool_calls")
+            if isinstance(raw_tool_calls, list):
+                tool_call_values = cast(list[Any], raw_tool_calls)
+                for raw_tool_call in tool_call_values:
+                    if not isinstance(raw_tool_call, dict):
+                        continue
+                    tool_call = cast(dict[str, Any], raw_tool_call)
+                    raw_function = tool_call.get("function")
+                    function = (
+                        cast(dict[str, Any], raw_function)
+                        if isinstance(raw_function, dict)
+                        else {}
+                    )
+                    response_input.append(
+                        {
+                            "type": "function_call",
+                            "call_id": str(tool_call.get("id") or ""),
+                            "name": str(function.get("name") or ""),
+                            "arguments": str(function.get("arguments") or "{}"),
+                        }
+                    )
+        return "\n\n".join(instructions), response_input
+
+    @staticmethod
+    def _convert_responses_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        converted: list[dict[str, Any]] = []
+        for tool in tools:
+            function = tool.get("function") if tool.get("type") == "function" else tool
+            function = function or {}
+            converted.append(
+                {
+                    "type": "function",
+                    "name": function.get("name", ""),
+                    "description": function.get("description", ""),
+                    "parameters": function.get(
+                        "parameters",
+                        function.get(
+                            "input_schema", {"type": "object", "properties": {}}
+                        ),
+                    ),
+                    "strict": False,
+                }
+            )
+        return converted
+
+    @staticmethod
+    def _responses_text_config(
+        response_format: type[BaseModel] | dict[str, Any] | None,
+        extra_params: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        text: dict[str, Any] = {}
+        verbosity = extra_params.get("verbosity")
+        if verbosity:
+            text["verbosity"] = verbosity
+        if isinstance(response_format, type):
+            text["format"] = {
+                "type": "json_schema",
+                "name": response_format.__name__,
+                "schema": to_strict_json_schema(response_format),
+                "strict": True,
+            }
+        elif isinstance(response_format, dict):
+            if response_format.get("type") == "json_schema":
+                raw_schema = response_format.get("json_schema")
+                schema = (
+                    cast(dict[str, Any], raw_schema)
+                    if isinstance(raw_schema, dict)
+                    else {}
+                )
+                text["format"] = {
+                    "type": "json_schema",
+                    "name": schema.get("name", "response"),
+                    "schema": schema.get("schema", {}),
+                    "strict": schema.get("strict", True),
+                }
+            elif response_format.get("type") == "json_object":
+                text["format"] = {"type": "json_object"}
+        elif extra_params.get("json_mode"):
+            text["format"] = {"type": "json_object"}
+        return text or None
+
+    def _normalize_responses_response(
+        self,
+        response: Any,
+        *,
+        response_format: type[BaseModel] | dict[str, Any] | None,
+        model: str,
+    ) -> CompletionResult:
+        raw_output = self._response_value(response, "output")
+        output: list[Any] = (
+            cast(list[Any], raw_output) if isinstance(raw_output, list) else []
+        )
+        raw_text = self._response_value(response, "output_text")
+        text = raw_text if isinstance(raw_text, str) else ""
+        tool_calls: list[ToolCallResult] = []
+        reasoning_details: list[dict[str, Any]] = []
+        for item in output:
+            item_type = self._response_value(item, "type")
+            if item_type == "function_call":
+                arguments = self._response_value(item, "arguments") or "{}"
+                try:
+                    parsed_arguments: Any = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError):
+                    parsed_arguments = {}
+                tool_input = (
+                    cast(dict[str, Any], parsed_arguments)
+                    if isinstance(parsed_arguments, dict)
+                    else {}
+                )
+                tool_calls.append(
+                    ToolCallResult(
+                        id=str(
+                            self._response_value(item, "call_id")
+                            or self._response_value(item, "id")
+                            or ""
+                        ),
+                        name=str(self._response_value(item, "name") or ""),
+                        input=tool_input,
+                    )
+                )
+            elif item_type == "reasoning":
+                if isinstance(item, BaseModel):
+                    reasoning_details.append(item.model_dump())
+                elif isinstance(item, dict):
+                    reasoning_details.append(cast(dict[str, Any], item))
+        content: Any = text
+        if isinstance(response_format, type) and text:
+            try:
+                content = validate_structured_output(text, response_format)
+            except (StructuredOutputError, ValidationError):
+                content = repair_response_model_json(text, response_format, model)
+        usage = self._response_value(response, "usage")
+        input_tokens = self._response_value(usage, "input_tokens") or 0
+        output_tokens = self._response_value(usage, "output_tokens") or 0
+        details = self._response_value(usage, "input_tokens_details")
+        cached_tokens = self._response_value(details, "cached_tokens") or 0
+        return CompletionResult(
+            content=content,
+            input_tokens=int(input_tokens),
+            output_tokens=int(output_tokens),
+            cache_read_input_tokens=int(cached_tokens),
+            finish_reason=self._responses_finish_reason(response),
+            tool_calls=tool_calls,
+            reasoning_details=reasoning_details,
+            raw_response=response,
+        )
+
+    @classmethod
+    def _responses_finish_reason(cls, response: Any) -> str:
+        return "stop" if cls._response_value(response, "status") == "completed" else "length"
+
+    @staticmethod
+    def _response_value(value: Any, key: str) -> Any:
+        if isinstance(value, dict):
+            mapping = cast(dict[str, Any], value)
+            return mapping.get(key)
+        return getattr(value, key, None)
 
     def _build_params(
         self,

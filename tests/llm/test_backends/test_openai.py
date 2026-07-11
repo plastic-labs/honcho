@@ -944,3 +944,212 @@ async def test_stream_structured_output_json_object_mode() -> None:
     assert call["response_format"] == {"type": "json_object"}
     system_messages = [m for m in call["messages"] if m["role"] == "system"]
     assert system_messages and "JSON" in system_messages[0]["content"]
+
+
+class _FakeResponsesStream:
+    def __init__(self, events: list[Any], final_response: Any) -> None:
+        self._events = events
+        self._final_response = final_response
+
+    async def __aenter__(self) -> "_FakeResponsesStream":
+        return self
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def _iter() -> AsyncIterator[Any]:
+            for event in self._events:
+                yield event
+
+        return _iter()
+
+    async def get_final_response(self) -> Any:
+        return self._final_response
+
+
+def _responses_final_response(
+    *,
+    text: str = "ok",
+    output: list[Any] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        output_text=text,
+        output=output
+        if output is not None
+        else [
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="output_text", text=text)],
+            )
+        ],
+        usage=SimpleNamespace(
+            input_tokens=11,
+            output_tokens=7,
+            input_tokens_details=SimpleNamespace(cached_tokens=3),
+        ),
+        status="completed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_responses_mode_builds_and_normalizes_completion() -> None:
+    client = Mock()
+    final = _responses_final_response(text="", output=[])
+    stream = _FakeResponsesStream(
+        [
+            SimpleNamespace(
+                type="response.output_text.delta", delta='{\"answer\":\"yes\"}'
+            ),
+            SimpleNamespace(type="response.completed", response=final),
+        ],
+        final,
+    )
+    client.responses.stream = Mock(return_value=stream)
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-5.6-luna",
+        messages=[
+            {"role": "system", "content": "Be precise."},
+            {"role": "user", "content": "Answer."},
+        ],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        thinking_effort="low",
+        extra_params={"api_mode": "responses"},
+    )
+
+    assert result.content == _StructuredResponse(answer="yes")
+    assert result.input_tokens == 11
+    assert result.output_tokens == 7
+    assert result.cache_read_input_tokens == 3
+    call = client.responses.stream.call_args.kwargs
+    assert call["model"] == "gpt-5.6-luna"
+    assert call["instructions"] == "Be precise."
+    assert call["input"] == [{"role": "user", "content": "Answer."}]
+    assert call["max_output_tokens"] == 100
+    assert call["reasoning"] == {"effort": "low"}
+    assert call["text"]["format"]["type"] == "json_schema"
+    assert call["text"]["format"]["name"] == "_StructuredResponse"
+    assert call["text"]["format"]["schema"]["additionalProperties"] is False
+    assert call["store"] is False
+
+
+def test_openai_backend_responses_mode_can_omit_max_output_tokens() -> None:
+    backend = OpenAIBackend(Mock())
+    params = backend._build_responses_params(
+        model="gpt-5.6-luna",
+        messages=[{"role": "user", "content": "Answer."}],
+        max_tokens=100,
+        tools=None,
+        tool_choice=None,
+        response_format=None,
+        thinking_effort=None,
+        extra_params={"api_mode": "responses", "omit_max_output_tokens": True},
+    )
+    assert "max_output_tokens" not in params
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_responses_mode_converts_tools_and_tool_history() -> None:
+    client = Mock()
+    function_call = SimpleNamespace(
+        type="function_call",
+        call_id="call_123",
+        name="lookup",
+        arguments='{\"topic\":\"memory\"}',
+    )
+    final = _responses_final_response(text="", output=[])
+    client.responses.stream = Mock(
+        return_value=_FakeResponsesStream(
+            [
+                SimpleNamespace(type="response.output_item.done", item=function_call),
+                SimpleNamespace(type="response.completed", response=final),
+            ],
+            final,
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-5.6-luna",
+        messages=[
+            {"role": "user", "content": "Look it up"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_old",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": '{\"topic\":\"old\"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_old", "content": "old result"},
+        ],
+        max_tokens=100,
+        tools=[
+            {
+                "name": "lookup",
+                "description": "Look up a topic",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"topic": {"type": "string"}},
+                },
+            }
+        ],
+        tool_choice="required",
+        extra_params={"api_mode": "responses"},
+    )
+
+    assert result.tool_calls[0].id == "call_123"
+    assert result.tool_calls[0].name == "lookup"
+    assert result.tool_calls[0].input == {"topic": "memory"}
+    call = client.responses.stream.call_args.kwargs
+    assert call["tools"][0] == {
+        "type": "function",
+        "name": "lookup",
+        "description": "Look up a topic",
+        "parameters": {
+            "type": "object",
+            "properties": {"topic": {"type": "string"}},
+        },
+        "strict": False,
+    }
+    assert call["tool_choice"] == "required"
+    assert any(item.get("type") == "function_call" for item in call["input"])
+    assert any(item.get("type") == "function_call_output" for item in call["input"])
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_responses_mode_streams_text_and_done_usage() -> None:
+    client = Mock()
+    events = [
+        SimpleNamespace(type="response.output_text.delta", delta="hel"),
+        SimpleNamespace(type="response.output_text.delta", delta="lo"),
+        SimpleNamespace(
+            type="response.completed",
+            response=_responses_final_response(text="hello"),
+        ),
+    ]
+    client.responses.stream = Mock(
+        return_value=_FakeResponsesStream(events, _responses_final_response(text="hello"))
+    )
+
+    backend = OpenAIBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="gpt-5.6-luna",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            extra_params={"api_mode": "responses"},
+        )
+    ]
+
+    assert [chunk.content for chunk in chunks if chunk.content] == ["hel", "lo"]
+    assert chunks[-1].is_done is True
+    assert chunks[-1].finish_reason == "stop"
+    assert chunks[-1].output_tokens == 7
