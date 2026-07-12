@@ -808,6 +808,7 @@ async def test_structured_output_json_object_mode_request_shape() -> None:
     assert system_messages, "expected a system message carrying the schema"
     system_content = system_messages[0]["content"]
     assert "JSON" in system_content
+    assert "json" in system_content
     assert "answer" in system_content  # schema property serialized in
     assert isinstance(result.content, _StructuredResponse)
     assert result.content.answer == "ok"
@@ -943,4 +944,6 @@ async def test_stream_structured_output_json_object_mode() -> None:
     call = _await_kwargs(client.chat.completions.create)
     assert call["response_format"] == {"type": "json_object"}
     system_messages = [m for m in call["messages"] if m["role"] == "system"]
-    assert system_messages and "JSON" in system_messages[0]["content"]
+    assert system_messages
+    assert "JSON" in system_messages[0]["content"]
+    assert "json" in system_messages[0]["content"]

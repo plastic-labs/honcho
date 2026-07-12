@@ -30,11 +30,12 @@ def _json_object_instruction(response_format: type[BaseModel]) -> str:
     instruction — the deriver issues one structured call per batch on the worker
     hot path and would otherwise re-walk the schema + re-serialize it every call.
     """
-    # "JSON" must appear in the messages to satisfy the json_object contract.
+    # Some OpenAI-compatible providers enforce this JSON-object precondition with
+    # a case-sensitive substring check, so include lowercase "json" explicitly.
     return (
-        "You must respond with a single JSON object that conforms exactly to "
-        "the following JSON schema. Do not include any text, markdown, or code "
-        "fences outside the JSON object.\n\nJSON schema:\n"
+        "You must respond with a single JSON object (json) that conforms "
+        "exactly to the following JSON schema. Do not include any text, "
+        "markdown, or code fences outside the JSON object.\n\nJSON schema:\n"
         f"{json.dumps(response_format.model_json_schema())}"
     )
 
