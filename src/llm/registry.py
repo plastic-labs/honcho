@@ -32,6 +32,14 @@ from .history_adapters import (
 )
 from .types import ProviderClient
 
+# Default client-level HTTP timeouts. Anthropic accepts seconds (float);
+# google-genai's HttpOptions.timeout is an int in milliseconds, so the Gemini
+# value is kept separately. Both default to 10 minutes to match the existing
+# Anthropic behavior — long enough for slow streamed responses, short enough
+# that a stalled socket can no longer wedge the deriver worker (see #785).
+_ANTHROPIC_TIMEOUT_S = 600.0
+_GEMINI_TIMEOUT_MS = 600_000
+
 # Client-level ``default_headers`` applied to OpenAI-compatible clients, keyed by
 # base-URL prefix. Currently only OpenRouter, which uses them for app attribution
 # (https://openrouter.ai/docs/app-attribution); add a prefix here to tag another
@@ -54,13 +62,28 @@ def _default_headers_for(base_url: str | None) -> dict[str, str]:
     return {}
 
 
+def _build_gemini_http_options(base_url: str | None) -> genai_types.HttpOptions:
+    """Build Gemini ``HttpOptions`` carrying a default HTTP timeout.
+
+    google-genai's ``HttpOptions.timeout`` is an int in milliseconds. A stalled
+    Gemini socket without this value wedges the entire deriver process because
+    all deriver workers share one uvloop event loop (see #785). Keep the
+    timeout even when no ``base_url`` is configured — that's the path the
+    default ``get_gemini_client`` takes and it's the one that was hanging.
+    """
+    return genai_types.HttpOptions(
+        base_url=base_url,
+        timeout=_GEMINI_TIMEOUT_MS,
+    )
+
+
 @lru_cache(maxsize=1)
 def get_anthropic_client() -> AsyncAnthropic:
     """Default Anthropic client built from settings.LLM.ANTHROPIC_API_KEY."""
     return AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
         base_url=settings.LLM.ANTHROPIC_BASE_URL,
-        timeout=600.0,
+        timeout=_ANTHROPIC_TIMEOUT_S,
     )
 
 
@@ -77,12 +100,10 @@ def get_openai_client() -> AsyncOpenAI:
 @lru_cache(maxsize=1)
 def get_gemini_client() -> genai.Client:
     """Default Gemini client built from settings.LLM.GEMINI_API_KEY."""
-    http_options = (
-        genai_types.HttpOptions(base_url=settings.LLM.GEMINI_BASE_URL)
-        if settings.LLM.GEMINI_BASE_URL
-        else None
+    return genai.Client(
+        api_key=settings.LLM.GEMINI_API_KEY,
+        http_options=_build_gemini_http_options(settings.LLM.GEMINI_BASE_URL),
     )
-    return genai.Client(api_key=settings.LLM.GEMINI_API_KEY, http_options=http_options)
 
 
 # Bounded cache — in practice the (base_url, api_key) key space is small
@@ -105,7 +126,9 @@ def get_anthropic_override_client(
     api_key: str | None,
 ) -> AsyncAnthropic:
     """Anthropic client for a specific (base_url, api_key) pair. Cached by key."""
-    return AsyncAnthropic(api_key=api_key, base_url=base_url, timeout=600.0)
+    return AsyncAnthropic(
+        api_key=api_key, base_url=base_url, timeout=_ANTHROPIC_TIMEOUT_S
+    )
 
 
 @lru_cache(maxsize=128)
@@ -113,8 +136,10 @@ def get_gemini_override_client(
     base_url: str | None, api_key: str | None
 ) -> genai.Client:
     """Gemini client for a specific (base_url, api_key) pair. Cached by key."""
-    http_options = genai_types.HttpOptions(base_url=base_url) if base_url else None
-    return genai.Client(api_key=api_key, http_options=http_options)
+    return genai.Client(
+        api_key=api_key,
+        http_options=_build_gemini_http_options(base_url),
+    )
 
 
 # Module-level default-client registry, populated at import time. Tests patch
@@ -125,7 +150,7 @@ if settings.LLM.ANTHROPIC_API_KEY:
     CLIENTS["anthropic"] = AsyncAnthropic(
         api_key=settings.LLM.ANTHROPIC_API_KEY,
         base_url=settings.LLM.ANTHROPIC_BASE_URL,
-        timeout=600.0,
+        timeout=_ANTHROPIC_TIMEOUT_S,
     )
 
 if settings.LLM.OPENAI_API_KEY:
@@ -136,14 +161,9 @@ if settings.LLM.OPENAI_API_KEY:
     )
 
 if settings.LLM.GEMINI_API_KEY:
-    http_options = (
-        genai_types.HttpOptions(base_url=settings.LLM.GEMINI_BASE_URL)
-        if settings.LLM.GEMINI_BASE_URL
-        else None
-    )
     CLIENTS["gemini"] = genai.Client(
         api_key=settings.LLM.GEMINI_API_KEY,
-        http_options=http_options,
+        http_options=_build_gemini_http_options(settings.LLM.GEMINI_BASE_URL),
     )
 
 
