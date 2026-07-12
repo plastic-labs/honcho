@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -141,6 +141,12 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
     embedding = await client.embed("hello world")
 
     assert embedding == [0.2] * 12
+    # 10-minute HTTP timeout, in lockstep with the LLM registry's Gemini client
+    # (see #785). Without this, a stalled Gemini embedding socket wedges the
+    # deriver worker — the same failure mode the LLM fix addresses.
+    gemini_client = cast(Any, client.client)
+    assert gemini_client.http_options.base_url == "https://gemini-proxy.example/v1beta"
+    assert gemini_client.http_options.timeout == 600_000
     assert calls == [
         {
             "model": "gemini-embedding-001",
@@ -148,6 +154,49 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
             "config": {"output_dimensionality": 12},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_gemini_embedding_client_keeps_timeout_without_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No-base-url Gemini embedding client must still carry an HTTP timeout."""
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: str,
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            return SimpleNamespace(
+                embeddings=[SimpleNamespace(values=[0.1] * 8)],
+            )
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.api_key = api_key
+            self.http_options = http_options
+            self.aio = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    gemini_client = cast(Any, client.client)
+    assert gemini_client.http_options.base_url is None
+    assert gemini_client.http_options.timeout == 600_000
 
 
 def _build_openai_client(

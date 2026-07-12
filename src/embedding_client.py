@@ -182,10 +182,13 @@ class _EmbeddingClient:
         if self.transport == "gemini":
             if not config.api_key:
                 raise ValueError("Gemini API key is required")
-            http_options = (
-                genai_types.HttpOptions(base_url=config.base_url)
-                if config.base_url
-                else None
+            # 10-minute HTTP timeout, in lockstep with the LLM registry's Gemini
+            # client (`src/llm/registry.py:_build_gemini_http_options`). Without
+            # this, a stalled Gemini embedding socket wedges the deriver worker
+            # exactly the way #785 describes for the LLM client.
+            http_options = genai_types.HttpOptions(
+                base_url=config.base_url,
+                timeout=600_000,
             )
             self.client: genai.Client | AsyncOpenAI = genai.Client(
                 api_key=config.api_key,
