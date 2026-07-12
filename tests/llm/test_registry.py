@@ -16,7 +16,6 @@ from google.genai import types as genai_types
 from src import config as app_config
 from src.llm import registry as registry_module
 
-
 # Gemini's HttpOptions.timeout is an int in milliseconds; keep it in lockstep
 # with the Anthropic client's 600s timeout to match the rest of the registry.
 _GEMINI_TIMEOUT_MS = 600_000
