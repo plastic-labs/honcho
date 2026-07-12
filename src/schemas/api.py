@@ -366,10 +366,9 @@ class SessionCreate(SessionBase):
         default=None,
         description=(
             "Optional list of (unprefixed) scope names to add this session to. "
-            "Each scope is created if it does not exist yet. Note: scope "
-            "membership only affects messages ingested after the session is "
-            "added to the scope; backfill of pre-existing documents lands in a "
-            "follow-up (DEV-1999)."
+            "Each scope is created if it does not exist yet. If the session "
+            "already has messages, its existing documents are backfilled into "
+            "the scope asynchronously."
         ),
     )
 
@@ -534,6 +533,18 @@ class ScopeSessions(BaseModel):
     """IDs of the sessions that are currently members of a scope."""
 
     session_ids: list[str]
+
+
+class ScopeStatus(BaseModel):
+    """Per-session backfill/reconciliation job status for a scope (DEV-1999).
+
+    ``backfill_status`` maps each session that has had a backfill enqueued to
+    its current job state: ``{state, updated_at[, docs_copied]}`` where
+    ``state`` is ``pending``/``completed``/``failed`` and ``docs_copied`` is
+    present once a backfill completes.
+    """
+
+    backfill_status: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -773,6 +784,14 @@ class ScheduleDreamRequest(BaseModel):
     dream_type: DreamType = Field(..., description="Type of dream to schedule")
     session_id: str | None = Field(
         None, description="Session ID to scope the dream to if specified"
+    )
+    rebuild: bool = Field(
+        False,
+        description=(
+            "card_refresh dreams only: rebuild the peer card solely from "
+            "observations currently in the collection, without injecting the "
+            "existing card (use after removals)"
+        ),
     )
 
 
