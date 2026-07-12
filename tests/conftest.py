@@ -88,6 +88,8 @@ _RUNTIME_MOCK_TEST_BLOCKLIST_PREFIXES = (
     "tests/utils/test_clients.py",
     # Session-scope SQL shape — asserts on compiled statements, never executes one.
     "tests/crud/test_session_scope_clauses.py",
+    # Pure PromptRepresentation model-validation tests — no DB needed.
+    "tests/utils/test_representation.py",
     # Pure JWT scope tests — operate on src.security directly, no DB needed.
     "tests/test_security.py",
     "tests/test_generate_jwt_script.py",
