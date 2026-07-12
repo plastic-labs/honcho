@@ -114,16 +114,28 @@ class PromptRepresentation(BaseModel):
     """
 
     explicit: list[ExplicitObservationBase] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: [{'content': 'The user is 25 years old'}, {'content': 'The user has a dog named Rover'}]",
         default_factory=list,
     )
 
     @field_validator("explicit", mode="before")
     @classmethod
-    def convert_none_to_empty_list(cls, v: Any) -> Any:
-        """Convert None to empty list - handles LLMs returning null instead of []."""
+    def normalize_explicit(cls, v: Any) -> Any:
+        """Normalize the ``explicit`` payload before validation.
+
+        Handles two shapes LLMs emit in ``json_object`` mode, where the model
+        sees only the prompt/schema text and often returns the simpler form:
+
+        - ``None`` instead of ``[]`` (some models return null for empty lists).
+        - bare strings instead of ``{"content": ...}`` objects. Providers
+          without ``json_schema`` support (e.g. DeepSeek, some vLLM configs)
+          frequently emit ``{"explicit": ["fact 1", ...]}``; coerce each string
+          into the expected object so observations aren't silently dropped (#893).
+        """
         if v is None:
             return []
+        if isinstance(v, list):
+            return [{"content": item} if isinstance(item, str) else item for item in v]
         return v
 
 
