@@ -114,7 +114,12 @@ class PromptRepresentation(BaseModel):
     """
 
     explicit: list[ExplicitObservationBase] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+        description=(
+            "Facts LITERALLY stated by the user - direct quotes or clear "
+            "paraphrases only, no interpretation or inference. "
+            'Example: [{"content": "The user is 25 years old"}, '
+            '{"content": "The user has a dog named Rover"}]'
+        ),
         default_factory=list,
     )
 
