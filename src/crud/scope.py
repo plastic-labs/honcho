@@ -13,7 +13,6 @@ removing a session enqueues a ``scope_removal`` task (soft-delete of the
 session's documents plus dependent derived documents).
 """
 
-import json
 from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any, Literal
@@ -395,10 +394,18 @@ async def update_scope_backfill_status(
     if docs_copied is not None:
         entry["docs_copied"] = docs_copied
 
+    # NOTE: the JSONB operand must be a Python dict, not a json.dumps() string.
+    # cast(<already-serialized-str>, JSONB) double-encodes: psycopg's JSONB
+    # bind adapter serializes the *string* again, producing a JSONB string
+    # scalar instead of an object. `||` between two non-array jsonb scalars
+    # doesn't merge keys — it silently wraps both sides into a 2-element
+    # array, corrupting backfill_status into a list and later crashing
+    # clear_scope_backfill_status's `#-` path delete (which then sees an
+    # array where it expects an object).
     merged_status = func.coalesce(
         models.Peer.internal_metadata.op("->")(BACKFILL_STATUS_KEY),
-        cast("{}", JSONB),
-    ).op("||")(cast(json.dumps({session_name: entry}), JSONB))
+        cast({}, JSONB),
+    ).op("||")(cast({session_name: entry}, JSONB))
 
     stmt = (
         update(models.Peer)

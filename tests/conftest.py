@@ -849,6 +849,7 @@ def mock_tracked_db(request: pytest.FixtureRequest):
         "src.dialectic.core.tracked_db",
         "src.dreamer.specialists.tracked_db",
         "src.dreamer.surprisal.tracked_db",
+        "src.deriver.scope_backfill.tracked_db",
     ]
     with ExitStack() as stack:
         for target in tracked_db_targets:
