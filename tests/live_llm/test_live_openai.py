@@ -93,7 +93,10 @@ async def test_live_openai_gpt5_reasoning_structured_output_and_prefix_caching(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)
-    backend, config = make_backend(model_spec, reasoning_effort="minimal")
+    # gpt-5.4 dropped 'minimal' from the reasoning_effort vocabulary
+    # (none/low/../xhigh); 'low' is the lowest tier both generations accept.
+    reasoning_effort = "low" if model_spec.model.startswith("gpt-5.4") else "minimal"
+    backend, config = make_backend(model_spec, reasoning_effort=reasoning_effort)
     parse_calls = wrap_async_method(
         monkeypatch,
         backend._client.chat.completions,
@@ -136,7 +139,7 @@ async def test_live_openai_gpt5_reasoning_structured_output_and_prefix_caching(
     assert second.cache_read_input_tokens > 0
 
     assert parse_calls[0]["kwargs"]["response_format"] is StructuredLiveResponse
-    assert parse_calls[0]["kwargs"]["reasoning_effort"] == "minimal"
+    assert parse_calls[0]["kwargs"]["reasoning_effort"] == reasoning_effort
     assert "max_completion_tokens" in parse_calls[0]["kwargs"]
     assert "max_tokens" not in parse_calls[0]["kwargs"]
 

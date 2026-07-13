@@ -109,25 +109,35 @@ async def run_tool_then_structured_flow(
         ),
     ]
 
-    # gemini-2.5-flash occasionally returns an empty candidate on the
-    # post-tool turn; in production the executor's retry layer absorbs
-    # that, but this calls the backend directly, so retry here.
+    # tool_choice stays "auto" on the replay turn — the production tool loop
+    # (dialectic) never forces "none", and gemini-2.5-flash is prone to
+    # returning empty candidates under NONE mode. Retry the turn on empty /
+    # unparseable candidates (in production the executor's retry layer
+    # absorbs those; this calls the backend directly) and on the rare run
+    # where the model chooses to tool-call again instead of answering.
     second: CompletionResult | None = None
     last_error: Exception | None = None
     for _ in range(3):
         try:
-            second = await execute_completion(
+            candidate = await execute_completion(
                 backend,
                 config,
                 messages=replay_messages,
                 max_tokens=4096,
                 tools=tools,
-                tool_choice="none",
+                tool_choice="auto",
                 response_format=FavoritePrimeReport,
             )
-            break
         except (ValidationError, LLMError, StructuredOutputError) as exc:
             last_error = exc
+            continue
+        if candidate.tool_calls:
+            last_error = AssertionError(
+                "model issued another tool call instead of answering"
+            )
+            continue
+        second = candidate
+        break
     if second is None:
         raise AssertionError(
             "structured replay turn failed on all attempts"
@@ -211,7 +221,10 @@ async def test_live_gemini_tools_with_structured_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)
-    backend, config = make_backend(model_spec, temperature=0)
+    # No temperature pin: gemini-2.5-flash occasionally returns an empty
+    # candidate on the replay turn, and at temperature=0 the retry re-sends
+    # a deterministic request — default sampling gives retries a real chance.
+    backend, config = make_backend(model_spec)
     generate_calls = wrap_async_method(
         monkeypatch,
         backend._client.aio.models,
