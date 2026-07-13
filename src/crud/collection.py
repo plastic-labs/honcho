@@ -48,6 +48,7 @@ def collection_cache_key(workspace_name: str, observer: str, observed: str) -> s
     key=COLLECTION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
     prefix=COLLECTION_LOCK_PREFIX,
+    check_interval=settings.CACHE.LOCK_WAIT_CHECK_INTERVAL_SECONDS,
 )
 async def _fetch_collection(
     db: AsyncSession,

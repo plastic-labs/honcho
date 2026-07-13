@@ -60,6 +60,7 @@ def workspace_cache_key(workspace_name: str) -> str:
     key=WORKSPACE_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
     prefix=WORKSPACE_LOCK_PREFIX,
+    check_interval=settings.CACHE.LOCK_WAIT_CHECK_INTERVAL_SECONDS,
 )
 async def _fetch_workspace(
     db: AsyncSession, workspace_name: str
