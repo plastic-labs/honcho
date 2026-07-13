@@ -139,6 +139,10 @@ jobs:
       - name: Configure test environment
         run: |
           {
+            # The staging dotenv carries AUTH_USE_AUTH=true without a usable
+            # JWT secret; src/config.py validates the pair at import time, so
+            # disable auth (this suite never runs the API server anyway).
+            echo "AUTH_USE_AUTH=false"
             echo "SENTRY_ENABLED=false"
             echo "TELEMETRY_ENABLED=false"
             echo "LIVE_LLM_ANTHROPIC_45_PLUS_MODELS=claude-sonnet-4-5"
