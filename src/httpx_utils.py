@@ -26,7 +26,13 @@ def get_async_transport(**kwargs) -> httpx.AsyncHTTPTransport | None:
     Returns ``None`` when no override is needed (the default).
     """
     if _force_ipv4_enabled():
-        return httpx.AsyncHTTPTransport(local_address="0.0.0.0", **kwargs)
+        # local_address="0.0.0.0" is an outbound source-address hint (bind to
+        # any IPv4 local interface), not a server listen bind, so Ruff's S104
+        # "binding to all interfaces" warning is a false positive here.
+        return httpx.AsyncHTTPTransport(
+            local_address="0.0.0.0",  # noqa: S104
+            **kwargs,
+        )
     return None
 
 

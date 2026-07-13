@@ -44,7 +44,9 @@ async def deliver_webhook(payload: WebhookPayload, workspace_name: str) -> None:
             logger.exception("Failed to generate webhook signature")
             return
 
-        async with httpx.AsyncClient(timeout=30.0, transport=get_async_transport()) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0, transport=get_async_transport()
+        ) as client:
             tasks = [
                 client.post(
                     url=url,
