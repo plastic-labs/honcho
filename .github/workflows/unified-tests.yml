@@ -6,14 +6,44 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+  # Manual trigger for PRs: add the `run-unified-tests` label to run the suite
+  # against the PR's merge commit. The label is purged as soon as the run
+  # starts so it can be re-added to trigger another run.
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: read
   actions: read
 
 jobs:
+  # Purge the trigger label first thing. Best-effort: failing to remove the
+  # label (e.g. read-only token on a fork PR) doesn't block the tests.
+  remove-label:
+    name: Remove trigger label
+    if: github.event_name == 'pull_request' && github.event.label.name == 'run-unified-tests'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove run-unified-tests label
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api --method DELETE \
+            "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/run-unified-tests"; then
+            echo "::warning::Could not remove the run-unified-tests label (it may have been removed already)"
+          fi
+
   start-runner:
     name: Start Fly Runner
+    needs: remove-label
+    # always() lets this run on push events, where remove-label is skipped.
+    # Label adds other than run-unified-tests trigger the workflow but skip
+    # every job here.
+    if: >-
+      always() &&
+      (github.event_name == 'push' || github.event.label.name == 'run-unified-tests')
     uses: ./.github/workflows/start-fly-runner.yml
     secrets: inherit
 
@@ -97,11 +127,52 @@ jobs:
             ,${{ steps.resolve-secret.outputs.second-id }}
           parse-json-secrets: true
 
+      # Layer test-specific overrides on top of the staging secret. The staging
+      # dotenv tracks the deployed release and can drift from what main's config
+      # expects; the TESTING_SECRET_ID secret holds only the keys (flat JSON,
+      # exact env var names) the unified tests need to pin. The get-secrets
+      # action refuses to inject an env var that already exists, so the
+      # overrides are fetched under a prefix alias here and promoted over the
+      # staging values in the next step.
+      - name: Fetch testing secret overrides
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            HONCHO_TEST_OVERRIDE,${{ secrets.TESTING_SECRET_ID }}
+          parse-json-secrets: true
+
+      # Re-export each HONCHO_TEST_OVERRIDE_* var under its real name; the
+      # later $GITHUB_ENV write wins over the value loaded from the staging
+      # secret. Values are already masked by the fetch step above.
+      - name: Apply testing secret overrides
+        run: |
+          set -euo pipefail
+          applied=0
+          while IFS= read -r -d '' entry; do
+            name="${entry%%=*}"
+            value="${entry#*=}"
+            case "$name" in
+              HONCHO_TEST_OVERRIDE_*)
+                target="${name#HONCHO_TEST_OVERRIDE_}"
+                {
+                  echo "${target}<<__HONCHO_OVERRIDE_EOF__"
+                  printf '%s\n' "$value"
+                  echo "__HONCHO_OVERRIDE_EOF__"
+                } >> "$GITHUB_ENV"
+                echo "Overriding ${target}"
+                applied=$((applied + 1))
+                ;;
+            esac
+          done < <(env -0)
+          echo "Applied ${applied} override(s)"
+
       # Configure the test environment. Disables auth/Sentry/CloudEvents telemetry
       # (their endpoints aren't reachable from CI), and points REASONING_TRACES_FILE
       # at a shared path so the API + deriver record full LLM I/O for auditing — the
       # runner uploads it to S3. Written after the fetch steps so these win over the
-      # values loaded from Secrets Manager (last $GITHUB_ENV write wins).
+      # values loaded from Secrets Manager (last $GITHUB_ENV write wins). Stale
+      # config keys loaded from the staging secret (e.g. settings that have since
+      # been renamed or removed on main) must always be ignored by the app config.
       - name: Configure test environment
         run: |
           echo "AUTH_USE_AUTH=false" >> "$GITHUB_ENV"
@@ -168,7 +239,7 @@ jobs:
             exit 0
           fi
 
-          RUNNER_ID="" 
+          RUNNER_ID=""
           if [ -n "$RUNNER_NAME" ]; then
             RUNNER_ID=$(echo "$RUNNERS_RESPONSE" | jq -r --arg name "$RUNNER_NAME" '.runners[]? | select(.name == $name) | .id')
           fi
