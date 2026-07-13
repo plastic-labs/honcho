@@ -1,5 +1,6 @@
 """Unit tests for src/utils/schema_conversion.py."""
 
+import json
 import re
 from typing import Any
 
@@ -57,6 +58,12 @@ class TestPrimitives:
             _object({"nothing": {"type": "null"}}, required=["nothing"])
         )
         assert model.model_validate({"nothing": None}).nothing is None  # pyright: ignore
+
+    def test_default_wins_over_required(self):
+        model = json_response_schema_to_pydantic(
+            _object({"count": {"type": "integer", "default": 3}}, required=["count"])
+        )
+        assert model.model_validate({}).count == 3  # pyright: ignore
 
 
 class TestNesting:
@@ -170,6 +177,31 @@ class TestEnumsAndUnions:
         )
         assert model.model_validate({"name": None}).name is None  # pyright: ignore
 
+    def test_all_null_enum_degenerates_to_none(self):
+        model = json_response_schema_to_pydantic(
+            _object({"nothing": {"enum": [None]}}, required=["nothing"])
+        )
+        assert model.model_validate({"nothing": None}).nothing is None  # pyright: ignore
+        with pytest.raises(ValidationError):
+            model.model_validate({"nothing": "x"})
+
+    def test_union_of_objects(self):
+        model = json_response_schema_to_pydantic(
+            _object(
+                {
+                    "pet": {
+                        "anyOf": [
+                            _object({"meows": {"type": "boolean"}}, required=["meows"]),
+                            _object({"barks": {"type": "boolean"}}, required=["barks"]),
+                        ]
+                    }
+                },
+                required=["pet"],
+            )
+        )
+        instance = model.model_validate({"pet": {"barks": True}})
+        assert instance.pet.barks is True  # pyright: ignore
+
 
 class TestRejections:
     @pytest.mark.parametrize(
@@ -238,6 +270,39 @@ class TestRejections:
         schema = _object({f"field_{i}": {"type": "string"} for i in range(600)})
         with pytest.raises(ValueError, match="maximum of 500 nodes"):
             json_response_schema_to_pydantic(schema)
+
+    def test_property_schema_not_an_object(self):
+        with pytest.raises(ValueError, match="schema must be an object"):
+            json_response_schema_to_pydantic(_object({"a": "string"}))
+
+    @pytest.mark.parametrize("members", [[], "not-a-list"])
+    def test_malformed_anyof(self, members: Any):
+        with pytest.raises(ValueError, match="'anyOf' must be a non-empty array"):
+            json_response_schema_to_pydantic(_object({"a": {"anyOf": members}}))
+
+    def test_empty_type_list(self):
+        with pytest.raises(ValueError, match="'type' array must not be empty"):
+            json_response_schema_to_pydantic(_object({"a": {"type": []}}))
+
+    @pytest.mark.parametrize("values", [[], "loves"])
+    def test_malformed_enum(self, values: Any):
+        with pytest.raises(ValueError, match="'enum' must be a non-empty array"):
+            json_response_schema_to_pydantic(_object({"a": {"enum": values}}))
+
+    def test_properties_not_an_object(self):
+        with pytest.raises(ValueError, match="'properties' must be an object"):
+            json_response_schema_to_pydantic({"type": "object", "properties": []})
+
+    @pytest.mark.parametrize("required", ["a", [1]])
+    def test_malformed_required(self, required: Any):
+        with pytest.raises(ValueError, match="'required' must be an array of strings"):
+            json_response_schema_to_pydantic(
+                _object({"a": {"type": "string"}}, required=required)
+            )
+
+    def test_empty_property_name(self):
+        with pytest.raises(ValueError, match="property names"):
+            json_response_schema_to_pydantic(_object({"": {"type": "string"}}))
 
 
 class TestLenientAcceptance:
@@ -322,6 +387,31 @@ class TestFieldMetadata:
         assert '"my-key":"v"' in dumped
         assert '"_private":7' in dumped
 
+    def test_digit_leading_key_gets_field_prefix(self):
+        model = json_response_schema_to_pydantic(
+            _object({"123": {"type": "integer"}}, required=["123"])
+        )
+        instance = model.model_validate({"123": 7})
+        assert instance.model_dump(by_alias=True) == {"123": 7}
+
+    def test_sanitized_key_collision_round_trip(self):
+        # "my-key" sanitizes to "my_key", which then collides with the real
+        # "my_key" property; both must survive with their original JSON keys.
+        model = json_response_schema_to_pydantic(
+            _object(
+                {"my-key": {"type": "string"}, "my_key": {"type": "integer"}},
+                required=["my-key", "my_key"],
+            )
+        )
+        instance = model.model_validate({"my-key": "v", "my_key": 7})
+        assert instance.model_dump(by_alias=True) == {"my-key": "v", "my_key": 7}
+
+    def test_digit_leading_model_name(self):
+        model = json_response_schema_to_pydantic(
+            _object({"a": {"type": "string"}}), model_name="123"
+        )
+        assert model.__name__ == "Model123"
+
 
 class TestZodCompatibility:
     def test_zod4_tojsonschema_output_converts(self):
@@ -377,3 +467,234 @@ class TestCustomGuardLimits:
         schema = _object({f"f{i}": {"type": "string"} for i in range(20)})
         with pytest.raises(ValueError, match="maximum of 10 nodes"):
             json_response_schema_to_pydantic(schema, max_nodes=10)
+
+    def test_depth_exactly_at_limit_allowed(self):
+        # Leaf sits at depth == max_depth; only depth > max_depth must fail.
+        schema: dict[str, Any] = {"type": "string"}
+        for _ in range(3):
+            schema = _object({"inner": schema})
+        model = json_response_schema_to_pydantic(schema, max_depth=3)
+        assert issubclass(model, BaseModel)
+
+
+# The wiki spec's own request example (dialectic-enhancements §3.A.1).
+SPEC_EXAMPLE_SCHEMA = _object(
+    {
+        "preferences": {
+            "type": "array",
+            "items": _object(
+                {
+                    "food": {"type": "string"},
+                    "sentiment": {
+                        "type": "string",
+                        "enum": ["loves", "likes", "neutral", "dislikes", "hates"],
+                    },
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                required=["food", "sentiment"],
+            ),
+            "maxItems": 3,
+        },
+        "summary": {"type": "string"},
+    },
+    required=["preferences", "summary"],
+)
+
+
+class TestEndToEnd:
+    """Table tests running the full pipeline the server runs: convert the
+    caller's schema, validate a payload against the generated model, and
+    serialize it back with model_dump_json(by_alias=True)."""
+
+    @pytest.mark.parametrize(
+        "schema,payload,expected",
+        [
+            pytest.param(
+                SPEC_EXAMPLE_SCHEMA,
+                {
+                    "preferences": [
+                        {
+                            "food": "dark roast coffee",
+                            "sentiment": "loves",
+                            "confidence": 0.95,
+                        },
+                        {"food": "sushi", "sentiment": "likes"},
+                    ],
+                    "summary": "Coffee enthusiast.",
+                },
+                {
+                    "preferences": [
+                        {
+                            "food": "dark roast coffee",
+                            "sentiment": "loves",
+                            "confidence": 0.95,
+                        },
+                        {"food": "sushi", "sentiment": "likes", "confidence": None},
+                    ],
+                    "summary": "Coffee enthusiast.",
+                },
+                id="spec-example",
+            ),
+            pytest.param(
+                _object(
+                    {
+                        "user": _object(
+                            {
+                                "name": {"type": "string"},
+                                "location": _object(
+                                    {
+                                        "lat": {"type": "number"},
+                                        "lon": {"type": "number"},
+                                    },
+                                    required=["lat", "lon"],
+                                ),
+                            },
+                            required=["name", "location"],
+                        )
+                    },
+                    required=["user"],
+                ),
+                {"user": {"name": "ada", "location": {"lat": 37.8, "lon": -122.3}}},
+                {"user": {"name": "ada", "location": {"lat": 37.8, "lon": -122.3}}},
+                id="nested-three-levels",
+            ),
+            pytest.param(
+                _object(
+                    {"my-key": {"type": "string"}, "first name": {"type": "string"}},
+                    required=["my-key"],
+                ),
+                {"my-key": "v", "first name": "Ada"},
+                {"my-key": "v", "first name": "Ada"},
+                id="alias-keys-round-trip",
+            ),
+            pytest.param(
+                _object(
+                    {
+                        "count": {"type": "integer", "default": 3},
+                        "tag": {"type": "string", "default": "none"},
+                    }
+                ),
+                {},
+                {"count": 3, "tag": "none"},
+                id="defaults-fill-omitted-fields",
+            ),
+            pytest.param(
+                _object(
+                    {
+                        "a": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                        "b": {"type": ["integer", "null"]},
+                    },
+                    required=["a", "b"],
+                ),
+                {"a": None, "b": 2},
+                {"a": None, "b": 2},
+                id="nullable-via-anyof-and-type-list",
+            ),
+            pytest.param(
+                _object(
+                    {"value": {"oneOf": [{"type": "integer"}, {"type": "string"}]}},
+                    required=["value"],
+                ),
+                {"value": "five"},
+                {"value": "five"},
+                id="oneof-union-string-member",
+            ),
+            pytest.param(
+                _object({"level": {"enum": [1, 2, None]}}, required=["level"]),
+                {"level": None},
+                {"level": None},
+                id="enum-with-null-member",
+            ),
+            pytest.param(
+                _object({"stuff": {"type": "array"}}, required=["stuff"]),
+                {"stuff": [1, "two", {"three": 3}, None]},
+                {"stuff": [1, "two", {"three": 3}, None]},
+                id="array-without-items-accepts-anything",
+            ),
+            pytest.param(
+                _object(
+                    {
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "maxItems": 2,
+                        }
+                    },
+                    required=["tags"],
+                ),
+                {"tags": ["a", "b", "c", "d"]},
+                {"tags": ["a", "b", "c", "d"]},
+                id="constraint-hints-not-enforced",
+            ),
+            pytest.param(
+                _object({"known": {"type": "string"}}, required=["known"]),
+                {"known": "x", "hallucinated": "dropped"},
+                {"known": "x"},
+                id="extra-keys-dropped",
+            ),
+            pytest.param(
+                {"type": "object", "properties": {}},
+                {},
+                {},
+                id="empty-object",
+            ),
+        ],
+    )
+    def test_construct_validate_serialize(
+        self,
+        schema: dict[str, Any],
+        payload: dict[str, Any],
+        expected: dict[str, Any],
+    ):
+        model = json_response_schema_to_pydantic(schema)
+        instance = model.model_validate(payload)
+        # by_alias=True mirrors DialecticAgent.answer's serialization.
+        assert json.loads(instance.model_dump_json(by_alias=True)) == expected
+
+    @pytest.mark.parametrize(
+        "schema,payload",
+        [
+            pytest.param(
+                SPEC_EXAMPLE_SCHEMA,
+                {"preferences": [{"food": "sushi"}], "summary": "s"},
+                id="missing-required-in-array-item",
+            ),
+            pytest.param(
+                SPEC_EXAMPLE_SCHEMA,
+                {
+                    "preferences": [{"food": "sushi", "sentiment": "adores"}],
+                    "summary": "s",
+                },
+                id="invalid-enum-value",
+            ),
+            pytest.param(
+                SPEC_EXAMPLE_SCHEMA,
+                {"preferences": [{"food": "sushi", "sentiment": "likes"}]},
+                id="missing-required-top-level",
+            ),
+            pytest.param(
+                _object(
+                    {"user": _object({"name": {"type": "string"}}, required=["name"])},
+                    required=["user"],
+                ),
+                {"user": {}},
+                id="missing-required-nested",
+            ),
+            pytest.param(
+                _object({"a": {"type": "string"}}, required=["a"]),
+                {"a": None},
+                id="null-for-non-nullable",
+            ),
+            pytest.param(
+                _object({"n": {"type": "integer"}}, required=["n"]),
+                {"n": {"nested": "dict"}},
+                id="wrong-type-for-integer",
+            ),
+        ],
+    )
+    def test_rejects_nonconforming_payloads(
+        self, schema: dict[str, Any], payload: dict[str, Any]
+    ):
+        model = json_response_schema_to_pydantic(schema)
+        with pytest.raises(ValidationError):
+            model.model_validate(payload)

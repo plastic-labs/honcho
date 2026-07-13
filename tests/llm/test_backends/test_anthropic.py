@@ -322,11 +322,48 @@ async def test_anthropic_backend_prefill_unchanged_without_tools() -> None:
 
 
 @pytest.mark.asyncio
+async def test_anthropic_backend_repairs_malformed_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structured output that fails JSON parsing falls back to
+    repair_response_model_json, whose result becomes the response content."""
+    # After the '{' prefill is prepended this is still invalid JSON.
+    client = _make_client([TextBlock(type="text", text='"answer": not-json')])
+
+    repaired = StructuredResponse(answer="fixed")
+    repair_calls: list[tuple[str, type[BaseModel], str]] = []
+
+    def _fake_repair(
+        raw: str, response_format: type[BaseModel], model_name: str
+    ) -> StructuredResponse:
+        repair_calls.append((raw, response_format, model_name))
+        return repaired
+
+    monkeypatch.setattr(
+        "src.llm.backends.anthropic.repair_response_model_json", _fake_repair
+    )
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=StructuredResponse,
+    )
+
+    assert result.content is repaired
+    assert repair_calls == [
+        ('{"answer": not-json', StructuredResponse, "claude-3-5-sonnet-latest")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_anthropic_backend_skips_parsing_on_tool_call_turns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A tool-call response with response_format set must not attempt JSON
-    parsing (whose failure would trigger a wasted repair LLM call)."""
+    parsing — the repair fallback raises on the empty text of tool-call
+    turns, which would fail every intermediate tool iteration."""
     client = _make_client(
         [
             ToolUseBlock(
