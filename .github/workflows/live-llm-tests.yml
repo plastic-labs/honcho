@@ -1,0 +1,151 @@
+name: Live LLM Tests
+
+on:
+  # Manual trigger for PRs: add the `run-live-llm` label to run the suite
+  # against the PR's merge commit. The label is purged as soon as the run
+  # starts so it can be re-added to trigger another run. Opt-in only — live
+  # provider behavior is inherently variable, so this is a signal, not a
+  # required check.
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Purge the trigger label first thing. Best-effort: failing to remove the
+  # label (e.g. read-only token on a fork PR) doesn't block the tests.
+  remove-label:
+    name: Remove trigger label
+    if: github.event_name == 'pull_request' && github.event.label.name == 'run-live-llm'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Remove run-live-llm label
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api --method DELETE \
+            "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/run-live-llm"; then
+            echo "::warning::Could not remove the run-live-llm label (it may have been removed already)"
+          fi
+
+  live-llm-tests:
+    name: Run Live LLM Tests
+    needs: remove-label
+    # always() lets this run on workflow_dispatch, where remove-label is
+    # skipped. Label adds other than run-live-llm trigger the workflow but
+    # skip every job here.
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-live-llm')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: unified-tests
+    permissions:
+      id-token: write  # Required for OIDC authentication with AWS
+      contents: read
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-east-1
+          role-duration-seconds: 3600
+
+      - name: Resolve secret ids from latest git tags
+        id: resolve-secret
+        env:
+          SECRET_PREFIX: ${{ secrets.STAGING_SECRET_PREFIX }}
+        run: |
+          set -euo pipefail
+          : "${SECRET_PREFIX:?STAGING_SECRET_PREFIX secret is not set for this environment}"
+          # Keep the secret-name prefix out of public CI logs.
+          echo "::add-mask::${SECRET_PREFIX}"
+
+          # Two newest v<major.minor.patch> tags, highest first (tags are public).
+          versions="$(git ls-remote --tags origin 'v*' \
+            | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
+            | sort -t. -k1,1nr -k2,2nr -k3,3nr -u)"
+          latest="$(printf '%s\n' "$versions" | sed -n '1p')"
+          second="$(printf '%s\n' "$versions" | sed -n '2p')"
+          if [ -z "${latest:-}" ]; then
+            echo "::error::No v<semver> git tags found to resolve a secret version"
+            exit 1
+          fi
+
+          latest_id="${SECRET_PREFIX}${latest}"
+          echo "::add-mask::${latest_id}"
+          echo "latest-id=${latest_id}" >> "$GITHUB_OUTPUT"
+          echo "Latest version: ${latest}"
+          if [ -n "${second:-}" ]; then
+            second_id="${SECRET_PREFIX}${second}"
+            echo "::add-mask::${second_id}"
+            echo "second-id=${second_id}" >> "$GITHUB_OUTPUT"
+            echo "Fallback version: ${second}"
+          fi
+
+      # Fetch the latest tag's secret. continue-on-error so a not-yet-published
+      # latest falls through to the second-latest instead of failing the job.
+      # The staging dotenv carries the LLM provider API keys this suite needs.
+      - name: Fetch staging secret (latest)
+        id: fetch-latest
+        continue-on-error: true
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            ,${{ steps.resolve-secret.outputs.latest-id }}
+          parse-json-secrets: true
+
+      # Runs only if the latest fetch failed; this one is NOT continue-on-error,
+      # so if the fallback also fails the job fails loudly.
+      - name: Fetch staging secret (fallback to second-latest)
+        if: steps.fetch-latest.outcome == 'failure' && steps.resolve-secret.outputs.second-id != ''
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            ,${{ steps.resolve-secret.outputs.second-id }}
+          parse-json-secrets: true
+
+      # Configure the test environment. Sentry/CloudEvents endpoints aren't
+      # reachable from CI. LIVE_LLM_ANTHROPIC_45_PLUS_MODELS must be set for
+      # the Anthropic tests to materialize — the claude_4_5_plus family has no
+      # default models, so with only the API key they'd silently collect as
+      # empty parameter sets. Written after the fetch steps so these win over
+      # values loaded from Secrets Manager (last $GITHUB_ENV write wins).
+      - name: Configure test environment
+        run: |
+          {
+            echo "SENTRY_ENABLED=false"
+            echo "TELEMETRY_ENABLED=false"
+            echo "LIVE_LLM_ANTHROPIC_45_PLUS_MODELS=claude-sonnet-4-5"
+          } >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install the project
+        run: uv sync --all-extras
+
+      # -n 0 overrides the `-n auto` xdist default from pyproject: ~15 short
+      # tests gain nothing from parallelism, serial execution avoids bursting
+      # every provider at once, and flake diagnosis gets ordered output.
+      - name: Run live LLM tests
+        run: uv run --frozen pytest tests/live_llm/ --live-llm -n 0 -v
