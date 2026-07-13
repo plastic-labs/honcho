@@ -45,11 +45,15 @@ async def init_cache() -> None:
             cache.setup("mem://", pickle_type=PicklerType.SQLALCHEMY)
             return
 
-        # Setup cache with Redis backend
+        # Setup cache with Redis backend. CACHE_CLUSTER selects the
+        # cluster-aware client, which follows the MOVED redirects a Redis
+        # Cluster returns for keys hashed to another shard; the standalone
+        # client treats those as command errors.
         try:
             cache.setup(
                 settings.CACHE.URL,
                 pickle_type=PicklerType.SQLALCHEMY,
+                cluster=settings.CACHE.CLUSTER,
             )
 
         except Exception as setup_err:

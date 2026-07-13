@@ -1234,6 +1234,10 @@ class CacheSettings(HonchoSettings):
 
     ENABLED: bool = False
     URL: str = "redis://localhost:6379/0?suppress=true"
+    # URL points at a Redis Cluster (OSS cluster protocol, e.g. GCP Memorystore
+    # for Redis Cluster). A standalone client cannot follow the MOVED redirects
+    # such deployments return for keys hashed to another shard.
+    CLUSTER: bool = False
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache
@@ -1242,6 +1246,12 @@ class CacheSettings(HonchoSettings):
     DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
         5  # how long to hold a lock on a resource when fetching DB after cache miss
     )
+
+    # Polling interval while waiting for another worker's fetch lock. cashews
+    # defaults to 0, which busy-spins the event loop for the whole wait.
+    LOCK_WAIT_CHECK_INTERVAL_SECONDS: Annotated[
+        float, Field(default=0.1, gt=0, le=5)
+    ] = 0.1
 
 
 class SurprisalSettings(BaseModel):
