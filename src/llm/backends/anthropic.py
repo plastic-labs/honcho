@@ -10,24 +10,7 @@ from pydantic import BaseModel, ValidationError
 
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.request_builder import apply_sdk_passthroughs
-from src.llm.structured_output import repair_response_model_json
-
-
-def _schema_instruction(
-    response_format: type[BaseModel], *, tools_present: bool
-) -> str:
-    """Build the structured-output instruction appended to the last message.
-
-    When tools are in play the wording is conditional so the model remains
-    free to emit tool_use blocks (callers also skip the '{' prefill then).
-    """
-    schema_json = json.dumps(response_format.model_json_schema(), indent=2)
-    if tools_present:
-        return (
-            "\n\nIf not responding with a tool call, respond with valid JSON "
-            f"matching this schema:\n{schema_json}"
-        )
-    return f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+from src.llm.structured_output import repair_response_model_json, schema_instruction
 
 
 class AnthropicBackend:
@@ -104,7 +87,7 @@ class AnthropicBackend:
             if response_format and isinstance(response_format, type):
                 self._append_text_to_last_message(
                     params["messages"],
-                    _schema_instruction(response_format, tools_present=False),
+                    schema_instruction(response_format, tools_present=False),
                 )
             params["messages"].append({"role": "assistant", "content": "{"})
         elif (
@@ -112,7 +95,7 @@ class AnthropicBackend:
         ):
             self._append_text_to_last_message(
                 params["messages"],
-                _schema_instruction(response_format, tools_present=bool(tools)),
+                schema_instruction(response_format, tools_present=bool(tools)),
             )
 
         response = await self._client.messages.create(**params)
@@ -186,7 +169,7 @@ class AnthropicBackend:
             if response_format and isinstance(response_format, type):
                 self._append_text_to_last_message(
                     params["messages"],
-                    _schema_instruction(response_format, tools_present=False),
+                    schema_instruction(response_format, tools_present=False),
                 )
             params["messages"].append({"role": "assistant", "content": "{"})
         elif (
@@ -194,7 +177,7 @@ class AnthropicBackend:
         ):
             self._append_text_to_last_message(
                 params["messages"],
-                _schema_instruction(response_format, tools_present=bool(tools)),
+                schema_instruction(response_format, tools_present=bool(tools)),
             )
         if thinking_budget_tokens:
             params["thinking"] = {
