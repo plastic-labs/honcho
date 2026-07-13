@@ -123,12 +123,22 @@ jobs:
       # Runs only if the latest fetch failed; this one is NOT continue-on-error,
       # so if the fallback also fails the job fails loudly.
       - name: Fetch staging secret (fallback to second-latest)
+        id: fetch-fallback
         if: steps.fetch-latest.outcome == 'failure' && steps.resolve-secret.outputs.second-id != ''
         uses: aws-actions/aws-secretsmanager-get-secrets@v2
         with:
           secret-ids: |
             ,${{ steps.resolve-secret.outputs.second-id }}
           parse-json-secrets: true
+
+      # If the latest fetch failed and the fallback was skipped (no second
+      # tag), no provider keys were loaded — without this guard every test
+      # would skip via require_provider_key and the run would go green.
+      - name: Verify staging secrets were loaded
+        if: steps.fetch-latest.outcome != 'success' && steps.fetch-fallback.outcome != 'success'
+        run: |
+          echo "::error::No staging secret could be fetched (latest failed; fallback skipped or failed)"
+          exit 1
 
       # Configure the test environment. Sentry/CloudEvents endpoints aren't
       # reachable from CI. LIVE_LLM_ANTHROPIC_45_PLUS_MODELS must be set for
