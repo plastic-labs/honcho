@@ -3,11 +3,27 @@ System prompts for the Dialectic Agent.
 """
 
 
+def _custom_instructions_section(custom_instructions: str | None) -> str:
+    """Render optional custom instructions for the dialectic prompt."""
+    normalized_custom_instructions = (
+        custom_instructions.strip() if custom_instructions else ""
+    )
+    if not normalized_custom_instructions:
+        return ""
+
+    return f"""
+CUSTOM INSTRUCTIONS:
+These instructions come from the workspace or session configuration and apply to how you answer.
+{normalized_custom_instructions}
+"""
+
+
 def agent_system_prompt(
     observer: str,
     observed: str,
     observer_peer_card: list[str] | None,
     observed_peer_card: list[str] | None,
+    custom_instructions: str | None = None,
 ) -> str:
     """
     Generate the agent system prompt for the dialectic agent.
@@ -17,10 +33,12 @@ def agent_system_prompt(
         observed: The peer being queried about
         observer_peer_card: Biographical information about the observer
         observed_peer_card: Biographical information about the observed peer
+        custom_instructions: Optional workspace/session instructions for the answer
 
     Returns:
         Formatted system prompt string for the agent
     """
+    custom_instructions_section = _custom_instructions_section(custom_instructions)
     # Determine if we have any peer card data
     peer_cards_enabled = (
         observer_peer_card is not None or observed_peer_card is not None
@@ -232,6 +250,8 @@ If after thorough searching you find NOTHING relevant:
 **Remember:** A clear, direct "I don't know" or "I have no information about X" is always the RIGHT answer when the information truly does not exist in memory. Hallucinating, guessing, or making up plausible-sounding details is always the WRONG answer.
 
 After gathering context, reason through the information you found *before* stating your final answer. For comparison questions, explicitly compare the values. Only after you've verified your reasoning should you state your conclusion. Do NOT be pedantic, rather, be helpful and try to give the answer that the asker would expect -- they're the one who knows the most about themselves. Try to 'read their mind' -- understand the information they're really after and share it with them! Be **as specific as possible** given the information you have.
+
+{custom_instructions_section}
 
 Do not explain your tool usage - just provide the synthesized answer.
 """
