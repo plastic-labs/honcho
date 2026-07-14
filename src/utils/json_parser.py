@@ -8,6 +8,135 @@ from json_repair import repair_json
 logger = logging.getLogger(__name__)
 # logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
+_JSON_FENCE_RE = re.compile(
+    r"```(?P<lang>[a-zA-Z0-9_+-]*)\s*(?P<body>.*?)```", re.IGNORECASE | re.DOTALL
+)
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+
+
+def _strip_reasoning_wrappers(text: str) -> str:
+    """Remove common reasoning/prose wrappers before JSON extraction."""
+    return _THINK_TAG_RE.sub("", text.strip()).strip()
+
+
+def _fenced_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    for match in _JSON_FENCE_RE.finditer(text):
+        body = match.group("body").strip()
+        if not body:
+            continue
+        lang = (match.group("lang") or "").strip().lower()
+        priority = 0 if lang == "json" else 1
+        candidates.append((priority, body))
+    candidates.sort(key=lambda item: item[0])
+    return [body for _, body in candidates]
+
+
+def _collect_balanced_json_candidates(text: str) -> list[str]:
+    """Return all balanced JSON object/array substrings, in encounter order."""
+    candidates: list[str] = []
+    start = None
+    stack: list[str] = []
+    in_string = False
+    escape = False
+
+    for i, char in enumerate(text):
+        if start is None:
+            if char not in "[{":
+                continue
+            start = i
+            stack.append("}" if char == "{" else "]")
+            continue
+
+        if escape:
+            escape = False
+            continue
+
+        if char == "\\":
+            escape = True
+            continue
+
+        if char == '"':
+            in_string = not in_string
+            continue
+
+        if in_string:
+            continue
+
+        if char == "{":
+            stack.append("}")
+        elif char == "[":
+            stack.append("]")
+        elif stack and char == stack[-1]:
+            stack.pop()
+            if not stack and start is not None:
+                candidates.append(text[start : i + 1].strip())
+                start = None
+
+    return candidates
+
+
+def _score_json_candidate(candidate: str) -> tuple[int, int, int]:
+    """Rank candidates toward likely payloads instead of debug/schema debris."""
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        return (-10, 0, len(candidate))
+
+    if isinstance(payload, dict):
+        keys = set(payload)
+        schema_keys = {"explicit", "deductive", "inductive", "observations", "facts"}
+        has_schema_signal = int(bool(keys & schema_keys))
+        return (2 if has_schema_signal else 0, len(keys), len(candidate))
+    if isinstance(payload, list):
+        return (1, len(payload), len(candidate))
+    return (0, 0, len(candidate))
+
+
+def _best_valid_json_candidate(candidates: list[str]) -> str | None:
+    valid_candidates: list[str] = []
+    for candidate in candidates:
+        try:
+            json.loads(candidate)
+            valid_candidates.append(candidate)
+        except json.JSONDecodeError:
+            continue
+    if not valid_candidates:
+        return None
+    return max(
+        enumerate(valid_candidates), key=lambda item: (_score_json_candidate(item[1]), item[0])
+    )[1]
+
+
+def extract_json_payload(text: str) -> str:
+    """Extract the most likely JSON payload from noisy model output."""
+    raw = text.strip()
+    if not raw:
+        return ""
+
+    direct_raw_valid = _best_valid_json_candidate([raw])
+    if direct_raw_valid:
+        return direct_raw_valid
+
+    cleaned = _strip_reasoning_wrappers(raw)
+    if not cleaned:
+        return ""
+
+    direct_valid = _best_valid_json_candidate([cleaned])
+    if direct_valid:
+        return direct_valid
+
+    fenced_valid = _best_valid_json_candidate(_fenced_candidates(cleaned))
+    if fenced_valid:
+        return fenced_valid
+
+    balanced_candidates = _collect_balanced_json_candidates(cleaned)
+    balanced_valid = _best_valid_json_candidate(balanced_candidates)
+    if balanced_valid:
+        return balanced_valid
+
+    return balanced_candidates[-1] if balanced_candidates else cleaned
+
 
 def comprehensive_json_repair(json_str: str) -> str:
     """Comprehensively repair malformed JSON with multiple strategies"""
@@ -354,7 +483,7 @@ def simple_bracket_repair(json_str: str) -> str:
 
 def validate_and_repair_json(json_str: str) -> str:
     """Main function with comprehensive repair strategies"""
-    json_str = json_str.strip()
+    json_str = extract_json_payload(json_str).strip()
 
     # Try parsing with repair library
     good_json = repair_json(json_str)
