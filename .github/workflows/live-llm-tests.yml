@@ -15,9 +15,7 @@ on:
       - '.github/workflows/live-llm-tests.yml'
   # Manual trigger for PRs: add the `run-live-llm` label to run the suite
   # against the PR's merge commit. The label is purged as soon as the run
-  # starts so it can be re-added to trigger another run. Opt-in only — live
-  # provider behavior is inherently variable, so this is a signal, not a
-  # required check.
+  # starts so it can be re-added to trigger another run.
   pull_request:
     types: [labeled]
   workflow_dispatch:
@@ -47,9 +45,8 @@ jobs:
   live-llm-tests:
     name: Run Live LLM Tests
     needs: remove-label
-    # always() lets this run on push and workflow_dispatch events, where
-    # remove-label is skipped. Label adds other than run-live-llm trigger
-    # the workflow but skip every job here.
+    # always() lets this run on push and workflow_dispatch events, where remove-label is
+    # skipped.
     if: >-
       always() &&
       (github.event_name == 'push' ||
@@ -110,7 +107,6 @@ jobs:
 
       # Fetch the latest tag's secret. continue-on-error so a not-yet-published
       # latest falls through to the second-latest instead of failing the job.
-      # The staging dotenv carries the LLM provider API keys this suite needs.
       - name: Fetch staging secret (latest)
         id: fetch-latest
         continue-on-error: true
@@ -144,8 +140,7 @@ jobs:
       # reachable from CI. LIVE_LLM_ANTHROPIC_45_PLUS_MODELS must be set for
       # the Anthropic tests to materialize — the claude_4_5_plus family has no
       # default models, so with only the API key they'd silently collect as
-      # empty parameter sets. Written after the fetch steps so these win over
-      # values loaded from Secrets Manager (last $GITHUB_ENV write wins).
+      # empty parameter sets.
       - name: Configure test environment
         run: |
           {
