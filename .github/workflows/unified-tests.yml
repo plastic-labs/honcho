@@ -12,11 +12,46 @@ on:
   pull_request:
     types: [labeled]
 
+# Cap spend: at most one active run per PR (per ref for push). Re-triggering
+# a PR run cancels the in-flight one instead of stacking Fly machines; pushes
+# to main queue instead of cancelling so main CI results aren't lost. The
+# cleanup-machine job runs `if: always()`, which still executes on cancelled
+# runs, so a cancelled run's Fly machine and runner are still torn down.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
 permissions:
   contents: read
   actions: read
 
 jobs:
+  # Only code owners (.github/CODEOWNERS) may trigger the suite manually via
+  # the label.
+  check-actor:
+    name: Verify actor is a code owner
+    if: github.event_name == 'pull_request' && github.event.label.name == 'run-unified-tests'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check actor against CODEOWNERS on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          # Usernames are case-insensitive on GitHub; compare lowercased.
+          owners="$(gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${{ github.repository }}/contents/.github/CODEOWNERS?ref=main" \
+            | sed 's/#.*//' | grep -oE '@[A-Za-z0-9-]+' | tr -d '@' \
+            | tr '[:upper:]' '[:lower:]' | sort -u)"
+          actor_lc="$(printf '%s' "$ACTOR" | tr '[:upper:]' '[:lower:]')"
+          if printf '%s\n' "$owners" | grep -qxF "$actor_lc"; then
+            echo "@${ACTOR} is a code owner; proceeding"
+          else
+            echo "::error::@${ACTOR} is not listed in .github/CODEOWNERS on main — only code owners may trigger this workflow manually"
+            exit 1
+          fi
+
   # Purge the trigger label first thing. Best-effort: failing to remove the
   # label (e.g. read-only token on a fork PR) doesn't block the tests.
   remove-label:
@@ -37,13 +72,16 @@ jobs:
 
   start-runner:
     name: Start Fly Runner
-    needs: remove-label
-    # always() lets this run on push events, where remove-label is skipped.
+    needs: [remove-label, check-actor]
+    # always() lets this run on push events, where both gate jobs are skipped.
     # Label adds other than run-unified-tests trigger the workflow but skip
-    # every job here.
+    # every job here; the run-unified-tests label additionally requires the
+    # check-actor gate to have passed.
     if: >-
       always() &&
-      (github.event_name == 'push' || github.event.label.name == 'run-unified-tests')
+      (github.event_name == 'push' ||
+       (github.event.label.name == 'run-unified-tests' &&
+        needs.check-actor.result == 'success'))
     uses: ./.github/workflows/start-fly-runner.yml
     secrets: inherit
 
