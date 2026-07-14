@@ -13,25 +13,45 @@ from src.db import ReadSessionLocal, SessionLocal, request_context
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on how long shielded cleanup may run before we stop waiting on it.
+# Healthy ROLLBACK/close take milliseconds; this only bites a wedged connection
+# (e.g. a black-holed socket with no libpq timeout) so it can't pin the task
+# forever. Cleanup is abandoned (not cancelled) past this — the pool/OS reclaims
+# the connection — since a shielded task cannot be interrupted anyway.
+_CLEANUP_TIMEOUT_SECONDS = 10.0
+
 
 async def _run_to_completion(coro: Coroutine[Any, Any, None]) -> None:
     """Run ``coro`` to completion even if the current task is cancelled (DEV-1861).
 
-    Runs the coro as a detached task and keeps awaiting it through
-    ``asyncio.shield`` (which never cancels the inner task), re-raising the
-    cancellation only afterward. Survives repeated re-delivery. NB:
-    ``anyio.CancelScope(shield=True)`` does NOT work here — it ignores a native
-    ``asyncio.Task.cancel()``, which is how Starlette and the deriver cancel.
+    Runs the coro as a detached task and waits on it via ``asyncio.wait`` (which
+    never cancels the inner task), re-raising the cancellation only afterward.
+    Survives repeated re-delivery. NB: ``anyio.CancelScope(shield=True)`` does
+    NOT work here — it ignores a native ``asyncio.Task.cancel()``, which is how
+    Starlette and the deriver cancel.
     """
     fut = asyncio.ensure_future(coro)
     cancelled = False
     while not fut.done():
         try:
-            await asyncio.shield(fut)
+            # wait() shields fut from our cancellation but still bounds the wait.
+            await asyncio.wait({fut}, timeout=_CLEANUP_TIMEOUT_SECONDS)
         except asyncio.CancelledError:
             cancelled = True  # keep waiting so ROLLBACK/close reach Postgres
-    if (exc := fut.exception()) is not None:  # cleanup swallows its own errors
-        logger.exception("session cleanup task failed", exc_info=exc)
+            continue
+        if not fut.done():
+            # Wedged cleanup (dead socket). Stop pinning this task; leave fut to
+            # error out / be reclaimed rather than block indefinitely.
+            logger.error(
+                "DB session cleanup exceeded %.0fs; abandoning to avoid pinning "
+                "the task",
+                _CLEANUP_TIMEOUT_SECONDS,
+            )
+            break
+    if fut.cancelled():
+        cancelled = True  # cleanup itself was cancelled (close() still ran)
+    elif fut.done() and (exc := fut.exception()) is not None:
+        logger.error("session cleanup task failed", exc_info=exc)
     if cancelled:
         raise asyncio.CancelledError()
 
@@ -116,9 +136,13 @@ async def tracked_db(operation_name: str | None = None, *, read_only: bool = Fal
     try:
         yield db
     finally:
-        await _run_to_completion(_finalize_session(db))  # shielded — see get_db
-        if token:  # Only reset if we set it
-            request_context.reset(token)
+        try:
+            await _run_to_completion(_finalize_session(db))  # shielded — see get_db
+        finally:
+            # Must run even when cleanup re-raises CancelledError, or a reused
+            # long-lived task (e.g. the deriver) leaks this contextvar.
+            if token:  # Only reset if we set it
+                request_context.reset(token)
 
 
 db: AsyncSession = Depends(get_db)

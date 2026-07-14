@@ -477,3 +477,90 @@ async def test_tracked_db_survives_cancellation_storm_during_cleanup(
 
     assert fake_db.rollback_calls == 1
     assert fake_db.close_calls == 1  # cleanup completed despite the storm
+
+
+@pytest.mark.asyncio
+async def test_tracked_db_resets_request_context_on_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The task-scoped contextvar must be reset even when cleanup re-raises
+    # CancelledError, else a reused long-lived task (e.g. the deriver) carries a
+    # stale `task:...` context into later work and corrupts tracing/attribution.
+    fake_db = FakeSession()
+    monkeypatch.setattr(dependencies_module, "SessionLocal", lambda: fake_db)
+
+    clear_token = request_context.set(None)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            async with real_tracked_db("ctx_cancel_op"):
+                assert (request_context.get() or "").startswith("task:ctx_cancel_op:")
+                raise asyncio.CancelledError()
+        assert request_context.get() is None  # reset despite the cancel
+    finally:
+        request_context.reset(clear_token)
+
+
+@pytest.mark.asyncio
+async def test_run_to_completion_abandons_wedged_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Shielded cleanup is uninterruptible by design; a wedged connection (dead
+    # socket, no libpq timeout) must therefore NOT pin the caller forever.
+    # _run_to_completion abandons cleanup past _CLEANUP_TIMEOUT_SECONDS.
+    monkeypatch.setattr(dependencies_module, "_CLEANUP_TIMEOUT_SECONDS", 0.2)
+    started = asyncio.Event()
+
+    async def wedged() -> None:
+        started.set()
+        await asyncio.sleep(3600)  # never completes
+
+    # Returns (abandons) well under the sleep instead of hanging.
+    await asyncio.wait_for(dependencies_module._run_to_completion(wedged()), timeout=5)
+    assert started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_tracked_db_no_idle_in_transaction_after_real_cancellation() -> None:
+    # Wire-level chaos test (ticket verification): cancel a REAL in-flight write
+    # transaction mid-flight and assert, from an independent connection, that the
+    # backend is not left parked 'idle in transaction'. Complements the mock
+    # tests above with a real pooled connection receiving ROLLBACK under cancel.
+    from sqlalchemy import text
+
+    from src.db import read_engine
+
+    entered = asyncio.Event()
+    pid_box: dict[str, int] = {}
+
+    async def worker() -> None:
+        async with real_tracked_db("chaos_cancel") as db:
+            pid = (await db.execute(text("SELECT pg_backend_pid()"))).scalar()
+            pid_box["pid"] = int(pid)  # pyright: ignore[reportArgumentType]
+            entered.set()
+            await asyncio.sleep(3600)  # hold the open BEGIN until cancelled
+
+    async def backend_state(pid: int) -> str | None:
+        async with read_engine.connect() as obs:
+            return (
+                await obs.execute(
+                    text("SELECT state FROM pg_stat_activity WHERE pid = :p"),
+                    {"p": pid},
+                )
+            ).scalar()
+
+    task = asyncio.ensure_future(worker())
+    await entered.wait()
+    pid = pid_box["pid"]
+    assert await backend_state(pid) == "idle in transaction"  # precondition
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    state = await backend_state(pid)
+    for _ in range(20):  # allow shielded cleanup a moment to land
+        if state != "idle in transaction":
+            break
+        await asyncio.sleep(0.1)
+        state = await backend_state(pid)
+    assert state != "idle in transaction", f"backend left {state!r} after cancel"
