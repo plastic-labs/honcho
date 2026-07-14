@@ -1,6 +1,7 @@
 """Configuration management for Honcho CLI.
 
-Config stored at ``~/.honcho/config.json`` with env var overrides.
+Config stored at ``~/.honcho/config.json`` with env var overrides. The config
+directory defaults to ``~/.honcho`` and can be relocated with `HONCHO_CONFIG_DIR`
 
 The CLI owns these top-level keys in that file:
 
@@ -30,7 +31,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from honcho_cli.oauth import TokenResponse
 
-CONFIG_DIR = Path.home() / ".honcho"
+def _config_dir() -> Path:
+    """Config directory: ``$HONCHO_CONFIG_DIR`` if set, else ``~/.honcho``."""
+    override = os.environ.get("HONCHO_CONFIG_DIR")
+    return Path(override).expanduser() if override else Path.home() / ".honcho"
+
+
+CONFIG_DIR = _config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 DEFAULT_BASE_URL = "https://api.honcho.dev"

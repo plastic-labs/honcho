@@ -3,9 +3,10 @@
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
-from honcho_cli.config import CLIConfig, OAuthTokens
+from honcho_cli.config import CLIConfig, OAuthTokens, _config_dir
 
 
 @pytest.fixture
@@ -17,6 +18,20 @@ def cfg_path(tmp_path, monkeypatch):
     for key in [k for k in os.environ if k.startswith("HONCHO_")]:
         monkeypatch.delenv(key)
     return f
+
+
+class TestConfigDir:
+    def test_defaults_to_dot_honcho(self, monkeypatch):
+        monkeypatch.delenv("HONCHO_CONFIG_DIR", raising=False)
+        assert _config_dir() == Path.home() / ".honcho"
+
+    def test_honcho_config_dir_override(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HONCHO_CONFIG_DIR", str(tmp_path / "profile"))
+        assert _config_dir() == tmp_path / "profile"
+
+    def test_expands_user_in_override(self, monkeypatch):
+        monkeypatch.setenv("HONCHO_CONFIG_DIR", "~/.honcho-test")
+        assert _config_dir() == Path.home() / ".honcho-test"
 
 
 class TestLoad:
