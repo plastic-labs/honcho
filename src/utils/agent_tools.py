@@ -1318,10 +1318,13 @@ async def _latest_source_timestamp(
     """Latest ``message_created_at`` across all source observations in the batch.
 
     Dreamer conclusions (deductive/inductive) are derived from existing
-    observations referenced by ``source_ids`` rather than from live messages. To
-    keep their timeline aligned with their evidence, we date them to the most
-    recent source observation instead of the dream-run time. Returns None if no
-    source_ids resolve to a usable timestamp (caller falls back to now).
+    observations referenced by ``source_ids`` rather than from live messages.
+    Their logical timestamp is the point when the conclusion became possible
+    from its evidence, not when the dreamer happened to run, so we date
+    ``internal_metadata["message_created_at"]`` to the most recent source
+    observation. The physical ``Document.created_at`` column remains the insert
+    time. Returns None if no source_ids resolve to a usable timestamp (caller
+    falls back to now).
     """
     source_ids: list[str] = []
     for obs in observations:
@@ -1339,9 +1342,6 @@ async def _latest_source_timestamp(
             observed=ctx.observed,
             document_ids=list(set(source_ids)),
         )
-        # Read ORM attributes inside the session: once it closes the Document
-        # instances are detached, and an expired attribute would trigger a lazy
-        # refresh with no session bound (DetachedInstanceError).
         for doc in docs:
             raw = doc.internal_metadata.get("message_created_at")
             if not isinstance(raw, str):
@@ -1422,7 +1422,9 @@ async def _handle_create_observations_impl(
         # same ISO-8601 Z format as the dreamer path below
         message_created_at = format_datetime_utc(ctx.current_messages[-1].created_at)
     else:
-        # Dreamer path: no current messages. Backdate the conclusion to the latest source observation.
+        # Dreamer path: no current messages. Backdate the conclusion to the
+        # latest source observation, which is when the inference became possible.
+
         message_ids = []
         message_created_at = (
             await _latest_source_timestamp(ctx, observations)
