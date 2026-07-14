@@ -55,7 +55,8 @@ jobs:
       always() &&
       (github.event_name == 'push' ||
        ((github.event_name == 'workflow_dispatch' ||
-         github.event.label.name == 'run-live-llm')))
+         github.event.label.name == 'run-live-llm') &&
+        needs.gate.outputs.authorized == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: unified-tests
