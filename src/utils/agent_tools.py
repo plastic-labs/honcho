@@ -27,6 +27,7 @@ from src.utils import summarizer
 from src.utils.formatting import (
     format_datetime_utc,
     format_new_turn_with_timestamp,
+    parse_datetime_iso,
     utc_now_iso,
 )
 from src.utils.representation import Representation
@@ -1329,6 +1330,7 @@ async def _latest_source_timestamp(
     if not source_ids:
         return None
 
+    latest: datetime | None = None
     async with tracked_db("create_observations.source_ts", read_only=True) as db:
         docs = await crud.fetch_documents_by_ids(
             db,
@@ -1337,18 +1339,20 @@ async def _latest_source_timestamp(
             observed=ctx.observed,
             document_ids=list(set(source_ids)),
         )
-
-    latest: datetime | None = None
-    for doc in docs:
-        raw = doc.internal_metadata.get("message_created_at")
-        if not isinstance(raw, str):
-            continue
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if latest is None or parsed > latest:
-            latest = parsed
+        # Read ORM attributes inside the session: once it closes the Document
+        # instances are detached, and an expired attribute would trigger a lazy
+        # refresh with no session bound (DetachedInstanceError).
+        for doc in docs:
+            raw = doc.internal_metadata.get("message_created_at")
+            if not isinstance(raw, str):
+                continue
+            try:
+                # always tz-aware, so the comparison below can't crash on mixed formats
+                parsed = parse_datetime_iso(raw)
+            except ValueError:
+                continue
+            if latest is None or parsed > latest:
+                latest = parsed
 
     return format_datetime_utc(latest) if latest is not None else None
 
@@ -1415,7 +1419,8 @@ async def _handle_create_observations_impl(
     # Determine message context
     if ctx.current_messages:
         message_ids = [msg.id for msg in ctx.current_messages]
-        message_created_at = str(ctx.current_messages[-1].created_at)
+        # same ISO-8601 Z format as the dreamer path below
+        message_created_at = format_datetime_utc(ctx.current_messages[-1].created_at)
     else:
         # Dreamer path: no current messages. Backdate the conclusion to the latest source observation.
         message_ids = []
