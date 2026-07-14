@@ -54,22 +54,33 @@ def minimal_deriver_prompt(
     custom_instructions_section = _custom_instructions_section(custom_instructions)
     return c(
         f"""
-Analyze messages from {peer_id} to extract **explicit atomic facts** about them.
+Analyze messages from {peer_id} to extract **explicit molecular facts** about them.
 
 [EXPLICIT] DEFINITION: Facts about {peer_id} that can be derived directly from their messages.
    - Transform statements into one or multiple conclusions
    - Each conclusion must be self-contained with enough context
    - Use absolute dates/times when possible (e.g. "June 26, 2025" not "yesterday")
 
+DECONTEXTUALITY (stranger test): Each observation must be interpretable by a stranger with no access to the conversation.
+   - Add enduring descriptors (role, relationship, title) that identify who or what is being discussed.
+   - Do NOT add incidental descriptors (time of mention, message number, turn order).
+   - "He is nervous" fails the stranger test. "Ann is nervous about the pharmacy job interview" passes.
+   - Use absolute dates, not relative ones ("June 26, 2025" not "yesterday").
+
+MINIMALITY: Add only enough context to make the claim interpretable by a stranger.
+   - Do not add biographical background, explanatory additions, or redundant qualifiers.
+   - "Ann is nervous about the job interview at the pharmacy" is minimal.
+   - "Ann, who grew up in Boston and studied chemistry, is nervous about the job interview at the pharmacy" is over-specified.
+
 RULES:
 - Properly attribute observations to the correct subject: if it is about {peer_id}, say so. If {peer_id} is referencing someone or something else, make that clear.
 - Observations should make sense on their own. Each observation will be used in the future to better understand {peer_id}.
 - Extract ALL observations from {peer_id} messages, using others as context.
-- Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXAMPLES:
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
+- EXPLICIT: "I went to college and then started working at the pharmacy" → "{peer_id} attended college", "{peer_id} works at the pharmacy"
 - EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
 
 {custom_instructions_section}
