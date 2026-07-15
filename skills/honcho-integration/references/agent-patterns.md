@@ -2,13 +2,13 @@
 
 How your AI accesses Honcho's user context. Pick based on the interview answer to Question Set 2. These build on the client/peer/session setup in `core-patterns.md`.
 
-- **Pattern A — Dialectic chat as a tool call** (recommended for agents): the agent decides when to query context on-demand.
+- **Pattern A — Dialectic chat as a tool call**: the agent decides when to query context on-demand.
 - **Pattern B — Pre-fetch with targeted queries**: fetch a fixed set of attributes before each LLM call.
 - **Pattern C — `context()` for LLM integration**: inject conversation history + representation into the prompt.
 
 > **Speed note.** `chat()` runs live dialectic reasoning (a few seconds) — Patterns A and B call it. `context()` (Pattern C) is a near-instant read. Prefer `context()` for per-turn grounding; reach for `chat()` when you genuinely need a reasoned answer.
 
-## Pattern A: Dialectic Chat as a Tool Call (Recommended for Agents)
+## Pattern A: Dialectic Chat as a Tool Call
 
 Make Honcho's chat endpoint available as a **tool** for your AI agent. This lets the agent query user context on-demand.
 
@@ -152,7 +152,7 @@ async function getUserContextForPrompt(userId: string): Promise<Record<string, s
 
 ## Pattern C: Get Context for LLM Integration
 
-Use `context()` for conversation history with built-in LLM formatting. This is a near-instant read — no dialectic reasoning — so it's the cheapest way to ground each turn.
+Use `context()` for conversation history with built-in LLM formatting. This is a near-instant read so it's the cheapest way to ground each turn.
 
 **Python:**
 
@@ -161,7 +161,7 @@ import openai
 
 session = honcho.session("conversation-123")
 user = honcho.peer("user-123")
-assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))
+assistant = honcho.peer("assistant")
 
 # Get context formatted for your LLM
 context = session.context(
@@ -198,7 +198,7 @@ import OpenAI from 'openai';
 
 const session = await honcho.session("conversation-123");
 const user = await honcho.peer("user-123");
-const assistant = await honcho.peer("assistant", { configuration: { observeMe: false } });
+const assistant = await honcho.peer("assistant");
 
 // Get context formatted for your LLM
 const context = await session.context({

@@ -1,6 +1,6 @@
 ---
 name: honcho-integration
-description: Integrate Honcho memory and social cognition into existing Python or TypeScript codebases. Use when adding Honcho SDK, setting up peers, configuring sessions, implementing the dialectic chat endpoint for AI agents, or wiring Honcho into bot frameworks (nanobot, openclaw, picoclaw, etc).
+description: Integrate Honcho memory into existing Python or TypeScript codebases. Use when adding Honcho SDK, setting up peers, configuring sessions, and accessing Honcho's representation.
 allowed-tools: Read, Glob, Grep, Bash(uv:*), Bash(bun:*), Bash(npm:*), Edit, Write, WebFetch, AskUserQuestion
 ---
 
@@ -10,7 +10,7 @@ allowed-tools: Read, Glob, Grep, Bash(uv:*), Bash(bun:*), Bash(npm:*), Edit, Wri
 
 Honcho is an open source memory library for building stateful agents. It works with any model, framework, or architecture. You send Honcho the messages from your conversations, and custom reasoning models process them in the background — extracting premises, drawing conclusions, and building rich representations of each participant over time. Your agent can then query those representations on-demand ("What does this user care about?", "How technical is this person?") and get grounded, reasoned answers.
 
-The key mental model: **Peers** are any participant — human or AI. Both are represented the same way. Observation settings (`observe_me`, `observe_others`) control which peers Honcho reasons about. Typically you want Honcho to model your users (`observe_me=True`) but not your AI assistant (`observe_me=False`). **Sessions** scope conversations between peers. **Messages** are the raw data you feed in — Honcho reasons about them asynchronously and stores the results as the peer's **representation**. No messages means no reasoning means no memory.
+The key mental model: **Peers** are any participant — human or AI. Both are represented the same way. Observation settings (`observe_me`, `observe_others`) control which peers Honcho reasons about. Typically you want Honcho to model your users (`observe_me=True`) but not anything with deterministic behavior (`observe_me=False`). **Sessions** scope conversations between peers. **Messages** are the raw data you feed in — Honcho reasons about them asynchronously and stores the results as the peer's **representation**. No messages means no reasoning means no memory.
 
 Your agent accesses this memory through `peer.chat(query)` (ask a natural language question, get a reasoned answer — a few seconds of live reasoning) or `session.context()` (near-instant read of formatted history + representation). Prefer `context()` for per-turn grounding; use `chat()` when you need a reasoned answer.
 
@@ -118,7 +118,7 @@ Based on interview responses, implement the integration:
 
 2. **Get an API key** ask the user to get a Honcho API key from <https://app.honcho.dev> and add it to the environment.
 
-3. **Verify with the CLI** (optional but recommended). If the user has the Honcho CLI installed (`pip install honcho-cli`), they can validate their setup before writing any integration code:
+3. **Verify with the CLI** (optional but recommended). If the user has the Honcho CLI installed (`uv install honcho-cli`), they can validate their setup before writing any integration code:
 
    ```bash
    honcho init          # persist API key + URL to ~/.honcho/config.json

@@ -70,23 +70,31 @@ Create peers for **every entity** in your business logic - users AND AI assistan
 ```python
 from honcho.api_types import PeerConfig
 
-# Human users
+# Human users (observed by default)
 user = honcho.peer("user-123")
 
-# AI assistants - set observe_me=False so Honcho doesn't model the AI
-assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))
-support_bot = honcho.peer("support-bot", configuration=PeerConfig(observe_me=False))
+# AI assistants can be observed too — leave observe_me on (the default) if you
+# want a model of the assistant.
+assistant = honcho.peer("assistant")
+
+# Deterministic bots (scripted/rule-based) - set observe_me=False; there's
+# nothing meaningful for Honcho to model.
+notification_bot = honcho.peer("notification-bot", configuration=PeerConfig(observe_me=False))
 ```
 
 **TypeScript:**
 
 ```typescript
-// Human users
+// Human users (observed by default)
 const user = await honcho.peer("user-123");
 
-// AI assistants - set observeMe=false so Honcho doesn't model the AI
-const assistant = await honcho.peer("assistant", { configuration: { observeMe: false } });
-const supportBot = await honcho.peer("support-bot", { configuration: { observeMe: false } });
+// AI assistants can be observed too — leave observeMe on (the default) if you
+// want a model of the assistant.
+const assistant = await honcho.peer("assistant");
+
+// Deterministic bots (scripted/rule-based) - set observeMe=false; there's
+// nothing meaningful for Honcho to model.
+const notificationBot = await honcho.peer("notification-bot", { configuration: { observeMe: false } });
 ```
 
 ## 3. Multi-Peer Sessions
@@ -103,12 +111,13 @@ session = honcho.session("conversation-123")
 # User is observed (Honcho builds a model of them)
 user_config = SessionPeerConfig(observe_me=True, observe_others=True)
 
-# AI is NOT observed (no model built of the AI)
-ai_config = SessionPeerConfig(observe_me=False, observe_others=True)
+# A deterministic bot is NOT observed (no model built of it). An AI assistant
+# could stay observed instead — observe_me defaults to True.
+bot_config = SessionPeerConfig(observe_me=False, observe_others=True)
 
 session.add_peers([
     (user, user_config),
-    (assistant, ai_config)
+    (notification_bot, bot_config)
 ])
 ```
 
@@ -118,8 +127,10 @@ session.add_peers([
 const session = await honcho.session("conversation-123");
 
 await session.addPeers([
+    // A deterministic bot isn't observed; an AI assistant could stay observed
+    // instead (observeMe defaults to true).
     [user, { observeMe: true, observeOthers: true }],
-    [assistant, { observeMe: false, observeOthers: true }]
+    [notificationBot, { observeMe: false, observeOthers: true }]
 ]);
 ```
 
