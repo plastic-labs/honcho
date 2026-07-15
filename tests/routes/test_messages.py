@@ -63,6 +63,7 @@ async def test_create_message_schedules_immediate_embed(
 
     with (
         patch("src.config.settings.EMBED_MESSAGES", True),
+        patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 50),
         patch(
             "src.reconciler.embed_now.embed_messages_now", new=AsyncMock()
         ) as mock_embed_now,
@@ -147,6 +148,7 @@ async def test_file_upload_schedules_immediate_embed(
 
     with (
         patch("src.config.settings.EMBED_MESSAGES", True),
+        patch.object(settings.EMBEDDING, "MAX_PENDING_EMBED_TASKS", 50),
         patch(
             "src.reconciler.embed_now.embed_messages_now", new=AsyncMock()
         ) as mock_embed_now,

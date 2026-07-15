@@ -1,0 +1,123 @@
+name: Live LLM Tests
+
+on:
+  # Runs on main pushes that can affect the LLM transport (narrower than
+  # unified-tests' src/** — live provider calls aren't worth burning on
+  # changes that can't reach the backends).
+  push:
+    branches: [main]
+    paths:
+      - 'src/llm/**'
+      - 'src/config.py'
+      - 'tests/live_llm/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/live-llm-tests.yml'
+  # Manual trigger for PRs: add the `run-live-llm` label to run the suite
+  # against the PR's merge commit. The label is purged as soon as the run
+  # starts so it can be re-added to trigger another run.
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+
+# Cap spend: at most one active run per PR (per ref for push/dispatch).
+# Re-triggering a PR run cancels the in-flight one instead of stacking live
+# provider calls; pushes to main queue instead of cancelling so main CI
+# results aren't lost.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Only code owners (.github/CODEOWNERS) may trigger the suite manually via
+  # the label or workflow_dispatch; the gate also purges the trigger label so
+  # it can be re-added to trigger another run.
+  gate:
+    name: Gate manual trigger
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/manual-trigger-gate.yml
+    with:
+      label: run-live-llm
+      allow-workflow-dispatch: true
+
+  live-llm-tests:
+    name: Run Live LLM Tests
+    needs: gate
+    # always() lets this run on push events, where the gate's jobs are skipped.
+    # Manual triggers (label / workflow_dispatch) additionally require the
+    # gate's CODEOWNERS check to have passed.
+    if: >-
+      always() &&
+      (github.event_name == 'push' ||
+       ((github.event_name == 'workflow_dispatch' ||
+         github.event.label.name == 'run-live-llm') &&
+        needs.gate.outputs.authorized == 'true'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: unified-tests
+    permissions:
+      id-token: write  # Required for OIDC authentication with AWS
+      contents: read
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-east-1
+          role-duration-seconds: 3600
+
+      # Resolves secret ids from the newest release tags, fetches the newest
+      # available staging secret into the job env, and fails if none loaded.
+      - name: Load staging secrets
+        uses: ./.github/actions/load-staging-secrets
+        with:
+          secret-prefix: ${{ secrets.STAGING_SECRET_PREFIX }}
+
+      # Configure the test environment. Sentry/CloudEvents endpoints aren't
+      # reachable from CI. LIVE_LLM_ANTHROPIC_45_PLUS_MODELS must be set for
+      # the Anthropic tests to materialize — the claude_4_5_plus family has no
+      # default models, so with only the API key they'd silently collect as
+      # empty parameter sets.
+      - name: Configure test environment
+        run: |
+          {
+            # The staging dotenv carries AUTH_USE_AUTH=true without a usable
+            # JWT secret; src/config.py validates the pair at import time, so
+            # disable auth (this suite never runs the API server anyway).
+            echo "AUTH_USE_AUTH=false"
+            echo "SENTRY_ENABLED=false"
+            echo "TELEMETRY_ENABLED=false"
+            echo "LIVE_LLM_ANTHROPIC_45_PLUS_MODELS=claude-sonnet-4-5"
+          } >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install the project
+        run: uv sync --all-extras
+
+      # -n 0 overrides the `-n auto` xdist default from pyproject: ~15 short
+      # tests gain nothing from parallelism, serial execution avoids bursting
+      # every provider at once, and flake diagnosis gets ordered output.
+      - name: Run live LLM tests
+        run: uv run --frozen pytest tests/live_llm/ --live-llm -n 0 -v

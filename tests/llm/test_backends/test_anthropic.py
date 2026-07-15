@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -245,3 +246,206 @@ async def test_anthropic_backend_ignores_thinking_effort() -> None:
     call = await_args.kwargs
     assert "thinking" not in call
     assert "reasoning_effort" not in call
+
+
+def _make_client(content_blocks: list[Any]) -> Mock:
+    client = Mock()
+    client.messages.create = AsyncMock(
+        return_value=SimpleNamespace(
+            content=content_blocks,
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=5,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+            stop_reason="end_turn",
+        )
+    )
+    return client
+
+
+SEARCH_TOOL = {
+    "name": "search",
+    "description": "Search for information",
+    "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_no_prefill_when_tools_present() -> None:
+    """With tools + response_format, the '{' prefill must be skipped and the
+    schema instruction must be conditional, so tool_use blocks stay reachable."""
+    client = _make_client([TextBlock(type="text", text='{"answer":"ok"}')])
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        # claude-3-5 supports prefill, so only the tools guard prevents it here
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[SEARCH_TOOL],
+        response_format=StructuredResponse,
+    )
+
+    assert isinstance(result.content, StructuredResponse)
+    call = client.messages.create.await_args.kwargs
+    assert call["messages"][-1]["role"] == "user"  # no assistant '{' prefill
+    assert (
+        "If not responding with a tool call, respond with valid JSON"
+        in call["messages"][0]["content"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_prefill_unchanged_without_tools() -> None:
+    """Tool-less structured calls keep the prefill + unconditional wording."""
+    client = _make_client([TextBlock(type="text", text='"answer":"ok"}')])
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=StructuredResponse,
+    )
+
+    assert isinstance(result.content, StructuredResponse)
+    call = client.messages.create.await_args.kwargs
+    assert call["messages"][-1] == {"role": "assistant", "content": "{"}
+    instruction = call["messages"][0]["content"]
+    assert "\n\nRespond with valid JSON matching this schema:" in instruction
+    assert "If not responding with a tool call" not in instruction
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_repairs_malformed_structured_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structured output that fails JSON parsing falls back to
+    repair_response_model_json, whose result becomes the response content."""
+    # After the '{' prefill is prepended this is still invalid JSON.
+    client = _make_client([TextBlock(type="text", text='"answer": not-json')])
+
+    repaired = StructuredResponse(answer="fixed")
+    repair_calls: list[tuple[str, type[BaseModel], str]] = []
+
+    def _fake_repair(
+        raw: str, response_format: type[BaseModel], model_name: str
+    ) -> StructuredResponse:
+        repair_calls.append((raw, response_format, model_name))
+        return repaired
+
+    monkeypatch.setattr(
+        "src.llm.backends.anthropic.repair_response_model_json", _fake_repair
+    )
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=StructuredResponse,
+    )
+
+    assert result.content is repaired
+    assert repair_calls == [
+        ('{"answer": not-json', StructuredResponse, "claude-3-5-sonnet-latest")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_skips_parsing_on_tool_call_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tool-call response with response_format set must not attempt JSON
+    parsing — the repair fallback raises on the empty text of tool-call
+    turns, which would fail every intermediate tool iteration."""
+    client = _make_client(
+        [
+            ToolUseBlock(
+                type="tool_use",
+                id="tool_1",
+                name="search",
+                input={"query": "honcho"},
+            )
+        ]
+    )
+
+    def _fail_repair(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("repair must not run for tool-call turns")
+
+    monkeypatch.setattr(
+        "src.llm.backends.anthropic.repair_response_model_json", _fail_repair
+    )
+
+    backend = AnthropicBackend(client)
+    result = await backend.complete(
+        model="claude-3-5-sonnet-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[SEARCH_TOOL],
+        response_format=StructuredResponse,
+    )
+
+    assert result.content == ""  # raw (empty) text, not a parsed model
+    assert result.tool_calls[0].name == "search"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_backend_stream_no_prefill_when_tools_present() -> None:
+    """The streaming path applies the same tools guard."""
+
+    class _FakeStream:
+        def __init__(self) -> None:
+            self._chunks: list[SimpleNamespace] = [
+                SimpleNamespace(
+                    type="content_block_delta",
+                    delta=SimpleNamespace(text='{"answer":"ok"}'),
+                )
+            ]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args: object) -> bool:
+            return False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._chunks:
+                return self._chunks.pop(0)
+            raise StopAsyncIteration
+
+        async def get_final_message(self):
+            return SimpleNamespace(
+                stop_reason="end_turn", usage=SimpleNamespace(output_tokens=5)
+            )
+
+    client = Mock()
+    client.messages.stream = Mock(return_value=_FakeStream())
+
+    backend = AnthropicBackend(client)
+    chunks = [
+        chunk
+        async for chunk in backend.stream(
+            model="claude-3-5-sonnet-latest",
+            messages=[{"role": "user", "content": "Hello"}],
+            max_tokens=100,
+            tools=[SEARCH_TOOL],
+            response_format=StructuredResponse,
+        )
+    ]
+
+    assert chunks[0].content == '{"answer":"ok"}'
+    call = client.messages.stream.call_args.kwargs
+    assert call["messages"][-1]["role"] == "user"  # no assistant '{' prefill
+    assert (
+        "If not responding with a tool call, respond with valid JSON"
+        in call["messages"][0]["content"]
+    )
