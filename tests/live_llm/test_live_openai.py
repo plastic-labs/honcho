@@ -93,9 +93,10 @@ async def test_live_openai_gpt5_reasoning_structured_output_and_prefix_caching(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     require_provider_key(model_spec)
-    # gpt-5.4 dropped 'minimal' from the reasoning_effort vocabulary
-    # (none/low/../xhigh); 'low' is the lowest tier both generations accept.
-    reasoning_effort = "low" if model_spec.model.startswith("gpt-5.4") else "minimal"
+    # Only the original gpt-5 generation accepts 'minimal'; gpt-5.1+ replaced
+    # it with 'none'. 'low' is valid everywhere else, including future models.
+    is_base_gpt5 = model_spec.model == "gpt-5" or model_spec.model.startswith("gpt-5-")
+    reasoning_effort = "minimal" if is_base_gpt5 else "low"
     backend, config = make_backend(model_spec, reasoning_effort=reasoning_effort)
     parse_calls = wrap_async_method(
         monkeypatch,

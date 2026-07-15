@@ -20,38 +20,43 @@ on:
     types: [labeled]
   workflow_dispatch:
 
+# Cap spend: at most one active run per PR (per ref for push/dispatch).
+# Re-triggering a PR run cancels the in-flight one instead of stacking live
+# provider calls; pushes to main queue instead of cancelling so main CI
+# results aren't lost.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
+
 permissions:
   contents: read
 
 jobs:
-  # Purge the trigger label first thing. Best-effort: failing to remove the
-  # label (e.g. read-only token on a fork PR) doesn't block the tests.
-  remove-label:
-    name: Remove trigger label
-    if: github.event_name == 'pull_request' && github.event.label.name == 'run-live-llm'
-    runs-on: ubuntu-latest
+  # Only code owners (.github/CODEOWNERS) may trigger the suite manually via
+  # the label or workflow_dispatch; the gate also purges the trigger label so
+  # it can be re-added to trigger another run.
+  gate:
+    name: Gate manual trigger
     permissions:
+      contents: read
       pull-requests: write
-    steps:
-      - name: Remove run-live-llm label
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if ! gh api --method DELETE \
-            "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/run-live-llm"; then
-            echo "::warning::Could not remove the run-live-llm label (it may have been removed already)"
-          fi
+    uses: ./.github/workflows/manual-trigger-gate.yml
+    with:
+      label: run-live-llm
+      allow-workflow-dispatch: true
 
   live-llm-tests:
     name: Run Live LLM Tests
-    needs: remove-label
-    # always() lets this run on push and workflow_dispatch events, where remove-label is
-    # skipped.
+    needs: gate
+    # always() lets this run on push events, where the gate's jobs are skipped.
+    # Manual triggers (label / workflow_dispatch) additionally require the
+    # gate's CODEOWNERS check to have passed.
     if: >-
       always() &&
       (github.event_name == 'push' ||
-       github.event_name == 'workflow_dispatch' ||
-       github.event.label.name == 'run-live-llm')
+       ((github.event_name == 'workflow_dispatch' ||
+         github.event.label.name == 'run-live-llm') &&
+        needs.gate.outputs.authorized == 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: unified-tests
@@ -73,68 +78,12 @@ jobs:
           aws-region: us-east-1
           role-duration-seconds: 3600
 
-      - name: Resolve secret ids from latest git tags
-        id: resolve-secret
-        env:
-          SECRET_PREFIX: ${{ secrets.STAGING_SECRET_PREFIX }}
-        run: |
-          set -euo pipefail
-          : "${SECRET_PREFIX:?STAGING_SECRET_PREFIX secret is not set for this environment}"
-          # Keep the secret-name prefix out of public CI logs.
-          echo "::add-mask::${SECRET_PREFIX}"
-
-          # Two newest v<major.minor.patch> tags, highest first (tags are public).
-          versions="$(git ls-remote --tags origin 'v*' \
-            | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
-            | sort -t. -k1,1nr -k2,2nr -k3,3nr -u)"
-          latest="$(printf '%s\n' "$versions" | sed -n '1p')"
-          second="$(printf '%s\n' "$versions" | sed -n '2p')"
-          if [ -z "${latest:-}" ]; then
-            echo "::error::No v<semver> git tags found to resolve a secret version"
-            exit 1
-          fi
-
-          latest_id="${SECRET_PREFIX}${latest}"
-          echo "::add-mask::${latest_id}"
-          echo "latest-id=${latest_id}" >> "$GITHUB_OUTPUT"
-          echo "Latest version: ${latest}"
-          if [ -n "${second:-}" ]; then
-            second_id="${SECRET_PREFIX}${second}"
-            echo "::add-mask::${second_id}"
-            echo "second-id=${second_id}" >> "$GITHUB_OUTPUT"
-            echo "Fallback version: ${second}"
-          fi
-
-      # Fetch the latest tag's secret. continue-on-error so a not-yet-published
-      # latest falls through to the second-latest instead of failing the job.
-      - name: Fetch staging secret (latest)
-        id: fetch-latest
-        continue-on-error: true
-        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+      # Resolves secret ids from the newest release tags, fetches the newest
+      # available staging secret into the job env, and fails if none loaded.
+      - name: Load staging secrets
+        uses: ./.github/actions/load-staging-secrets
         with:
-          secret-ids: |
-            ,${{ steps.resolve-secret.outputs.latest-id }}
-          parse-json-secrets: true
-
-      # Runs only if the latest fetch failed; this one is NOT continue-on-error,
-      # so if the fallback also fails the job fails loudly.
-      - name: Fetch staging secret (fallback to second-latest)
-        id: fetch-fallback
-        if: steps.fetch-latest.outcome == 'failure' && steps.resolve-secret.outputs.second-id != ''
-        uses: aws-actions/aws-secretsmanager-get-secrets@v2
-        with:
-          secret-ids: |
-            ,${{ steps.resolve-secret.outputs.second-id }}
-          parse-json-secrets: true
-
-      # If the latest fetch failed and the fallback was skipped (no second
-      # tag), no provider keys were loaded — without this guard every test
-      # would skip via require_provider_key and the run would go green.
-      - name: Verify staging secrets were loaded
-        if: steps.fetch-latest.outcome != 'success' && steps.fetch-fallback.outcome != 'success'
-        run: |
-          echo "::error::No staging secret could be fetched (latest failed; fallback skipped or failed)"
-          exit 1
+          secret-prefix: ${{ secrets.STAGING_SECRET_PREFIX }}
 
       # Configure the test environment. Sentry/CloudEvents endpoints aren't
       # reachable from CI. LIVE_LLM_ANTHROPIC_45_PLUS_MODELS must be set for
