@@ -65,7 +65,7 @@ You need a Honcho API key — get one free at <https://app.honcho.dev> (starts w
 ## Rules of thumb
 
 - **Always record turns.** Memory only grows from messages you feed in. Recording is the one non-optional step.
-- **Don't observe yourself.** The assistant peer should be `observe_me: false` — you want a model of the user, not of the agent.
+- **Modeling the assistant is optional.** Setting `observe_me: false` on the assistant peer skips building a model of it — required only for deterministic bots (scripted output, nothing meaningful to model). For an AI assistant it's fine to leave observation on if you also want a model of the agent.
 - **One stable peer ID per entity.** Reuse the same `peer_id` for a person across every session and channel; splitting them (`user`, `user-web`, `user-discord`) builds separate representations and fragments memory.
 - **Scope sessions so reasoning actually fires.** Reasoning is token-batched per peer (~1,000 tokens within a session). Scope a session to one active interaction (per-conversation, per-channel, per-task, per-project); create a new one when context genuinely resets (new topic, new day), reuse it while context should keep accumulating. Many tiny sessions each stall below the threshold and never get reasoned over.
 - **Don't block on reasoning.** It's asynchronous. Respond now; the representation will be richer next time.

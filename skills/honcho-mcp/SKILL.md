@@ -34,7 +34,7 @@ add_messages_to_session   session_id: "<session-id>"
                             - peer_id: "Assistant"     content: "<your exact reply>"
 ```
 
-**Reuse the same `session_id` for the whole continuous conversation** (don't mint a new one per turn) — that's what lets the user's messages accumulate past the ~1,000-token reasoning threshold so Honcho actually reasons over them. And use **one stable `peer_id` per real person**, reused across every session and channel; a fresh or per-channel ID (`user-web` vs `user-discord`) builds separate, weaker representations instead of one. Set `observe_me: false` on the assistant peer — you want a model of the user, not of yourself. Reasoning is asynchronous; don't poll or wait for it.
+**Reuse the same `session_id` for the whole continuous conversation** (don't mint a new one per turn) — that's what lets the user's messages accumulate past the ~1,000-token reasoning threshold so Honcho actually reasons over them. And use **one stable `peer_id` per real person**, reused across every session and channel; a fresh or per-channel ID (`user-web` vs `user-discord`) builds separate, weaker representations instead of one. Setting `observe_me: false` on the assistant peer skips building a model of it — reserve that for deterministic bots (nothing meaningful to model) or whenever you simply don't need a representation of the assistant; for an AI assistant it's perfectly fine to leave observation on. Reasoning is asynchronous; don't poll or wait for it.
 
 ## Other useful tools
 

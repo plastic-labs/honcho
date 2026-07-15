@@ -127,7 +127,7 @@ Key patterns (shared):
 
 - IDs sanitized to `^[a-zA-Z0-9_-]+` (Honcho requirement)
 - User peer: `observe_me=True, observe_others=True`
-- Assistant peer: `observe_me=False, observe_others=True`
+- Assistant/bot peer: `observe_others=True`; set `observe_me=False` only for deterministic bots (scripted output — nothing to model). AI-assistant bots can keep `observe_me=True`.
 
 If references exist for this framework, use them directly from `{baseDir}/references/bot-frameworks/<framework>/`.
 
