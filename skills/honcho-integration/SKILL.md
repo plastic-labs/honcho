@@ -12,7 +12,17 @@ Honcho is an open source memory library for building stateful agents. It works w
 
 The key mental model: **Peers** are any participant — human or AI. Both are represented the same way. Observation settings (`observe_me`, `observe_others`) control which peers Honcho reasons about. Typically you want Honcho to model your users (`observe_me=True`) but not your AI assistant (`observe_me=False`). **Sessions** scope conversations between peers. **Messages** are the raw data you feed in — Honcho reasons about them asynchronously and stores the results as the peer's **representation**. No messages means no reasoning means no memory.
 
-Your agent accesses this memory through `peer.chat(query)` (ask a natural language question, get a reasoned answer), `session.context()` (get formatted conversation history + representations), or both.
+Your agent accesses this memory through `peer.chat(query)` (ask a natural language question, get a reasoned answer — a few seconds of live reasoning) or `session.context()` (near-instant read of formatted history + representation). Prefer `context()` for per-turn grounding; use `chat()` when you need a reasoned answer.
+
+## Reference map
+
+Follow the workflow below. Read a reference file only when you reach the step that needs it:
+
+| When you're… | Read |
+| --- | --- |
+| Writing the client/peer/session setup (init, peers, sessions, add messages) | `references/core-patterns.md` |
+| Wiring how the AI reads context (tool call, pre-fetch, `context()`, streaming) | `references/agent-patterns.md` |
+| Integrating into a bot framework (nanobot, openclaw, picoclaw, …) | `references/bot-frameworks.md` + `references/bot-frameworks/<framework>/` |
 
 ## Integration Workflow
 
@@ -34,7 +44,7 @@ Use Glob and Grep to find:
 - User/session models or types
 - API routes handling chat or conversation endpoints
 
-> **Bot framework detected?** If the codebase is built around an agent loop, tool registry, session manager, and message bus (e.g., nanobot, openclaw, picoclaw), read `{baseDir}/references/bot-frameworks.md` for framework-specific integration guidance and check `{baseDir}/references/bot-frameworks/<framework>/` for concrete reference implementations.
+> **Bot framework detected?** If the codebase is built around an agent loop, tool registry, session manager, and message bus (e.g., nanobot, openclaw, picoclaw), read `references/bot-frameworks.md` for framework-specific integration guidance and check `references/bot-frameworks/<framework>/` for concrete reference implementations.
 
 ### Phase 2: Interview (REQUIRED)
 
@@ -51,7 +61,7 @@ Ask about which entities should be Honcho peers:
 
 #### Question Set 2 - Integration Pattern
 
-Ask how they want to use Honcho context:
+Ask how they want to use Honcho context (see `references/agent-patterns.md` for the implementation of each):
 
 - header: "Pattern"
 - question: "How should your AI access Honcho's user context?"
@@ -82,11 +92,11 @@ If they chose pre-fetch, ask what context matters:
 
 Based on interview responses, implement the integration:
 
-1. Install the SDK
-2. Create Honcho client initialization
-3. Set up peer creation for identified entities
-4. Implement the chosen integration pattern(s)
-5. Add message storage after exchanges
+1. Install the SDK (see [Installation](#installation))
+2. Create Honcho client initialization — `references/core-patterns.md` §1
+3. Set up peer creation for identified entities — `references/core-patterns.md` §2–3
+4. Implement the chosen integration pattern(s) — `references/agent-patterns.md`
+5. Add message storage after exchanges — `references/core-patterns.md` §4
 6. Update any existing conversation handlers
 
 ### Phase 4: Verification
@@ -132,394 +142,7 @@ uv add honcho-ai
 bun add @honcho-ai/sdk
 ```
 
-## Sync vs Async
-
-**TypeScript** — The SDK is async by default. All methods return promises. No separate sync API.
-
-**Python** — The SDK provides both sync and async interfaces:
-
-- **Sync** (default): `from honcho import Honcho` — use in sync frameworks (Flask, Django, CLI scripts)
-- **Async**: `from honcho import Honcho` with `.aio` namespace — use in async frameworks (FastAPI, Starlette, async workers)
-
-```python
-# Sync usage (Flask, Django, scripts)
-from honcho import Honcho
-honcho = Honcho(workspace_id="my-app", api_key=os.environ["HONCHO_API_KEY"])
-peer = honcho.peer("user-123")
-response = peer.chat("What does this user prefer?")
-
-# Async usage (FastAPI, Starlette)
-from honcho import Honcho
-honcho = Honcho(workspace_id="my-app", api_key=os.environ["HONCHO_API_KEY"])
-peer = await honcho.aio.peer("user-123")
-response = await peer.aio.chat("What does this user prefer?")
-```
-
-Match the client to the framework — check whether the codebase uses `async def` handlers or sync `def` handlers and choose accordingly. The rest of this skill shows sync Python examples; swap to `.aio` equivalents for async codebases.
-
-## Core Integration Patterns
-
-### 1. Initialize with a Single Workspace
-
-Use ONE workspace for your entire application. The workspace name should reflect your app/product.
-
-**Python:**
-
-```python
-from honcho import Honcho
-import os
-
-# Sync client (Flask, Django, scripts)
-honcho = Honcho(
-    workspace_id="your-app-name",
-    api_key=os.environ["HONCHO_API_KEY"],
-    environment="production"
-)
-
-# Async client (FastAPI, Starlette) — use honcho.aio for all operations
-# honcho.aio.peer(), honcho.aio.session(), etc.
-```
-
-**TypeScript:**
-
-```typescript
-import { Honcho } from '@honcho-ai/sdk';
-
-// All methods are async by default
-const honcho = new Honcho({
-    workspaceId: "your-app-name",
-    apiKey: process.env.HONCHO_API_KEY,
-    environment: "production"
-});
-```
-
-### 2. Create Peers for ALL Entities
-
-Create peers for **every entity** in your business logic - users AND AI assistants.
-
-**Python:**
-
-```python
-from honcho.api_types import PeerConfig
-
-# Human users
-user = honcho.peer("user-123")
-
-# AI assistants - set observe_me=False so Honcho doesn't model the AI
-assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))
-support_bot = honcho.peer("support-bot", configuration=PeerConfig(observe_me=False))
-```
-
-**TypeScript:**
-
-```typescript
-// Human users
-const user = await honcho.peer("user-123");
-
-// AI assistants - set observeMe=false so Honcho doesn't model the AI
-const assistant = await honcho.peer("assistant", { configuration: { observeMe: false } });
-const supportBot = await honcho.peer("support-bot", { configuration: { observeMe: false } });
-```
-
-### 3. Multi-Peer Sessions
-
-Sessions can have multiple participants. Configure observation settings per-peer.
-
-**Python:**
-
-```python
-from honcho.api_types import SessionPeerConfig
-
-session = honcho.session("conversation-123")
-
-# User is observed (Honcho builds a model of them)
-user_config = SessionPeerConfig(observe_me=True, observe_others=True)
-
-# AI is NOT observed (no model built of the AI)
-ai_config = SessionPeerConfig(observe_me=False, observe_others=True)
-
-session.add_peers([
-    (user, user_config),
-    (assistant, ai_config)
-])
-```
-
-**TypeScript:**
-
-```typescript
-const session = await honcho.session("conversation-123");
-
-await session.addPeers([
-    [user, { observeMe: true, observeOthers: true }],
-    [assistant, { observeMe: false, observeOthers: true }]
-]);
-```
-
-### 4. Add Messages to Sessions
-
-**Python:**
-
-```python
-session.add_messages([
-    user.message("I'm having trouble with my account"),
-    assistant.message("I'd be happy to help. What seems to be the issue?"),
-    user.message("I can't reset my password")
-])
-```
-
-**TypeScript:**
-
-```typescript
-await session.addMessages([
-    user.message("I'm having trouble with my account"),
-    assistant.message("I'd be happy to help. What seems to be the issue?"),
-    user.message("I can't reset my password")
-]);
-```
-
-## Using Honcho for AI Agents
-
-### Pattern A: Dialectic Chat as a Tool Call (Recommended for Agents)
-
-Make Honcho's chat endpoint available as a **tool** for your AI agent. This lets the agent query user context on-demand.
-
-**Python (OpenAI function calling):**
-
-```python
-import openai
-from honcho import Honcho
-
-honcho = Honcho(workspace_id="my-app", api_key=os.environ["HONCHO_API_KEY"])
-
-# Define the tool for your agent
-honcho_tool = {
-    "type": "function",
-    "function": {
-        "name": "query_user_context",
-        "description": "Query Honcho to retrieve relevant context about the user based on their history and preferences. Use this when you need to understand the user's background, preferences, past interactions, or goals.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "A natural language question about the user, e.g. 'What are this user's main goals?' or 'What communication style does this user prefer?'"
-                }
-            },
-            "required": ["query"]
-        }
-    }
-}
-
-def handle_honcho_tool_call(user_id: str, query: str) -> str:
-    """Execute the Honcho chat tool call."""
-    peer = honcho.peer(user_id)
-    return peer.chat(query)
-
-# Use in your agent loop
-def run_agent(user_id: str, user_message: str):
-    messages = [{"role": "user", "content": user_message}]
-
-    response = openai.chat.completions.create(
-        model="gpt-4",
-        messages=messages,
-        tools=[honcho_tool]
-    )
-
-    # Handle tool calls
-    if response.choices[0].message.tool_calls:
-        for tool_call in response.choices[0].message.tool_calls:
-            if tool_call.function.name == "query_user_context":
-                import json
-                args = json.loads(tool_call.function.arguments)
-                result = handle_honcho_tool_call(user_id, args["query"])
-                # Continue conversation with tool result...
-```
-
-**TypeScript (OpenAI function calling):**
-
-```typescript
-import OpenAI from 'openai';
-import { Honcho } from '@honcho-ai/sdk';
-
-const honcho = new Honcho({
-    workspaceId: "my-app",
-    apiKey: process.env.HONCHO_API_KEY
-});
-
-const honchoTool: OpenAI.ChatCompletionTool = {
-    type: "function",
-    function: {
-        name: "query_user_context",
-        description: "Query Honcho to retrieve relevant context about the user based on their history and preferences.",
-        parameters: {
-            type: "object",
-            properties: {
-                query: {
-                    type: "string",
-                    description: "A natural language question about the user"
-                }
-            },
-            required: ["query"]
-        }
-    }
-};
-
-async function handleHonchoToolCall(userId: string, query: string): Promise<string> {
-    const peer = await honcho.peer(userId);
-    return await peer.chat(query);
-}
-```
-
-### Pattern B: Pre-fetch Context with Targeted Queries
-
-For simpler integrations, fetch user context before the LLM call using pre-defined queries.
-
-**Python:**
-
-```python
-def get_user_context_for_prompt(user_id: str) -> dict:
-    """Fetch key user attributes via targeted Honcho queries."""
-    peer = honcho.peer(user_id)
-
-    return {
-        "communication_style": peer.chat("What communication style does this user prefer? Be concise."),
-        "expertise_level": peer.chat("What is this user's technical expertise level? Be concise."),
-        "current_goals": peer.chat("What are this user's current goals or priorities? Be concise."),
-        "preferences": peer.chat("What key preferences should I know about this user? Be concise.")
-    }
-
-def build_system_prompt(user_context: dict) -> str:
-    return f"""You are a helpful assistant. Here's what you know about this user:
-
-Communication style: {user_context['communication_style']}
-Expertise level: {user_context['expertise_level']}
-Current goals: {user_context['current_goals']}
-Key preferences: {user_context['preferences']}
-
-Tailor your responses accordingly."""
-```
-
-**TypeScript:**
-
-```typescript
-async function getUserContextForPrompt(userId: string): Promise<Record<string, string>> {
-    const peer = await honcho.peer(userId);
-
-    const [style, expertise, goals, preferences] = await Promise.all([
-        peer.chat("What communication style does this user prefer? Be concise."),
-        peer.chat("What is this user's technical expertise level? Be concise."),
-        peer.chat("What are this user's current goals or priorities? Be concise."),
-        peer.chat("What key preferences should I know about this user? Be concise.")
-    ]);
-
-    return {
-        communicationStyle: style,
-        expertiseLevel: expertise,
-        currentGoals: goals,
-        preferences: preferences
-    };
-}
-```
-
-### Pattern C: Get Context for LLM Integration
-
-Use `context()` for conversation history with built-in LLM formatting.
-
-**Python:**
-
-```python
-import openai
-
-session = honcho.session("conversation-123")
-user = honcho.peer("user-123")
-assistant = honcho.peer("assistant", configuration=PeerConfig(observe_me=False))
-
-# Get context formatted for your LLM
-context = session.context(
-    tokens=2000,
-    peer_target=user.id,  # Include representation of this user
-    summary=True           # Include conversation summaries
-)
-
-# Convert to OpenAI format
-messages = context.to_openai(assistant=assistant)
-
-# Or Anthropic format
-# messages = context.to_anthropic(assistant=assistant)
-
-# Add the new user message
-messages.append({"role": "user", "content": "What should I focus on today?"})
-
-response = openai.chat.completions.create(
-    model="gpt-4",
-    messages=messages
-)
-
-# Store the exchange
-session.add_messages([
-    user.message("What should I focus on today?"),
-    assistant.message(response.choices[0].message.content)
-])
-```
-
-**TypeScript:**
-
-```typescript
-import OpenAI from 'openai';
-
-const session = await honcho.session("conversation-123");
-const user = await honcho.peer("user-123");
-const assistant = await honcho.peer("assistant", { configuration: { observeMe: false } });
-
-// Get context formatted for your LLM
-const context = await session.context({
-    tokens: 2000,
-    peerTarget: user.id,  // Include representation of this user
-    summary: true          // Include conversation summaries
-});
-
-// Convert to OpenAI format
-const messages = context.toOpenAI(assistant);
-
-// Or Anthropic format
-// const messages = context.toAnthropic(assistant);
-
-// Add the new user message
-messages.push({ role: "user", content: "What should I focus on today?" });
-
-const openai = new OpenAI();
-const response = await openai.chat.completions.create({
-    model: "gpt-4",
-    messages
-});
-
-// Store the exchange
-await session.addMessages([
-    user.message("What should I focus on today?"),
-    assistant.message(response.choices[0].message.content!)
-]);
-```
-
-## Streaming Responses
-
-**Python:**
-
-```python
-stream = peer.chat_stream("What do we know about this user?")
-
-for chunk in stream:
-    print(chunk, end="", flush=True)
-```
-
-**TypeScript:**
-
-```typescript
-const stream = await peer.chatStream("What do we know about this user?");
-
-for await (const chunk of stream) {
-    process.stdout.write(chunk);
-}
-```
+The SDK is sync-by-default in Python (with an `.aio` async namespace) and async-only in TypeScript — match the client to your framework. Full sync/async guidance and the base client/peer/session/message code are in `references/core-patterns.md`.
 
 ## Integration Checklist
 

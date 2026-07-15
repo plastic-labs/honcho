@@ -21,6 +21,8 @@ This skill migrates code from `honcho` Python SDK v1.6.0 to v2.1.1 (required for
 
 ## Quick Migration
 
+The four changes below are the structural breaks you hit first — apply them inline. The remaining renames and smaller changes are one-line lookups in the [Quick Reference Table](#quick-reference-table); the full before/after for every change lives in [DETAILED-CHANGES.md](DETAILED-CHANGES.md).
+
 ### 1. Update async architecture
 
 ```python
@@ -98,177 +100,21 @@ session.get_configuration()
 client.get_configuration()
 ```
 
-### 5. Update method names
+### Changes 5–15 (at a glance)
 
-```python
-# Before
-peer.working_rep()
-peer.get_context()
-peer.get_sessions()
-session.get_context()
-session.get_summaries()
-session.get_messages()
-session.get_peers()
-session.get_peer_config()
-client.get_peers()
-client.get_sessions()
-client.get_workspaces()
+The remaining breaks are one-line mappings in the [Quick Reference Table](#quick-reference-table) below, with full before/after in [DETAILED-CHANGES.md](DETAILED-CHANGES.md):
 
-# After
-peer.representation()
-peer.context()
-peer.sessions()
-session.context()
-session.summaries()
-session.messages()
-session.peers()
-session.get_peer_configuration()
-client.peers()
-client.sessions()
-client.workspaces()
-```
-
-### 6. Update streaming
-
-```python
-# Before
-response = peer.chat("query", stream=True)
-for chunk in response:
-    print(chunk, end="")
-
-# After
-stream = peer.chat_stream("query")
-for chunk in stream:
-    print(chunk, end="")
-```
-
-### 7. Update queue status (formerly deriver)
-
-```python
-# Before
-from honcho_core.types import DeriverStatus
-
-status = client.get_deriver_status()
-status = client.poll_deriver_status(timeout=300.0)  # Removed!
-
-# After
-from honcho.api_types import QueueStatusResponse
-
-status = client.queue_status()
-# poll_deriver_status removed - implement polling manually if needed
-```
-
-### 8. Update representation parameters
-
-```python
-# Before
-rep = peer.working_rep(
-    include_most_derived=True,
-    max_observations=50
-)
-
-# After
-rep = peer.representation(
-    include_most_frequent=True,
-    max_conclusions=50
-)
-```
-
-### 9. Move update_message to session
-
-```python
-# Before
-updated = client.update_message(message=msg, metadata={"key": "value"}, session="sess-id")
-
-# After
-updated = session.update_message(message=msg, metadata={"key": "value"})
-```
-
-### 10. Update card() return type and method name
-
-```python
-# Before
-card: str = peer.card()  # Returns str
-
-# After (v2.0.0+)
-card: list[str] | None = peer.get_card()  # Returns list[str] | None
-if card:
-    print("\n".join(card))
-
-# peer.card() still works but is deprecated — use get_card()
-
-# New in v2.0.1: set_card()
-peer.set_card(["Prefers dark mode", "Located in US"])
-```
-
-### 11. Strict input validation (v2.0.2+)
-
-All input models now reject unknown fields via `extra="forbid"` Pydantic validation. Previously, misspelled or extraneous fields were silently ignored.
-
-```python
-# Before (v2.0.1 and earlier) — silently ignored
-peer = client.peer("user-1", configuration=PeerConfig(observe_mee=True))  # typo silently ignored
-
-# After (v2.0.2+) — raises ValidationError
-peer = client.peer("user-1", configuration=PeerConfig(observe_mee=True))  # ValidationError!
-```
-
-### 12. peer() and session() always make API calls (v2.1.0+)
-
-**Breaking**: `peer()` and `session()` now always make a get-or-create API call. Previously, calling without metadata/configuration returned a lazy object with no API call.
-
-```python
-# Before (v2.0.x) — no API call without options
-peer = client.peer("user-123")  # Lazy, no network request
-
-# After (v2.1.0+) — always hits the API
-peer = client.peer("user-123")  # Makes POST to /peers (get-or-create)
-
-# Async
-peer = await client.aio.peer("user-123")  # Also always hits API
-```
-
-### 13. New properties and methods (v2.1.0+)
-
-```python
-# created_at on Peer and Session
-peer = client.peer("user-123")
-print(peer.created_at)  # datetime | None
-
-session = client.session("sess-1")
-print(session.created_at)  # datetime | None
-
-# is_active on Session
-print(session.is_active)  # bool | None
-
-# get_message() on Session
-msg = session.get_message("msg-id")
-# Async: msg = await session.aio.get_message("msg-id")
-```
-
-### 14. Pagination parameters on list methods (v2.1.0+)
-
-All list methods now accept `page`, `size`, and `reverse` parameters:
-
-```python
-# Before (v2.0.x) — only filters
-peers_page = client.peers(filters={"metadata": {"role": "admin"}})
-
-# After (v2.1.0+) — pagination controls
-peers_page = client.peers(
-    filters={"metadata": {"role": "admin"}},
-    page=2,
-    size=25,
-    reverse=True
-)
-
-# Works on: client.peers(), client.sessions(), peer.sessions(),
-# session.messages(), scope.list()
-```
-
-### 15. Broader HTTP retry logic (v2.1.1+)
-
-The SDK now retries on `httpx.TimeoutException`, `httpx.NetworkError`, and `httpx.RemoteProtocolError` (previously only `httpx.TimeoutException` and `httpx.ConnectError`). These are mapped to the SDK's `TimeoutError` and `ConnectionError` respectively. No code changes needed — this is transparent.
+- **5. Method renames** — `get_context()`→`context()`, `get_sessions()`→`sessions()`, `get_messages()`→`messages()`, etc. (drop the `get_` prefix)
+- **6. Streaming** — `chat("q", stream=True)` → `chat_stream("q")`
+- **7. Queue status** — `get_deriver_status()`→`queue_status()`; `poll_deriver_status()` removed (poll manually)
+- **8. Representation params** — `include_most_derived=`→`include_most_frequent=`, `max_observations=`→`max_conclusions=`
+- **9. `update_message`** — moved from `client.update_message(..., session=)` to `session.update_message(...)`
+- **10. Card** — `card(): str` → `get_card(): list[str] | None`; new `set_card(list[str])` (v2.0.1); `card()` deprecated
+- **11. Strict validation** (v2.0.2) — unknown config fields now raise `ValidationError` instead of being ignored
+- **12. `peer()`/`session()`** (v2.1.0) — now always make a get-or-create API call (previously lazy)
+- **13. New properties** (v2.1.0) — `created_at`, `session.is_active`, `session.get_message(id)`
+- **14. Pagination** (v2.1.0) — `page=`, `size=`, `reverse=` on all list methods
+- **15. Retries** (v2.1.1) — broader HTTP retry coverage; transparent, no code changes
 
 ## Quick Reference Table
 

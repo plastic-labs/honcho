@@ -26,10 +26,20 @@ Reasoning happens **asynchronously**. After you record a turn, don't poll or wai
 Do this every conversation. It's the whole skill.
 
 1. **Once per conversation** — make sure there's a session with you and the user as peers (observe the user, don't observe yourself).
-2. **Before responding, when personalization helps** — pull the user's current context (`get_context` / `get_representation`) or search past messages (`search`) — these are fast reads. For a reasoned answer to a specific question, ask the dialectic (`chat`) — that one takes a few seconds, so use it when it earns its keep.
+2. **Before responding, when personalization helps** — pull the user's current context (`get_session_context` / `get_representation`) or search past messages (`search`) — these are fast reads. For a reasoned answer to a specific question, ask the dialectic (`chat`) — that one takes a few seconds, so use it when it earns its keep.
 3. **After every exchange** — record both the user's message and your reply. This is what makes Honcho learn. Don't skip it.
 
 Optionally, when you learn a durable fact you don't want to wait for background reasoning to surface, **store a conclusion** directly.
+
+## What you get back when you recall
+
+Three ways to pull memory, cheapest first:
+
+- **Representation** (`get_representation`) — Honcho's synthesized understanding of the user as text, ready to drop straight into a system prompt. Near-instant read.
+- **Context** (`get_session_context`) — the fuller session view: a session summary + recent messages covering the conversation, and — *only if you target a peer* — that peer's representation folded in. Without a peer target it's session-local (recent turns + summary) and carries no cross-conversation memory. Near-instant read.
+- **Dialectic** (`chat`) — a *reasoned* natural-language answer to a specific question ("How does this user like to receive feedback?"). Runs live reasoning, so it takes a few seconds. Use it when a plain read won't answer the question.
+
+The dialectic (`chat`) also takes a **reasoning level** that trades speed for depth — from `minimal` (fast factual lookup) through `low` (the default balance) to `max` (deep synthesis for the hardest questions). Pick the lowest level that answers the question; higher levels are slower and cost more. The full level-by-level table and model routing live in the path skills (`honcho-mcp`, `honcho-cli`) and the [chat docs](https://honcho.dev/docs/v3/documentation/features/chat.md).
 
 ---
 
@@ -59,7 +69,7 @@ You need a Honcho API key — get one free at <https://app.honcho.dev> (starts w
 - **One stable peer ID per entity.** Reuse the same `peer_id` for a person across every session and channel; splitting them (`user`, `user-web`, `user-discord`) builds separate representations and fragments memory.
 - **Scope sessions so reasoning actually fires.** Reasoning is token-batched per peer (~1,000 tokens within a session). Scope a session to one active interaction (per-conversation, per-channel, per-task, per-project); create a new one when context genuinely resets (new topic, new day), reuse it while context should keep accumulating. Many tiny sessions each stall below the threshold and never get reasoned over.
 - **Don't block on reasoning.** It's asynchronous. Respond now; the representation will be richer next time.
-- **Reads are cheap; reasoning isn't.** Fetching the representation/context (`get_context`, `get_representation`, `search`) is a near-instant read — use it freely. The dialectic (`chat`) runs live reasoning and takes a few seconds, so save it for when you genuinely need a reasoned answer, not every turn.
+- **Reads are cheap; reasoning isn't.** Fetching the representation/context (`get_session_context`, `get_representation`, `search`) is a near-instant read — use it freely. The dialectic (`chat`) runs live reasoning and takes a few seconds, so save it for when you genuinely need a reasoned answer, not every turn.
 - **Check before you store.** Background reasoning derives most conclusions automatically. Store a conclusion manually only for a durable fact you want available immediately; `list`/`query` first to avoid duplicates.
 - **One workspace per app/user-context.** Don't scatter the same user's memory across multiple workspaces.
 - **Unify memory across tools with a shared workspace + peer ID.** To give one user continuous memory across several apps or agents (e.g. Claude Code, Cursor, your own app), point them at the same workspace and reuse the same peer ID — that shared ID is what links the representation. See [Unified Memory Setup](https://honcho.dev/docs/v3/guides/recipes/unified-memory-setup.md).

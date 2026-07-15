@@ -51,7 +51,7 @@ add_messages_to_session   session_id: "<session-id>"
 ## Speed: reads vs. reasoning
 
 - **`chat` is the slow one** — it runs the dialectic (live reasoning over the user's memory), so it takes a few seconds. Use it when you need a reasoned answer, not for every turn.
-- **`get_context` / `get_peer_context` / `get_representation` / `search` are reads** — near-instantaneous. Reach for these first when you just need the current representation or history; only call `chat` when you actually need reasoning.
+- **`get_session_context` / `get_peer_context` / `get_representation` / `search` are reads** — near-instantaneous. Reach for these first when you just need the current representation or history; only call `chat` when you actually need reasoning.
 
 ## Reasoning levels
 
