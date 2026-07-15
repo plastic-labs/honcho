@@ -41,12 +41,14 @@ jobs:
         run: gcloud auth configure-docker ${{ env.GCP_AR_LOCATION }}-docker.pkg.dev --quiet
 
       - name: Build and push image
+        env:
+          VERSION: ${{ github.event.inputs.version }}
         run: |
           # Determine the image label based on trigger type
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            IMAGE_LABEL="deployment-${{ github.event.inputs.version }}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            IMAGE_LABEL="deployment-${VERSION}"
           else
-            IMAGE_LABEL="deployment-${{ github.ref_name }}"
+            IMAGE_LABEL="deployment-${GITHUB_REF_NAME}"
           fi
           BASE="${{ env.GCP_AR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_AR_REPO }}/${{ env.IMAGE_NAME }}"
           TAG="$BASE:$IMAGE_LABEL"
