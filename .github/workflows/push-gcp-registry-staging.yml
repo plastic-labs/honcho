@@ -1,0 +1,43 @@
+name: Build and Push to GCP Artifact Registry (Staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Additional image tag to push alongside the commit SHA"
+        required: true
+        type: string
+        default: "latest"
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.STAGING_GCP_PROJECT_ID }}
+  GCP_AR_LOCATION: ${{ secrets.STAGING_GCP_AR_LOCATION }}
+  GCP_AR_REPO: ${{ secrets.STAGING_GCP_AR_REPO }}
+  IMAGE_NAME: ${{ secrets.STAGING_IMAGE_NAME }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_AR_LOCATION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        run: |
+          BASE="${{ env.GCP_AR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_AR_REPO }}/${{ env.IMAGE_NAME }}"
+          SHA_TAG="$BASE:${{ github.sha }}"
+          INPUT_TAG="$BASE:${{ inputs.tag }}"
+          docker build -t "$SHA_TAG" -t "$INPUT_TAG" .
+          docker push "$SHA_TAG"
+          docker push "$INPUT_TAG"
