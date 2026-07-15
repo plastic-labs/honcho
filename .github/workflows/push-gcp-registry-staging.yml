@@ -42,9 +42,13 @@ jobs:
 
       - name: Build and push image
         run: |
+          # Determine the image label based on trigger type
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            IMAGE_LABEL="deployment-${{ github.event.inputs.version }}"
+          else
+            IMAGE_LABEL="deployment-${{ github.ref_name }}"
+          fi
           BASE="${{ env.GCP_AR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_AR_REPO }}/${{ env.IMAGE_NAME }}"
-          SHA_TAG="$BASE:${{ github.sha }}"
-          INPUT_TAG="$BASE:${{ inputs.tag }}"
-          docker build -t "$SHA_TAG" -t "$INPUT_TAG" .
-          docker push "$SHA_TAG"
-          docker push "$INPUT_TAG"
+          TAG="$BASE:$IMAGE_LABEL"
+          docker build -t "$TAG" .
+          docker push "$TAG"
