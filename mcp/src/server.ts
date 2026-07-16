@@ -5,12 +5,16 @@ import { register as registerPeerTools } from "./tools/peers.js";
 import { register as registerSessionTools } from "./tools/sessions.js";
 import { register as registerConclusionTools } from "./tools/conclusions.js";
 import { register as registerSystemTools } from "./tools/system.js";
+import instructions from "../instructions.md";
 
 export function createServer(ctx: ToolContext): McpServer {
-  const server = new McpServer({
-    name: "Honcho MCP Server",
-    version: "3.0.0",
-  });
+  const server = new McpServer(
+    {
+      name: "Honcho MCP Server",
+      version: "3.0.0",
+    },
+    { instructions },
+  );
 
   registerWorkspaceTools(server, ctx);
   registerPeerTools(server, ctx);

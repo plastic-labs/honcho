@@ -143,13 +143,7 @@ Invoke with `/honcho-integration` in your coding agent.
 
 #### honcho-memory
 
-**Concepts & strategy for using Honcho at runtime.** The hub skill: it teaches the recall → respond → record loop, session and peer design, and token-batching (so reasoning actually fires) — the durable model behind using Honcho as memory, independent of how you're connected. It routes to the path skill for your connection (`honcho-mcp` or `honcho-cli`). Use this when your agent already has Honcho available and you want it to remember the user across conversations — as opposed to `honcho-integration`, which adds the SDK to a codebase.
-
-#### honcho-mcp
-
-**For using Honcho through the MCP server.** The mechanics of the recall/record loop with the [MCP tools](#mcp-server) — `create_session`, `add_messages_to_session`, `chat`, `search`, conclusions, and the rest — plus the session/peer reuse that keeps a user's memory unified. The most direct skill for an MCP-connected agent ("how do I use these Honcho tools?").
-
-Invoke implicitly when an MCP-connected agent needs to remember or recall something about the user.
+**Concepts & strategy for using Honcho at runtime.** The hub skill: it teaches the recall → respond → record loop and session and peer design — the durable model behind using Honcho as memory, independent of how you're connected — plus how to connect via MCP and drive the [MCP tools](#mcp-server). Use this when your agent already has Honcho available and you want it to remember the user across conversations — as opposed to `honcho-integration`, which adds the SDK to a codebase. (An MCP-connected agent also receives usage guidance directly from the server on connect.)
 
 #### honcho-cli
 
