@@ -207,8 +207,8 @@ class TestRejections:
     @pytest.mark.parametrize(
         "construct,schema",
         [
-            ("$ref", _object({"a": {"$ref": "#/x"}})),
-            ("$defs", {"type": "object", "properties": {}, "$defs": {}}),
+            ("$defs", _object({"a": {"type": "object", "$defs": {}}})),
+            ("definitions", _object({"a": {"type": "object", "definitions": {}}})),
             ("allOf", _object({"a": {"allOf": [{"type": "string"}]}})),
             ("not", _object({"a": {"not": {"type": "string"}}})),
             ("if", _object({"a": {"if": {"type": "string"}}})),
@@ -223,7 +223,9 @@ class TestRejections:
             json_response_schema_to_pydantic(schema)
 
     def test_error_message_includes_path(self):
-        with pytest.raises(ValueError, match=r"'\$ref' at properties\.address"):
+        with pytest.raises(
+            ValueError, match=r"unsupported \$ref '#/x'.*at properties\.address"
+        ):
             json_response_schema_to_pydantic(_object({"address": {"$ref": "#/x"}}))
 
     def test_schema_valued_additional_properties(self):
@@ -246,6 +248,201 @@ class TestRejections:
     def test_unknown_type(self):
         with pytest.raises(ValueError, match="unsupported type 'date'"):
             json_response_schema_to_pydantic(_object({"when": {"type": "date"}}))
+
+
+class TestRefs:
+    def test_ref_into_defs(self):
+        model = json_response_schema_to_pydantic(
+            _object(
+                {"address": {"$ref": "#/$defs/Address"}},
+                required=["address"],
+                **{
+                    "$defs": {
+                        "Address": _object(
+                            {"city": {"type": "string"}}, required=["city"]
+                        )
+                    }
+                },
+            )
+        )
+        instance = model.model_validate({"address": {"city": "Berlin"}})
+        assert instance.address.city == "Berlin"  # pyright: ignore
+
+    def test_ref_into_definitions_alias(self):
+        model = json_response_schema_to_pydantic(
+            _object(
+                {"item": {"$ref": "#/definitions/Item"}},
+                required=["item"],
+                definitions={"Item": {"type": "string"}},
+            )
+        )
+        assert model.model_validate({"item": "x"}).item == "x"  # pyright: ignore
+
+    def test_pydantic_nested_model_schema(self):
+        """The real-world motivation: model_json_schema() of a nested Pydantic
+        model emits $defs/$ref and must convert cleanly."""
+
+        class Preference(BaseModel):
+            food: str
+            confidence: float
+
+        class Preferences(BaseModel):
+            preferences: list[Preference]
+            summary: str
+
+        model = json_response_schema_to_pydantic(Preferences.model_json_schema())
+        instance = model.model_validate(
+            {
+                "preferences": [{"food": "sushi", "confidence": 0.9}],
+                "summary": "likes sushi",
+            }
+        )
+        assert instance.preferences[0].food == "sushi"  # pyright: ignore
+
+    def test_root_ref(self):
+        model = json_response_schema_to_pydantic(
+            {
+                "$ref": "#/$defs/Root",
+                "$defs": {
+                    "Root": _object({"ok": {"type": "boolean"}}, required=["ok"])
+                },
+            }
+        )
+        assert model.model_validate({"ok": True}).ok is True  # pyright: ignore
+
+    def test_ref_sibling_keys_overlay_target(self):
+        model = json_response_schema_to_pydantic(
+            _object(
+                {"count": {"$ref": "#/$defs/Count", "default": 3}},
+                **{"$defs": {"Count": {"type": "integer"}}},
+            )
+        )
+        assert model.model_validate({}).count == 3  # pyright: ignore
+
+    def test_same_def_referenced_twice(self):
+        model = json_response_schema_to_pydantic(
+            _object(
+                {
+                    "home": {"$ref": "#/$defs/Address"},
+                    "work": {"$ref": "#/$defs/Address"},
+                },
+                required=["home", "work"],
+                **{"$defs": {"Address": _object({"city": {"type": "string"}})}},
+            )
+        )
+        instance = model.model_validate(
+            {"home": {"city": "Berlin"}, "work": {"city": "Kyiv"}}
+        )
+        assert instance.work.city == "Kyiv"  # pyright: ignore
+
+    def test_chained_refs(self):
+        model = json_response_schema_to_pydantic(
+            _object(
+                {"a": {"$ref": "#/$defs/A"}},
+                required=["a"],
+                **{"$defs": {"A": {"$ref": "#/$defs/B"}, "B": {"type": "string"}}},
+            )
+        )
+        assert model.model_validate({"a": "x"}).a == "x"  # pyright: ignore
+
+    def test_unreferenced_invalid_def_is_ignored(self):
+        model = json_response_schema_to_pydantic(
+            _object(
+                {"name": {"type": "string"}},
+                **{"$defs": {"Broken": {"allOf": [{"type": "string"}]}}},
+            )
+        )
+        assert model.model_validate({"name": "x"}).name == "x"  # pyright: ignore
+
+    @pytest.mark.parametrize(
+        "ref",
+        ["#", "#/x", "#/$defs/a/b", "#/properties/a", "https://x.dev/s.json#/$defs/X"],
+    )
+    def test_unsupported_ref_forms(self, ref: str):
+        with pytest.raises(ValueError, match=r"unsupported \$ref"):
+            json_response_schema_to_pydantic(
+                _object(
+                    {"a": {"$ref": ref}},
+                    **{"$defs": {"a": {"type": "string"}}},
+                )
+            )
+
+    def test_unknown_definition(self):
+        with pytest.raises(ValueError, match="unknown definition"):
+            json_response_schema_to_pydantic(
+                _object({"a": {"$ref": "#/$defs/Missing"}}, **{"$defs": {}})
+            )
+
+    def test_direct_recursion_rejected(self):
+        with pytest.raises(ValueError, match=r"recursive \$ref.*cycle: Node -> Node"):
+            json_response_schema_to_pydantic(
+                _object(
+                    {"tree": {"$ref": "#/$defs/Node"}},
+                    **{
+                        "$defs": {
+                            "Node": _object(
+                                {
+                                    "children": {
+                                        "type": "array",
+                                        "items": {"$ref": "#/$defs/Node"},
+                                    }
+                                }
+                            )
+                        }
+                    },
+                )
+            )
+
+    def test_mutual_recursion_rejected(self):
+        with pytest.raises(ValueError, match=r"cycle: A -> B -> A"):
+            json_response_schema_to_pydantic(
+                _object(
+                    {"a": {"$ref": "#/$defs/A"}},
+                    **{
+                        "$defs": {
+                            "A": _object({"b": {"$ref": "#/$defs/B"}}),
+                            "B": _object({"a": {"$ref": "#/$defs/A"}}),
+                        }
+                    },
+                )
+            )
+
+    def test_recursive_pydantic_model_rejected(self):
+        class Node(BaseModel):
+            value: str
+            children: list["Node"] = []
+
+        with pytest.raises(ValueError, match=r"recursive \$ref"):
+            json_response_schema_to_pydantic(Node.model_json_schema())
+
+    def test_ref_expansion_counts_against_node_budget(self):
+        """A doubling ref chain (billion laughs) is stopped by max_nodes."""
+        defs = {
+            f"L{i}": _object(
+                {
+                    "a": {"$ref": f"#/$defs/L{i + 1}"},
+                    "b": {"$ref": f"#/$defs/L{i + 1}"},
+                }
+            )
+            for i in range(10)
+        }
+        defs["L10"] = {"type": "string"}
+        with pytest.raises(ValueError, match="maximum of .* nodes"):
+            json_response_schema_to_pydantic(
+                _object({"root": {"$ref": "#/$defs/L0"}}, **{"$defs": defs})
+            )
+
+    def test_duplicate_name_across_defs_and_definitions(self):
+        with pytest.raises(ValueError, match="appears in both"):
+            json_response_schema_to_pydantic(
+                _object(
+                    {"a": {"$ref": "#/$defs/X"}},
+                    **{
+                        "$defs": {"X": {"type": "string"}},
+                        "definitions": {"X": {"type": "integer"}},
+                    },
+                )
+            )
 
     def test_root_must_be_object(self):
         with pytest.raises(ValueError, match="root schema"):

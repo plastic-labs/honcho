@@ -17,8 +17,10 @@ from typing import Any, Literal, NoReturn, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
+# "$defs"/"definitions" are extracted at the root before the walk and are
+# rejected anywhere else. "$ref" nodes are resolved by _resolve_ref before
+# node validation, so they never reach this check.
 _UNSUPPORTED_KEYS = (
-    "$ref",
     "$defs",
     "definitions",
     "allOf",
@@ -28,6 +30,8 @@ _UNSUPPORTED_KEYS = (
     "else",
     "patternProperties",
 )
+
+_REF_PREFIXES = ("#/$defs/", "#/definitions/")
 
 _PRIMITIVE_TYPES: dict[str, Any] = {
     "string": str,
@@ -65,7 +69,9 @@ class _Ctx:
 
     max_depth: int
     max_nodes: int
+    defs: dict[str, Any] = field(default_factory=dict)
     used_names: set[str] = field(default_factory=set)
+    ref_stack: list[str] = field(default_factory=list)
     node_count: int = 0
 
 
@@ -87,6 +93,14 @@ def json_response_schema_to_pydantic(
     key is ignored. Boolean ``additionalProperties`` is accepted and ignored;
     extra keys in LLM output are silently dropped (``extra="ignore"``).
 
+    ``$ref`` is supported for references of the form ``#/$defs/<name>`` or
+    ``#/definitions/<name>`` into root-level ``$defs``/``definitions`` (this
+    is what Pydantic's ``model_json_schema()`` and Zod's ``toJSONSchema``
+    emit). References are resolved by inlining; sibling keys next to ``$ref``
+    overlay the referenced definition (siblings win). Recursive references
+    are rejected — the error names the cycle. Unreferenced definitions are
+    ignored without validation.
+
     Constraint keywords (``minItems``, ``maxLength``, ``minimum``,
     ``pattern``, ...) are passed through to the generated schema as hints but
     are not enforced by Pydantic.
@@ -106,24 +120,29 @@ def json_response_schema_to_pydantic(
 
     Raises:
         ValueError: If the schema is malformed or uses an unsupported
-            construct (``$ref``, ``$defs``, ``allOf``, ``not``,
-            ``if``/``then``/``else``, ``patternProperties``, schema-valued
-            ``additionalProperties``, boolean schemas, unknown types, or a
-            non-object root). The message names the construct and its path.
+            construct (``allOf``, ``not``, ``if``/``then``/``else``,
+            ``patternProperties``, schema-valued ``additionalProperties``,
+            boolean schemas, unknown types, a non-object root, a ``$ref``
+            that is recursive, malformed, or targets an unknown definition,
+            or ``$defs``/``definitions`` anywhere but the root). The message
+            names the construct and its path.
     """
     schema_obj: Any = schema
     if not isinstance(schema_obj, dict):
         raise ValueError("response_format must be a JSON Schema object")
 
     root = {k: v for k, v in schema.items() if k != "$schema"}
+    defs = _extract_defs(root)
     root_type = root.get("type")
+    # A "$ref" root is allowed through here; the post-conversion check below
+    # still enforces that it resolves to an object.
     is_object_root = root_type == "object" or (
-        root_type is None and "properties" in root
+        root_type is None and ("properties" in root or "$ref" in root)
     )
     if not is_object_root:
         raise ValueError("root schema must have type 'object'")
 
-    ctx = _Ctx(max_depth=max_depth, max_nodes=max_nodes)
+    ctx = _Ctx(max_depth=max_depth, max_nodes=max_nodes, defs=defs)
     annotation = _convert_schema(root, "", model_name, ctx, depth=0)
     # An object root always converts to a model class; this is a safety net.
     if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
@@ -148,9 +167,14 @@ def _convert_schema(
 ) -> Any:
     """Convert one schema node into a type annotation.
 
-    Dispatch order matters: enum (a value constraint) wins over unions,
-    which win over "type"-based conversion.
+    Dispatch order matters: $ref resolution comes first (a ref node is
+    replaced by its target before anything else looks at it), then enum (a
+    value constraint) wins over unions, which win over "type"-based
+    conversion.
     """
+    if isinstance(raw_node, dict) and "$ref" in raw_node:
+        return _resolve_ref(cast(dict[str, Any], raw_node), path, ctx, depth)
+
     node = _validate_node(raw_node, path, ctx, depth)
 
     if "enum" in node:
@@ -181,6 +205,83 @@ def _convert_schema(
     if node_type is None:
         _fail("schema has no recognizable type", path)
     _fail(f"unsupported type '{node_type}'", path)
+
+
+def _extract_defs(root: dict[str, Any]) -> dict[str, Any]:
+    """Pop root-level ``$defs``/``definitions`` and merge them into one
+    registry. Entries are validated lazily, when (and only when) referenced."""
+    defs: dict[str, Any] = {}
+    for key in ("$defs", "definitions"):
+        raw = root.pop(key, None)
+        if raw is None:
+            continue
+        if not isinstance(raw, dict):
+            _fail(f"'{key}' must be an object", "")
+        for name, definition in cast(dict[Any, Any], raw).items():
+            if not isinstance(name, str) or not name:
+                _fail(f"'{key}' definition names must be non-empty strings", "")
+            if name in defs:
+                _fail(
+                    f"definition '{name}' appears in both '$defs' and 'definitions'",
+                    "",
+                )
+            defs[name] = definition
+    return defs
+
+
+def _resolve_ref(node: dict[str, Any], path: str, ctx: _Ctx, depth: int) -> Any:
+    """Inline a ``$ref`` node: resolve the target definition, overlay any
+    sibling keys (siblings win), and convert the result in place.
+
+    Only root-relative refs into ``$defs``/``definitions`` are supported.
+    Cycles are rejected — recursion cannot be inlined. The resolved node is
+    converted at the same depth (replacement semantics); the node budget in
+    ``_validate_node`` still counts every expansion, so a definition that is
+    referenced many times cannot blow up the walk.
+    """
+    ref: Any = node["$ref"]
+    if not isinstance(ref, str):
+        _fail("'$ref' must be a string", path)
+    name: str | None = None
+    for prefix in _REF_PREFIXES:
+        if ref.startswith(prefix):
+            name = ref[len(prefix) :]
+            break
+    # "/", "~", and "%" would make the remainder a deeper or escaped JSON
+    # pointer (e.g. "#/$defs/a/b", "~1" escapes, %-encoding) rather than a
+    # plain definition name, so their presence means an unsupported form.
+    if not name or "/" in name or "~" in name or "%" in name:
+        _fail(
+            f"unsupported $ref '{ref}': only '#/$defs/<name>' or "
+            + "'#/definitions/<name>' references are supported",
+            path,
+        )
+    if name not in ctx.defs:
+        _fail(f"$ref '{ref}' points to an unknown definition", path)
+    # ref_stack holds the definitions currently being expanded on this branch
+    # of the walk, so membership means the definition (transitively)
+    # references itself. Slicing from the first occurrence yields the cycle
+    # for the error message, e.g. stack [A, B] + name A -> "A -> B -> A".
+    if name in ctx.ref_stack:
+        cycle = " -> ".join([*ctx.ref_stack[ctx.ref_stack.index(name) :], name])
+        _fail(
+            f"recursive $ref is not supported (cycle: {cycle}); "
+            + "restructure the schema so definitions do not reference themselves",
+            path,
+        )
+    target: Any = ctx.defs[name]
+    siblings = {k: v for k, v in node.items() if k != "$ref"}
+    resolved: Any = target
+    if siblings and isinstance(target, dict):
+        resolved = {**cast(dict[str, Any], target), **siblings}
+    # Pop after converting (not just on success) so the stack tracks only the
+    # current branch: a diamond — the same definition referenced from two
+    # sibling nodes — is legitimate reuse, not a cycle.
+    ctx.ref_stack.append(name)
+    try:
+        return _convert_schema(resolved, path, name, ctx, depth)
+    finally:
+        ctx.ref_stack.pop()
 
 
 def _validate_node(raw_node: Any, path: str, ctx: _Ctx, depth: int) -> dict[str, Any]:
