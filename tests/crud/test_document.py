@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.crud.document import is_rejected_duplicate
+from src.crud.document import SemanticRejectionResult, is_rejected_duplicate
 from src.exceptions import ResourceNotFoundException
 
 
@@ -381,7 +381,7 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
         )
 
-        assert rejected is True
+        assert rejected is SemanticRejectionResult.REJECTED
         surviving = (
             await db_session.execute(
                 select(models.Document).where(
@@ -445,7 +445,7 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
         )
 
-        assert rejected is False
+        assert rejected is SemanticRejectionResult.REPLACED_EXISTING
         # Count carried forward onto the replacement (3 -> 4), not reset to 1.
         assert new_doc.times_derived == 4
         live = (
@@ -509,7 +509,7 @@ class TestDocumentCRUD:
             ),
         ]
 
-        accepted = await crud.create_documents(
+        result = await crud.create_documents(
             db_session,
             documents=doc_schemas,
             workspace_name=test_workspace.name,
@@ -517,8 +517,13 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
             deduplicate=False,
         )
+        accepted = result.created_documents
 
         assert len(accepted) == 1
+        assert result.exact_dup_in_batch_count == 2
+        assert result.exact_dup_existing_count == 0
+        assert result.semantic_dup_rejected_count == 0
+        assert result.semantic_dup_replaced_count == 0
         live = (
             (
                 await db_session.execute(
@@ -571,7 +576,7 @@ class TestDocumentCRUD:
         )
 
         # Case/whitespace variant of the existing content -> exact match.
-        accepted = await crud.create_documents(
+        result = await crud.create_documents(
             db_session,
             [
                 schemas.DocumentCreate(
@@ -590,8 +595,13 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
             deduplicate=False,
         )
+        accepted = result.created_documents
 
         assert len(accepted) == 0
+        assert result.exact_dup_existing_count == 1
+        assert result.exact_dup_in_batch_count == 0
+        assert result.semantic_dup_rejected_count == 0
+        assert result.semantic_dup_replaced_count == 0
         surviving = (
             (
                 await db_session.execute(
@@ -663,25 +673,27 @@ class TestDocumentCRUD:
 
         # Incoming exact match claims more accumulated reinforcement (5) than
         # existing + 1 (3) -> incoming wins.
-        accepted = await crud.create_documents(
-            db_session,
-            [
-                schemas.DocumentCreate(
-                    content="user likes coffee ",
-                    embedding=[0.9] * 1536,
-                    session_name=test_session.name,
-                    times_derived=5,
-                    metadata=schemas.DocumentMetadata(
-                        message_ids=[2],
-                        message_created_at="2026-01-02T00:00:00Z",
-                    ),
-                )
-            ],
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            deduplicate=False,
-        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    schemas.DocumentCreate(
+                        content="user likes coffee ",
+                        embedding=[0.9] * 1536,
+                        session_name=test_session.name,
+                        times_derived=5,
+                        metadata=schemas.DocumentMetadata(
+                            message_ids=[2],
+                            message_created_at="2026-01-02T00:00:00Z",
+                        ),
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                deduplicate=False,
+            )
+        ).created_documents
         assert len(accepted) == 0
         live = await _live()
         assert len(live) == 1
@@ -689,24 +701,26 @@ class TestDocumentCRUD:
 
         # A normal re-derivation (times_derived defaults to 1) now bumps by one:
         # greatest(existing + 1, 1) -> existing + 1.
-        accepted = await crud.create_documents(
-            db_session,
-            [
-                schemas.DocumentCreate(
-                    content="USER LIKES COFFEE",
-                    embedding=[0.4] * 1536,
-                    session_name=test_session.name,
-                    metadata=schemas.DocumentMetadata(
-                        message_ids=[3],
-                        message_created_at="2026-01-03T00:00:00Z",
-                    ),
-                )
-            ],
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-            deduplicate=False,
-        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    schemas.DocumentCreate(
+                        content="USER LIKES COFFEE",
+                        embedding=[0.4] * 1536,
+                        session_name=test_session.name,
+                        metadata=schemas.DocumentMetadata(
+                            message_ids=[3],
+                            message_created_at="2026-01-03T00:00:00Z",
+                        ),
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+                deduplicate=False,
+            )
+        ).created_documents
         assert len(accepted) == 0
         live = await _live()
         assert len(live) == 1
@@ -746,7 +760,7 @@ class TestDocumentCRUD:
         )
 
         db_session.autoflush = False
-        accepted = await crud.create_documents(
+        result = await crud.create_documents(
             db_session,
             [
                 schemas.DocumentCreate(
@@ -775,9 +789,14 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
             deduplicate=True,
         )
+        accepted = result.created_documents
 
         assert len(accepted) == 1
         assert accepted[0].content == "User likes coffee and tea"
+        assert result.exact_dup_existing_count == 1
+        assert result.semantic_dup_replaced_count == 1
+        assert result.exact_dup_in_batch_count == 0
+        assert result.semantic_dup_rejected_count == 0
 
         surviving = (
             (
@@ -796,6 +815,65 @@ class TestDocumentCRUD:
         assert len(surviving) == 1
         assert surviving[0].content == "User likes coffee and tea"
         assert surviving[0].times_derived == 3
+
+    @pytest.mark.asyncio
+    async def test_semantic_dedup_rejected_counts(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """A semantically-similar doc with less information than the existing one
+        is rejected, and the rejection is counted on the result."""
+        test_workspace, test_peer = sample_data
+        test_peer2, test_session, _ = await self._setup_test_data(
+            db_session, test_workspace, test_peer
+        )
+
+        await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="eri loves cats and dogs and birds and snakes",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[1],
+                        message_created_at="2026-01-01T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+        )
+
+        # Fewer unique tokens -> existing wins -> new doc is rejected.
+        result = await crud.create_documents(
+            db_session,
+            [
+                schemas.DocumentCreate(
+                    content="eri loves cats",
+                    embedding=[0.5] * 1536,
+                    session_name=test_session.name,
+                    times_derived=1,
+                    metadata=schemas.DocumentMetadata(
+                        message_ids=[2],
+                        message_created_at="2026-01-02T00:00:00Z",
+                    ),
+                )
+            ],
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            deduplicate=True,
+        )
+
+        assert len(result.created_documents) == 0
+        assert result.semantic_dup_rejected_count == 1
+        assert result.exact_dup_in_batch_count == 0
+        assert result.exact_dup_existing_count == 0
+        assert result.semantic_dup_replaced_count == 0
 
     @pytest.mark.asyncio
     async def test_delete_document_success(
@@ -902,15 +980,17 @@ class TestDocumentCRUD:
         ]
 
         # Create documents
-        count = await crud.create_documents(
-            db_session,
-            documents=doc_schemas,
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-        )
+        created_documents = (
+            await crud.create_documents(
+                db_session,
+                documents=doc_schemas,
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
 
-        assert len(count) == 2
+        assert len(created_documents) == 2
 
         # Verify documents were created
         stmt = select(models.Document).where(

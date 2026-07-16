@@ -987,14 +987,16 @@ async def create_observations(
     accepted: list[schemas.DocumentCreate] = []
     if documents:
         async with tracked_db("create_observations.save") as db:
-            accepted = await crud.create_documents(
-                db,
-                documents=documents,
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-                deduplicate=True,
-            )
+            accepted = (
+                await crud.create_documents(
+                    db,
+                    documents=documents,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    deduplicate=True,
+                )
+            ).created_documents
         logger.info(
             "Created %d observations in %s/%s/%s",
             len(accepted),
