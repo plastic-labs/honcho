@@ -78,8 +78,9 @@ class TestSupportsDeviceLogin:
         with patch("honcho_cli.oauth.httpx.get", return_value=FakeResponse(200, body)):
             assert oauth.supports_device_login("https://api.honcho.dev") is False
 
-    def test_false_on_non_200(self):
-        with patch("honcho_cli.oauth.httpx.get", return_value=FakeResponse(404, "")):
+    @pytest.mark.parametrize("status", [404, 500])
+    def test_false_on_non_200(self, status):
+        with patch("honcho_cli.oauth.httpx.get", return_value=FakeResponse(status, "")):
             assert oauth.supports_device_login("http://localhost:8000") is False
 
     def test_false_on_connection_error(self):

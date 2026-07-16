@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from honcho_cli.config import CLIConfig, OAuthTokens, _config_dir
+from honcho_cli.oauth import TokenResponse
 
 
 @pytest.fixture
@@ -59,6 +60,31 @@ class TestLoad:
         loaded = CLIConfig.load()
         assert loaded.api_key == "env-key"
         assert loaded.base_url == "http://localhost:8000"
+
+    def test_empty_env_var_popped_from_environ(self, cfg_path, monkeypatch):
+        """Empty HONCHO_* vars are removed so the SDK doesn't crash on them."""
+        cfg_path.write_text(json.dumps({"apiKey": "file-key"}))
+        monkeypatch.setenv("HONCHO_API_KEY", "")
+        loaded = CLIConfig.load()
+        assert "HONCHO_API_KEY" not in os.environ
+        assert loaded.api_key == "file-key"
+
+    def test_garbage_access_expires_at_treated_as_expired(self, cfg_path):
+        """Hand-edited/corrupt expiry degrades to the refresh path, not a crash."""
+        cfg_path.write_text(json.dumps(
+            {"oauth": {"accessToken": "x", "accessExpiresAt": "not-a-number"}}
+        ))
+        loaded = CLIConfig.load()
+        assert loaded.oauth is not None
+        assert loaded.oauth.access_valid() is False
+
+    def test_numeric_string_access_expires_at_parses(self, cfg_path):
+        cfg_path.write_text(json.dumps(
+            {"oauth": {"accessToken": "x", "accessExpiresAt": "12345"}}
+        ))
+        loaded = CLIConfig.load()
+        assert loaded.oauth is not None
+        assert loaded.oauth.access_expires_at == 12345.0
 
 
 class TestSave:
@@ -155,6 +181,12 @@ class TestOAuth:
         CLIConfig(base_url="http://localhost:8000").save()
         assert "oauth" not in json.loads(cfg_path.read_text())
 
+    def test_stale_api_key_is_dropped(self, cfg_path):
+        """Device login must clear an old manual key, or it wins over the fresh token forever."""
+        cfg_path.write_text(json.dumps({"apiKey": "old-manual-key"}))
+        CLIConfig(base_url="http://localhost:8000", oauth=self._tokens(9999999999)).save()
+        assert "apiKey" not in json.loads(cfg_path.read_text())
+
     def test_resolved_api_key_prefers_manual_key(self, cfg_path):
         cfg = CLIConfig(api_key="manual", oauth=self._tokens(9999999999))
         assert cfg.resolved_api_key() == "manual"
@@ -168,6 +200,25 @@ class TestOAuth:
         assert not self._tokens(time.time() - 10).access_valid()
         # inside the default 60s skew window → treated as invalid
         assert not self._tokens(time.time() + 30).access_valid()
+
+    def test_access_valid_false_without_token(self):
+        """A missing token is invalid even with a far-future expiry."""
+        tokens = OAuthTokens(access_token="", access_expires_at=time.time() + 3600)
+        assert tokens.access_valid() is False
+
+    def test_from_response_keeps_prior_refresh_token_when_not_rotated(self):
+        """Refresh-token rotation is optional (RFC 6749 §5.1) — keep the old one."""
+        resp = TokenResponse(
+            access_token="new-at", refresh_token="", expires_in=3600, scope=""
+        )
+        tokens = OAuthTokens.from_response(
+            resp,
+            client_id="honcho-cli",
+            scope_fallback="write",
+            refresh_fallback="prior-rt",
+        )
+        assert tokens.refresh_token == "prior-rt"
+        assert tokens.scope == "write"
 
     def test_redacted_masks_oauth_token(self):
         red = CLIConfig(oauth=self._tokens(1234)).redacted()

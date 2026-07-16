@@ -84,7 +84,12 @@ class OAuthTokens:
     scope: str = ""
 
     def access_valid(self, skew: int = 60) -> bool:
-        """True while the access token is present and not within ``skew`` of expiry."""
+        """True while the access token is present and not within ``skew`` of expiry.
+
+        Checks the expiry timestamp recorded at mint time, not the token
+        itself — the server is the real authority, so a wrong answer here
+        costs at most an extra refresh or a 401.
+        """
         return bool(self.access_token) and time.time() < self.access_expires_at - skew
 
     @classmethod
@@ -223,7 +228,7 @@ class CLIConfig:
         Only includes fields that have a value set — per-command fields
         (workspace_id, peer_id, session_id) are omitted when empty.
         """
-        d: dict[str, str] = {}
+        result: dict[str, str] = {}
         for fld in fields(self):
             val = getattr(self, fld.name)
             if not val:
@@ -231,12 +236,12 @@ class CLIConfig:
             if fld.name == "api_key":
                 # Show ``***<last4>`` only — enough to compare keys without
                 # leaking the header or body of the JWT.
-                d[fld.name] = _redact_token(val)
+                result[fld.name] = _redact_token(val)
             elif fld.name == "oauth":
-                d[fld.name] = _redact_token(val.access_token)
+                result[fld.name] = _redact_token(val.access_token)
             else:
-                d[fld.name] = val
-        return d
+                result[fld.name] = val
+        return result
 
 
 def get_client_kwargs(config: CLIConfig) -> dict:

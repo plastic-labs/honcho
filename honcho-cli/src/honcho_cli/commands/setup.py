@@ -123,18 +123,26 @@ def init(
     # Non-interactive (JSON/piped) or an explicit --api-key: manual-key path.
     # Device login needs a human at a browser, so it's TTY-only.
     if use_json() or api_key:
-        final_key = _prompt_api_key(key_val)
-        final_url = _prompt_url(url_val)
-        if final_key != file_key or final_url != file_url:
-            CLIConfig(base_url=final_url, api_key=final_key).save()
-            if not use_json():
-                _console.print(f"  {ICON_OK} [dim]Saved to {CONFIG_FILE}[/dim]")
-        _check_connection(final_url, final_key)
-        if use_json():
-            print_result({"apiKey": _redact(final_key), "baseUrl": final_url})
-        return
+        _init_manual_key(key_val, url_val, file_key, file_url)
+    else:
+        _init_interactive(key_val, url_val, file_url)
 
-    # Interactive: URL first (device flow needs the host), then auth method.
+
+def _init_manual_key(key_val: str, url_val: str, file_key: str, file_url: str) -> None:
+    """Non-interactive path: confirm/save apiKey + URL, no device login."""
+    final_key = _prompt_api_key(key_val)
+    final_url = _prompt_url(url_val)
+    if final_key != file_key or final_url != file_url:
+        CLIConfig(base_url=final_url, api_key=final_key).save()
+        if not use_json():
+            _console.print(f"  {ICON_OK} [dim]Saved to {CONFIG_FILE}[/dim]")
+    _check_connection(final_url, final_key)
+    if use_json():
+        print_result({"apiKey": _redact(final_key), "baseUrl": final_url})
+
+
+def _init_interactive(key_val: str, url_val: str, file_url: str) -> None:
+    """Interactive path: URL first (device flow needs the host), then auth method."""
     final_url = _prompt_url(url_val)
     existing = CLIConfig.load()
     has_creds = bool(key_val) or bool(existing.oauth and existing.oauth.access_token)
