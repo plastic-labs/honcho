@@ -1,0 +1,30 @@
+{
+  "icon": "brain",
+  "tags": ["ai", "memory", "data", "cli"],
+  "secrets": [
+    {
+      "secret_name": "HONCHO_API_KEY",
+      "description": "Required. Create one at app.honcho.dev › API keys."
+    },
+    {
+      "secret_name": "HONCHO_WORKSPACE_ID",
+      "description": "Optional. Honcho workspace ID. Defaults to default."
+    },
+    {
+      "secret_name": "HONCHO_USER_ID",
+      "description": "Optional. User peer ID. Defaults to the Zo Computer username when available, then user."
+    },
+    {
+      "secret_name": "HONCHO_ASSISTANT_ID",
+      "description": "Optional. Assistant peer ID. Defaults to assistant."
+    },
+    {
+      "secret_name": "HONCHO_SESSION_ID",
+      "description": "Optional. Default session ID. Defaults to default."
+    },
+    {
+      "secret_name": "HONCHO_BASE_URL",
+      "description": "Optional. Custom Honcho API URL. Defaults to Honcho production."
+    }
+  ]
+}
