@@ -151,18 +151,6 @@ Invoke with `/honcho-integration` in your coding agent.
 
 Invoke implicitly when you ask your agent to inspect a Honcho deployment.
 
-#### migrate-honcho-py / migrate-honcho-ts
-
-**For SDK upgrades.** Migrates code from v1.6.0 to v2.0.0 (required for Honcho 3.0.0+). Use when upgrading the SDK or seeing errors about removed APIs like `observations`, `Representation`, `.core`, or `get_config`.
-
-Both skills handle: terminology changes (`Observation` → `Conclusion`), `Representation` class removal, method renames, and streaming API updates.
-
-| Python | TypeScript |
-|--------|------------|
-| `/migrate-honcho-py` | `/migrate-honcho-ts` |
-| `AsyncHoncho` → `.aio` accessor | `@honcho-ai/core` removal |
-| | `snake_case` → `camelCase` |
-
 ---
 
 ## Universal Starter Prompt
