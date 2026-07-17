@@ -4,9 +4,7 @@ description: "Get chat endpoint answers as typed, machine-readable JSON"
 icon: "brackets-curly"
 ---
 
-By default, the [chat endpoint](/v3/documentation/features/chat) returns a free-form natural language answer. When your application needs machine-readable output — a recommendation engine expecting `{ "items": [...] }`, a router expecting an enum, a scoring pipeline expecting numbers — parsing that string yourself is fragile and model-dependent.
-
-Structured outputs solve this: pass a schema with your query, and the answer is guaranteed to conform to it. The agent still runs its full reasoning loop — searching memory, reading messages, following reasoning chains — and only the final synthesized answer is formatted to your schema.
+By default, the [chat endpoint](/v3/documentation/features/chat) returns a free-form natural language answer. When your application needs machine-readable output, parsing that string yourself can be fragile and model-dependent. In this case you can use structured Dialectic outputs: pass a schema with your query, and the answer is guaranteed to conform to it. The agent still runs its full reasoning loop and only the final synthesized answer is formatted to your schema.
 
 ## Basic Usage
 
@@ -105,11 +103,11 @@ curl -X POST "$HONCHO_URL/v3/workspaces/my-app/peers/user-123/chat" \
 ```
 </CodeGroup>
 
-At the API level, `content` in the response is always a string — when `response_format` is set, it is a JSON-encoded object conforming to your schema.
+At the API level, `content` in the response is always a string. When `response_format` is set, it is a JSON-encoded object conforming to your schema.
 
 ## Streaming
 
-`response_format` works with streaming. The stream emits the JSON answer incrementally as raw text chunks; the accumulated text is a valid JSON string once the stream completes. The SDKs do not parse streamed responses for you — parse the final string yourself:
+`response_format` works with streaming. The stream emits the JSON answer incrementally as raw text chunks; the accumulated text is a valid JSON string once the stream completes. To enable streaming the SDKs cannot parse streamed responses for you, you parse the final string yourself:
 
 <CodeGroup>
 ```python Python
@@ -143,7 +141,7 @@ const result = FoodPreferences.parse(JSON.parse(text));
 
 ## Supported Schema Subset
 
-Honcho supports a conservative subset of JSON Schema. Schemas outside this subset are rejected with a `422` validation error before any reasoning runs, so malformed schemas fail fast.
+Honcho supports a conservative subset of JSON Schema that enables the kind of Pydantic models used for structured LLM outputs. Schemas outside this subset are rejected with a `422` validation error before any reasoning runs.
 
 The root of the schema must be `"type": "object"`.
 
@@ -158,12 +156,12 @@ The root of the schema must be `"type": "object"`.
 | `required`, `default`, `description` | Supported |
 | Boolean `additionalProperties` | Accepted and ignored |
 | `$ref` into root-level `$defs` / `definitions` | Supported — resolved by inlining (this is what Pydantic and Zod emit) |
-| Recursive `$ref` (a definition that references itself, directly or indirectly) | Rejected (422) — the error names the cycle |
+| Recursive `$ref` (a definition that references itself, directly or indirectly) | Rejected (422) — the error will identify the cycle |
 | Other `$ref` forms (external URLs, arbitrary JSON pointers) | Rejected (422) |
 | `allOf`, `not`, `if` / `then` / `else` | Rejected (422) |
 | `patternProperties`, schema-valued `additionalProperties` | Rejected (422) |
 
-Two additional guardrails: schemas may nest at most 20 levels deep and contain at most 500 total nodes.
+Schemas may nest at most 20 levels deep and contain at most 500 total nodes.
 
 <Note>
 Constraint keywords like `minItems`, `maxLength`, `minimum`, `pattern`, and `format` are passed through to the model as hints but are **not enforced server-side**. If you need hard guarantees on these, validate the returned object in your application.
@@ -173,33 +171,69 @@ Constraint keywords like `minItems`, `maxLength`, `minimum`, `pattern`, and `for
 **Recursive schemas are not supported.** A self-referential Pydantic model (`Node.children: list[Node]`) or a recursive Zod schema (`z.lazy(...)`) produces a recursive `$ref`, which is rejected with a 422 naming the cycle. Restructure recursive shapes as explicit nesting with a fixed depth.
 </Note>
 
+## Optional Fields and Unions
+
+Two distinct mechanisms control "optionality" in a raw JSON Schema:
+
+- **Omission** is controlled by `required`. A property not listed in `required` may be left out by the model entirely; the parsed answer will contain it as `null`.
+- **Nullability** is controlled by the field's type. An `anyOf`/`oneOf` with a `{"type": "null"}` member (or the shorthand `"type": ["string", "null"]`) means the field's *value* may be `null` even when the field itself is required.
+
+`anyOf` and `oneOf` are treated identically: a plain union of the member schemas. Unions of non-null types (e.g. a string-or-integer field) are also supported.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "favorite_food": { "type": "string" },
+    "dietary_restriction": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }],
+      "description": "The user's dietary restriction, or null if none is known"
+    },
+    "years_vegetarian": { "type": ["integer", "null"] },
+    "confidence": { "type": "number" }
+  },
+  "required": ["favorite_food", "dietary_restriction", "years_vegetarian"]
+}
+```
+
+In this schema:
+
+- `favorite_food` is required and must be a string.
+- `dietary_restriction` is required but **nullable**: the key is always present in the answer, and the model can answer `null` when it has no evidence. This is the recommended way to give the model an escape hatch (see [Best Practices](#model-uncertainty-explicitly)).
+- `years_vegetarian` is the same thing written with the `type`-list shorthand (`["integer", "null"]` is equivalent to an `anyOf` of the two).
+- `confidence` is not in `required`, so the model may omit it; if it does, the field comes back as `null`.
+
+If a property declares a `default`, that default is used whenever the model omits the field _even if_ the property is listed in `required`.
+
+Pydantic and Zod produce these shapes for you: `str | None` in Pydantic emits the `anyOf` form above, and `z.string().nullable()` does the same in Zod (`z.string().optional()` controls presence in `required`).
+
 ## Error Handling
 
 | Condition | Result |
 |-----------|--------|
 | `response_format` is not a valid JSON Schema object | `422` validation error |
 | Root type is not `"object"` | `422` validation error |
-| Schema uses an unsupported construct | `422` naming the construct and its path |
-| Schema contains a recursive `$ref` | `422` naming the cycle (e.g. `cycle: Node -> Node`) |
+| Schema uses an unsupported construct | `422` identifying the construct and its path |
+| Schema contains a recursive `$ref` | `422` identifying the cycle (e.g. `cycle: Node -> Node`) |
 | Model fails to produce valid structured output after retries | `500`, same as any LLM failure |
 
 ## How It Works
 
-Structured output constrains only the **final synthesis step**, not the reasoning itself:
+Structured output constrains the final synthesis step. The reasoning itself works the same in both settings.
 
-1. The dialectic agent runs its normal tool loop — searching conclusions, grepping messages, traversing reasoning chains — in free-form text.
+1. The dialectic agent runs its normal tool loop in free-form text. It will search conclusions, grep messages, and traverse reasoning chains
 2. Once the agent has gathered enough context, the final answer generation is constrained to your schema using the provider's native structured output support.
-3. The conforming JSON is returned as the response `content` (and parsed into a typed object by the SDK when you passed a Pydantic model or Zod schema).
+3. The conforming JSON is returned as the response `content` and parsed into a typed object by the SDK when you passed a Pydantic model or Zod schema.
 
 This means answer *quality* is unaffected by the schema: the agent reasons exactly as it would for a free-form answer, and reasoning levels (`minimal` through `max`) work the same way alongside `response_format`.
 
 ## Best Practices
 
 ### Add descriptions to your fields
-Field `description`s are visible to the model when it formats the answer. `confidence: float` with a description of "0-1, how certain the evidence is" gets meaningfully better output than a bare field.
+Field `description`s are visible to the model when it formats the answer. `confidence: float` with a provided description of "score how certain the evidence is from 0-5" gets meaningfully better output than a bare field.
 
 ### Model uncertainty explicitly
-The chat endpoint returns `None`/`null` when it has no relevant information, but a schema can force an answer shape even when evidence is thin. Include an escape hatch — an optional field, a `"confidence"` score, or an enum member like `"unknown"` — so the model isn't forced to fabricate.
+The chat endpoint returns `None`/`null` when it has no relevant information. With a schema, you can force an answer even when evidence is thin. To avoid hallucinations, consider including an escape hatch as an optional field, a `"confidence"` score, or an enum member like `"unknown"` so the model isn't forced to fabricate.
 
 ### Keep schemas focused
-A schema with three well-described fields outperforms one with twenty. If you need many distinct insights, make separate chat calls — they parallelize well.
+A schema with three well-described fields outperforms one with twenty. If you need many distinct insights, consider making separate chat calls.
