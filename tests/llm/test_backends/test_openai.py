@@ -1,4 +1,6 @@
+import gc
 import json
+import weakref
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
@@ -10,8 +12,12 @@ from openai import BadRequestError
 from pydantic import BaseModel
 
 from src.exceptions import ValidationException
-from src.llm.backends.openai import OpenAIBackend
+from src.llm.backends.openai import (
+    OpenAIBackend,
+    _json_object_instruction,  # pyright: ignore[reportPrivateUsage]
+)
 from src.utils.representation import PromptRepresentation
+from src.utils.schema_conversion import json_response_schema_to_pydantic
 
 
 def _await_kwargs(mock_method: Any) -> dict[str, Any]:
@@ -836,6 +842,70 @@ async def test_structured_output_json_object_mode_repairs_markdown() -> None:
     )
 
     assert isinstance(result.content, PromptRepresentation)
+
+
+@pytest.mark.asyncio
+async def test_structured_output_json_object_mode_with_dynamic_model() -> None:
+    """json_object mode composes with a caller-supplied schema converted at
+    request time (the dialectic's response_format path): the generated class's
+    schema — unions included — is injected into the prompt and the JSON body
+    parses back through the class."""
+    response_model = json_response_schema_to_pydantic(
+        {
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string"},
+                "years": {"type": ["integer", "null"]},
+            },
+            "required": ["answer", "years"],
+        }
+    )
+    client = Mock()
+    client.chat.completions.parse = AsyncMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok", "years": 3}')
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=response_model,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    assert client.chat.completions.parse.await_count == 0
+    call = _await_kwargs(client.chat.completions.create)
+    assert call["response_format"] == {"type": "json_object"}
+    system_messages = [m for m in call["messages"] if m["role"] == "system"]
+    assert system_messages, "expected a system message carrying the schema"
+    # The dynamic model's schema (union field included) made it into the prompt.
+    assert "years" in system_messages[0]["content"]
+    assert "anyOf" in system_messages[0]["content"]
+
+    assert isinstance(result.content, response_model)
+    # The model class is dynamic, so field access is untyped by construction.
+    content: Any = result.content
+    assert content.answer == "ok"
+    assert content.years == 3
+
+
+def test_json_object_instruction_does_not_pin_dynamic_models() -> None:
+    """The instruction cache must hold its model-class keys weakly: the
+    dialectic creates a fresh response_format class per request (see
+    src/utils/schema_conversion.py), and a strong-keyed cache would grow by
+    one pinned class per structured chat call."""
+    model = json_response_schema_to_pydantic(
+        {"type": "object", "properties": {"answer": {"type": "string"}}}
+    )
+    first = _json_object_instruction(model)
+    assert _json_object_instruction(model) is first  # cached while alive
+
+    ref = weakref.ref(model)
+    del model
+    gc.collect()
+    assert ref() is None, "instruction cache must not keep dynamic classes alive"
 
 
 @pytest.mark.asyncio
