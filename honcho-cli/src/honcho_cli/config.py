@@ -5,10 +5,14 @@ directory defaults to ``~/.honcho`` and can be relocated with `HONCHO_CONFIG_DIR
 
 The CLI owns these top-level keys in that file:
 
-    apiKey          -- Honcho admin JWT (manual auth)
     environmentUrl  -- Honcho API URL (full URL, e.g. https://api.honcho.dev)
     oauth           -- OAuth device-grant tokens (accessToken, refreshToken,
-                       accessExpiresAt, clientId, scope), written by device login
+                       accessExpiresAt, clientId, scope, host), written by
+                       device login
+
+``apiKey`` (manual admin JWT) is shared with sibling tools: the CLI writes it
+on paste-key login and reads it as a fallback, but never deletes it. A live
+OAuth token takes precedence over ``apiKey`` for the CLI's own calls.
 
 All other top-level keys (``hosts``, ``sessions``, ``saveMessages``,
 ``sessionStrategy``, …) are written by sibling Honcho tools and are
@@ -82,6 +86,15 @@ class OAuthTokens:
     access_expires_at: float = 0.0  # epoch seconds
     client_id: str = ""
     scope: str = ""
+    host: str = ""  # base_url the grant was minted against
+
+    def matches_host(self, base_url: str) -> bool:
+        """True when the grant belongs to ``base_url``.
+
+        Tokens are host-scoped — a staging grant must not be sent to prod.
+        Legacy blocks with no recorded host are trusted.
+        """
+        return not self.host or self.host.rstrip("/") == base_url.rstrip("/")
 
     def access_valid(self, skew: int = 60) -> bool:
         """True while the access token is present and not within ``skew`` of expiry.
@@ -100,6 +113,7 @@ class OAuthTokens:
         client_id: str,
         scope_fallback: str = "",
         refresh_fallback: str = "",
+        host: str = "",
     ) -> OAuthTokens:
         """Build persisted tokens from a token response.
 
@@ -112,6 +126,7 @@ class OAuthTokens:
             access_expires_at=time.time() + resp.expires_in,
             client_id=client_id,
             scope=resp.scope or scope_fallback,
+            host=host,
         )
 
 
@@ -131,12 +146,30 @@ class CLIConfig:
     session_id: str = ""
     oauth: OAuthTokens | None = None
 
+    def usable_oauth(self) -> OAuthTokens | None:
+        """The OAuth grant, if present and bound to the current host."""
+        if (
+            self.oauth
+            and self.oauth.access_token
+            and self.oauth.matches_host(self.base_url)
+        ):
+            return self.oauth
+        return None
+
     def resolved_api_key(self) -> str:
-        """The key handed to the SDK: manual apiKey wins, else the OAuth token."""
+        """The key handed to the SDK: a live OAuth token wins, else apiKey.
+
+        An expired grant loses to a saved apiKey (a dead grant degrades to the
+        shared key) but still wins over nothing, since the server is the final
+        judge.
+        """
+        tokens = self.usable_oauth()
+        if tokens and tokens.access_valid():
+            return tokens.access_token
         if self.api_key:
             return self.api_key
-        if self.oauth and self.oauth.access_token:
-            return self.oauth.access_token
+        if tokens:
+            return tokens.access_token
         return ""
 
     @classmethod
@@ -166,6 +199,7 @@ class CLIConfig:
                         access_expires_at=_coerce_epoch(oauth.get("accessExpiresAt")),
                         client_id=str(oauth.get("clientId", "")),
                         scope=str(oauth.get("scope", "")),
+                        host=str(oauth.get("host", "")),
                     )
 
         for fld_name, env_var in ENV_MAP.items():
@@ -181,10 +215,12 @@ class CLIConfig:
         return config
 
     def save(self) -> None:
-        """Write ``apiKey`` + ``environmentUrl`` to config.json.
+        """Write ``environmentUrl`` + credentials to config.json.
 
         Preserves unrelated top-level keys (``hosts``, ``sessions``,
         ``saveMessages``, ``sessionStrategy``, …) that other tools write.
+        ``apiKey`` is written when set but never removed — sibling tools read
+        it. The ``oauth`` block is CLI-owned and dropped when empty.
         """
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -201,8 +237,6 @@ class CLIConfig:
         data["environmentUrl"] = self.base_url
         if self.api_key:
             data["apiKey"] = self.api_key
-        else:
-            data.pop("apiKey", None)
 
         if self.oauth and self.oauth.access_token:
             data["oauth"] = {
@@ -211,6 +245,7 @@ class CLIConfig:
                 "accessExpiresAt": self.oauth.access_expires_at,
                 "clientId": self.oauth.client_id,
                 "scope": self.oauth.scope,
+                "host": self.oauth.host,
             }
         else:
             data.pop("oauth", None)

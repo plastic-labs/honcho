@@ -167,7 +167,7 @@ class TestOAuth:
     def test_oauth_persists_camelcase_keys(self, cfg_path):
         CLIConfig(base_url="http://localhost:8000", oauth=self._tokens(1234)).save()
         on_disk = json.loads(cfg_path.read_text())["oauth"]
-        assert set(on_disk) == {"accessToken", "refreshToken", "accessExpiresAt", "clientId", "scope"}
+        assert set(on_disk) == {"accessToken", "refreshToken", "accessExpiresAt", "clientId", "scope", "host"}
 
     def test_save_preserves_foreign_keys_with_oauth(self, cfg_path):
         cfg_path.write_text(json.dumps({"hosts": {"claude_code": {"peerName": "u"}}}))
@@ -181,15 +181,33 @@ class TestOAuth:
         CLIConfig(base_url="http://localhost:8000").save()
         assert "oauth" not in json.loads(cfg_path.read_text())
 
-    def test_stale_api_key_is_dropped(self, cfg_path):
-        """Device login must clear an old manual key, or it wins over the fresh token forever."""
-        cfg_path.write_text(json.dumps({"apiKey": "old-manual-key"}))
+    def test_api_key_preserved_on_device_login(self, cfg_path):
+        """apiKey is shared with sibling tools — device login must not delete it."""
+        cfg_path.write_text(json.dumps({"apiKey": "shared-key"}))
         CLIConfig(base_url="http://localhost:8000", oauth=self._tokens(9999999999)).save()
-        assert "apiKey" not in json.loads(cfg_path.read_text())
+        on_disk = json.loads(cfg_path.read_text())
+        assert on_disk["apiKey"] == "shared-key"
+        assert on_disk["oauth"]["accessToken"] == "hch-at-x"
 
-    def test_resolved_api_key_prefers_manual_key(self, cfg_path):
+    def test_resolved_api_key_prefers_live_oauth(self, cfg_path):
         cfg = CLIConfig(api_key="manual", oauth=self._tokens(9999999999))
+        assert cfg.resolved_api_key() == "hch-at-x"
+
+    def test_resolved_api_key_expired_oauth_falls_back_to_api_key(self, cfg_path):
+        cfg = CLIConfig(api_key="manual", oauth=self._tokens(time.time() - 100))
         assert cfg.resolved_api_key() == "manual"
+
+    def test_resolved_api_key_host_mismatch_falls_back_to_api_key(self, cfg_path):
+        tokens = self._tokens(9999999999)
+        tokens.host = "https://staging.example.com"
+        cfg = CLIConfig(
+            base_url="https://api.honcho.dev", api_key="manual", oauth=tokens
+        )
+        assert cfg.resolved_api_key() == "manual"
+
+    def test_resolved_api_key_expired_oauth_wins_over_nothing(self, cfg_path):
+        cfg = CLIConfig(oauth=self._tokens(time.time() - 100))
+        assert cfg.resolved_api_key() == "hch-at-x"
 
     def test_resolved_api_key_falls_back_to_oauth(self, cfg_path):
         cfg = CLIConfig(oauth=self._tokens(9999999999))
@@ -216,9 +234,23 @@ class TestOAuth:
             client_id="honcho-cli",
             scope_fallback="write",
             refresh_fallback="prior-rt",
+            host="https://staging.example.com",
         )
         assert tokens.refresh_token == "prior-rt"
         assert tokens.scope == "write"
+        assert tokens.host == "https://staging.example.com"
+
+    def test_host_round_trips_and_legacy_matches_all(self, cfg_path):
+        tokens = self._tokens(9999999999)
+        tokens.host = "https://staging.example.com"
+        CLIConfig(base_url="https://staging.example.com", oauth=tokens).save()
+        loaded = CLIConfig.load()
+        assert loaded.oauth is not None
+        assert loaded.oauth.host == "https://staging.example.com"
+        # trailing-slash normalization + legacy blocks (no host) trust any host
+        assert loaded.oauth.matches_host("https://staging.example.com/")
+        assert not loaded.oauth.matches_host("https://api.honcho.dev")
+        assert OAuthTokens(access_token="x").matches_host("https://anything.dev")
 
     def test_redacted_masks_oauth_token(self):
         red = CLIConfig(oauth=self._tokens(1234)).redacted()

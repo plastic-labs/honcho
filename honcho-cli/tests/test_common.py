@@ -44,12 +44,28 @@ def test_valid_token_is_not_refreshed(cfg_path):
     refresh.assert_not_called()
 
 
-def test_manual_key_short_circuits(cfg_path):
+def test_expired_token_refreshes_despite_manual_key(cfg_path):
+    """OAuth wins over apiKey now, so the grant is kept alive even with a key set."""
     config = _cfg(time.time() - 100)
+    config.api_key = "manual"
+    rotated = TokenResponse(
+        access_token="new-at", refresh_token="new-rt", expires_in=3600, scope="write"
+    )
+    with patch("honcho_cli.oauth.refresh_access_token", return_value=rotated) as refresh:
+        common.maybe_refresh_token(config)
+    refresh.assert_called_once()
+    assert config.resolved_api_key() == "new-at"
+
+
+def test_host_mismatch_skips_refresh(cfg_path):
+    """A grant minted for another host is ignored — no refresh, apiKey covers this one."""
+    config = _cfg(time.time() - 100)
+    config.oauth.host = "https://staging.example.com"
     config.api_key = "manual"
     with patch("honcho_cli.oauth.refresh_access_token") as refresh:
         common.maybe_refresh_token(config)
     refresh.assert_not_called()
+    assert config.resolved_api_key() == "manual"
 
 
 def test_expired_token_refreshes_and_persists(cfg_path):
@@ -86,8 +102,25 @@ def test_refresh_failure_exits(cfg_path):
             common.maybe_refresh_token(config)
 
 
+def test_refresh_failure_falls_back_to_api_key(cfg_path):
+    """A dead grant degrades to the saved apiKey instead of aborting."""
+    config = _cfg(time.time() - 100)
+    config.api_key = "manual"
+    with patch("honcho_cli.oauth.refresh_access_token", side_effect=OAuthFlowError("invalid_grant")):
+        common.maybe_refresh_token(config)  # must not raise
+    assert config.resolved_api_key() == "manual"
+
+
 def test_missing_refresh_token_exits(cfg_path):
     config = _cfg(time.time() - 100)
     config.oauth.refresh_token = ""
     with pytest.raises(typer.Exit):
         common.maybe_refresh_token(config)
+
+
+def test_missing_refresh_token_falls_back_to_api_key(cfg_path):
+    config = _cfg(time.time() - 100)
+    config.oauth.refresh_token = ""
+    config.api_key = "manual"
+    common.maybe_refresh_token(config)  # must not raise
+    assert config.resolved_api_key() == "manual"

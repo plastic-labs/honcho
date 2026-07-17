@@ -249,7 +249,10 @@ def _device_login(base_url: str) -> OAuthTokens:
         raise typer.Exit(1)
 
     return OAuthTokens.from_response(
-        tokens, client_id=endpoints.client_id, scope_fallback=endpoints.scope
+        tokens,
+        client_id=endpoints.client_id,
+        scope_fallback=endpoints.scope,
+        host=base_url,
     )
 
 
@@ -329,13 +332,16 @@ def _check_connection(base_url: str, api_key: str) -> None:
 
 def _auth_mode_detail(config: CLIConfig) -> str:
     """Human summary of which credential the CLI will use."""
+    tokens = config.usable_oauth()
+    if tokens is not None:
+        if tokens.access_valid():
+            secs = max(int(tokens.access_expires_at - time.time()), 0)
+            return f"OAuth device token (expires in {secs // 60}m)"
+        if config.api_key:
+            return "API key (OAuth token expired)"
+        return "OAuth device token (expired — will refresh)"
     if config.api_key:
         return "API key"
-    if config.oauth and config.oauth.access_token:
-        if config.oauth.access_valid():
-            secs = max(int(config.oauth.access_expires_at - time.time()), 0)
-            return f"OAuth device token (expires in {secs // 60}m)"
-        return "OAuth device token (expired — will refresh)"
     return "missing — run `honcho init`"
 
 
