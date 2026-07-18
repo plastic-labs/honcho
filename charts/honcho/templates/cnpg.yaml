@@ -1,0 +1,50 @@
+{{- if .Values.cnpg.enabled }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "honcho.dbName" . }}
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+spec:
+  description: {{ .Values.cnpg.description | quote }}
+  imageName: {{ .Values.cnpg.imageName | quote }}
+  {{- with .Values.cnpg.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  instances: {{ .Values.cnpg.instances }}
+  bootstrap:
+    initdb:
+      database: {{ .Values.cnpg.database | quote }}
+      owner: {{ .Values.cnpg.owner | quote }}
+      secret:
+        name: {{ include "honcho.dbSecretName" . }}
+      {{- with .Values.cnpg.postInitApplicationSQL }}
+      postInitApplicationSQL:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  storage:
+    size: {{ .Values.cnpg.storage.size | quote }}
+    {{- with .Values.cnpg.storage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+  walStorage:
+    size: {{ .Values.cnpg.walStorage.size | quote }}
+    {{- with .Values.cnpg.walStorage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+  monitoring:
+    enablePodMonitor: {{ .Values.cnpg.monitoring.enablePodMonitor }}
+  {{- with .Values.cnpg.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.cnpg.backup }}
+  backup:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.cnpg.postgresql }}
+  postgresql:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

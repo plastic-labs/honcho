@@ -1,0 +1,23 @@
+Honcho has been installed.
+
+Required next checks:
+
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+  kubectl get svc -n {{ .Release.Namespace }} {{ include "honcho.fullname" . }}-api
+
+{{- if not .Values.runtimeSecret.enabled }}
+
+runtimeSecret.enabled is false. The API and deriver need DB_CONNECTION_URI and
+LLM provider credentials from config.env, extraEnv, extraEnvFrom, or a Secret.
+{{- end }}
+
+{{- if and .Values.runtimeSecret.enabled (not .Values.runtimeSecret.name) }}
+
+The chart will read runtime settings from Secret:
+
+  {{ include "honcho.runtimeSecretName" . }}
+{{- end }}
+
+Run the health test after the API pod is ready:
+
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
