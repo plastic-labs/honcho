@@ -1,10 +1,14 @@
+import math
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from src.config import EmbeddingModelConfig
-from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
+from src.embedding_client import (  # pyright: ignore[reportPrivateUsage]
+    _EmbeddingClient,
+    _l2_truncate,
+)
 
 
 class FakeOpenAIEmbeddingsAPI:
@@ -86,6 +90,79 @@ async def test_openai_embedding_client_rejects_dimension_mismatch(
         max_input_tokens=8192,
         max_tokens_per_request=300_000,
         send_dimensions=False,
+    )
+
+    with pytest.raises(ValueError, match="Embedding dimension mismatch"):
+        await client.embed("hello world")
+
+
+def test_l2_truncate_slices_and_renormalizes() -> None:
+    truncated = _l2_truncate([0.1] * 16, 8)
+
+    assert len(truncated) == 8
+    assert math.isclose(math.sqrt(sum(v * v for v in truncated)), 1.0, abs_tol=1e-9)
+
+
+def test_l2_truncate_leaves_zero_norm_slice_untouched() -> None:
+    assert _l2_truncate([0.0] * 4, 2) == [0.0, 0.0]
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_truncates_oversized_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Provider returns a native 16-dim vector (e.g. an MRL model behind a server
+    # that ignores `dimensions=`); we configured 8 and enabled truncation.
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 16)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="qwen3-embedding",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=True,
+        truncate_to_dimensions=True,
+    )
+
+    embedding = await client.embed("hello world")
+
+    assert len(embedding) == 8
+    assert math.isclose(math.sqrt(sum(v * v for v in embedding)), 1.0, abs_tol=1e-9)
+
+
+@pytest.mark.asyncio
+async def test_openai_embedding_client_rejects_oversized_without_truncation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 16)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="qwen3-embedding",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=True,
+        truncate_to_dimensions=False,
     )
 
     with pytest.raises(ValueError, match="Embedding dimension mismatch"):
