@@ -6,11 +6,11 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, NamedTuple, TypeVar
 
+import httpx
 import tiktoken
 from google import genai
 from google.genai import types as genai_types
 from nanoid import generate as generate_nanoid
-from openai import AsyncOpenAI
 
 from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
 
@@ -187,7 +187,7 @@ class _EmbeddingClient:
                 if config.base_url
                 else None
             )
-            self.client: genai.Client | AsyncOpenAI = genai.Client(
+            self.client: genai.Client | httpx.AsyncClient = genai.Client(
                 api_key=config.api_key,
                 http_options=http_options,
             )
@@ -198,9 +198,12 @@ class _EmbeddingClient:
         else:  # openai
             if not config.api_key:
                 raise ValueError("OpenAI API key is required")
-            self.client = AsyncOpenAI(
-                api_key=config.api_key,
-                base_url=config.base_url,
+            if not config.base_url:
+                raise ValueError("OpenAI base URL is required")
+            self._openai_api_key: str = config.api_key
+            self._openai_base_url: str = config.base_url.rstrip("/")
+            self.client = httpx.AsyncClient(
+                timeout=httpx.Timeout(120.0, connect=30.0),
             )
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = 2048  # OpenAI batch limit
@@ -222,6 +225,21 @@ class _EmbeddingClient:
                 + f"Expected {self.vector_dimensions}, got {len(embedding)}."
             )
         return embedding
+
+    async def _openai_post_embeddings(
+        self, http_client: httpx.AsyncClient, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        resp = await http_client.post(
+            f"{self._openai_base_url}/embeddings",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {self._openai_api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        if not resp.is_success:
+            resp.raise_for_status()
+        return resp.json()
 
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
@@ -257,14 +275,14 @@ class _EmbeddingClient:
                 fn=_call_gemini,
             )
 
-        openai_client = self.client
+        http_client: httpx.AsyncClient = self.client  # type: ignore[assignment]
 
         async def _call_openai() -> list[float]:
-            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            payload: dict[str, Any] = {"model": self.model, "input": [query]}
             if self.send_dimensions:
-                openai_kwargs["dimensions"] = self.vector_dimensions
-            response = await openai_client.embeddings.create(**openai_kwargs)
-            return self._validate_embedding_dimensions(response.data[0].embedding)
+                payload["dimensions"] = self.vector_dimensions
+            data = await self._openai_post_embeddings(http_client, payload)
+            return self._validate_embedding_dimensions(data["data"][0]["embedding"])
 
         return await _emit_embedding_call(
             provider=self.transport,
@@ -460,16 +478,17 @@ class _EmbeddingClient:
                                 self._validate_embedding_dimensions(embedding.values)
                             )
             else:  # openai
-                openai_kwargs: dict[str, Any] = {
+                http_client: httpx.AsyncClient = self.client  # type: ignore[assignment]
+                payload: dict[str, Any] = {
                     "model": self.model,
                     "input": [item.text for item in batch],
                 }
                 if self.send_dimensions:
-                    openai_kwargs["dimensions"] = self.vector_dimensions
-                response = await self.client.embeddings.create(**openai_kwargs)
-                for item, embedding_data in zip(batch, response.data, strict=True):
+                    payload["dimensions"] = self.vector_dimensions
+                resp_data = await self._openai_post_embeddings(http_client, payload)
+                for item, emb in zip(batch, resp_data["data"], strict=True):
                     result[item.text_id][item.chunk_index] = (
-                        self._validate_embedding_dimensions(embedding_data.embedding)
+                        self._validate_embedding_dimensions(emb["embedding"])
                     )
             return result
 

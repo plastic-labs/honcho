@@ -4,6 +4,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.models import Peer, Workspace
 
 
@@ -229,7 +230,7 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="First conclusion",
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
         )
         db_session.add(doc1)
@@ -240,7 +241,7 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Second conclusion",
-            embedding=[0.2] * 1536,
+            embedding=[0.2] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
         )
         db_session.add(doc2)
@@ -294,7 +295,7 @@ class TestConclusionRoutes:
                 observer=test_peer.name,
                 observed=test_peer2.name,
                 content=f"Conclusion {i}",
-                embedding=[0.1 * i] * 1536,
+                embedding=[0.1 * i] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
             )
             db_session.add(doc)
@@ -610,7 +611,7 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test conclusion to delete",
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
         )
         db_session.add(doc)
@@ -715,7 +716,7 @@ class TestConclusionRoutes:
             observer=test_peer.name,
             observed=test_peer2.name,
             content="Test conclusion content",
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
         )
         db_session.add(doc)
@@ -784,7 +785,7 @@ class TestConclusionRoutes:
                     observer=test_peer.name,
                     observed=test_peer2.name,
                     content=f"{level} conclusion {i}",
-                    embedding=[0.1] * 1536,
+                    embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     level=level,
                 )
