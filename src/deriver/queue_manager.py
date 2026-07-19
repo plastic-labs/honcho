@@ -610,10 +610,62 @@ class QueueManager:
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
 
+    async def _quarantine_invalid_work_unit(
+        self,
+        work_unit_key: str,
+        worker_id: str,
+        error: Exception,
+    ) -> None:
+        """Mark an unparseable work unit errored and release worker ownership.
+
+        Work-unit parsing happens before task-specific processing. Without this
+        guard, a malformed producer can raise before the normal ``finally``
+        block, leaving the worker owned forever and starving the queue when the
+        Deriver is configured with a single worker.
+        """
+        ownership = self.worker_ownership.get(worker_id)
+        error_msg = f"Invalid work unit key: {error.__class__.__name__}: {error}"
+        try:
+            async with tracked_db("quarantine_invalid_work_unit") as db:
+                await db.execute(
+                    update(models.QueueItem)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(~models.QueueItem.processed)
+                    .values(processed=True, error=error_msg[:65535])
+                )
+                if ownership and ownership.work_unit_key == work_unit_key:
+                    await db.execute(
+                        delete(models.ActiveQueueSession)
+                        .where(models.ActiveQueueSession.id == ownership.aqs_id)
+                        .where(
+                            models.ActiveQueueSession.work_unit_key == work_unit_key
+                        )
+                    )
+                await db.commit()
+        except Exception as quarantine_error:
+            logger.error(
+                "Failed to quarantine invalid work unit %s: %s",
+                work_unit_key,
+                quarantine_error,
+                exc_info=True,
+            )
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.capture_exception(quarantine_error)
+        finally:
+            self.untrack_worker_work_unit(worker_id, work_unit_key)
+
+        logger.error("Quarantined invalid work unit %s: %s", work_unit_key, error)
+        if settings.SENTRY.ENABLED:
+            sentry_sdk.capture_exception(error)
+
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
-        work_unit = parse_work_unit_key(work_unit_key)
+        try:
+            work_unit = parse_work_unit_key(work_unit_key)
+        except Exception as error:
+            await self._quarantine_invalid_work_unit(work_unit_key, worker_id, error)
+            return
         async with self.semaphore:
             queue_item_count = 0
             try:
