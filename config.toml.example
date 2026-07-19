@@ -74,6 +74,7 @@ MAX_TOKENS_PER_REQUEST = 300000
 [embedding.model_config]
 transport = "openai"
 model = "text-embedding-3-small"
+# tokenizer = "tiktoken:cl100k_base" # or "hf:BAAI/bge-m3" / "file:/path/to/tokenizer.json"
 
 # Optional module-level endpoint overrides
 # [embedding.model_config.overrides]

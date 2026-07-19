@@ -245,11 +245,20 @@ EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 # Embedding transport/model selection
 EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
 EMBEDDING_MODEL_CONFIG__MODEL=text-embedding-3-small
+# EMBEDDING_MODEL_CONFIG__TOKENIZER=  # unset = tiktoken auto-detect (default)
 
 # Optional endpoint overrides
 EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 ```
+
+`EMBEDDING_MODEL_CONFIG__TOKENIZER` is optional. Leave it unset for Honcho's
+current tiktoken auto-detection behavior. For OpenAI-compatible embedding
+models with a different tokenizer, set `tiktoken:<encoding>`, `hf:<repo-id>`,
+or `file:/absolute/path/to/tokenizer.json`. Hugging Face and file tokenizers
+require installing the optional `honcho[tokenizers]` extra. When the tokenizer
+does not match the model's real tokenizer, chunk-size decisions can undercount
+tokens and the provider may reject oversized inputs (see issue #827).
 
 Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
 

@@ -4,7 +4,11 @@ from typing import Any
 import pytest
 
 from src.config import EmbeddingModelConfig
-from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
+from src.embedding_client import (
+    _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
+    _resolve_tokenizer,  # pyright: ignore[reportPrivateUsage]
+)
+from src.exceptions import ValidationException
 
 
 class FakeOpenAIEmbeddingsAPI:
@@ -444,3 +448,236 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert len(out["long"]) > 1
     # Order preserved
     assert isinstance(out["long"][0], str)
+
+
+class FakeEncoding:
+    """Deterministic tokenizer double: every text maps to `token_count` tokens."""
+
+    def __init__(self, token_count: int) -> None:
+        self.token_count: int = token_count
+
+    def encode(self, _text: str) -> list[int]:
+        return list(range(self.token_count))
+
+    def decode(self, tokens: list[int]) -> str:
+        return " ".join(str(token) for token in tokens)
+
+
+def test_resolve_tokenizer_returns_model_encoding_for_known_models() -> None:
+    tokenizer = _resolve_tokenizer("text-embedding-3-small", None)
+    assert tokenizer.encode("hello") is not None
+
+
+def test_resolve_tokenizer_warns_and_falls_back_for_unknown_models(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.embedding_client"):
+        tokenizer = _resolve_tokenizer("baai/bge-m3", None)
+
+    assert tokenizer.encode("hello") is not None
+    assert any(
+        "falling back to cl100k_base" in record.message for record in caplog.records
+    )
+
+
+def test_resolve_tokenizer_blank_spec_uses_default() -> None:
+    default = _resolve_tokenizer("text-embedding-3-small", None)
+    blank = _resolve_tokenizer("text-embedding-3-small", "   ")
+    assert type(blank) is type(default)
+
+
+def test_resolve_tokenizer_tiktoken_spec_uses_named_encoding() -> None:
+    import tiktoken
+
+    tokenizer = _resolve_tokenizer("text-embedding-3-small", "tiktoken:o200k_base")
+    assert tokenizer is tiktoken.get_encoding("o200k_base")
+
+
+def test_resolve_tokenizer_rejects_unknown_tiktoken_encoding() -> None:
+    with pytest.raises(ValidationException, match="unknown tiktoken encoding"):
+        _resolve_tokenizer("text-embedding-3-small", "tiktoken:not-a-real-encoding")
+
+
+def test_resolve_tokenizer_rejects_empty_tiktoken_spec() -> None:
+    with pytest.raises(ValidationException, match="requires an encoding name"):
+        _resolve_tokenizer("text-embedding-3-small", "tiktoken:")
+
+
+def test_resolve_tokenizer_rejects_unknown_prefix() -> None:
+    with pytest.raises(ValidationException, match="tiktoken:, hf:, file:"):
+        _resolve_tokenizer("text-embedding-3-small", "sentencepiece:foo")
+
+
+def test_resolve_tokenizer_rejects_empty_hf_and_file_specs() -> None:
+    with pytest.raises(ValidationException, match="requires a model name"):
+        _resolve_tokenizer("text-embedding-3-small", "hf:")
+    with pytest.raises(ValidationException, match="requires a tokenizer path"):
+        _resolve_tokenizer("text-embedding-3-small", "file:")
+
+
+def test_resolve_tokenizer_hf_requires_tokenizers_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_import_module(name: str) -> Any:
+        raise ImportError(name)
+
+    monkeypatch.setattr("src.embedding_client.import_module", fake_import_module)
+
+    with pytest.raises(ValidationException, match=r"honcho\[tokenizers\]"):
+        _resolve_tokenizer("text-embedding-3-small", "hf:BAAI/bge-m3")
+
+
+def test_resolve_tokenizer_hf_from_pretrained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class FakeTokenizerCls:
+        @staticmethod
+        def from_pretrained(model_name: str) -> Any:
+            calls.append(model_name)
+
+            def _encode(_text: str, add_special_tokens: bool = True) -> Any:
+                _ = add_special_tokens
+                return SimpleNamespace(ids=[1, 2, 3])
+
+            def _decode(_ids: list[int], skip_special_tokens: bool = True) -> str:
+                _ = skip_special_tokens
+                return "decoded"
+
+            return SimpleNamespace(encode=_encode, decode=_decode)
+
+    def _fake_import_module(_name: str) -> Any:
+        return SimpleNamespace(Tokenizer=FakeTokenizerCls)
+
+    monkeypatch.setattr("src.embedding_client.import_module", _fake_import_module)
+
+    tokenizer = _resolve_tokenizer("text-embedding-3-small", "hf:BAAI/bge-m3")
+
+    assert calls == ["BAAI/bge-m3"]
+    assert tokenizer.encode("anything") == [1, 2, 3]
+    assert tokenizer.decode([1, 2, 3]) == "decoded"
+
+
+def test_resolve_tokenizer_loads_from_file(tmp_path: Any) -> None:
+    tokenizers = pytest.importorskip("tokenizers")
+
+    tokenizer = tokenizers.Tokenizer(
+        tokenizers.models.WordLevel({"hello": 0, "world": 1})
+    )
+    tokenizer.pre_tokenizer = tokenizers.pre_tokenizers.Whitespace()
+    path = tmp_path / "tokenizer.json"
+    tokenizer.save(str(path))
+
+    loaded = _resolve_tokenizer("text-embedding-3-small", f"file:{path}")
+
+    assert loaded.encode("hello world") == [0, 1]
+    assert loaded.decode([0, 1]) == "hello world"
+
+
+def test_embedding_client_uses_configured_tokenizer_for_chunking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chunk-size decisions must follow the configured tokenizer, not the
+    tiktoken fallback — the core of issue #827."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    def _fake_get_encoding(name: str) -> FakeEncoding | None:
+        return FakeEncoding(token_count=100) if name == "fake-enc" else None
+
+    monkeypatch.setattr(
+        "src.embedding_client.tiktoken.get_encoding", _fake_get_encoding
+    )
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            tokenizer="tiktoken:fake-enc",
+        ),
+        vector_dimensions=4,
+        max_input_tokens=10,
+        max_tokens_per_request=1000,
+        send_dimensions=False,
+    )
+
+    # cl100k_base would count "hi" as 1 token and not chunk; the configured
+    # tokenizer counts 100 tokens, so it must be split into <=10-token chunks.
+    chunks = client.prepare_chunks({"msg": "hi"})["msg"]
+
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert len(chunk.split()) <= 10
+
+
+def test_hf_tokenizer_special_tokens_reserved_from_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BERT-family providers count [CLS]/[SEP] toward the input limit, so the
+    client's effective budget must shrink by the special-token overhead."""
+
+    def _encode(text: str, add_special_tokens: bool = True) -> Any:
+        ids = [10 + i for i, _ in enumerate(text.split())]
+        return SimpleNamespace(ids=([0, *ids, 1] if add_special_tokens else ids))
+
+    def _decode(ids: list[int], **_kwargs: Any) -> str:
+        return " ".join("w" for _ in ids)
+
+    class FakeTokenizerCls:
+        @staticmethod
+        def from_file(_path: str) -> Any:
+            return SimpleNamespace(encode=_encode, decode=_decode)
+
+    def _fake_import_module(_name: str) -> Any:
+        return SimpleNamespace(Tokenizer=FakeTokenizerCls)
+
+    monkeypatch.setattr("src.embedding_client.import_module", _fake_import_module)
+
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="baai/bge-m3",
+            api_key="test-key",
+            tokenizer="file:/tmp/whatever.json",
+        ),
+        vector_dimensions=4,
+        max_input_tokens=100,
+        max_tokens_per_request=1000,
+        send_dimensions=False,
+    )
+
+    # 2 specials ([CLS]/[SEP]) reserved: budget is 98, not 100.
+    assert client.max_embedding_tokens == 98
+
+
+def test_settings_signature_tracks_tokenizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.config import settings
+    from src.embedding_client import EmbeddingClient
+
+    wrapper = EmbeddingClient()
+    before = wrapper._get_settings_signature()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(
+        settings.EMBEDDING.MODEL_CONFIG, "tokenizer", "tiktoken:o200k_base"
+    )
+    after = wrapper._get_settings_signature()  # pyright: ignore[reportPrivateUsage]
+
+    assert before != after
