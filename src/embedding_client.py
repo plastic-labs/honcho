@@ -726,6 +726,16 @@ class EmbeddingClient:
     def _resolve_runtime_config(self) -> EmbeddingModelConfig:
         return resolve_embedding_model_config(settings.EMBEDDING.MODEL_CONFIG)
 
+    def warmup(self) -> None:
+        """Eagerly construct the underlying client at process startup.
+
+        ``hf:`` tokenizer specs fetch from the Hugging Face Hub; doing that on
+        the first request would stall the event loop under the singleton lock.
+        Calling this from the API and deriver lifespans moves any tokenizer
+        download off the request path and fails the process fast on a bad spec.
+        """
+        self._get_client()
+
     def _get_settings_signature(self) -> tuple[object, ...]:
         runtime_config = self._resolve_runtime_config()
         return (
