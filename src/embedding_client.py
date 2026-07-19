@@ -6,7 +6,8 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
+from importlib import import_module
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol, TypeVar, cast
 
 import tiktoken
 from nanoid import generate as generate_nanoid
@@ -17,6 +18,7 @@ from .config import (
     resolve_embedding_model_config,
     settings,
 )
+from .exceptions import ValidationException
 
 if TYPE_CHECKING:
     from google import genai
@@ -168,6 +170,118 @@ class BatchItem(NamedTuple):
     token_count: int
 
 
+class TokenizerLike(Protocol):
+    """Minimal encode/decode surface the embedding pipeline needs from a tokenizer."""
+
+    def encode(self, text: str) -> list[int]: ...
+
+    def decode(self, tokens: list[int]) -> str: ...
+
+
+class _HuggingFaceTokenizer:
+    """Adapter making a `tokenizers.Tokenizer` satisfy TokenizerLike."""
+
+    def __init__(self, tokenizer: Any) -> None:
+        self._tokenizer: Any = tokenizer
+        # Special tokens ([CLS]/[SEP]) the provider adds per input also count
+        # toward its token limit, so they must come out of the chunk budget.
+        self.special_tokens_overhead: int = len(
+            tokenizer.encode("", add_special_tokens=True).ids
+        )
+
+    def encode(self, text: str) -> list[int]:
+        return list(self._tokenizer.encode(text, add_special_tokens=False).ids)
+
+    def decode(self, tokens: list[int]) -> str:
+        return str(self._tokenizer.decode(tokens, skip_special_tokens=True))
+
+
+def _load_huggingface_tokenizer(spec: str) -> TokenizerLike:
+    if spec.startswith("hf:"):
+        model_name = spec.removeprefix("hf:")
+        if not model_name:
+            raise ValidationException(
+                "Embedding tokenizer spec 'hf:' requires a model name"
+            )
+        tokenizer_cls = _import_tokenizers_cls()
+        return _HuggingFaceTokenizer(tokenizer_cls.from_pretrained(model_name))
+
+    path = spec.removeprefix("file:")
+    if not path:
+        raise ValidationException(
+            "Embedding tokenizer spec 'file:' requires a tokenizer path"
+        )
+    tokenizer_cls = _import_tokenizers_cls()
+    return _HuggingFaceTokenizer(tokenizer_cls.from_file(path))
+
+
+def _import_tokenizers_cls() -> Any:
+    """Import the `tokenizers.Tokenizer` class, raising a clear ValidationException
+    when the optional `tokenizers` package is not installed."""
+    try:
+        return import_module("tokenizers").Tokenizer
+    except ImportError as exc:
+        raise ValidationException(
+            "The 'tokenizers' package is required for hf: and file: embedding "
+            + "tokenizers. Install it with the honcho[tokenizers] extra."
+        ) from exc
+
+
+def _default_tokenizer_for_model(model: str) -> TokenizerLike:
+    try:
+        return tiktoken.encoding_for_model(model)
+    except KeyError:
+        # The provider's real tokenizer may count differently (e.g. bge-m3's
+        # XLM-RoBERTa tokenizer vs cl100k_base), which can push chunks the
+        # provider then rejects. Set EMBEDDING_MODEL_CONFIG__TOKENIZER to match
+        # the configured model's tokenizer.
+        logger.warning(
+            "No tiktoken encoding for embedding model %r; falling back to "
+            + "cl100k_base for token counting. If the provider uses a different "
+            + "tokenizer, chunk-size decisions may be wrong. Configure "
+            + "EMBEDDING_MODEL_CONFIG__TOKENIZER to override.",
+            model,
+        )
+        return tiktoken.get_encoding("cl100k_base")
+
+
+def _resolve_tokenizer(model: str, spec: str | None) -> TokenizerLike:
+    """Resolve the tokenizer used for embedding token counting and chunking.
+
+    Args:
+        model: Configured embedding model name (used when no spec is given)
+        spec: Optional explicit tokenizer spec: "tiktoken:<encoding>",
+            "hf:<repo-id>", or "file:/path/to/tokenizer.json"
+
+    Returns:
+        A TokenizerLike for chunk-size decisions.
+    """
+    if spec is None or spec.strip() == "":
+        return _default_tokenizer_for_model(model)
+
+    spec = spec.strip()
+
+    if spec.startswith("tiktoken:"):
+        encoding_name = spec.removeprefix("tiktoken:")
+        if not encoding_name:
+            raise ValidationException(
+                "Embedding tokenizer spec 'tiktoken:' requires an encoding name"
+            )
+        try:
+            return tiktoken.get_encoding(encoding_name)
+        except ValueError as exc:
+            raise ValidationException(
+                f"Embedding tokenizer spec uses unknown tiktoken encoding: {encoding_name}"
+            ) from exc
+
+    if spec.startswith(("hf:", "file:")):
+        return _load_huggingface_tokenizer(spec)
+
+    raise ValidationException(
+        "Embedding tokenizer must be unset or start with one of: tiktoken:, hf:, file:"
+    )
+
+
 class _EmbeddingClient:
     """
     Embedding client supporting OpenAI and Gemini with chunking and batching support.
@@ -227,10 +341,19 @@ class _EmbeddingClient:
             self.max_embedding_tokens = max_input_tokens
             self.max_batch_size = config.max_batch_size or 2048
 
-        try:
-            self.encoding: tiktoken.Encoding = tiktoken.encoding_for_model(self.model)
-        except KeyError:
-            self.encoding = tiktoken.get_encoding("cl100k_base")
+        self.encoding: TokenizerLike = _resolve_tokenizer(self.model, config.tokenizer)
+        # Providers count the special tokens they add per input (e.g. [CLS]/[SEP]
+        # for BERT-family models) toward the limit; reserve them from the budget.
+        self.max_embedding_tokens -= getattr(
+            self.encoding, "special_tokens_overhead", 0
+        )
+        if self.max_embedding_tokens <= 0:
+            msg = (
+                f"Effective embedding token budget is {self.max_embedding_tokens} after"
+                " reserving special-token overhead. Reduce"
+                " EMBEDDING_MODEL_CONFIG__TOKENIZER overhead or raise EMBEDDING_MAX_INPUT_TOKENS."
+            )
+            raise ValidationException(msg)
         self.max_embedding_tokens_per_request: int = max_tokens_per_request
 
     @property
@@ -594,7 +717,7 @@ def _chunk_text_with_tokens(
     text: str,
     encoded_tokens: list[int],
     max_tokens: int,
-    encoding: tiktoken.Encoding,
+    encoding: TokenizerLike,
 ) -> list[tuple[str, int]]:
     """
     Split text into chunks that fit within token limits, with 20% overlap.
@@ -603,7 +726,7 @@ def _chunk_text_with_tokens(
         text: Original text to chunk
         encoded_tokens: Pre-encoded tokens for the text
         max_tokens: Maximum tokens per chunk
-        encoding: Tiktoken encoding model
+        encoding: Tokenizer used to decode token slices back into text
 
     Returns:
         List of (chunk_text, token_count) tuples
@@ -684,6 +807,7 @@ class EmbeddingClient:
             runtime_config.api_key,
             runtime_config.base_url,
             runtime_config.max_batch_size,
+            runtime_config.tokenizer,
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
@@ -735,20 +859,31 @@ class EmbeddingClient:
         return self._get_client().vector_dimensions
 
     @property
-    def encoding(self) -> tiktoken.Encoding:
-        """Get the tiktoken encoding.
+    def encoding(self) -> TokenizerLike:
+        """Get the configured embedding tokenizer.
 
-        Resolved without constructing the underlying client: tiktoken needs no
-        API key, and token-counting callers (e.g. the document dedup tie-break)
-        must work in environments with no embedding credentials, such as CI for
-        pull requests from forks.
+        Resolved without constructing the underlying client when possible:
+        token counting (e.g. the document dedup tie-break) must work in
+        environments with no embedding credentials, such as CI for pull
+        requests from forks. Only HF/file tokenizers require client
+        construction (to load the tokenizer once and cache it on the
+        instance), so for those specs we fall back to the constructed
+        client's encoding.
         """
-        if self._instance is not None:
+        if (
+            self._instance is not None
+            and self._instance_signature == self._get_settings_signature()
+        ):
             return self._instance.encoding
-        try:
-            return tiktoken.encoding_for_model(self._resolve_runtime_config().model)
-        except KeyError:
-            return tiktoken.get_encoding("cl100k_base")
+        runtime_config = self._resolve_runtime_config()
+        spec = runtime_config.tokenizer
+        if spec and spec.strip() and spec.strip().startswith(("hf:", "file:")):
+            # HF/file tokenizers are loaded once inside _EmbeddingClient and
+            # cached on the instance; resolving them here would either
+            # duplicate the load or bypass the special_tokens_overhead
+            # accounting. Delegate to the constructed client.
+            return self._get_client().encoding
+        return _resolve_tokenizer(runtime_config.model, spec)
 
 
 # Shared singleton embedding client instance
