@@ -574,6 +574,16 @@ class DialecticOptions(BaseModel):
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",
     )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+            " Only a conservative subset of JSON Schema is supported; unsupported"
+            "  schemas are rejected with 422. Constraint keywords (minItems, "
+            " maxLength, ...) are hints to the model, not enforced server-side."
+        ),
+    )
 
     @field_validator("query", mode="after")
     @classmethod
