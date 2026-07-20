@@ -318,10 +318,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> list[Any]:
+        ) -> crud.CreateDocumentsResult:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return documents
+            return crud.CreateDocumentsResult(created_documents=documents)
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",
@@ -379,10 +379,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> list[Any]:
+        ) -> crud.CreateDocumentsResult:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return documents
+            return crud.CreateDocumentsResult(created_documents=documents)
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",
@@ -438,10 +438,10 @@ class TestCreateObservations:
             observer: str,
             observed: str,
             deduplicate: bool = False,
-        ) -> list[Any]:
+        ) -> crud.CreateDocumentsResult:
             _ = (workspace_name, observer, observed, deduplicate)
             created_documents.extend(documents)
-            return documents
+            return crud.CreateDocumentsResult(created_documents=documents)
 
         monkeypatch.setattr(
             "src.utils.agent_tools.embedding_client.simple_batch_embed",

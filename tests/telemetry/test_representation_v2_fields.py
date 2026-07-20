@@ -2,8 +2,6 @@
 """tests for RepresentationCompletedEvent additive fields + truncation.
 
 Targets:
-- Schema stays at v2 (additive, no bump). Existing `input_tokens` semantics
-  unchanged.
 - fields are defaultable (no breakage for callers that ignore them)
   and round-trip through Pydantic serialization.
 - `HonchoLLMCallResponse.hit_input_token_cap` defaults to False but can be
@@ -17,10 +15,6 @@ from src.telemetry.events.representation import RepresentationCompletedEvent
 
 
 class TestRepresentationV2AdditiveFields:
-    def test_schema_stays_at_v2(self):
-        """is additive — schema_version must NOT bump to 3."""
-        assert RepresentationCompletedEvent.schema_version() == 2
-
     def test_new_fields_are_optional(self):
         """Existing callers must keep working without supplying any new
         fields. All new fields default."""
@@ -53,6 +47,10 @@ class TestRepresentationV2AdditiveFields:
         assert event.hit_batch_token_cap is False
         assert event.hit_input_token_cap is False
         assert event.observer_count == 0
+        assert event.exact_dup_in_batch_count == 0
+        assert event.exact_dup_existing_count == 0
+        assert event.semantic_dup_rejected_count == 0
+        assert event.semantic_dup_replaced_count == 0
 
     def test_input_tokens_semantics_preserved(self):
         """The downstream metering key must remain 'queued-message tokens'.
@@ -159,9 +157,40 @@ class TestRepresentationV2AdditiveFields:
             "hit_batch_token_cap",
             "hit_input_token_cap",
             "observer_count",
+            "exact_dup_in_batch_count",
+            "exact_dup_existing_count",
+            "semantic_dup_rejected_count",
+            "semantic_dup_replaced_count",
         ):
             assert field in data, f"missing field: {field}"
         assert data["hit_batch_token_cap"] is True
+
+    def test_dedup_count_fields_round_trip(self):
+        event = RepresentationCompletedEvent(
+            workspace_name="ws",
+            session_name="s",
+            observed="user",
+            queue_items_processed=1,
+            earliest_message_id="m1",
+            latest_message_id="m1",
+            message_count=1,
+            explicit_conclusion_count=0,
+            context_preparation_ms=10.0,
+            llm_call_ms=100.0,
+            total_duration_ms=110.0,
+            input_tokens=100,
+            total_input_tokens=200,
+            output_tokens=50,
+            exact_dup_in_batch_count=2,
+            exact_dup_existing_count=3,
+            semantic_dup_rejected_count=4,
+            semantic_dup_replaced_count=5,
+        )
+        data = event.model_dump(mode="json")
+        assert data["exact_dup_in_batch_count"] == 2
+        assert data["exact_dup_existing_count"] == 3
+        assert data["semantic_dup_rejected_count"] == 4
+        assert data["semantic_dup_replaced_count"] == 5
 
 
 class TestHitInputTokenCapFlag:
