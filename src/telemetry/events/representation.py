@@ -22,7 +22,7 @@ class RepresentationCompletedEvent(BaseEvent):
     """
 
     _event_type: ClassVar[str] = "representation.completed"
-    _schema_version: ClassVar[int] = 3
+    _schema_version: ClassVar[int] = 2
     _category: ClassVar[str] = "representation"
 
     # Workspace context
