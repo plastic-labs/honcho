@@ -239,8 +239,8 @@ async def process_representation_tasks_batch(
                 )
                 successful_observer_count += 1
             except Exception as e:
-                logger.error(
-                    "Failed to save representation for observer %s: %s", observer, e
+                logger.exception(
+                    "Failed to save representation for observer %s", observer
                 )
                 save_errors.append((observer, e))
 
