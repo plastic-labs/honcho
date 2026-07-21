@@ -11,6 +11,7 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Origin": CORS_ORIGIN,
   "Access-Control-Allow-Methods": CORS_METHODS,
   "Access-Control-Allow-Headers": CORS_ALLOWED_HEADERS,
+  "Access-Control-Expose-Headers": "WWW-Authenticate",
 };
 
 const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource";
