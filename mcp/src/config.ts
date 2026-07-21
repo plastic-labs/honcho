@@ -22,13 +22,13 @@ export interface Env {
  */
 export function parseConfig(request: Request, env: Env = {}): HonchoConfig {
   const authHeader = request.headers.get("Authorization");
-  const trimmedAuthHeader = authHeader?.trim();
-  if (!trimmedAuthHeader?.startsWith("Bearer ")) {
+  const bearerMatch = authHeader?.trim().match(/^Bearer\s+(.*)$/i);
+  if (!bearerMatch) {
     throw new Error(
       "Missing Authorization header. Provide 'Authorization: Bearer <your-honcho-key>'.",
     );
   }
-  const apiKey = trimmedAuthHeader.substring(7).trim();
+  const apiKey = bearerMatch[1].trim();
   if (!apiKey) {
     throw new Error("Authorization header is empty after 'Bearer '.");
   }
