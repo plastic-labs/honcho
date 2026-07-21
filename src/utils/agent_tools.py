@@ -1366,10 +1366,31 @@ async def _handle_create_observations_impl(
     forced_level: str | None = None,
 ) -> "str | ToolResult":
     """Handle create_observations tool."""
-    raw_observations = tool_input.get("observations", [])
+    raw_observations_value = tool_input.get("observations", [])
+
+    if not raw_observations_value:
+        return "ERROR: observations list is empty"
+    if not isinstance(raw_observations_value, list):
+        return "ERROR: observations must be a list"
+
+    raw_observations: list[dict[str, Any]] = []
+    validation_failures: list[ObservationFailure] = []
+    for index, raw_observation in enumerate(cast(list[Any], raw_observations_value)):
+        if not isinstance(raw_observation, dict):
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=str(raw_observation)[:50],
+                    error=f"observation at index {index} must be an object",
+                )
+            )
+            continue
+        raw_observations.append(cast(dict[str, Any], raw_observation).copy())
 
     if not raw_observations:
-        return "ERROR: observations list is empty"
+        failure_details = "; ".join(
+            f"'{f.content_preview}': {f.error}" for f in validation_failures
+        )
+        return f"ERROR: All observations failed validation: {failure_details}"
 
     # Set context-specific default level before Pydantic validation
     default_level = "explicit" if ctx.current_messages else "deductive"
@@ -1389,7 +1410,6 @@ async def _handle_create_observations_impl(
             obs["source_ids"] = normalized_source_ids
     # Validate observations individually so valid ones are still processed
     observations: list[schemas.ObservationInput] = []
-    validation_failures: list[ObservationFailure] = []
     for obs in raw_observations:
         try:
             validated = schemas.ObservationInput.model_validate(obs)

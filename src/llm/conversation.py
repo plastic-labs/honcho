@@ -31,6 +31,17 @@ def count_message_tokens(messages: list[dict[str, Any]]) -> int:
             except TypeError:
                 # Non-JSON-serializable content (e.g. bytes) — estimate from repr.
                 total += estimate_tokens(str(msg["parts"]))
+        # OpenAI keeps tool arguments outside ``content``. Count the complete
+        # provider-visible structure or long tool calls can evade the cap.
+        if "tool_calls" in msg:
+            try:
+                total += estimate_tokens(json.dumps(msg["tool_calls"]))
+            except TypeError:
+                total += estimate_tokens(str(msg["tool_calls"]))
+        for key in ("tool_call_id", "name"):
+            value = msg.get(key)
+            if value is not None:
+                total += estimate_tokens(str(value))
     return total
 
 

@@ -125,7 +125,17 @@ async def test_deduction_specialist_uses_nested_model_config(
         raise AssertionError("Expected dreamer LLM call")
     kwargs = await_args.kwargs
     expected_config = settings.DREAM.DEDUCTION_MODEL_CONFIG
+    expected_output_tokens = (
+        expected_config.max_output_tokens or specialist.get_max_tokens()
+    )
+    expected_input_tokens = min(
+        settings.DREAM.MAX_INPUT_TOKENS,
+        settings.DREAM.CONTEXT_WINDOW_TOKENS
+        - expected_output_tokens
+        - settings.DREAM.CONTEXT_SAFETY_MARGIN_TOKENS,
+    )
 
     assert result.content == "done"
     assert kwargs["model_config"] == expected_config
+    assert kwargs["max_input_tokens"] == expected_input_tokens
     assert "llm_settings" not in kwargs

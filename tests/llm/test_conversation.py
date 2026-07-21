@@ -3,6 +3,7 @@ from typing import Any
 from src.llm.conversation import (
     _is_tool_result_message,  # pyright: ignore[reportPrivateUsage]
     _is_tool_use_message,  # pyright: ignore[reportPrivateUsage]
+    count_message_tokens,
     truncate_messages_to_fit,
 )
 
@@ -37,6 +38,39 @@ def test_truncate_messages_to_fit_preserves_tool_result_pair() -> None:
     truncated = truncate_messages_to_fit(messages, max_tokens=5)
 
     assert truncated == messages[1:]
+
+
+def test_count_message_tokens_includes_openai_tool_call_arguments() -> None:
+    short_call = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"},
+                }
+            ],
+        }
+    ]
+    long_call = [
+        {
+            **short_call[0],
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "lookup",
+                        "arguments": "x " * 1000,
+                    },
+                }
+            ],
+        }
+    ]
+
+    assert count_message_tokens(long_call) > count_message_tokens(short_call) + 500
 
 
 def test_is_tool_use_message_detects_gemini_function_call_in_parts() -> None:

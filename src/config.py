@@ -1272,6 +1272,18 @@ class DreamSettings(HonchoSettings):
     # Agent iteration limit - increased for extended reasoning workflow
     MAX_TOOL_ITERATIONS: Annotated[int, Field(default=20, gt=0, le=50)] = 20
 
+    # Operator ceiling for accumulated specialist conversation. The runtime
+    # further bounds this by context window - output budget - safety margin.
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=200_000)] = 100_000
+    # Conservative default for OpenAI-compatible backends; operators using a
+    # larger context window can raise it explicitly.
+    CONTEXT_WINDOW_TOKENS: Annotated[int, Field(default=32_768, gt=0, le=2_000_000)] = (
+        32_768
+    )
+    CONTEXT_SAFETY_MARGIN_TOKENS: Annotated[
+        int, Field(default=2_048, ge=0, le=100_000)
+    ] = 2_048
+
     # Token limit for get_recent_history tool within the agent
     HISTORY_TOKEN_LIMIT: Annotated[int, Field(default=16_384, gt=0, le=200_000)] = (
         16_384
@@ -1324,6 +1336,11 @@ class DreamSettings(HonchoSettings):
     @model_validator(mode="after")
     def _validate_specialist_token_budgets(self) -> "DreamSettings":
         """Ensure thinking_budget_tokens < max_output_tokens for each specialist."""
+        if self.CONTEXT_SAFETY_MARGIN_TOKENS >= self.CONTEXT_WINDOW_TOKENS:
+            raise ValueError(
+                "dream.CONTEXT_SAFETY_MARGIN_TOKENS must be smaller than "
+                + "dream.CONTEXT_WINDOW_TOKENS"
+            )
         for name, cfg in (
             ("DEDUCTION_MODEL_CONFIG", self.DEDUCTION_MODEL_CONFIG),
             ("INDUCTION_MODEL_CONFIG", self.INDUCTION_MODEL_CONFIG),

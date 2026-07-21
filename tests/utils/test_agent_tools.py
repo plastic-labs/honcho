@@ -294,6 +294,32 @@ class TestCreateObservations:
         # Handlers may return ToolResult (); str() returns .content.
         assert "empty" in str(result).lower()
 
+    async def test_malformed_item_does_not_block_valid_observation(
+        self, make_tool_context: Callable[..., ToolContext]
+    ):
+        """A malformed model item is reported while valid peers still persist."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Inferred preference for quiet spaces",
+                        "source_ids": ["premise1", "premise2"],
+                        "premises": [
+                            "User mentioned working in libraries",
+                            "User avoids noisy cafes",
+                        ],
+                    },
+                    "not an object",
+                ]
+            },
+        )
+
+        assert "Created 1 observations" in str(result)
+        assert "observation at index 1 must be an object" in str(result)
+
     async def test_batch_embedding_failure_falls_back_to_individual_embeds(
         self,
         tool_test_data: Any,
@@ -1598,6 +1624,27 @@ class TestToolExecutor:
 
         assert isinstance(result, str)
         # Should contain error info, not raise exception
+
+    @pytest.mark.parametrize(
+        "tool_name",
+        ["create_observations_deductive", "create_observations_inductive"],
+    )
+    async def test_executor_rejects_non_object_observations_without_type_error(
+        self, tool_test_data: Any, tool_name: str
+    ):
+        """Malformed model tool arguments are returned as validation errors."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        executor = await create_tool_executor(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+        )
+
+        result = await executor(tool_name, {"observations": ["not an object"]})
+
+        assert "observation at index 0 must be an object" in result
+        assert "TypeError" not in result
 
     async def test_executor_dreamer_context_includes_observation_ids(
         self, tool_test_data: Any

@@ -275,6 +275,20 @@ If you update it, send the full deduplicated list and remove stale entries.
                 if configured_max and configured_max > 0
                 else self.get_max_tokens()
             )
+            context_limited_input_tokens = (
+                settings.DREAM.CONTEXT_WINDOW_TOKENS
+                - effective_max_tokens
+                - settings.DREAM.CONTEXT_SAFETY_MARGIN_TOKENS
+            )
+            if context_limited_input_tokens <= 0:
+                raise ValidationException(
+                    "Dream context window must exceed max output tokens plus "
+                    + "the context safety margin"
+                )
+            effective_max_input_tokens = min(
+                settings.DREAM.MAX_INPUT_TOKENS,
+                context_limited_input_tokens,
+            )
 
             # call_purpose maps "deduction"/"induction" specialist names onto the
             # closed CallPurpose enum slugs without importing the enum here.
@@ -289,6 +303,7 @@ If you update it, send the full deduplicated list and remove stale entries.
                 tool_choice=None,
                 tool_executor=tool_executor,
                 max_tool_iterations=self.get_max_iterations(),
+                max_input_tokens=effective_max_input_tokens,
                 messages=messages,
                 telemetry=LLMTelemetryContext(
                     workspace_name=workspace_name,
