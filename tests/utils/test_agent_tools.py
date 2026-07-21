@@ -1646,6 +1646,25 @@ class TestToolExecutor:
         assert "observation at index 0 must be an object" in result
         assert "TypeError" not in result
 
+    @pytest.mark.parametrize("observations", [False, 0, ""])
+    async def test_executor_rejects_falsey_non_list_observation_container(
+        self, tool_test_data: Any, observations: Any
+    ):
+        """Falsey non-list containers report their actual type violation."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+        executor = await create_tool_executor(
+            workspace_name=workspace.name,
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+        )
+
+        result = await executor(
+            "create_observations_deductive", {"observations": observations}
+        )
+
+        assert "observations must be a list" in result
+
     async def test_executor_dreamer_context_includes_observation_ids(
         self, tool_test_data: Any
     ):

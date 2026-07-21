@@ -1366,12 +1366,11 @@ async def _handle_create_observations_impl(
     forced_level: str | None = None,
 ) -> "str | ToolResult":
     """Handle create_observations tool."""
-    raw_observations_value = tool_input.get("observations", [])
-
-    if not raw_observations_value:
-        return "ERROR: observations list is empty"
+    raw_observations_value = tool_input.get("observations")
     if not isinstance(raw_observations_value, list):
         return "ERROR: observations must be a list"
+    if not raw_observations_value:
+        return "ERROR: observations list is empty"
 
     raw_observations: list[dict[str, Any]] = []
     validation_failures: list[ObservationFailure] = []
