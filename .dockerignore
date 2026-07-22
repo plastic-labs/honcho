@@ -12,3 +12,7 @@ docker-compose.yml.example
 .vscode/**
 data/**
 .venv
+.wrangler
+**/.wrangler
+mcp/.wrangler
+mcp/node_modules
