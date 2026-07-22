@@ -1,5 +1,7 @@
 import datetime
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from enum import Enum
 from logging import getLogger
 from typing import Any, cast
 
@@ -465,6 +467,15 @@ def _dedup_key(
     )
 
 
+@dataclass
+class CreateDocumentsResult:
+    created_documents: list[schemas.DocumentCreate] = field(default_factory=list)
+    exact_dup_in_batch_count: int = 0
+    exact_dup_existing_count: int = 0
+    semantic_dup_rejected_count: int = 0
+    semantic_dup_replaced_count: int = 0
+
+
 async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
@@ -473,7 +484,7 @@ async def create_documents(
     observer: str,
     observed: str,
     deduplicate: bool = False,
-) -> list[schemas.DocumentCreate]:
+) -> CreateDocumentsResult:
     """
     Create multiple documents with optional duplicate detection.
 
@@ -547,6 +558,10 @@ async def create_documents(
     # duplicates within a single inference call collapse to one document.
     seen_in_batch: set[tuple[str, str, str | None]] = set()
 
+    exact_dup_existing_count = 0
+    exact_dup_in_batch_count = 0
+    semantic_dup_rejected_count = 0
+    semantic_dup_replaced_count = 0
     for doc in documents:
         try:
             # Session-purity invariant: an explicit document must always carry
@@ -569,6 +584,7 @@ async def create_documents(
             # Exact-match dedup, always on:
             # 1) collapse exact duplicates within this batch (drop silently).
             if dedup_key in seen_in_batch:
+                exact_dup_in_batch_count += 1
                 continue
             seen_in_batch.add(dedup_key)
 
@@ -587,16 +603,22 @@ async def create_documents(
                     doc.times_derived,
                 )
                 await db.flush()
+                exact_dup_existing_count += 1
                 continue
 
             # for each document, if deduplicate is True, perform a process
             # that checks against existing documents and either rejects this document
             # as a duplicate OR deletes an existing document that is a duplicate.
             if deduplicate:
-                is_duplicate = await is_rejected_duplicate(
+                duplicate_result = await is_rejected_duplicate(
                     db, doc, workspace_name, observer=observer, observed=observed
                 )
-                if is_duplicate:
+                if duplicate_result is SemanticRejectionResult.REPLACED_EXISTING:
+                    # Existing doc was soft-deleted in favor of this one; the
+                    # new doc still gets inserted below.
+                    semantic_dup_replaced_count += 1
+                elif duplicate_result is SemanticRejectionResult.REJECTED:
+                    semantic_dup_rejected_count += 1
                     continue
 
             metadata_dict = doc.metadata.model_dump(exclude_none=True)
@@ -748,7 +770,13 @@ async def create_documents(
             "Failed to create documents due to integrity constraint violation"
         ) from e
 
-    return accepted_documents
+    return CreateDocumentsResult(
+        created_documents=accepted_documents,
+        exact_dup_existing_count=exact_dup_existing_count,
+        exact_dup_in_batch_count=exact_dup_in_batch_count,
+        semantic_dup_rejected_count=semantic_dup_rejected_count,
+        semantic_dup_replaced_count=semantic_dup_replaced_count,
+    )
 
 
 async def delete_document(
@@ -1098,6 +1126,12 @@ async def create_observations(
     return honcho_documents
 
 
+class SemanticRejectionResult(Enum):
+    NOT_DUPLICATE = 0
+    REPLACED_EXISTING = 1
+    REJECTED = 2
+
+
 async def is_rejected_duplicate(
     db: AsyncSession,
     doc: schemas.DocumentCreate,
@@ -1105,7 +1139,7 @@ async def is_rejected_duplicate(
     *,
     observer: str,
     observed: str,
-) -> bool:
+) -> SemanticRejectionResult:
     """
     Check if a document is a duplicate of an existing document.
 
@@ -1136,7 +1170,7 @@ async def is_rejected_duplicate(
         if doc.session_name is None:
             # create_documents refuses session-less explicit documents; if one
             # reaches here anyway it has no valid merge partner.
-            return False
+            return SemanticRejectionResult.NOT_DUPLICATE
         filters["session_name"] = doc.session_name
 
     # Step 1: Find potential duplicates using cosine similarity
@@ -1153,7 +1187,7 @@ async def is_rejected_duplicate(
     )
 
     if not similar_docs:
-        return False
+        return SemanticRejectionResult.NOT_DUPLICATE
 
     existing_doc = similar_docs[0]
 
@@ -1180,7 +1214,9 @@ async def is_rejected_duplicate(
         # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
         existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
         await db.flush()
-        return False  # Don't reject the new document
+        return (
+            SemanticRejectionResult.REPLACED_EXISTING
+        )  # Don't reject the new document
 
     # Existing document has more information, reject the new one but record the
     # reinforcement: a semantic duplicate was derived again. greatest(...) keeps
@@ -1197,7 +1233,7 @@ async def is_rejected_duplicate(
         doc.content,
         existing_doc.content,
     )
-    return True
+    return SemanticRejectionResult.REJECTED
 
 
 async def cleanup_soft_deleted_documents(

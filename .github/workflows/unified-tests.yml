@@ -6,14 +6,50 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+  # Manual trigger for PRs: add the `run-unified-tests` label to run the suite
+  # against the PR's merge commit. The label is purged as soon as the run
+  # starts so it can be re-added to trigger another run.
+  pull_request:
+    types: [labeled]
+
+# Cap spend: at most one active run per PR (per ref for push). Re-triggering
+# a PR run cancels the in-flight one instead of stacking Fly machines; pushes
+# to main queue instead of cancelling so main CI results aren't lost. The
+# cleanup-machine job runs `if: always()`, which still executes on cancelled
+# runs, so a cancelled run's Fly machine and runner are still torn down.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read
   actions: read
 
 jobs:
+  # Only code owners (.github/CODEOWNERS) may trigger the suite manually via
+  # the label; the gate also purges the trigger label so it can be re-added
+  # to trigger another run.
+  gate:
+    name: Gate manual trigger
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/manual-trigger-gate.yml
+    with:
+      label: run-unified-tests
+
   start-runner:
     name: Start Fly Runner
+    needs: gate
+    # always() lets this run on push events, where the gate's jobs are skipped.
+    # Label adds other than run-unified-tests trigger the workflow but skip
+    # every job here; the run-unified-tests label additionally requires the
+    # gate's CODEOWNERS check to have passed.
+    if: >-
+      always() &&
+      (github.event_name == 'push' ||
+       (github.event.label.name == 'run-unified-tests' &&
+        needs.gate.outputs.authorized == 'true'))
     uses: ./.github/workflows/start-fly-runner.yml
     secrets: inherit
 
@@ -44,70 +80,67 @@ jobs:
           aws-region: us-east-1
           role-duration-seconds: 43200 # 12 hours
 
-      - name: Resolve secret ids from latest git tags
-        id: resolve-secret
-        env:
-          SECRET_PREFIX: ${{ secrets.STAGING_SECRET_PREFIX }}
+      # Resolves secret ids from the newest release tags, fetches the newest
+      # available staging secret into the job env, and fails if none loaded.
+      - name: Load staging secrets
+        uses: ./.github/actions/load-staging-secrets
+        with:
+          secret-prefix: ${{ secrets.STAGING_SECRET_PREFIX }}
+
+      # Layer test-specific overrides on top of the staging secret. The staging
+      # dotenv tracks the deployed release and can drift from what main's config
+      # expects; the TESTING_SECRET_ID secret holds only the keys (flat JSON,
+      # exact env var names) the unified tests need to pin. The get-secrets
+      # action refuses to inject an env var that already exists, so the
+      # overrides are fetched under a prefix alias here and promoted over the
+      # staging values in the next step.
+      - name: Fetch testing secret overrides
+        uses: aws-actions/aws-secretsmanager-get-secrets@v2
+        with:
+          secret-ids: |
+            HONCHO_TEST_OVERRIDE,${{ secrets.TESTING_SECRET_ID }}
+          parse-json-secrets: true
+
+      # Re-export each HONCHO_TEST_OVERRIDE_* var under its real name; the
+      # later $GITHUB_ENV write wins over the value loaded from the staging
+      # secret. Values are already masked by the fetch step above.
+      - name: Apply testing secret overrides
         run: |
           set -euo pipefail
-          : "${SECRET_PREFIX:?STAGING_SECRET_PREFIX secret is not set for this environment}"
-          # Keep the secret-name prefix out of public CI logs.
-          echo "::add-mask::${SECRET_PREFIX}"
-
-          # Two newest v<major.minor.patch> tags, highest first (tags are public).
-          versions="$(git ls-remote --tags origin 'v*' \
-            | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
-            | sort -t. -k1,1nr -k2,2nr -k3,3nr -u)"
-          latest="$(printf '%s\n' "$versions" | sed -n '1p')"
-          second="$(printf '%s\n' "$versions" | sed -n '2p')"
-          if [ -z "${latest:-}" ]; then
-            echo "::error::No v<semver> git tags found to resolve a secret version"
-            exit 1
-          fi
-
-          latest_id="${SECRET_PREFIX}${latest}"
-          echo "::add-mask::${latest_id}"
-          echo "latest-id=${latest_id}" >> "$GITHUB_OUTPUT"
-          echo "Latest version: ${latest}"
-          if [ -n "${second:-}" ]; then
-            second_id="${SECRET_PREFIX}${second}"
-            echo "::add-mask::${second_id}"
-            echo "second-id=${second_id}" >> "$GITHUB_OUTPUT"
-            echo "Fallback version: ${second}"
-          fi
-
-      # Fetch the latest tag's secret. continue-on-error so a not-yet-published
-      # latest falls through to the second-latest instead of failing the job.
-      - name: Fetch staging secret (latest)
-        id: fetch-latest
-        continue-on-error: true
-        uses: aws-actions/aws-secretsmanager-get-secrets@v2
-        with:
-          secret-ids: |
-            ,${{ steps.resolve-secret.outputs.latest-id }}
-          parse-json-secrets: true
-
-      # Runs only if the latest fetch failed; this one is NOT continue-on-error,
-      # so if the fallback also fails the job fails loudly.
-      - name: Fetch staging secret (fallback to second-latest)
-        if: steps.fetch-latest.outcome == 'failure' && steps.resolve-secret.outputs.second-id != ''
-        uses: aws-actions/aws-secretsmanager-get-secrets@v2
-        with:
-          secret-ids: |
-            ,${{ steps.resolve-secret.outputs.second-id }}
-          parse-json-secrets: true
+          applied=0
+          while IFS= read -r -d '' entry; do
+            name="${entry%%=*}"
+            value="${entry#*=}"
+            case "$name" in
+              HONCHO_TEST_OVERRIDE_*)
+                target="${name#HONCHO_TEST_OVERRIDE_}"
+                {
+                  echo "${target}<<__HONCHO_OVERRIDE_EOF__"
+                  printf '%s\n' "$value"
+                  echo "__HONCHO_OVERRIDE_EOF__"
+                } >> "$GITHUB_ENV"
+                echo "Overriding ${target}"
+                applied=$((applied + 1))
+                ;;
+            esac
+          done < <(env -0)
+          echo "Applied ${applied} override(s)"
 
       # Configure the test environment. Disables auth/Sentry/CloudEvents telemetry
       # (their endpoints aren't reachable from CI), and points REASONING_TRACES_FILE
       # at a shared path so the API + deriver record full LLM I/O for auditing — the
       # runner uploads it to S3. Written after the fetch steps so these win over the
-      # values loaded from Secrets Manager (last $GITHUB_ENV write wins).
+      # values loaded from Secrets Manager (last $GITHUB_ENV write wins). Stale
+      # config keys loaded from the staging secret (e.g. settings that have since
+      # been renamed or removed on main) must always be ignored by the app config.
       - name: Configure test environment
         run: |
-          echo "AUTH_USE_AUTH=false" >> "$GITHUB_ENV"
-          echo "SENTRY_ENABLED=false" >> "$GITHUB_ENV"
-          echo "TELEMETRY_ENABLED=false" >> "$GITHUB_ENV"
-          echo "REASONING_TRACES_FILE=unified-reasoning-traces.jsonl" >> "$GITHUB_ENV"
+          {
+            echo "AUTH_USE_AUTH=false"
+            echo "SENTRY_ENABLED=false"
+            echo "TELEMETRY_ENABLED=false"
+            echo "REASONING_TRACES_FILE=unified-reasoning-traces.jsonl"
+          } >> "$GITHUB_ENV"
 
       - name: Verify Docker is available
         run: docker info
@@ -168,7 +201,7 @@ jobs:
             exit 0
           fi
 
-          RUNNER_ID="" 
+          RUNNER_ID=""
           if [ -n "$RUNNER_NAME" ]; then
             RUNNER_ID=$(echo "$RUNNERS_RESPONSE" | jq -r --arg name "$RUNNER_NAME" '.runners[]? | select(.name == $name) | .id')
           fi

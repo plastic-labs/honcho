@@ -64,7 +64,7 @@ class RepresentationManager:
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
-    ) -> int:
+    ) -> crud.CreateDocumentsResult:
         """
         Save Representation objects to the collection as a set of documents.
 
@@ -75,14 +75,15 @@ class RepresentationManager:
             message_created_at: Timestamp when the message was created
 
         Returns:
-            The number of *new documents saved*
+            The result of document creation, including saved documents and
+            deduplication counts.
         """
 
-        new_documents = 0
+        empty_result = crud.CreateDocumentsResult()
 
         if not representation.deductive and not representation.explicit:
             logger.debug("No observations to save")
-            return new_documents
+            return empty_result
 
         all_observations = [
             _normalized_observation(obs)
@@ -91,7 +92,7 @@ class RepresentationManager:
         ]
         if not all_observations:
             logger.debug("No non-empty observations to save")
-            return new_documents
+            return empty_result
 
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
@@ -123,7 +124,7 @@ class RepresentationManager:
         # Batch create document objects
         create_document_start = time.perf_counter()
         async with tracked_db("representation_manager.save_representation") as db:
-            new_documents = await self._save_representation_internal(
+            new_documents_result = await self._save_representation_internal(
                 db,
                 all_observations,
                 embeddings,
@@ -141,7 +142,7 @@ class RepresentationManager:
             "ms",
         )
 
-        return new_documents
+        return new_documents_result
 
     async def _save_representation_internal(
         self,
@@ -152,7 +153,7 @@ class RepresentationManager:
         session_name: str,
         message_created_at: datetime.datetime,
         message_level_configuration: ResolvedConfiguration,
-    ) -> int:
+    ) -> crud.CreateDocumentsResult:
         # get_or_create_collection already handles IntegrityError with rollback and a retry
         collection = await crud.get_or_create_collection(
             db,
@@ -191,7 +192,7 @@ class RepresentationManager:
             )
 
         # Use bulk creation with optional duplicate detection
-        accepted_documents = await crud.create_documents(
+        accepted_documents_result = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,
@@ -206,7 +207,7 @@ class RepresentationManager:
             except Exception as e:
                 logger.warning(f"Failed to check dream scheduling: {e}")
 
-        return len(accepted_documents)
+        return accepted_documents_result
 
     async def get_working_representation(
         self,

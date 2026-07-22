@@ -12,6 +12,22 @@ class StructuredOutputError(ValueError):
     """Raised when structured output cannot be validated or repaired."""
 
 
+def schema_instruction(response_format: type[BaseModel], *, tools_present: bool) -> str:
+    """Structured-output instruction appended to the conversation for
+    providers without native (or tools-compatible) schema enforcement.
+
+    When tools are in play the wording is conditional so the model remains
+    free to emit tool calls; validation then relies on parse + repair.
+    """
+    schema_json = json.dumps(response_format.model_json_schema(), indent=2)
+    if tools_present:
+        return (
+            "\n\nIf not responding with a tool call, respond with valid JSON "
+            f"matching this schema:\n{schema_json}"
+        )
+    return f"\n\nRespond with valid JSON matching this schema:\n{schema_json}"
+
+
 def repair_response_model_json(
     raw_content: str,
     response_model: type[BaseModel],
