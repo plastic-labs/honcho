@@ -191,8 +191,20 @@ class _EmbeddingClient:
                 api_key=config.api_key,
                 http_options=http_options,
             )
-            # Gemini's embedding models support up to 8192 input tokens.
-            self.max_embedding_tokens: int = min(max_input_tokens, 8192)
+            # Gemini's embedding models have model-specific input token caps
+            # (shared across all modalities):
+            #   - gemini-embedding-001: 2048 tokens
+            #   - gemini-embedding-2: 8192 tokens
+            # Unknown models default conservatively to 2048.
+            if "gemini-embedding-2" in self.model:
+                gemini_model_token_cap = 8192
+            elif "gemini-embedding-001" in self.model:
+                gemini_model_token_cap = 2048
+            else:
+                gemini_model_token_cap = 2048
+            self.max_embedding_tokens: int = min(
+                max_input_tokens, gemini_model_token_cap
+            )
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
         else:  # openai
