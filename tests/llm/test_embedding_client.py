@@ -92,6 +92,46 @@ async def test_openai_embedding_client_rejects_dimension_mismatch(
         await client.embed("hello world")
 
 
+def test_gemini_embedding_client_honors_8192_token_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini's max_embedding_tokens should be capped at 8192, not 2048."""
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str, http_options: Any) -> None:
+            self.api_key: str = api_key
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    # When max_input_tokens is above the provider cap, it should be clamped to 8192.
+    client_above_cap = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=20_000,
+        max_tokens_per_request=300_000,
+        send_dimensions=True,
+    )
+    assert client_above_cap.max_embedding_tokens == 8192
+
+    # When max_input_tokens is below the provider cap, it should pass through unchanged.
+    client_below_cap = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=1024,
+        max_tokens_per_request=300_000,
+        send_dimensions=True,
+    )
+    assert client_below_cap.max_embedding_tokens == 1024
+
+
 @pytest.mark.asyncio
 async def test_gemini_embedding_client_uses_output_dimensionality(
     monkeypatch: pytest.MonkeyPatch,

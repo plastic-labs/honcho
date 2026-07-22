@@ -191,8 +191,8 @@ class _EmbeddingClient:
                 api_key=config.api_key,
                 http_options=http_options,
             )
-            # Gemini has a 2048 token limit
-            self.max_embedding_tokens: int = min(max_input_tokens, 2048)
+            # Gemini's embedding models support up to 8192 input tokens.
+            self.max_embedding_tokens: int = min(max_input_tokens, 8192)
             # Gemini batch size is not documented, using conservative estimate
             self.max_batch_size: int = 100
         else:  # openai
