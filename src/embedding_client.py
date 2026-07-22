@@ -448,9 +448,15 @@ class _EmbeddingClient:
             item in analytics."""
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
             if isinstance(self.client, genai.Client):
+                # Wrap each string in Content+Part so gemini-embedding-2*
+                # treats them as separate items, not a single document.
+                gemini_contents = [
+                    genai_types.Content(parts=[genai_types.Part(text=item.text)])
+                    for item in batch
+                ]
                 response = await self.client.aio.models.embed_content(
                     model=self.model,
-                    contents=[item.text for item in batch],
+                    contents=gemini_contents,
                     config={"output_dimensionality": self.vector_dimensions},
                 )
                 if response.embeddings:

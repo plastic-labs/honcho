@@ -444,3 +444,70 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert len(out["long"]) > 1
     # Order preserved
     assert isinstance(out["long"][0], str)
+
+
+@pytest.mark.asyncio
+async def test_gemini_process_batch_wraps_contents_as_content_part(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_process_batch must wrap each text in Content(parts=[Part(text=...)])
+    so gemini-embedding-2* models treat them as separate items, not a single
+    multi-part document."""
+    from google.genai import types as genai_types
+
+    calls: list[dict[str, Any]] = []
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: Any,
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            calls.append({"model": model, "contents": contents, "config": config})
+            # Return one embedding per input content item
+            embeddings = [
+                SimpleNamespace(values=[0.3] * 8) for _ in contents
+            ]
+            return SimpleNamespace(embeddings=embeddings)
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.api_key: str | None = api_key
+            self.http_options: Any = http_options
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-2",
+            api_key="gemini-key",
+            base_url=None,
+        ),
+        vector_dimensions=8,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    from src.embedding_client import BatchItem
+
+    batch = [
+        BatchItem("hello", "id1", 0, 1),
+        BatchItem("world", "id2", 0, 1),
+    ]
+    result = await client._process_batch(batch)
+
+    assert len(result) == 2
+    assert result["id1"][0] == [0.3] * 8
+    assert result["id2"][0] == [0.3] * 8
+
+    assert len(calls) == 1
+    contents = calls[0]["contents"]
+    assert len(contents) == 2
+    assert all(isinstance(c, genai_types.Content) for c in contents)
+    assert contents[0].parts[0].text == "hello"
+    assert contents[1].parts[0].text == "world"
