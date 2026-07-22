@@ -172,6 +172,32 @@ def test_gemini_embedding_client_gemini_2_caps_at_8192(
     assert client_below_cap.max_embedding_tokens == 4096
 
 
+def test_gemini_embedding_client_models_prefixed_gemini_2_caps_at_8192(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The canonical 'models/gemini-embedding-2' form (as returned by Gemini's
+    API) must still be recognized and granted the 8192 cap."""
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str, http_options: Any) -> None:
+            self.api_key: str = api_key
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="models/gemini-embedding-2",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=20_000,
+        max_tokens_per_request=300_000,
+        send_dimensions=True,
+    )
+    assert client.max_embedding_tokens == 8192
+
+
 def test_gemini_embedding_client_unknown_model_defaults_to_2048(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
