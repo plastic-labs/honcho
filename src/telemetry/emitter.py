@@ -172,6 +172,20 @@ class TelemetryEmitter:
         )
         self._running = True
         self._flush_task = asyncio.create_task(self._periodic_flush())
+
+        # Pre-create the dropped-event counter children at 0 so the metric is
+        # visible in Prometheus/Grafana before any drop occurs — a labeled
+        # counter exports nothing until its first observation. Lets us alert on
+        # telemetry drops and tell "no drops" apart from "metric missing".
+        from src.telemetry.prometheus.metrics import prometheus_metrics
+
+        prometheus_metrics.initialize_telemetry_dropped_metrics(
+            reasons=[
+                f"{self.drop_reason_prefix}buffer_full",
+                f"{self.drop_reason_prefix}send_failed",
+            ]
+        )
+
         logger.info("Telemetry emitter started, endpoint: %s", self.endpoint)
 
     async def shutdown(self) -> None:

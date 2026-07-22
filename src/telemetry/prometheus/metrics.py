@@ -325,6 +325,27 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("record_telemetry_event_dropped", e)
 
+    def initialize_telemetry_dropped_metrics(self, *, reasons: list[str]) -> None:
+        """Pre-create telemetry_events_dropped child series at 0.
+
+        A labeled Prometheus counter exports no time series until its first
+        ``labels(...)`` call, so ``telemetry_events_dropped`` stays invisible in
+        Prometheus/Grafana until an event is actually dropped — you cannot alert
+        on or graph a metric that does not exist yet. Materializing the
+        ``(namespace, reason)`` children at startup keeps the metric present at 0,
+        so a missing series signals a broken scrape rather than "no drops".
+
+        Args:
+            reasons: The reason label values the calling emitter can produce.
+        """
+        for reason in reasons:
+            try:
+                telemetry_events_dropped_counter.labels(reason=reason)
+            except Exception as e:
+                self._handle_metric_error(
+                    "initialize_telemetry_dropped_metrics", e
+                )
+
     def set_telemetry_buffer_size(self, *, size: int) -> None:
         try:
             telemetry_buffer_size_gauge.labels().set(size)
