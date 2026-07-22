@@ -54,10 +54,25 @@ class ObservationMetadata(BaseModel):
     created_at: datetime
     message_ids: list[int]
     session_name: str | None = None
+    source_indices: list[int] = Field(
+        default_factory=list,
+        description="0-based indices into the deriver batch's message list "
+        "indicating which messages directly support this observation",
+    )
 
 
 class ExplicitObservationBase(BaseModel):
     content: str = Field(description="The explicit observation")
+    source_indices: list[int] = Field(
+        default_factory=list,
+        description=(
+            "0-based indices of the messages in the <messages> block that "
+            "directly support this observation. Include the message "
+            "containing any context needed to interpret the conclusion "
+            '(e.g., the question being answered by "the first one"). '
+            "Only include messages that directly support the observation."
+        ),
+    )
 
 
 class DeductiveObservationBase(BaseModel):
@@ -593,6 +608,7 @@ class Representation(BaseModel):
                         doc.internal_metadata.get("message_ids", [])
                     ),
                     session_name=doc.session_name,
+                    source_indices=doc.internal_metadata.get("source_indices", []),
                 )
                 for doc in documents
                 if doc.level == "explicit"
@@ -667,6 +683,7 @@ class Representation(BaseModel):
             explicit=[
                 ExplicitObservation(
                     content=e.content,
+                    source_indices=e.source_indices,
                     created_at=created_at,
                     message_ids=message_ids,
                     session_name=session_name,
