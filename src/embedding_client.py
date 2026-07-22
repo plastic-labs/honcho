@@ -460,10 +460,16 @@ class _EmbeddingClient:
                     # input item, in order. This is the documented/expected
                     # behavior and the efficient common case.
                     for item, embedding in zip(batch, embeddings, strict=True):
-                        if embedding.values:
-                            result[item.text_id][item.chunk_index] = (
-                                self._validate_embedding_dimensions(embedding.values)
+                        if not embedding.values:
+                            raise ValueError(
+                                "Gemini API returned an embedding with no "
+                                f"values for text_id={item.text_id!r}, "
+                                f"chunk_index={item.chunk_index!r} (batch "
+                                "path)."
                             )
+                        result[item.text_id][item.chunk_index] = (
+                            self._validate_embedding_dimensions(embedding.values)
+                        )
                 else:
                     # Cardinality mismatch: do NOT assume any particular
                     # alignment between `batch` and `embeddings` (e.g. via
@@ -497,10 +503,16 @@ class _EmbeddingClient:
                                 f"chunk_index={item.chunk_index!r}."
                             )
                         embedding = item_embeddings[0]
-                        if embedding.values:
-                            result[item.text_id][item.chunk_index] = (
-                                self._validate_embedding_dimensions(embedding.values)
+                        if not embedding.values:
+                            raise ValueError(
+                                "Gemini API returned an embedding with no "
+                                f"values for text_id={item.text_id!r}, "
+                                f"chunk_index={item.chunk_index!r} (fallback "
+                                "path)."
                             )
+                        result[item.text_id][item.chunk_index] = (
+                            self._validate_embedding_dimensions(embedding.values)
+                        )
             else:  # openai
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
