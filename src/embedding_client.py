@@ -196,10 +196,8 @@ class _EmbeddingClient:
             #   - gemini-embedding-001: 2048 tokens
             #   - gemini-embedding-2: 8192 tokens
             # Unknown models default conservatively to 2048.
-            if "gemini-embedding-2" in self.model:
+            if self.model == "gemini-embedding-2":
                 gemini_model_token_cap = 8192
-            elif "gemini-embedding-001" in self.model:
-                gemini_model_token_cap = 2048
             else:
                 gemini_model_token_cap = 2048
             self.max_embedding_tokens: int = min(
