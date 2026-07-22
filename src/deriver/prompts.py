@@ -81,6 +81,7 @@ RULES:
 - Observations should make sense on their own. Each observation will be used in the future to better understand {peer_id}.
 - Extract ALL observations from {peer_id} messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
+- Each message in the <messages> block is prefixed with a 0-based index like [0], [1], [2]. For each observation, set source_indices to the indices of the messages that directly support it. Include the message containing any context needed to interpret the conclusion (e.g., the question being answered by "the first one"). Only include messages that directly support the observation — not the entire conversation.
 
 EXAMPLES (using `{peer_id}` as the target peer id):
 - EXPLICIT: "I just had my 25th birthday last Saturday" → "{peer_id} is 25 years old", "{peer_id}'s birthday is June 21st"
