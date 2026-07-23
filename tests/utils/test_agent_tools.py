@@ -248,6 +248,36 @@ class TestCreateObservations:
         assert doc.level == "deductive"
         assert doc.source_ids == ["premise1", "premise2"]
 
+    async def test_non_deriver_context_rejects_explicit(
+        self,
+        db_session: AsyncSession,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Session-purity invariant: agents without current_messages (dreamer
+        specialists, dialectic) must not create explicit-level observations,
+        even when they pass level='explicit' to the generic tool."""
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {"content": "Claims to be a doctor", "level": "explicit"},
+                ]
+            },
+        )
+
+        assert isinstance(result, str)
+        assert "ERROR" in result
+        assert "explicit" in result
+
+        # Verify nothing landed in the DB
+        stmt = select(models.Document).where(
+            models.Document.content == "Claims to be a doctor"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is None
+
     async def test_source_ids_display_prefix_is_stripped(
         self,
         db_session: AsyncSession,

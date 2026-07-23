@@ -850,6 +850,18 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["create_observations_inductive"],
 ]
 
+# Tools for the card-refresh specialist (card_refresh dream type).
+# Card-only maintenance: discovery plus update_peer_card. Deliberately
+# excludes every observation-mutating tool (create_observations*,
+# delete_observations) — a card refresh must never touch observations.
+CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
+    # Discovery tools
+    TOOLS["get_recent_observations"],
+    TOOLS["search_memory"],
+    # Action tool
+    TOOLS["update_peer_card"],
+]
+
 
 async def create_observations(
     observations: list[schemas.ObservationInput],
@@ -1407,6 +1419,21 @@ async def _handle_create_observations_impl(
                 ObservationFailure(
                     content_preview=validated.content[:50],
                     error=f"Deriver can only create 'explicit' observations, got '{validated.level}'",
+                )
+            )
+            continue
+        # Session-purity invariant: explicit observations record what was
+        # directly derived from a session's messages. Agents that are not
+        # processing messages (dreamer specialists, dialectic) must not mint
+        # them — consolidation output belongs at a derived level.
+        if not ctx.current_messages and validated.level == "explicit":
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=validated.content[:50],
+                    error=(
+                        "Only message ingestion can create 'explicit' observations; "
+                        "use a derived level (deductive/inductive/contradiction)"
+                    ),
                 )
             )
             continue
