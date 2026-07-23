@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -90,6 +90,125 @@ async def test_openai_embedding_client_rejects_dimension_mismatch(
 
     with pytest.raises(ValueError, match="Embedding dimension mismatch"):
         await client.embed("hello world")
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_truncates_oversize_input_instead_of_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In truncate mode, an input exceeding the token cap is embedded from a
+    token-capped prefix and still yields exactly one vector — one oversize
+    observation must not fail the whole batch (#569)."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=5,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    oversize = "word " * 100  # far over the 5-token cap
+
+    result = await client.simple_batch_embed([oversize], on_oversize="truncate")
+
+    assert len(result) == 1  # 1:1 preserved
+    assert result[0] == [0.1] * 8
+    # The provider received a truncated input within the cap, not the full text.
+    # In batch mode the provider is always called with a list of strings.
+    sent_text = cast("list[str]", fake_embeddings.calls[-1]["input"])[0]
+    assert len(client.encoding.encode(sent_text)) <= client.max_embedding_tokens
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_truncate_reencodes_when_decode_drifts_over_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """decode(ids[:cap]) can re-encode to more than cap tokens at BPE/pre-token
+    boundaries. A single prefix slice is not enough — the truncate path must
+    re-encode and trim again so the provider never receives an over-cap input
+    (the guarantee #569 relies on)."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=5,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    class _DriftEncoding:
+        """Every non-empty text encodes to len+1 tokens, so decode(ids[:5])
+        re-encodes to 6 (> cap): a plain slice would slip an over-cap input
+        through, while the re-trim loop converges back within the cap."""
+
+        def encode(self, text: str) -> list[int]:
+            return [0] * (len(text) + 1) if text else []
+
+        def decode(self, ids: list[int]) -> str:
+            return "a" * len(ids)
+
+    monkeypatch.setattr(client, "encoding", _DriftEncoding())
+
+    result = await client.simple_batch_embed(["a" * 10], on_oversize="truncate")
+
+    assert len(result) == 1  # 1:1 preserved
+    # A plain ids[:cap] slice would re-encode to cap+1 and slip through; the
+    # loop must land the sent input within the cap.
+    sent_text = cast("list[str]", fake_embeddings.calls[-1]["input"])[0]
+    assert len(client.encoding.encode(sent_text)) <= client.max_embedding_tokens
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_raises_on_oversize_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default mode preserves the historical contract: an oversize input raises,
+    so existing callers are unaffected by the new truncate option (#569 guard)."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=5,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    with pytest.raises(ValueError, match="exceeds maximum token limit"):
+        await client.simple_batch_embed(["word " * 100])
 
 
 @pytest.mark.asyncio

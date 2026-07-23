@@ -105,7 +105,7 @@ class RepresentationManager:
                 parent_category="representation",
             ):
                 embeddings = await embedding_client.simple_batch_embed(
-                    observation_texts
+                    observation_texts, on_oversize="truncate"
                 )
         except ValueError as e:
             raise exceptions.ValidationException(
