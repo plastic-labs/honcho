@@ -1,8 +1,10 @@
 """FastAPI routes for workspace resources and workspace-scoped operations."""
 
+import json
 import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
+from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,8 +13,11 @@ from src import crud, schemas
 from src.config import settings
 from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
-from src.exceptions import AuthenticationException
+from src.dialectic.chat import workspace_chat, workspace_chat_stream
+from src.exceptions import AuthenticationException, ValidationException
 from src.security import JWTParams, require_auth
+from src.telemetry import prometheus_metrics
+from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -248,3 +253,75 @@ async def schedule_dream(
         observed,
         request.session_id,
     )
+
+
+@router.post(
+    "/{workspace_id}/chat",
+    responses={
+        200: {
+            "content": {
+                "application/json": {
+                    "schema": schemas.DialecticResponse.model_json_schema()
+                },
+                "text/event-stream": {},
+            },
+        },
+    },
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def chat(
+    workspace_id: str = Path(...),
+    options: schemas.WorkspaceChatOptions = Body(...),
+):
+    """
+    Query the entire workspace using natural language. Performs agentic search
+    and reasoning across ALL peers' representations and messages -- discovering
+    relevant peers first, then querying their memory -- to answer
+    workspace-wide questions ("what themes are common across users?",
+    "which peers discussed X?").
+    """
+    from typing import Any as _Any
+
+    from pydantic import BaseModel as _BaseModel
+
+    response_model: type[_BaseModel] | None = None
+    if options.response_format is not None:
+        try:
+            response_model = json_response_schema_to_pydantic(options.response_format)
+        except ValueError as e:
+            raise ValidationException(f"Invalid response_format: {e}") from None
+
+    if settings.METRICS.ENABLED:
+        prometheus_metrics.record_dialectic_call(
+            workspace_name=workspace_id,
+            reasoning_level=options.reasoning_level,
+        )
+
+    if options.stream:
+
+        async def format_sse_stream(chunks: _Any) -> _Any:
+            async for chunk in chunks:
+                yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
+            yield f"data: {json.dumps({'done': True})}\n\n"
+
+        return StreamingResponse(
+            format_sse_stream(
+                workspace_chat_stream(
+                    workspace_name=workspace_id,
+                    session_name=options.session_id,
+                    query=options.query,
+                    reasoning_level=options.reasoning_level,
+                    response_model=response_model,
+                )
+            ),
+            media_type="text/event-stream",
+        )
+
+    response = await workspace_chat(
+        workspace_name=workspace_id,
+        session_name=options.session_id,
+        query=options.query,
+        reasoning_level=options.reasoning_level,
+        response_model=response_model,
+    )
+    return schemas.DialecticResponse(content=response if response else None)

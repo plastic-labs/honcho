@@ -667,6 +667,12 @@ def mock_llm_call_functions(request: pytest.FixtureRequest):
         patch(
             "src.routers.peers.agentic_chat_stream", side_effect=mock_stream
         ) as mock_agentic_chat_stream,
+        patch(
+            "src.routers.workspaces.workspace_chat", new_callable=AsyncMock
+        ) as mock_workspace_chat,
+        patch(
+            "src.routers.workspaces.workspace_chat_stream", side_effect=mock_stream
+        ) as mock_workspace_chat_stream,
     ):
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
@@ -682,11 +688,20 @@ def mock_llm_call_functions(request: pytest.FixtureRequest):
 
         mock_agentic_chat.side_effect = _agentic_chat_response
 
+        async def _workspace_chat_response(*_args: object, **kwargs: object) -> str:
+            if kwargs.get("response_model") is not None:
+                return "{}"
+            return "Test workspace chat response"
+
+        mock_workspace_chat.side_effect = _workspace_chat_response
+
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "agentic_chat": mock_agentic_chat,
             "agentic_chat_stream": mock_agentic_chat_stream,
+            "workspace_chat": mock_workspace_chat,
+            "workspace_chat_stream": mock_workspace_chat_stream,
         }
 
 

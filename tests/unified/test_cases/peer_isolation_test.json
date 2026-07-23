@@ -1,0 +1,148 @@
+{
+  "description": "Test that peer Z cannot access information from a session between X and Y that Z was not part of. This validates session membership scoping - peers should only see messages from sessions they participated in.",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "xy_private_session",
+      "peer_configs": {
+        "peer_x": {
+          "observe_me": true,
+          "observe_others": true
+        },
+        "peer_y": {
+          "observe_me": true,
+          "observe_others": true
+        },
+        "agent": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "xy_private_session",
+      "messages": [
+        {
+          "peer_id": "peer_x",
+          "content": "Hey peer_y, I need to tell you something important. My secret password is 'strawberry_unicorn_42' - please remember this for later."
+        },
+        {
+          "peer_id": "agent",
+          "content": "Got it, I'll remember that."
+        },
+        {
+          "peer_id": "peer_y",
+          "content": "Thanks for sharing that, peer_x. I've noted your password: strawberry_unicorn_42. I'll keep it safe."
+        },
+        {
+          "peer_id": "peer_x",
+          "content": "Perfect. Also, I'm planning a surprise party for peer_z next Friday at 7pm at the Blue Whale restaurant downtown. Don't tell peer_z!"
+        },
+        {
+          "peer_id": "peer_y",
+          "content": "Amazing! I'll be there. The surprise party at Blue Whale will be great. My lips are sealed!"
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "create_session",
+      "session_id": "z_separate_session",
+      "peer_configs": {
+        "peer_z": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "agent": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "z_separate_session",
+      "messages": [
+        {
+          "peer_id": "peer_z",
+          "content": "Hi! I'm peer_z. I like going to restaurants and attending parties."
+        },
+        {
+          "peer_id": "agent",
+          "content": "That's nice! Do you have any upcoming plans?"
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "session_id": "z_separate_session",
+      "observer_peer_id": "agent",
+      "observed_peer_id": "peer_z",
+      "input": "What is peer_x's secret password?",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "not_contains",
+          "text": "strawberry_unicorn_42",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response indicate that the agent DOES NOT KNOW the password, or that the information is not available? The response should NOT reveal the password 'strawberry_unicorn_42'. Return true if the agent correctly says they don't know or the info isn't available.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "chat",
+      "session_id": "z_separate_session",
+      "observer_peer_id": "agent",
+      "observed_peer_id": "peer_z",
+      "input": "Is there a surprise party being planned? If so, where and when?",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "not_contains",
+          "text": "Blue Whale",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "not_contains",
+          "text": "Friday at 7",
+          "case_sensitive": false
+        },
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response indicate that the agent DOES NOT KNOW about any surprise party details? The response should NOT mention the Blue Whale restaurant or Friday at 7pm. Return true if the agent correctly says they don't have this information.",
+          "pass_if": true
+        }
+      ]
+    },
+    {
+      "step_type": "query",
+      "target": "workspace_chat",
+      "input": "What did peer_x tell peer_y about their password?",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "The workspace chat should be able to answer this question since it can access information from all sessions. Does the response mention the password 'strawberry_unicorn_42' or indicate that peer_x shared a password with peer_y? Return true if the workspace-level query CAN see this information.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

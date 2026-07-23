@@ -591,6 +591,37 @@ class DialecticOptions(BaseModel):
         return v.replace("\x00", "")
 
 
+class WorkspaceChatOptions(BaseModel):
+    """Options for workspace-level chat (no anchor peer; see DialecticOptions)."""
+
+    session_id: str | None = Field(
+        None, description="Optional session to scope message tools to"
+    )
+    query: Annotated[
+        str, Field(min_length=1, max_length=10000, description="Workspace chat prompt")
+    ]
+    stream: bool = False
+    reasoning_level: ReasoningLevel = Field(
+        default="low",
+        description="Level of reasoning to apply: minimal, low, medium, high, or max",
+    )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+        ),
+    )
+    # scopes(#897): the observer-swap `scope` read option lands here once the
+    # scopes facade merges; workspace chat is the peer-unanchored read and
+    # scope becomes its narrowing parameter.
+
+    @field_validator("query", mode="after")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
+        return v.replace("\x00", "")
+
+
 class DialecticResponse(BaseModel):
     content: str | None
 
