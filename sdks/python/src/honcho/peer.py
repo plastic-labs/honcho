@@ -7,9 +7,9 @@ import datetime
 import logging
 import warnings
 from collections.abc import Generator
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 
-from pydantic import ConfigDict, Field, PrivateAttr, validate_call
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .api_types import (
     MessageCreateParams,
@@ -37,6 +37,19 @@ if TYPE_CHECKING:
     from .session import Session
 
 logger = logging.getLogger(__name__)
+
+TResponseFormat = TypeVar("TResponseFormat", bound=BaseModel)
+
+
+def serialize_response_format(
+    response_format: type[BaseModel] | dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Convert a chat response_format argument to a JSON Schema dict."""
+    if response_format is None:
+        return None
+    if isinstance(response_format, type):
+        return response_format.model_json_schema()
+    return response_format
 
 
 class Peer(PeerBase, MetadataConfigMixin):
@@ -221,6 +234,30 @@ class Peer(PeerBase, MetadataConfigMixin):
         self._configuration = configuration  # pyright: ignore[reportIncompatibleVariableOverride]
         self._created_at = created_at
 
+    @overload
+    def chat(
+        self,
+        query: str,
+        *,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[TResponseFormat],
+    ) -> TResponseFormat | None: ...
+
+    @overload
+    def chat(
+        self,
+        query: str,
+        *,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> str | None: ...
+
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def chat(
         self,
@@ -230,7 +267,8 @@ class Peer(PeerBase, MetadataConfigMixin):
         session: str | SessionBase | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
-    ) -> str | None:
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+    ) -> BaseModel | str | None:
         """
         Query the peer's representation with a natural language question.
 
@@ -249,9 +287,15 @@ class Peer(PeerBase, MetadataConfigMixin):
                      ID string or a Session object.
             reasoning_level: Optional reasoning level for the query: "minimal", "low", "medium",
                              "high", or "max". Defaults to "low" if not provided.
+            response_format: Optional structure for the answer. Pass a Pydantic
+                             model class to get a parsed instance back, or a raw
+                             JSON Schema dict (root type "object") to get the
+                             answer as a JSON string.
 
         Returns:
-            Response string containing the answer, or None if no relevant information
+            Response string containing the answer (a JSON string when a schema
+            dict was given), a parsed model instance when a Pydantic model class
+            was given, or None if no relevant information.
         """
         self._honcho._ensure_workspace()
         target_id = resolve_id(target)
@@ -264,6 +308,9 @@ class Peer(PeerBase, MetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
 
         data = self._honcho._http.post(
             routes.peer_chat(self.workspace_id, self.id),
@@ -272,6 +319,8 @@ class Peer(PeerBase, MetadataConfigMixin):
         content = data.get("content")
         if not content:
             return None
+        if isinstance(response_format, type):
+            return response_format.model_validate_json(content)
         return content
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -283,6 +332,7 @@ class Peer(PeerBase, MetadataConfigMixin):
         session: str | SessionBase | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
     ) -> DialecticStreamResponse:
         """
         Query the peer's representation with a natural language question, streaming the response.
@@ -302,6 +352,11 @@ class Peer(PeerBase, MetadataConfigMixin):
                      ID string or a Session object.
             reasoning_level: Optional reasoning level for the query: "minimal", "low", "medium",
                              "high", or "max". Defaults to "low" if not provided.
+            response_format: Optional structure for the answer: a Pydantic model
+                             class or a JSON Schema dict (root type "object").
+                             Streamed chunks stay raw text that accumulates to a
+                             JSON string; parse it yourself (e.g. with
+                             Model.model_validate_json) once the stream completes.
 
         Returns:
             DialecticStreamResponse object that can be iterated over and provides final response
@@ -317,6 +372,9 @@ class Peer(PeerBase, MetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
 
         def stream_response() -> Generator[str, None, None]:
             yield from parse_sse_stream(

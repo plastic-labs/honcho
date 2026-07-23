@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -8,6 +8,7 @@ from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.crud.document import CreateDocumentsResult
 from src.crud.representation import RepresentationManager
 from src.schemas.configuration import (
     ResolvedConfiguration,
@@ -468,7 +469,9 @@ class TestRepresentationManagerSave:
             patch.object(
                 manager,
                 "_save_representation_internal",
-                new=AsyncMock(return_value=1),
+                new=AsyncMock(
+                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                ),
             ) as mock_save,
         ):
             saved = await manager.save_representation(
@@ -479,7 +482,7 @@ class TestRepresentationManagerSave:
                 message_level_configuration=_resolved_config(),
             )
 
-        assert saved == 1
+        assert len(saved.created_documents) == 1
         mock_embed.assert_awaited_once_with(["useful observation"])
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
@@ -522,7 +525,9 @@ class TestRepresentationManagerSave:
             patch.object(
                 manager,
                 "_save_representation_internal",
-                new=AsyncMock(return_value=1),
+                new=AsyncMock(
+                    return_value=CreateDocumentsResult(created_documents=[MagicMock()])
+                ),
             ) as mock_save,
         ):
             saved = await manager.save_representation(
@@ -533,7 +538,7 @@ class TestRepresentationManagerSave:
                 message_level_configuration=_resolved_config(),
             )
 
-        assert saved == 1
+        assert len(saved.created_documents) == 1
         mock_embed.assert_awaited_once_with(["inferred conclusion"])
         saved_observations = _saved_observations(mock_save)
         assert len(saved_observations) == 1
@@ -584,6 +589,6 @@ class TestRepresentationManagerSave:
                 message_level_configuration=_resolved_config(),
             )
 
-        assert saved == 0
+        assert len(saved.created_documents) == 0
         mock_embed.assert_not_awaited()
         mock_save.assert_not_awaited()

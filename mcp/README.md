@@ -16,13 +16,10 @@ A Cloudflare Worker that implements the [Model Context Protocol (MCP)](https://m
         "mcp-remote",
         "https://mcp.honcho.dev",
         "--header",
-        "Authorization:${AUTH_HEADER}",
-        "--header",
-        "X-Honcho-User-Name:${USER_NAME}"
+        "Authorization:${AUTH_HEADER}"
       ],
       "env": {
-        "AUTH_HEADER": "Bearer <your-honcho-key>",
-        "USER_NAME": "<your-name>"
+        "AUTH_HEADER": "Bearer <your-honcho-key>"
       }
     }
   }
@@ -115,8 +112,7 @@ bun run tsc --noEmit
 
 ```bash
 bunx mcp-remote http://localhost:8787 \
-  --header "Authorization:Bearer <key>" \
-  --header "X-Honcho-User-Name:test"
+  --header "Authorization:Bearer <key>"
 ```
 
 ### Deploy
