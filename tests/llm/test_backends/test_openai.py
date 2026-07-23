@@ -658,12 +658,16 @@ async def test_structured_output_parsed_none_returns_refusal() -> None:
 
 @pytest.mark.asyncio
 async def test_structured_output_parsed_none_no_content_raises() -> None:
-    """json_schema with no parsed model, content, or refusal raises so the
-    retry/fallback chain engages — it must NOT silently empty like json_object."""
+    """json_schema with no parsed model, content, or refusal falls back to
+    json_object mode; if json_object also fails, the original exception is
+    re-raised so the retry/fallback chain can engage."""
     from src.exceptions import ValidationException
 
     client = Mock()
     client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return("", parsed=None)
+    )
+    client.chat.completions.create = AsyncMock(
         return_value=_structured_create_return("", parsed=None)
     )
 
@@ -675,6 +679,93 @@ async def test_structured_output_parsed_none_no_content_raises() -> None:
             max_tokens=100,
             response_format=_StructuredResponse,
         )
+
+    assert client.chat.completions.parse.await_count == 1
+    assert client.chat.completions.create.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_structured_output_parsed_none_empty_content_fallback_to_json_object() -> None:
+    """OpenAI-compatible providers that accept parse() but return empty content
+    are retried with json_object mode."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return("", parsed=None)
+    )
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok"}', parsed=None)
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="kimi-k3",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+    )
+
+    assert client.chat.completions.parse.await_count == 1
+    assert client.chat.completions.create.await_count == 1
+    call = _await_kwargs(client.chat.completions.create)
+    assert call["response_format"] == {"type": "json_object"}
+    assert isinstance(result.content, _StructuredResponse)
+    assert result.content.answer == "ok"
+
+
+@pytest.mark.asyncio
+async def test_structured_output_parsed_malformed_json_fallback_to_json_object() -> None:
+    """OpenAI-compatible providers that return malformed but repairable JSON via
+    json_schema still succeed without a second request. json_repair handles
+    common provider quirks like unquoted keys."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return(
+            '{answer: "ok"}', parsed=None
+        )
+    )
+    client.chat.completions.create = AsyncMock()
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="mimo-v2.5-pro",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+    )
+
+    assert client.chat.completions.parse.await_count == 1
+    # No second request needed when json_repair can fix the json_schema response.
+    assert client.chat.completions.create.await_count == 0
+    assert isinstance(result.content, _StructuredResponse)
+    assert result.content.answer == "ok"
+
+
+@pytest.mark.asyncio
+async def test_structured_output_parsed_unrepairable_content_fallback_to_json_object() -> None:
+    """OpenAI-compatible providers that return unrepairable JSON from parse()
+    are retried with json_object mode."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return(
+            "not valid json at all", parsed=None
+        )
+    )
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer": "ok"}', parsed=None)
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="mimo-v2.5-pro",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+    )
+
+    assert client.chat.completions.parse.await_count == 1
+    assert client.chat.completions.create.await_count == 1
+    assert isinstance(result.content, _StructuredResponse)
+    assert result.content.answer == "ok"
 
 
 @pytest.mark.asyncio
