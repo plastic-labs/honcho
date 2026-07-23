@@ -448,17 +448,71 @@ class _EmbeddingClient:
             item in analytics."""
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
             if isinstance(self.client, genai.Client):
-                response = await self.client.aio.models.embed_content(
+                gemini_client = self.client
+                response = await gemini_client.aio.models.embed_content(
                     model=self.model,
                     contents=[item.text for item in batch],
                     config={"output_dimensionality": self.vector_dimensions},
                 )
-                if response.embeddings:
-                    for item, embedding in zip(batch, response.embeddings, strict=True):
-                        if embedding.values:
-                            result[item.text_id][item.chunk_index] = (
-                                self._validate_embedding_dimensions(embedding.values)
+                embeddings = response.embeddings or []
+                if len(embeddings) == len(batch):
+                    # Happy path: Gemini returned exactly one embedding per
+                    # input item, in order. This is the documented/expected
+                    # behavior and the efficient common case.
+                    for item, embedding in zip(batch, embeddings, strict=True):
+                        if not embedding.values:
+                            raise ValueError(
+                                "Gemini API returned an embedding with no "
+                                f"values for text_id={item.text_id!r}, "
+                                f"chunk_index={item.chunk_index!r} (batch "
+                                "path)."
                             )
+                        result[item.text_id][item.chunk_index] = (
+                            self._validate_embedding_dimensions(embedding.values)
+                        )
+                else:
+                    # Cardinality mismatch: do NOT assume any particular
+                    # alignment between `batch` and `embeddings` (e.g. via
+                    # zip/truncation) — the SDK docstring claims a strict
+                    # one-to-one, in-order mapping, but this has been
+                    # observed to not always hold (empty/whitespace items
+                    # dropped, batch size >100, other API quirks). Instead,
+                    # fall back to embedding each item individually so we
+                    # can guarantee correct item-to-embedding mapping.
+                    logger.warning(
+                        "Gemini batch embedding call returned %d embeddings "
+                        "for %d input items (mismatch); falling back to "
+                        "per-item embedding calls to preserve correct "
+                        "item-to-embedding alignment.",
+                        len(embeddings),
+                        len(batch),
+                    )
+                    for item in batch:
+                        item_response = await gemini_client.aio.models.embed_content(
+                            model=self.model,
+                            contents=item.text,
+                            config={"output_dimensionality": self.vector_dimensions},
+                        )
+                        item_embeddings = item_response.embeddings or []
+                        if len(item_embeddings) != 1:
+                            raise ValueError(
+                                "Gemini API returned "
+                                f"{len(item_embeddings)} embeddings for a "
+                                "single-item embedding call (expected "
+                                f"exactly 1) for text_id={item.text_id!r}, "
+                                f"chunk_index={item.chunk_index!r}."
+                            )
+                        embedding = item_embeddings[0]
+                        if not embedding.values:
+                            raise ValueError(
+                                "Gemini API returned an embedding with no "
+                                f"values for text_id={item.text_id!r}, "
+                                f"chunk_index={item.chunk_index!r} (fallback "
+                                "path)."
+                            )
+                        result[item.text_id][item.chunk_index] = (
+                            self._validate_embedding_dimensions(embedding.values)
+                        )
             else:  # openai
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
