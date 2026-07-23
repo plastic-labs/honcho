@@ -306,7 +306,9 @@ class GeminiBackend:
                 if isinstance(raw_http_options, genai_types.HttpOptions):
                     http_options = raw_http_options
                 elif isinstance(raw_http_options, dict):
-                    http_options = genai_types.HttpOptions(**raw_http_options)
+                    http_options = genai_types.HttpOptions.model_validate(
+                        raw_http_options
+                    )
             operator_extra_headers = extra_params.get("extra_headers")
             if operator_extra_headers:
                 if http_options is None:
