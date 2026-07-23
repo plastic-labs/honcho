@@ -106,3 +106,64 @@ def test_prompt_representation_conversion():
     # (they would be created directly by the Dreamer via the create_observations tool)
     assert len(rep.deductive) == 0
     assert rep.explicit[0].created_at == timestamp
+
+
+def test_prompt_representation_accepts_string_explicit():
+    """Issue #524: accept ``explicit`` emitted as a bare string."""
+    pr = PromptRepresentation.model_validate({"explicit": "User works remotely"})
+    assert [e.content for e in pr.explicit] == ["User works remotely"]
+
+
+def test_prompt_representation_accepts_list_of_strings_explicit():
+    """Issue #524: accept ``explicit`` emitted as a list of strings."""
+    pr = PromptRepresentation.model_validate(
+        {"explicit": ["User prefers Korean communication", "User likes coffee"]}
+    )
+    assert [e.content for e in pr.explicit] == [
+        "User prefers Korean communication",
+        "User likes coffee",
+    ]
+
+
+def test_prompt_representation_accepts_mixed_list_explicit():
+    """Issue #524: a list mixing strings and proper dicts is normalized."""
+    pr = PromptRepresentation.model_validate(
+        {
+            "explicit": [
+                "User works remotely",
+                {"content": "User likes coffee"},
+            ]
+        }
+    )
+    assert [e.content for e in pr.explicit] == [
+        "User works remotely",
+        "User likes coffee",
+    ]
+
+
+def test_prompt_representation_drops_blank_string_items():
+    """Issue #524: blank and whitespace-only string items are filtered out."""
+    pr = PromptRepresentation.model_validate(
+        {"explicit": ["  ", "", "User works remotely", "   "]}
+    )
+    assert [e.content for e in pr.explicit] == ["User works remotely"]
+
+
+def test_prompt_representation_bare_blank_string_explicit():
+    """Issue #524: a single bare blank string yields an empty list."""
+    pr = PromptRepresentation.model_validate({"explicit": "   "})
+    assert pr.explicit == []
+
+
+def test_prompt_representation_none_explicit_still_allowed():
+    """Existing behavior: ``None`` continues to coerce to an empty list."""
+    pr = PromptRepresentation.model_validate({"explicit": None})
+    assert pr.explicit == []
+
+
+def test_prompt_representation_proper_dicts_explicit_pass_through():
+    """Existing behavior: a well-formed dict list still validates unchanged."""
+    pr = PromptRepresentation.model_validate(
+        {"explicit": [{"content": "A"}, {"content": "B"}]}
+    )
+    assert [e.content for e in pr.explicit] == ["A", "B"]
