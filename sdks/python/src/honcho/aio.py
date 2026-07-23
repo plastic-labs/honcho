@@ -399,6 +399,73 @@ class HonchoAio(AsyncMetadataConfigMixin):
         """Delete a workspace asynchronously."""
         await self._honcho._async_http_client.delete(routes.workspace(workspace_id))
 
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def chat(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+    ) -> BaseModel | str | None:
+        """Query the entire workspace asynchronously (see Honcho.chat)."""
+        await self._honcho._ensure_workspace_async()
+        resolved_session_id = resolve_id(session)
+        body: dict[str, Any] = {"query": query, "stream": False}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
+
+        data = await self._honcho._async_http_client.post(
+            routes.workspace_chat(self._honcho.workspace_id),
+            body=body,
+        )
+        content = data.get("content")
+        if not content:
+            return None
+        if isinstance(response_format, type):
+            return response_format.model_validate_json(content)
+        return content
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    async def chat_stream(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+    ) -> AsyncDialecticStreamResponse:
+        """Streaming variant of :meth:`chat` (async)."""
+        await self._honcho._ensure_workspace_async()
+        resolved_session_id = resolve_id(session)
+        body: dict[str, Any] = {"query": query, "stream": True}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
+
+        async def stream_response() -> AsyncGenerator[str, None]:
+            async for chunk in parse_sse_astream(
+                self._honcho._async_http_client.stream(
+                    "POST",
+                    routes.workspace_chat(self._honcho.workspace_id),
+                    body=body,
+                )
+            ):
+                yield chunk
+
+        return AsyncDialecticStreamResponse(stream_response())
+
     @validate_call
     async def search(
         self,

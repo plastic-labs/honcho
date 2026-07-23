@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from typing import Any, Literal
 
 import httpx
@@ -27,9 +27,10 @@ from .http import AsyncHonchoHTTPClient, HonchoHTTPClient, routes
 from .message import Message
 from .mixins import MetadataConfigMixin
 from .pagination import SyncPage
-from .peer import Peer
+from .peer import Peer, serialize_response_format
+from .types import DialecticStreamResponse
 from .session import Session
-from .utils import normalize_peers_to_dict, resolve_id
+from .utils import normalize_peers_to_dict, parse_sse_stream, resolve_id
 
 logger = logging.getLogger(__name__)
 
@@ -581,6 +582,90 @@ class Honcho(BaseModel, MetadataConfigMixin):  # pyright: ignore[reportUnsafeMul
             workspace_id: The ID of the workspace to delete
         """
         self._http.delete(routes.workspace(workspace_id))
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def chat(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+    ) -> BaseModel | str | None:
+        """
+        Query the entire workspace with a natural language question.
+
+        Unlike peer.chat(), which queries a single peer's representation, this
+        searches across ALL peers and observations in the workspace — use it
+        for cross-peer analysis, common themes, or workspace-wide questions.
+
+        Args:
+            query: The natural language question to ask.
+            session: Optional session to scope message retrieval to.
+            reasoning_level: Optional reasoning level: "minimal", "low",
+                             "medium", "high", or "max" (default "low").
+            response_format: Optional structure for the answer: a Pydantic
+                             model class (returns a parsed instance) or a raw
+                             JSON Schema dict (returns a JSON string).
+
+        Returns:
+            The synthesized answer, or None if no relevant information.
+        """
+        self._ensure_workspace()
+        resolved_session_id = resolve_id(session)
+        body: dict[str, Any] = {"query": query, "stream": False}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
+
+        data = self._http.post(
+            routes.workspace_chat(self.workspace_id),
+            body=body,
+        )
+        content = data.get("content")
+        if not content:
+            return None
+        if isinstance(response_format, type):
+            return response_format.model_validate_json(content)
+        return content
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def chat_stream(
+        self,
+        query: str = Field(..., min_length=1, description="The natural language query"),
+        *,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+    ) -> DialecticStreamResponse:
+        """Streaming variant of :meth:`chat`. See chat() for argument docs."""
+        self._ensure_workspace()
+        resolved_session_id = resolve_id(session)
+        body: dict[str, Any] = {"query": query, "stream": True}
+        if resolved_session_id:
+            body["session_id"] = resolved_session_id
+        if reasoning_level:
+            body["reasoning_level"] = reasoning_level
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
+
+        def stream_response() -> Generator[str, None, None]:
+            yield from parse_sse_stream(
+                self._http.stream(
+                    "POST",
+                    routes.workspace_chat(self.workspace_id),
+                    body=body,
+                )
+            )
+
+        return DialecticStreamResponse(stream_response())
 
     @validate_call
     def search(
