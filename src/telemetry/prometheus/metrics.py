@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from enum import Enum
-from typing import cast, final
+from typing import cast, final, get_args
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
@@ -20,7 +20,7 @@ from prometheus_client.core import GaugeMetricFamily
 from starlette.requests import Request
 from starlette.responses import Response
 
-from src.config import settings
+from src.config import ReasoningLevel, settings
 
 disable_created_metrics()
 
@@ -64,6 +64,24 @@ class DeriverComponents(Enum):
 
 class DialecticComponents(Enum):
     TOTAL = "total"
+
+
+# Bounded label domains used to zero-initialize counter children at startup (see
+# initialize_bounded_metrics). REASONING_LEVELS is derived from the config
+# Literal so it never drifts.
+REASONING_LEVELS: tuple[str, ...] = get_args(ReasoningLevel)
+
+# Valid (token_type, component) pairs for deriver_tokens_processed. NOT the full
+# cartesian product: input tokens only have input components, output tokens only
+# OUTPUT_TOTAL. Enumerating the cartesian product would fabricate impossible
+# always-0 series (e.g. output/prompt). Kept as an explicit literal, drift-guarded
+# by tests/telemetry/test_metric_zero_init.py.
+_DERIVER_TOKEN_COMBOS: tuple[tuple[str, str], ...] = (
+    (TokenTypes.INPUT.value, DeriverComponents.PROMPT.value),
+    (TokenTypes.INPUT.value, DeriverComponents.MESSAGES.value),
+    (TokenTypes.INPUT.value, DeriverComponents.PREVIOUS_SUMMARY.value),
+    (TokenTypes.OUTPUT.value, DeriverComponents.OUTPUT_TOTAL.value),
+)
 
 
 api_requests_counter = NamespacedCounter(
@@ -152,6 +170,16 @@ telemetry_events_dropped_counter = NamespacedCounter(
 telemetry_buffer_size_gauge = NamespacedGauge(
     "telemetry_buffer_size",
     "Current size of the CloudEvents emitter buffer",
+    ["namespace"],
+)
+
+# Embedding backlog: MessageEmbedding rows still awaiting a vector
+# (sync_state='pending'). Distinct from embed_now_tasks_in_flight (which counts
+# in-flight fast-path work in the API process) — this is the durable, DB-wide
+# backlog the reconciler drains. Set once per reconciliation cycle in the deriver.
+message_embeddings_pending_gauge = NamespacedGauge(
+    "message_embeddings_pending",
+    "MessageEmbedding rows awaiting embedding (sync_state='pending')",
     ["namespace"],
 )
 
@@ -325,32 +353,121 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("record_telemetry_event_dropped", e)
 
+    def _touch(self, counter: NamespacedCounter, **labels: str) -> None:
+        """Pre-create a counter child series at 0 without incrementing it.
+
+        A labeled Prometheus counter exports no time series until its first
+        ``labels(...)`` call, so pre-touching a child keeps it present at 0 —
+        a missing series then signals a broken scrape rather than "no events".
+        Fail-soft (like the recorders): a bad init must never crash startup.
+        """
+        try:
+            counter.labels(**labels)
+        except Exception as e:
+            self._handle_metric_error("_touch", e)
+
     def initialize_telemetry_dropped_metrics(self, *, reasons: list[str]) -> None:
         """Pre-create telemetry_events_dropped child series at 0.
 
-        A labeled Prometheus counter exports no time series until its first
-        ``labels(...)`` call, so ``telemetry_events_dropped`` stays invisible in
-        Prometheus/Grafana until an event is actually dropped — you cannot alert
-        on or graph a metric that does not exist yet. Materializing the
-        ``(namespace, reason)`` children at startup keeps the metric present at 0,
-        so a missing series signals a broken scrape rather than "no drops".
+        ``telemetry_events_dropped`` stays invisible in Prometheus/Grafana until
+        an event is actually dropped — you cannot alert on or graph a metric that
+        does not exist yet. Materializing the ``(namespace, reason)`` children at
+        startup keeps the metric present at 0, so a missing series signals a broken
+        scrape rather than "no drops".
+
+        Called per-emitter from ``TelemetryEmitter.start()`` because the reason
+        values are prefix-dependent (the trace emitter uses a ``trace_`` prefix),
+        which the process-level ``initialize_bounded_metrics`` does not know.
 
         Args:
             reasons: The reason label values the calling emitter can produce.
         """
         for reason in reasons:
-            try:
-                telemetry_events_dropped_counter.labels(reason=reason)
-            except Exception as e:
-                self._handle_metric_error(
-                    "initialize_telemetry_dropped_metrics", e
-                )
+            self._touch(telemetry_events_dropped_counter, reason=reason)
+
+    def initialize_bounded_metrics(self, *, instance_type: str) -> None:
+        """Pre-create bounded-label counter children at 0 for this process.
+
+        See .meta design telemetry-counter-zero-init. Only counters whose full
+        label domain is bounded, enumerable at startup, and actually emitted by
+        THIS process are materialized; high-cardinality labels (endpoint,
+        workspace_name) and impossible label tuples are deliberately left absent.
+
+        ``telemetry_events_dropped`` is handled separately, per-emitter, in
+        ``TelemetryEmitter.start()`` (prefix-dependent — see above).
+
+        Args:
+            instance_type: "api" or "deriver" — selects the process-specific
+                counters. Event-type and buffer metrics are initialized in both.
+        """
+        if not settings.METRICS.ENABLED:
+            return
+
+        # Lazy import to avoid any import-time cycle (metrics is imported widely).
+        from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
+
+        # --- Common: both processes run a TelemetryEmitter, so both emit their
+        # own subset of event types. The domain is bounded/low-cardinality (~21
+        # types), so init the full set in each process rather than maintain a
+        # fragile per-event-type -> process map.
+        for event_type in ALL_EVENT_TYPES:
+            self._touch(telemetry_events_emitted_counter, type=event_type)
+        for event_type in HIGH_VOLUME_EVENT_TYPES:
+            self._touch(telemetry_events_sampled_out_counter, type=event_type)
+        telemetry_buffer_size_gauge.labels().set(0)
+
+        if instance_type == "api":
+            # dialectic tokens: token_type x component(total) x reasoning_level
+            for token_type in TokenTypes:
+                for level in REASONING_LEVELS:
+                    self._touch(
+                        dialectic_tokens_processed_counter,
+                        token_type=token_type.value,
+                        component=DialecticComponents.TOTAL.value,
+                        reasoning_level=level,
+                    )
+            # embed_now fast path runs as an API-process background task
+            self._touch(embed_now_tasks_shed_counter)
+            embed_now_tasks_in_flight_gauge.labels().set(0)
+
+        elif instance_type == "deriver":
+            # deriver tokens: only the VALID (task_type, token_type, component)
+            # tuples (see _DERIVER_TOKEN_COMBOS).
+            for task_type in DeriverTaskTypes:
+                for token_type_value, component_value in _DERIVER_TOKEN_COMBOS:
+                    self._touch(
+                        deriver_tokens_processed_counter,
+                        task_type=task_type.value,
+                        token_type=token_type_value,
+                        component=component_value,
+                    )
+            # dreamer tokens: specialist_name x token_type. Specialist names are
+            # derived from the concrete BaseSpecialist subclasses so a new
+            # specialist can't silently miss init.
+            from src.dreamer.specialists import BaseSpecialist
+
+            for specialist in BaseSpecialist.__subclasses__():
+                for token_type in TokenTypes:
+                    self._touch(
+                        dreamer_tokens_processed_counter,
+                        specialist_name=specialist.name,
+                        token_type=token_type.value,
+                    )
+            # embedding backlog gauge — set live each reconciliation cycle; init
+            # at 0 so it's visible before the first cycle.
+            message_embeddings_pending_gauge.labels().set(0)
 
     def set_telemetry_buffer_size(self, *, size: int) -> None:
         try:
             telemetry_buffer_size_gauge.labels().set(size)
         except Exception as e:
             self._handle_metric_error("set_telemetry_buffer_size", e)
+
+    def set_message_embeddings_pending(self, *, count: int) -> None:
+        try:
+            message_embeddings_pending_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_message_embeddings_pending", e)
 
 
 prometheus_metrics = PrometheusMetrics()

@@ -23,6 +23,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.exceptions import VectorStoreError
+from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
@@ -700,6 +701,30 @@ async def _cleanup_pgvector_batch(
         return True
 
 
+async def _record_pending_embeddings_backlog() -> None:
+    """Set the pending-embeddings backlog gauge to the current count of
+    MessageEmbedding rows awaiting a vector (sync_state='pending').
+
+    Called at the end of each reconciliation cycle so the gauge reflects the
+    residual backlog after the sweep. Best-effort: a metrics/DB hiccup here must
+    never fail the reconciliation cycle.
+    """
+    if not settings.METRICS.ENABLED:
+        return
+    try:
+        async with tracked_db("reconciler_pending_count", read_only=True) as db:
+            count = await db.scalar(
+                select(func.count())
+                .select_from(models.MessageEmbedding)
+                .where(models.MessageEmbedding.sync_state == "pending")
+            )
+        prometheus_metrics.set_message_embeddings_pending(count=count or 0)
+    except Exception:
+        logger.warning(
+            "Failed to record pending-embeddings backlog gauge", exc_info=True
+        )
+
+
 async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
     """
     Run a complete reconciliation cycle.
@@ -729,6 +754,7 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             if not (embs_work or cleanup_work):
                 break
         logger.debug("Vector reconciliation cycle completed (pgvector mode)")
+        await _record_pending_embeddings_backlog()
         return metrics
 
     # External vector store mode - reconcile documents, embeddings, and cleanup
@@ -756,4 +782,5 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             break
 
     logger.debug("Vector reconciliation cycle completed")
+    await _record_pending_embeddings_backlog()
     return metrics
