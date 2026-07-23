@@ -1099,21 +1099,23 @@ class TestSessionPurityInvariant:
         test_workspace, test_peer = sample_data
         test_peer2, _, _ = await self._setup(db_session, test_workspace, test_peer)
 
-        accepted = await crud.create_documents(
-            db_session,
-            [
-                self._doc("Global explicit fact", session_name=None),
-                self._doc(
-                    "Dream-derived conclusion",
-                    session_name=None,
-                    level="deductive",
-                    message_id=2,
-                ),
-            ],
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc("Global explicit fact", session_name=None),
+                    self._doc(
+                        "Dream-derived conclusion",
+                        session_name=None,
+                        level="deductive",
+                        message_id=2,
+                    ),
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
 
         assert [d.content for d in accepted] == ["Dream-derived conclusion"]
         live = await self._live_docs(
@@ -1142,17 +1144,19 @@ class TestSessionPurityInvariant:
             observer=test_peer.name,
             observed=test_peer2.name,
         )
-        accepted = await crud.create_documents(
-            db_session,
-            [
-                self._doc(
-                    "user likes coffee ", session_name=session_b.name, message_id=2
-                )
-            ],
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc(
+                        "user likes coffee ", session_name=session_b.name, message_id=2
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
 
         assert len(accepted) == 1
         live = await self._live_docs(
@@ -1186,13 +1190,19 @@ class TestSessionPurityInvariant:
             observer=test_peer.name,
             observed=test_peer2.name,
         )
-        accepted = await crud.create_documents(
-            db_session,
-            [self._doc("User likes coffee", session_name=session_a.name, message_id=2)],
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc(
+                        "User likes coffee", session_name=session_a.name, message_id=2
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
 
         assert len(accepted) == 1
         live = await self._live_docs(
@@ -1228,20 +1238,22 @@ class TestSessionPurityInvariant:
             observer=test_peer.name,
             observed=test_peer2.name,
         )
-        accepted = await crud.create_documents(
-            db_session,
-            [
-                self._doc(
-                    "probably a morning person",
-                    session_name=session_b.name,
-                    level="deductive",
-                    message_id=2,
-                )
-            ],
-            workspace_name=test_workspace.name,
-            observer=test_peer.name,
-            observed=test_peer2.name,
-        )
+        accepted = (
+            await crud.create_documents(
+                db_session,
+                [
+                    self._doc(
+                        "probably a morning person",
+                        session_name=session_b.name,
+                        level="deductive",
+                        message_id=2,
+                    )
+                ],
+                workspace_name=test_workspace.name,
+                observer=test_peer.name,
+                observed=test_peer2.name,
+            )
+        ).created_documents
 
         assert len(accepted) == 0
         live = await self._live_docs(
@@ -1274,7 +1286,7 @@ class TestSessionPurityInvariant:
                 observer=test_peer.name,
                 observed=test_peer2.name,
             )
-        assert rejected is False
+        assert rejected is SemanticRejectionResult.NOT_DUPLICATE
         assert mock_query.await_args is not None
         assert mock_query.await_args.kwargs["filters"] == {
             "level": "explicit",
@@ -1294,7 +1306,7 @@ class TestSessionPurityInvariant:
                 observer=test_peer.name,
                 observed=test_peer2.name,
             )
-        assert rejected is False
+        assert rejected is SemanticRejectionResult.NOT_DUPLICATE
         assert mock_query.await_args is not None
         assert mock_query.await_args.kwargs["filters"] == {"level": "deductive"}
 
@@ -1320,5 +1332,5 @@ class TestSessionPurityInvariant:
                 observer=test_peer.name,
                 observed=test_peer2.name,
             )
-        assert rejected is False
+        assert rejected is SemanticRejectionResult.NOT_DUPLICATE
         mock_query.assert_not_awaited()
