@@ -546,7 +546,7 @@ WEBHOOK_MAX_WORKSPACE_LIMIT=10
 ### Vector Store
 
 ```bash
-VECTOR_STORE_TYPE=pgvector  # Options: pgvector, turbopuffer, lancedb
+VECTOR_STORE_TYPE=pgvector  # Options: pgvector, turbopuffer, lancedb, qdrant
 VECTOR_STORE_MIGRATED=false
 VECTOR_STORE_NAMESPACE=honcho
 # Embedding dim is configured via EMBEDDING_VECTOR_DIMENSIONS — see the
@@ -558,6 +558,15 @@ VECTOR_STORE_TURBOPUFFER_REGION=us-east-1
 
 # LanceDB-specific
 VECTOR_STORE_LANCEDB_PATH=./lancedb_data
+
+# Qdrant-specific
+VECTOR_STORE_QDRANT_URL=http://localhost:6333
+VECTOR_STORE_QDRANT_API_KEY=your-qdrant-api-key  # optional
+VECTOR_STORE_QDRANT_PREFER_GRPC=false
+VECTOR_STORE_QDRANT_GRPC_PORT=6334
+VECTOR_STORE_QDRANT_HTTPS=false  # optional, inferred from URL scheme
+VECTOR_STORE_QDRANT_PREFIX=  # optional, for reverse-proxy path prefix
+VECTOR_STORE_QDRANT_TIMEOUT=  # optional, request timeout in seconds
 ```
 
 ## Monitoring

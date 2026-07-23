@@ -205,6 +205,10 @@ def _create_store_by_type(store_type: str) -> VectorStore:
         from src.vector_store.lancedb import LanceDBVectorStore
 
         return LanceDBVectorStore()
+    elif store_type == "qdrant":
+        from src.vector_store.qdrant import QdrantVectorStore
+
+        return QdrantVectorStore()
     else:
         raise ValueError(f"Unknown vector store type: {store_type}")
 
