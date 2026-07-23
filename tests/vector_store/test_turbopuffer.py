@@ -53,6 +53,30 @@ async def test_upsert_many_raises_vector_store_error_on_5xx(
     namespace_mock.write.assert_awaited_once()
 
 
+def test_build_filters_membership(store: TurbopufferVectorStore) -> None:
+    """Both the dict `in` form and the bare-list sugar produce an In filter."""
+    assert store._build_filters({"session_name": {"in": ["s1", "s2"]}}) == (  # pyright: ignore[reportPrivateUsage]
+        "session_name",
+        "In",
+        ["s1", "s2"],
+    )
+    assert store._build_filters({"session_name": ["s1", "s2"]}) == (  # pyright: ignore[reportPrivateUsage]
+        "session_name",
+        "In",
+        ["s1", "s2"],
+    )
+
+
+def test_build_filters_empty_membership_fails_closed(
+    store: TurbopufferVectorStore,
+) -> None:
+    """An empty membership list must produce an always-false filter, never an
+    omitted/empty In that could widen scope (fail-open)."""
+    never = ("And", [("session_name", "Eq", ""), ("session_name", "NotEq", "")])
+    assert store._build_filters({"session_name": {"in": []}}) == never  # pyright: ignore[reportPrivateUsage]
+    assert store._build_filters({"session_name": []}) == never  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.asyncio
 async def test_upsert_many_short_circuits_on_empty(
     store: TurbopufferVectorStore,

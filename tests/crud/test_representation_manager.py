@@ -432,6 +432,24 @@ class TestRepresentationManagerSessionScoping:
         assert representation.explicit == []
         assert representation.deductive == []
 
+    def test_build_filter_conditions_empty_allowlist_fails_closed(self):
+        """The filter-builder layer itself must fail closed, independent of the
+        early-return guard in _get_working_representation_internal. An empty
+        allowlist emits an empty `in` (renders as always-false downstream), not
+        an omitted filter."""
+        manager = RepresentationManager(
+            "workspace", observer="observer", observed="observed"
+        )
+
+        assert manager._build_filter_conditions(session_names=[]) == {  # pyright: ignore[reportPrivateUsage]
+            "session_name": {"in": []}
+        }
+        # None means unscoped — no session filter emitted.
+        assert manager._build_filter_conditions(session_names=None) == {}  # pyright: ignore[reportPrivateUsage]
+        assert manager._build_filter_conditions(session_names=["s1"]) == {  # pyright: ignore[reportPrivateUsage]
+            "session_name": {"in": ["s1"]}
+        }
+
 
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio

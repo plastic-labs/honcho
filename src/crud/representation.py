@@ -538,7 +538,11 @@ class RepresentationManager:
         if level:
             filters["level"] = level
 
-        if session_names:
+        # `is not None` (not truthiness): an explicit empty allowlist must emit
+        # an empty `in` so downstream stores fail closed, matching
+        # _query_documents_recent / _query_documents_most_derived. Truthiness
+        # here would silently drop the filter and widen scope.
+        if session_names is not None:
             filters["session_name"] = {"in": session_names}
 
         return filters
