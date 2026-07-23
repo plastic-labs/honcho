@@ -71,17 +71,27 @@ class DialecticComponents(Enum):
 # Literal so it never drifts.
 REASONING_LEVELS: tuple[str, ...] = get_args(ReasoningLevel)
 
-# Valid (token_type, component) pairs for deriver_tokens_processed. NOT the full
-# cartesian product: input tokens only have input components, output tokens only
-# OUTPUT_TOTAL. Enumerating the cartesian product would fabricate impossible
-# always-0 series (e.g. output/prompt). Kept as an explicit literal, drift-guarded
-# by tests/telemetry/test_metric_zero_init.py.
-_DERIVER_TOKEN_COMBOS: tuple[tuple[str, str], ...] = (
-    (TokenTypes.INPUT.value, DeriverComponents.PROMPT.value),
-    (TokenTypes.INPUT.value, DeriverComponents.MESSAGES.value),
-    (TokenTypes.INPUT.value, DeriverComponents.PREVIOUS_SUMMARY.value),
-    (TokenTypes.OUTPUT.value, DeriverComponents.OUTPUT_TOTAL.value),
-)
+# Valid (token_type, component) pairs for deriver_tokens_processed, per task_type.
+# NOT the cartesian product: input tokens only pair with input components, output
+# only with OUTPUT_TOTAL, and PREVIOUS_SUMMARY occurs only for summary tasks
+# (ingestion has no previous summary). Enumerating anything broader would
+# fabricate impossible always-0 series (e.g. output/prompt, or
+# ingestion/previous_summary). Explicit literal, drift-guarded by
+# tests/telemetry/test_metric_zero_init.py. Sources: track_deriver_input_tokens
+# (utils/tokens.py) + the OUTPUT_TOTAL sites in deriver.py / summarizer.py.
+_DERIVER_TOKEN_COMBOS_BY_TASK: dict[str, tuple[tuple[str, str], ...]] = {
+    DeriverTaskTypes.INGESTION.value: (
+        (TokenTypes.INPUT.value, DeriverComponents.PROMPT.value),
+        (TokenTypes.INPUT.value, DeriverComponents.MESSAGES.value),
+        (TokenTypes.OUTPUT.value, DeriverComponents.OUTPUT_TOTAL.value),
+    ),
+    DeriverTaskTypes.SUMMARY.value: (
+        (TokenTypes.INPUT.value, DeriverComponents.PROMPT.value),
+        (TokenTypes.INPUT.value, DeriverComponents.MESSAGES.value),
+        (TokenTypes.INPUT.value, DeriverComponents.PREVIOUS_SUMMARY.value),
+        (TokenTypes.OUTPUT.value, DeriverComponents.OUTPUT_TOTAL.value),
+    ),
+}
 
 
 api_requests_counter = NamespacedCounter(
@@ -366,6 +376,14 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("_touch", e)
 
+    def _set_gauge_zero(self, gauge: NamespacedGauge) -> None:
+        """Materialize a (namespace-only) gauge at 0. Fail-soft, like ``_touch``:
+        a startup init must never propagate an exception into process boot."""
+        try:
+            gauge.labels().set(0)
+        except Exception as e:
+            self._handle_metric_error("_set_gauge_zero", e)
+
     def initialize_telemetry_dropped_metrics(self, *, reasons: list[str]) -> None:
         """Pre-create telemetry_events_dropped child series at 0.
 
@@ -414,7 +432,7 @@ class PrometheusMetrics:
             self._touch(telemetry_events_emitted_counter, type=event_type)
         for event_type in HIGH_VOLUME_EVENT_TYPES:
             self._touch(telemetry_events_sampled_out_counter, type=event_type)
-        telemetry_buffer_size_gauge.labels().set(0)
+        self._set_gauge_zero(telemetry_buffer_size_gauge)
 
         if instance_type == "api":
             # dialectic tokens: token_type x component(total) x reasoning_level
@@ -428,16 +446,17 @@ class PrometheusMetrics:
                     )
             # embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
-            embed_now_tasks_in_flight_gauge.labels().set(0)
+            self._set_gauge_zero(embed_now_tasks_in_flight_gauge)
 
         elif instance_type == "deriver":
-            # deriver tokens: only the VALID (task_type, token_type, component)
-            # tuples (see _DERIVER_TOKEN_COMBOS).
-            for task_type in DeriverTaskTypes:
-                for token_type_value, component_value in _DERIVER_TOKEN_COMBOS:
+            # deriver tokens: only the VALID (token_type, component) tuples per
+            # task_type (see _DERIVER_TOKEN_COMBOS_BY_TASK) — never the cartesian
+            # product, which would fabricate impossible always-0 series.
+            for task_type_value, combos in _DERIVER_TOKEN_COMBOS_BY_TASK.items():
+                for token_type_value, component_value in combos:
                     self._touch(
                         deriver_tokens_processed_counter,
-                        task_type=task_type.value,
+                        task_type=task_type_value,
                         token_type=token_type_value,
                         component=component_value,
                     )
@@ -455,7 +474,7 @@ class PrometheusMetrics:
                     )
             # embedding backlog gauge — set live each reconciliation cycle; init
             # at 0 so it's visible before the first cycle.
-            message_embeddings_pending_gauge.labels().set(0)
+            self._set_gauge_zero(message_embeddings_pending_gauge)
 
     def set_telemetry_buffer_size(self, *, size: int) -> None:
         try:

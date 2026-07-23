@@ -19,7 +19,7 @@ from prometheus_client import REGISTRY
 from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.prometheus.metrics import (
-    _DERIVER_TOKEN_COMBOS,  # pyright: ignore[reportPrivateUsage]
+    _DERIVER_TOKEN_COMBOS_BY_TASK,  # pyright: ignore[reportPrivateUsage]
     REASONING_LEVELS,
     DeriverComponents,
     DeriverTaskTypes,
@@ -85,21 +85,35 @@ def test_high_volume_registry_matches_subclasses():
 
 
 def test_deriver_token_combos_are_valid_and_complete():
-    """Every combo uses real enum values, and every DeriverComponent is covered.
+    """Every combo uses real enum values; the union across tasks covers every
+    DeriverComponent; and no task enumerates an impossible pair.
 
-    Fails if a DeriverComponent is added to the enum without deciding which
-    token_type it pairs with in _DERIVER_TOKEN_COMBOS.
+    Fails if a DeriverComponent/DeriverTaskType is added without deciding which
+    task_type + token_type it pairs with in _DERIVER_TOKEN_COMBOS_BY_TASK.
     """
     valid_token_types = {t.value for t in TokenTypes}
     valid_components = {c.value for c in DeriverComponents}
-    for token_type, component in _DERIVER_TOKEN_COMBOS:
-        assert token_type in valid_token_types
-        assert component in valid_components
-    # every component appears in exactly one combo
-    combo_components = {comp for _, comp in _DERIVER_TOKEN_COMBOS}
-    assert combo_components == valid_components
-    # the cartesian product would be larger — we intentionally enumerate fewer
-    assert len(_DERIVER_TOKEN_COMBOS) < len(valid_token_types) * len(valid_components)
+    valid_task_types = {t.value for t in DeriverTaskTypes}
+
+    assert set(_DERIVER_TOKEN_COMBOS_BY_TASK) == valid_task_types
+    all_components: set[str] = set()
+    for task_type, combos in _DERIVER_TOKEN_COMBOS_BY_TASK.items():
+        assert task_type in valid_task_types
+        for token_type, component in combos:
+            assert token_type in valid_token_types
+            assert component in valid_components
+        # each task enumerates fewer than its cartesian product (no impossible pairs)
+        assert len(combos) < len(valid_token_types) * len(valid_components)
+        all_components.update(comp for _, comp in combos)
+
+    # every component is reachable via some task
+    assert all_components == valid_components
+    # previous_summary is summary-only: ingestion must NOT enumerate it
+    ingestion = _DERIVER_TOKEN_COMBOS_BY_TASK[DeriverTaskTypes.INGESTION.value]
+    assert (
+        TokenTypes.INPUT.value,
+        DeriverComponents.PREVIOUS_SUMMARY.value,
+    ) not in ingestion
 
 
 # ---------------------------------------------------------------------------
@@ -152,12 +166,12 @@ def test_sampled_out_excludes_ground_truth_event_types():
 @pytest.mark.usefixtures("metrics_enabled")
 def test_deriver_init_materializes_token_and_backlog():
     prometheus_metrics.initialize_bounded_metrics(instance_type="deriver")
-    for task_type in DeriverTaskTypes:
-        for token_type, component in _DERIVER_TOKEN_COMBOS:
+    for task_type, combos in _DERIVER_TOKEN_COMBOS_BY_TASK.items():
+        for token_type, component in combos:
             assert (
                 sample(
                     "deriver_tokens_processed_total",
-                    task_type=task_type.value,
+                    task_type=task_type,
                     token_type=token_type,
                     component=component,
                 )
@@ -181,12 +195,23 @@ def test_deriver_init_omits_impossible_token_combos():
     """The cartesian product includes combos that never occur (e.g. output tokens
     with an input component). Those must not be materialized."""
     prometheus_metrics.initialize_bounded_metrics(instance_type="deriver")
+    # output tokens never pair with an input component
     assert (
         sample(
             "deriver_tokens_processed_total",
             task_type=DeriverTaskTypes.INGESTION.value,
             token_type=TokenTypes.OUTPUT.value,
             component=DeriverComponents.PROMPT.value,
+        )
+        is None
+    )
+    # previous_summary is summary-only — ingestion must not materialize it
+    assert (
+        sample(
+            "deriver_tokens_processed_total",
+            task_type=DeriverTaskTypes.INGESTION.value,
+            token_type=TokenTypes.INPUT.value,
+            component=DeriverComponents.PREVIOUS_SUMMARY.value,
         )
         is None
     )
