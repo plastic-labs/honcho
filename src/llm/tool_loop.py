@@ -404,6 +404,10 @@ async def execute_tool_loop(
     # DialecticCompletedEvent.hit_input_token_cap reflect the cap hit
     # (the toolless path tracks this in src/llm/api.py:325-340).
     hit_input_token_cap = False
+    # Set when an empty tool-less response can't be retried in-loop (no
+    # iterations left) and we break out to the forced synthesis call to
+    # recover a final answer instead of returning empty.
+    empty_recovery_synthesis = False
     # Track effective tool_choice — switches from "required"/"any" to "auto" after iter 1.
     effective_tool_choice = tool_choice
 
@@ -492,24 +496,39 @@ async def execute_tool_loop(
             if not response.tool_calls_made:
                 logger.debug("No tool calls in response, finishing")
 
-                if (
-                    isinstance(response.content, str)
-                    and not response.content.strip()
-                    and empty_response_retries < 1
-                    and iteration < max_tool_iterations - 1
-                ):
-                    empty_response_retries += 1
-                    conversation_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your last response was empty. Provide a concise answer "
-                                "to the original query using the available context."
-                            ),
-                        }
-                    )
-                    iteration += 1
-                    continue
+                is_empty_response = response.content is None or (
+                    isinstance(response.content, str) and not response.content.strip()
+                )
+                if is_empty_response:
+                    # An empty final answer is never useful. Try one in-loop
+                    # nudge while both the retry budget and an iteration remain;
+                    # otherwise recover via the forced synthesis call rather than
+                    # returning null. This covers the minimal tier
+                    # (max_tool_iterations=1, where no in-loop retry is possible)
+                    # and a repeat empty response after the nudge was spent.
+                    if (
+                        empty_response_retries < 1
+                        and iteration < max_tool_iterations - 1
+                    ):
+                        empty_response_retries += 1
+                        conversation_messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Your last response was empty. Provide a concise answer "
+                                    "to the original query using the available context."
+                                ),
+                            }
+                        )
+                        iteration += 1
+                        continue
+                    if not stream_final:
+                        # Advance iteration so the synthesis call is counted,
+                        # then break to it. Streaming leaves the empty tail to
+                        # the stream itself.
+                        empty_recovery_synthesis = True
+                        iteration += 1
+                        break
 
                 if stream_final:
                     # Snapshot the plan that just succeeded — streaming retries
@@ -657,19 +676,27 @@ async def execute_tool_loop(
 
         iteration += 1
 
-    logger.warning(
-        f"Tool execution loop reached max iterations ({max_tool_iterations})"
-    )
+    if empty_recovery_synthesis:
+        logger.debug("Empty tool-less response, no retries left; forcing synthesis")
+        synthesis_prompt = (
+            "Your previous response was empty. Using the context already available, "
+            "provide your final answer to the original query now. "
+            "Do not attempt to call any tools."
+        )
+    else:
+        logger.warning(
+            f"Tool execution loop reached max iterations ({max_tool_iterations})"
+        )
+        synthesis_prompt = (
+            "You have reached the maximum number of tool calls. "
+            "Based on all the information you have gathered, provide your final response now. "
+            "Do not attempt to call any more tools."
+        )
 
-    # The max-iteration synthesis call gets iteration N+1 in telemetry so 's
+    # The synthesis call gets iteration N+1 in telemetry so 's
     # AgentIterationEvent and this LLMCallCompletedEvent line up sequentially.
     synthesis_iteration = iteration + 1
 
-    synthesis_prompt = (
-        "You have reached the maximum number of tool calls. "
-        "Based on all the information you have gathered, provide your final response now. "
-        "Do not attempt to call any more tools."
-    )
     conversation_messages.append({"role": "user", "content": synthesis_prompt})
 
     # Truncate again — the per-iteration truncate ran before the last tool
