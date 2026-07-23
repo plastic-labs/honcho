@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -74,6 +74,21 @@ def _normalized_observation_input(
 ) -> schemas.ObservationInput:
     """Return an observation input with content normalized for persistence/embedding."""
     return obs.model_copy(update={"content": obs.content.strip()})
+
+
+def _dedupe_observation_docs_for_tool_output(
+    documents: Sequence[Document],
+) -> list[Document]:
+    """Remove exact duplicate observations from tool output without mutating storage."""
+    seen: set[tuple[str, str]] = set()
+    deduped: list[Document] = []
+    for doc in documents:
+        key = (doc.level or "explicit", " ".join(doc.content.casefold().split()))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(doc)
+    return deduped
 
 
 def _base_observation_properties() -> dict[str, Any]:
@@ -2340,6 +2355,7 @@ async def _handle_get_reasoning_chain(
                     db, ctx.workspace_name, doc.source_ids
                 )
                 if premises:
+                    premises = _dedupe_observation_docs_for_tool_output(premises)
                     premise_lines: list[Any] = []
                     for p in premises:
                         p_level = p.level or "explicit"
@@ -2357,6 +2373,7 @@ async def _handle_get_reasoning_chain(
                     db, ctx.workspace_name, doc.source_ids
                 )
                 if sources:
+                    sources = _dedupe_observation_docs_for_tool_output(sources)
                     source_lines: list[Any] = []
                     for s in sources:
                         s_level = s.level or "explicit"
@@ -2385,6 +2402,7 @@ async def _handle_get_reasoning_chain(
                 observed=ctx.observed,
             )
             if children:
+                children = _dedupe_observation_docs_for_tool_output(children)
                 child_lines: list[Any] = []
                 for c in children:
                     c_level = c.level or "explicit"
