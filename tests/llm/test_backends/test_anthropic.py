@@ -494,7 +494,7 @@ async def test_anthropic_backend_passes_timeout_to_stream_request() -> None:
             """Return the stream object used by the backend."""
             return self
 
-        async def __aexit__(self, *_args):
+        async def __aexit__(self, *_args: object) -> bool:
             """Do not suppress stream errors."""
             return False
 
