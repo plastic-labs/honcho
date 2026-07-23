@@ -321,7 +321,7 @@ class GeminiBackend:
         if timeout is not None:
             if http_options is None:
                 http_options = genai_types.HttpOptions()
-            http_options.timeout = timeout
+            http_options.timeout = int(timeout * 1000)
         if http_options is not None:
             config["http_options"] = http_options
         return config

@@ -129,7 +129,7 @@ async def test_gemini_backend_maps_timeout_to_http_options() -> None:
     await_args = client.aio.models.generate_content.await_args
     if await_args is None:
         raise AssertionError("Expected Gemini generate_content call")
-    assert await_args.kwargs["config"]["http_options"].timeout == 90.0
+    assert await_args.kwargs["config"]["http_options"].timeout == 90_000
 
 
 @pytest.mark.asyncio
