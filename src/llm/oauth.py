@@ -44,11 +44,8 @@ class OAuthTokenManager:
         self._token_file = Path(token_file) if token_file else None
         # If a token file exists, it holds the most recently rotated token and
         # takes precedence over the value passed in (which may be stale).
-        if self._token_file and self._token_file.exists():
-            stored = self._token_file.read_text().strip()
-            if stored:
-                refresh_token = stored
-        self._refresh_token = refresh_token
+        stored = self._read_token_file()
+        self._refresh_token = stored if stored else refresh_token
         self._client_id = client_id
         self._access_token: str = ""
         self._expires_at: float = 0.0
@@ -58,8 +55,25 @@ class OAuthTokenManager:
     def access_token(self) -> str:
         return self._access_token
 
+    def _read_token_file(self) -> str | None:
+        if self._token_file and self._token_file.exists():
+            stored = self._token_file.read_text().strip()
+            if stored:
+                return stored
+        return None
+
     async def refresh(self) -> None:
-        """Exchange the refresh token for a new access token."""
+        """Exchange the refresh token for a new access token.
+
+        Refresh tokens rotate on use, and multiple processes (API server,
+        deriver worker) each hold an independent in-memory copy while sharing
+        one token file. Re-reading the file here picks up a sibling's
+        already-rotated token instead of retrying one the auth server has
+        already invalidated.
+        """
+        stored = self._read_token_file()
+        if stored and stored != self._refresh_token:
+            self._refresh_token = stored
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 _TOKEN_URL,
@@ -90,9 +104,7 @@ class OAuthTokenManager:
                 logger.debug("Persisted rotated refresh token to %s", self._token_file)
         expires_in: int = data.get("expires_in", 600)
         self._expires_at = time.time() + expires_in
-        logger.info(
-            "OAuth access token refreshed; expires in %ds", expires_in
-        )
+        logger.info("OAuth access token refreshed; expires in %ds", expires_in)
 
     async def refresh_if_needed(self) -> None:
         """Refresh only when within the buffer window of expiry."""
