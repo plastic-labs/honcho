@@ -66,6 +66,19 @@ OPENAI_API_KEY = "your-api-key-here"
 # GEMINI_API_KEY = "your-api-key"
 
 # Embedding settings
+#
+# VECTOR_DIMENSIONS must be <= 2000: pgvector's HNSW index has a hard limit
+# of 2000 dimensions. A mismatch may be caught earlier by the startup
+# schema validator (src/startup/embedding_validator.py, which compares
+# VECTOR_DIMENSIONS against the existing pgvector column on boot) or only
+# surface later at index creation, depending on whether a schema already
+# exists. Some embedding models default to higher output dimensions — e.g.
+# Gemini's gemini-embedding-001 defaults to 3072. If you switch to such a
+# model, you must set VECTOR_DIMENSIONS to a value at or below 2000
+# (1536 is a common choice). For models that support Matryoshka
+# Representation Learning (including gemini-embedding-001), setting
+# VECTOR_DIMENSIONS truncates the output to that size instead of failing;
+# it must still match what your chosen model can actually produce.
 [embedding]
 VECTOR_DIMENSIONS = 1536
 MAX_INPUT_TOKENS = 8192
