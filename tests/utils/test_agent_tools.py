@@ -801,6 +801,7 @@ class TestSearchMemory:
             context_window: int = 2,
             embedding: list[float] | None = None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (workspace_name, session_name, query, limit, context_window, observer)
             fallback_embeddings.append(embedding)
@@ -909,6 +910,7 @@ class TestSearchMessagesTemporal:
             context_window: int = 2,
             embedding: list[float] | None = None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (
                 workspace_name,
@@ -1502,6 +1504,7 @@ class TestExtractPreferences:
             context_window: int,
             embedding: list[float] | None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (limit, context_window, observer)
             embedding_args.append(embedding)
