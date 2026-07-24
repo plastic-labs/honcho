@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from typing import Any
+from typing import Any, final
 
 import pytest
 from sqlalchemy.exc import InterfaceError
@@ -339,6 +339,25 @@ async def test_read_only_session_works_with_tracing_checkout_hook() -> None:
 # both a CancelledError raised in the body AND one re-delivered during cleanup.
 
 
+def storm_until_done(task: "asyncio.Task[None]") -> None:
+    """Re-cancel `task` at anyio's cadence until it finishes.
+
+    anyio's CancelScope._deliver_cancellation re-cancels via loop.call_soon on
+    every event-loop tick for as long as the task is inside the scope — and
+    Starlette's BaseHTTPMiddleware wraps every request in a task group. A few
+    sparse cancel()s leave quiet ticks that let a per-wait timeout re-arm and
+    cleanup finish; this cadence leaves none.
+    """
+    loop = asyncio.get_running_loop()
+
+    def restorm() -> None:
+        if not task.done():
+            task.cancel()
+            loop.call_soon(restorm)
+
+    restorm()
+
+
 @pytest.mark.asyncio
 async def test_tracked_db_rolls_back_and_closes_on_cancellation(
     monkeypatch: pytest.MonkeyPatch,
@@ -452,6 +471,7 @@ async def test_tracked_db_survives_cancellation_storm_during_cleanup(
     # the case `anyio.CancelScope(shield=True)` fails to cover for a native
     # task.cancel(), which is why we do not use it.) rollback() here awaits, so
     # a re-delivered cancel has a real window to land mid-cleanup.
+    @final
     class SlowRollbackSession(FakeSession):
         async def rollback(self) -> None:
             self.rollback_calls += 1
@@ -469,9 +489,7 @@ async def test_tracked_db_survives_cancellation_storm_during_cleanup(
 
     task = asyncio.ensure_future(worker())
     await entered.wait()
-    for _ in range(5):  # cancel storm straddling the cleanup window
-        task.cancel()
-        await asyncio.sleep(0.05)
+    storm_until_done(task)
     with pytest.raises(asyncio.CancelledError):
         await task
 
@@ -515,8 +533,45 @@ async def test_run_to_completion_abandons_wedged_cleanup(
         await asyncio.sleep(3600)  # never completes
 
     # Returns (abandons) well under the sleep instead of hanging.
-    await asyncio.wait_for(dependencies_module._run_to_completion(wedged()), timeout=5)
+    await asyncio.wait_for(
+        dependencies_module._run_to_completion(wedged()),  # pyright: ignore[reportPrivateUsage]
+        timeout=5,
+    )
     assert started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_run_to_completion_deadline_holds_under_cancel_storm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The abandon deadline must be monotonic across re-deliveries. A per-wait
+    # timeout re-arms on every CancelledError, and anyio re-delivers on every
+    # event-loop tick (see storm_until_done), so it would never elapse — a wedged
+    # connection would pin the request task for as long as the storm lasts.
+    monkeypatch.setattr(dependencies_module, "_CLEANUP_TIMEOUT_SECONDS", 0.3)
+
+    async def wedged() -> None:
+        await asyncio.sleep(3600)  # never completes
+
+    loop = asyncio.get_running_loop()
+    task = asyncio.ensure_future(
+        dependencies_module._run_to_completion(wedged())  # pyright: ignore[reportPrivateUsage]
+    )
+    await asyncio.sleep(0)  # let it reach the wait loop
+    storm_until_done(task)
+
+    began = loop.time()
+    for _ in range(50):  # bounded poll: a broken deadline hangs rather than fails
+        if task.done():
+            break
+        await asyncio.sleep(0.1)
+    elapsed = loop.time() - began
+    if not task.done():
+        task.cancel()
+        pytest.fail(f"cleanup not abandoned after {elapsed:.1f}s under a cancel storm")
+
+    assert task.cancelled()  # cancellation still propagates after abandoning
+    assert elapsed < 2.0, f"abandoned only after {elapsed:.1f}s (deadline was 0.3s)"
 
 
 @pytest.mark.asyncio

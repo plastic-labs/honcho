@@ -32,22 +32,27 @@ async def _run_to_completion(coro: Coroutine[Any, Any, None]) -> None:
     """
     fut = asyncio.ensure_future(coro)
     cancelled = False
+    loop = asyncio.get_running_loop()
+    # One monotonic deadline for the whole loop, not a per-wait timeout: anyio
+    # (Starlette's BaseHTTPMiddleware wraps every request in a task group)
+    # re-delivers cancellation on every event-loop tick, so a per-wait timeout
+    # re-arms each tick and never elapses.
+    deadline = loop.time() + _CLEANUP_TIMEOUT_SECONDS
     while not fut.done():
-        try:
-            # wait() shields fut from our cancellation but still bounds the wait.
-            await asyncio.wait({fut}, timeout=_CLEANUP_TIMEOUT_SECONDS)
-        except asyncio.CancelledError:
-            cancelled = True  # keep waiting so ROLLBACK/close reach Postgres
-            continue
-        if not fut.done():
+        remaining = deadline - loop.time()
+        if remaining <= 0:
             # Wedged cleanup (dead socket). Stop pinning this task; leave fut to
             # error out / be reclaimed rather than block indefinitely.
             logger.error(
-                "DB session cleanup exceeded %.0fs; abandoning to avoid pinning "
-                "the task",
+                "DB session cleanup exceeded %.0fs; abandoning to avoid pinning the task",
                 _CLEANUP_TIMEOUT_SECONDS,
             )
             break
+        try:
+            # wait() shields fut from our cancellation but still bounds the wait.
+            await asyncio.wait({fut}, timeout=remaining)
+        except asyncio.CancelledError:
+            cancelled = True  # keep waiting so ROLLBACK/close reach Postgres
     if fut.cancelled():
         cancelled = True  # cleanup itself was cancelled (close() still ran)
     elif fut.done() and (exc := fut.exception()) is not None:
