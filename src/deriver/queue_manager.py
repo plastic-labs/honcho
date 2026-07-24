@@ -906,6 +906,12 @@ class QueueManager:
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id >= effective_start_id)
+                .where(
+                    or_(
+                        models.Message.peer_name == parsed_key.observed,
+                        models.Message.id == preceding_message_id_subq,
+                    )
+                )
                 .subquery()
             )
 
