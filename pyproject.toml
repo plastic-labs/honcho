@@ -39,6 +39,7 @@ dependencies = [
     "scikit-learn>=1.6.0",
     "prometheus_client>=0.21.0",
     "cloudevents>=1.12.0,<2.0",
+    "pymilvus[milvus-lite]>=3.0.0",
 ]
 [dependency-groups]
 dev = [
@@ -132,7 +133,7 @@ reportUnusedCallResult = false
 reportCallInDefaultInitializer = false
 reportAny = false
 reportExplicitAny = false
-allowedUntypedLibraries = ["langfuse", "lancedb", "pyarrow"]
+allowedUntypedLibraries = ["langfuse", "lancedb", "pyarrow", "pymilvus"]
 reportImplicitOverride = false
 reportImportCycles = false
 

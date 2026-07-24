@@ -546,7 +546,7 @@ WEBHOOK_MAX_WORKSPACE_LIMIT=10
 ### Vector Store
 
 ```bash
-VECTOR_STORE_TYPE=pgvector  # Options: pgvector, turbopuffer, lancedb
+VECTOR_STORE_TYPE=pgvector  # Options: pgvector, turbopuffer, lancedb, milvus
 VECTOR_STORE_MIGRATED=false
 VECTOR_STORE_NAMESPACE=honcho
 # Embedding dim is configured via EMBEDDING_VECTOR_DIMENSIONS — see the
@@ -558,6 +558,14 @@ VECTOR_STORE_TURBOPUFFER_REGION=us-east-1
 
 # LanceDB-specific
 VECTOR_STORE_LANCEDB_PATH=./lancedb_data
+
+# Milvus-specific
+# Default uses Milvus Lite local storage. Use http://localhost:19530 for
+# Milvus server, or a Zilliz Cloud URI with VECTOR_STORE_MILVUS_TOKEN.
+VECTOR_STORE_MILVUS_URI=./milvus.db
+VECTOR_STORE_MILVUS_TOKEN=
+VECTOR_STORE_MILVUS_DB_NAME=
+VECTOR_STORE_MILVUS_CONSISTENCY_LEVEL=
 ```
 
 ## Monitoring
@@ -702,6 +710,7 @@ ENABLED = false
 
 [vector_store]
 TYPE = "pgvector"
+MILVUS_URI = "./milvus.db"
 
 [sentry]
 ENABLED = false
@@ -728,4 +737,4 @@ uv run alembic revision --autogenerate -m "Description"  # Create new migration
 
 5. **Dialectic level issues** — Unset level fields inherit from the built-in defaults. For Anthropic, `THINKING_BUDGET_TOKENS` must be >= 1024 when enabled. For providers without budgeted thinking, omit it or set it to `0`. `MAX_OUTPUT_TOKENS` must exceed `THINKING_BUDGET_TOKENS`.
 
-6. **Vector store issues** — For Turbopuffer, set the API key. Check that `EMBEDDING_VECTOR_DIMENSIONS` matches your embedding model — the startup validator will refuse to boot on a mismatch.
+6. **Vector store issues** — For Turbopuffer, set the API key. For Milvus Lite, keep `VECTOR_STORE_MILVUS_URI` pointed at a local `.db` path; for Milvus server or Zilliz Cloud, set the URI and token as needed. Check that `EMBEDDING_VECTOR_DIMENSIONS` matches your embedding model — the startup validator will refuse to boot on a mismatch.
