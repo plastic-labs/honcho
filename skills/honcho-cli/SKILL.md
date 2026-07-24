@@ -1,6 +1,6 @@
 ---
 name: honcho-cli
-description: Inspect and debug Honcho workspaces via the `honcho` CLI. Use when investigating peer representations, memory state, session context, queue status, or dialectic quality — any task that requires introspection of a Honcho deployment.
+description: Inspect and debug Honcho workspaces via the `honcho` CLI. Use when investigating peer representations, memory state, session context, or dialectic quality — any task that requires introspection of a Honcho deployment, including verifying that a recall/record memory loop is actually working.
 allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 ---
 
@@ -30,7 +30,6 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - Run `honcho peer inspect` before `honcho peer chat` to understand context.
 - Use `honcho session context` to see exactly what an agent receives.
 - Never run `honcho workspace delete` without `honcho workspace inspect` first.
-- Check queue status when derivation seems stalled.
 - Compare peer card with conclusions to understand memory state.
 
 ## Inspection tour
@@ -81,9 +80,6 @@ honcho peer search <peer_id> "query" --json
 ```bash
 # Is observation enabled?
 honcho peer inspect <peer_id> --json | jq '.configuration'
-
-# Is the deriver queue processing messages?
-honcho workspace queue-status --json
 
 # What conclusions exist?
 honcho conclusion list --observer <peer_id> --json

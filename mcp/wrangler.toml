@@ -3,6 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2024-12-09"
 compatibility_flags = ["nodejs_compat"]
 
+# Bundle Markdown (e.g. instructions.md) as text strings so it can be imported.
+rules = [
+  { type = "Text", globs = ["**/*.md"], fallthrough = true },
+]
+
 [env.production]
 name = "honcho-mcp"
 

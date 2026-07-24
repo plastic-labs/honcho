@@ -70,6 +70,16 @@ add_messages_to_session
 
 ---
 
+## Best Practices
+
+- **Group messages into coherent context buckets** — give each distinct context its own `session_id` (a chat thread, a project, a channel) and reuse that same `session_id` for every turn within it, rather than minting a new one per turn. Honcho reasons over the messages in a session together, so keeping a context's messages in one bucket produces a coherent representation; scattering them across sessions fragments it.
+- **Use one stable `peer_id` per real person**, reused across every session and channel. A fresh or per-channel ID (`user-web` vs. `user-discord`) builds separate, weaker representations instead of one.
+- **`observe_me: false` skips building a model of a peer** — reserve it for deterministic bots (nothing meaningful to model). For a real AI assistant it's fine to leave observation on.
+- **Reasoning is asynchronous** — don't poll or wait for it to finish before responding. A brand-new or low-volume peer legitimately has little to show yet.
+- **Reach for reads before `chat`** — `get_session_context` / `get_peer_context` / `get_representation` / `search` are near-instant; `chat` runs live reasoning and takes a few seconds. Use `chat` only when you need a reasoned answer.
+
+---
+
 ## General Tools
 
 The full API for advanced use cases.
