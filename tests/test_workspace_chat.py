@@ -1011,7 +1011,7 @@ class TestWorkspaceToolExecutor:
 
     async def test_returns_callable(
         self,
-        db_session: AsyncSession,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
         workspace_test_data: Any,
     ):
         """create_workspace_tool_executor returns an async callable."""
@@ -1025,7 +1025,7 @@ class TestWorkspaceToolExecutor:
 
     async def test_routes_workspace_tools(
         self,
-        db_session: AsyncSession,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
         workspace_test_data: Any,
     ):
         """Workspace-specific tools are routed to workspace handlers."""
@@ -1047,7 +1047,7 @@ class TestWorkspaceToolExecutor:
 
     async def test_falls_through_to_standard_handlers(
         self,
-        db_session: AsyncSession,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
         workspace_test_data: Any,
     ):
         """Non-workspace tools fall through to standard handlers."""
@@ -1065,7 +1065,7 @@ class TestWorkspaceToolExecutor:
 
     async def test_unknown_tool_returns_error(
         self,
-        db_session: AsyncSession,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
         workspace_test_data: Any,
     ):
         """Unknown tool name returns error."""
@@ -1081,7 +1081,7 @@ class TestWorkspaceToolExecutor:
 
     async def test_handles_exceptions_gracefully(
         self,
-        db_session: AsyncSession,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
         workspace_test_data: Any,
     ):
         """Executor returns error strings instead of raising exceptions."""
@@ -1099,7 +1099,7 @@ class TestWorkspaceToolExecutor:
 
     async def test_get_peer_card_via_executor(
         self,
-        db_session: AsyncSession,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
         workspace_test_data: Any,
     ):
         """get_peer_card routes through workspace handler with params."""
