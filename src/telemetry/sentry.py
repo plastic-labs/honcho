@@ -9,17 +9,56 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 import sentry_sdk
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
+from sqlalchemy.exc import OperationalError
 
 from src.config import settings
+from src.exceptions import HonchoException
 
 P = ParamSpec("P")
 T = TypeVar("T")
 
 if TYPE_CHECKING:
-    from sentry_sdk._types import EventProcessor
+    from sentry_sdk._types import Event, EventProcessor, Hint
     from sentry_sdk.integrations import Integration
 
 logger = logging.getLogger(__name__)
+
+
+def default_before_send(event: Event, hint: Hint | None) -> Event | None:
+    """Filter/regroup known non-actionable events before Sentry ingests them.
+
+    Shared by every entrypoint (API + deriver) so filtering is process-agnostic.
+    """
+    if not hint:
+        return event
+
+    exc_info = hint.get("exc_info")
+    if not exc_info:
+        return event
+
+    _, exc_value, _ = exc_info
+    if isinstance(exc_value, HonchoException):
+        return None
+
+    # Filters out ValidationErrors and RequestValidationErrors (typically from Pydantic)
+    if isinstance(exc_value, ValidationError | RequestValidationError):
+        logger.info(f"Filtering out validation error from Sentry: {exc_value}")
+        return None
+
+    # DB connection-pool checkout timeouts are a fleet-wide saturation symptom, not a
+    # per-transaction bug. Collapse every occurrence into one issue (Sentry would otherwise
+    # split by transaction/endpoint) and drop to warning so it stops tripping error alerts.
+    # Watch it via a rate/spike metric alert instead. Root cause tracked in DEV-1852.
+    if isinstance(exc_value, OperationalError) and "connection timeout expired" in str(
+        exc_value
+    ):
+        event["fingerprint"] = ["honcho-db-connection-timeout"]
+        event["level"] = "warning"
+        return event
+
+    return event
 
 
 # Paths whose transactions carry no debugging value but are hit constantly
@@ -81,13 +120,14 @@ def traces_sampler(sampling_context: dict[str, Any]) -> float:
 def initialize_sentry(
     *,
     integrations: Sequence[Integration],
-    before_send: EventProcessor | None = None,
+    before_send: EventProcessor | None = default_before_send,
 ) -> None:
     """Initialize Sentry SDK with project settings.
 
     Args:
         integrations: Sentry SDK integrations to enable (e.g., Starlette, FastAPI).
-        before_send: Optional event filter callback to suppress specific exceptions.
+        before_send: Event filter override. Defaults to ``default_before_send`` so
+            every entrypoint gets the shared filters; pass ``None`` to opt out.
     """
     sentry_sdk.init(
         dsn=settings.SENTRY.DSN,
