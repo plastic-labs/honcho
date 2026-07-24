@@ -1030,7 +1030,7 @@ async def get_recent_history(
     session_name: str | None,
     observed: str | None = None,
     token_limit: int = 8192,
-    allowed_sessions: list[str] | None = None,
+    session_names: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Retrieve recent conversation history.
@@ -1050,6 +1050,9 @@ async def get_recent_history(
         List of messages in chronological order
     """
     if session_name:
+        # Fail closed: a specific session outside the allowlist is not readable.
+        if session_names is not None and session_name not in session_names:
+            return []
         # Get messages from a specific session
         messages_stmt = await crud.get_messages(
             workspace_name=workspace_name,
@@ -1063,7 +1066,7 @@ async def get_recent_history(
         return list(reversed(messages))
     elif observed:
         # Fail closed on an empty allowlist
-        if allowed_sessions is not None and not allowed_sessions:
+        if session_names is not None and not session_names:
             return []
         # Get recent messages from the observed peer across all sessions
         # (restricted to the session allowlist when one is provided)
@@ -1074,8 +1077,8 @@ async def get_recent_history(
             .order_by(models.Message.created_at.desc())
             .limit(50)  # Limit to recent messages
         )
-        if allowed_sessions is not None:
-            stmt = stmt.where(models.Message.session_name.in_(allowed_sessions))
+        if session_names is not None:
+            stmt = stmt.where(models.Message.session_name.in_(session_names))
         result = await db.execute(stmt)
         messages = list(result.scalars().all())
         # Return in chronological order
@@ -1146,7 +1149,7 @@ async def get_observation_context(
     session_name: str | None,
     message_ids: list[str],
     observer: str | None = None,
-    allowed_sessions: list[str] | None = None,
+    session_names: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Retrieve messages for given message IDs along with surrounding context.
@@ -1171,20 +1174,25 @@ async def get_observation_context(
 
     # Pre-fetch peer session scope if needed
     allowed_session_names: list[str] | None = None
-    if not session_name and (observer or allowed_sessions is not None):
+    if not session_name and (observer or session_names is not None):
         if observer:
             from src.crud.message import get_peer_session_names
 
             allowed_session_names = await get_peer_session_names(
                 db, workspace_name, observer
             )
-            if allowed_sessions is not None:
-                scope = set(allowed_sessions)
+            if session_names is not None:
+                scope = set(session_names)
                 allowed_session_names = [s for s in allowed_session_names if s in scope]
         else:
-            allowed_session_names = list(allowed_sessions or [])
+            allowed_session_names = list(session_names or [])
         if not allowed_session_names:
             return []
+    elif (
+        session_name and session_names is not None and session_name not in session_names
+    ):
+        # Requested session is outside the allowlist — fail closed.
+        return []
 
     # Use a CTE to get seq_in_session values for target messages
     stmt = (
@@ -1750,7 +1758,7 @@ async def _handle_get_recent_history(
             session_name=ctx.session_name,
             observed=ctx.observed,
             token_limit=ctx.history_token_limit,
-            allowed_sessions=ctx.session_names,
+            session_names=ctx.session_names,
         )
         if not history:
             return "No conversation history available"
@@ -1835,7 +1843,7 @@ async def _handle_search_memory(
                 context_window=0,
                 embedding=query_embedding,
                 observer=ctx.observer,
-                allowed_sessions=ctx.session_names,
+                session_names=ctx.session_names,
             )
             if snippets:
                 message_output = _format_message_snippets(
@@ -1877,7 +1885,7 @@ async def _handle_get_observation_context(
             session_name=ctx.session_name,
             message_ids=tool_input["message_ids"],
             observer=ctx.observer,
-            allowed_sessions=ctx.session_names,
+            session_names=ctx.session_names,
         )
         if not messages:
             return f"No messages found for IDs {tool_input['message_ids']}"
@@ -1920,7 +1928,7 @@ async def _handle_search_messages(
         context_window=2,
         embedding=query_embedding,
         observer=ctx.observer,
-        allowed_sessions=ctx.session_names,
+        session_names=ctx.session_names,
     )
     search_meta: dict[str, Any] = {
         "top_k": limit,
@@ -1957,7 +1965,7 @@ async def _handle_grep_messages(
         limit=limit,
         context_window=context_window,
         observer=ctx.observer,
-        allowed_sessions=ctx.session_names,
+        session_names=ctx.session_names,
     )
     if not snippets:
         return f"No messages found containing '{text}'"
@@ -2022,7 +2030,7 @@ async def _handle_get_messages_by_date_range(
             limit=limit,
             order=order,
             observer=ctx.observer,
-            allowed_sessions=ctx.session_names,
+            session_names=ctx.session_names,
         )
         msg_count = len(messages)
         messages_text = (
@@ -2095,7 +2103,7 @@ async def _handle_search_messages_temporal(
         before_date=before_date,
         limit=limit,
         context_window=context_window,
-        allowed_sessions=ctx.session_names,
+        session_names=ctx.session_names,
         embedding=query_embedding,
         observer=ctx.observer,
     )
