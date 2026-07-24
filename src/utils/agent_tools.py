@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import weakref
 from collections.abc import Callable
@@ -2174,11 +2175,56 @@ async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) ->
     )
 
 
+def _normalize_observation_ids(raw: Any) -> list[str]:
+    """Coerce a delete_observations ``observation_ids`` argument into ``list[str]``.
+
+    The tool schema asks for ``list[str]``, but LLM/tool-call output sometimes
+    provides a stringified list (e.g. ``"[doc_abc123]"``, ``"[id:doc_abc123]"``,
+    or a JSON-encoded array). A bare string passed into SQLAlchemy's ``.in_()``
+    either raises or silently iterates character-by-character, so it is
+    normalized here before reaching the delete path. See issue #719.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple, set)):
+        items: list[Any] = list(raw)
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, list):
+            items = parsed
+        elif isinstance(parsed, str):
+            items = [parsed]
+        else:
+            inner = text
+            if inner.startswith("[") and inner.endswith("]"):
+                inner = inner[1:-1]
+            items = list(inner.split(","))
+    else:
+        items = [raw]
+
+    normalized: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            item = str(item)
+        cleaned = item.strip().strip("\"'").strip()
+        if cleaned.lower().startswith("id:"):
+            cleaned = cleaned[3:].strip()
+        if cleaned:
+            normalized.append(cleaned)
+    return normalized
+
+
 async def _handle_delete_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
     """Handle delete_observations tool."""
-    observation_ids = tool_input.get("observation_ids", [])
+    observation_ids = _normalize_observation_ids(tool_input.get("observation_ids", []))
     if not observation_ids:
         return "ERROR: observation_ids list is empty"
 

@@ -21,6 +21,7 @@ from src.utils.agent_tools import (
     ToolContext,
     _handle_create_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_delete_observations,  # pyright: ignore[reportPrivateUsage]
+    _normalize_observation_ids,  # pyright: ignore[reportPrivateUsage]
     _handle_extract_preferences,  # pyright: ignore[reportPrivateUsage]
     _handle_finish_consolidation,  # pyright: ignore[reportPrivateUsage]
     _handle_get_messages_by_date_range,  # pyright: ignore[reportPrivateUsage]
@@ -676,6 +677,59 @@ class TestDeleteObservations:
         assert event.conclusion_count == 3
         # RETURNING order is not guaranteed; compare as multiset.
         assert sorted(event.levels) == sorted(["explicit", "deductive", "inductive"])
+
+class TestNormalizeObservationIds:
+    """Unit tests for _normalize_observation_ids (issue #719)."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (["doc_abc123", "doc_def456"], ["doc_abc123", "doc_def456"]),
+            ('["doc_abc123", "doc_def456"]', ["doc_abc123", "doc_def456"]),
+            ("[doc_abc123]", ["doc_abc123"]),
+            ("[id:doc_abc123]", ["doc_abc123"]),
+            ("[doc_abc123, doc_def456]", ["doc_abc123", "doc_def456"]),
+            ("doc_abc123", ["doc_abc123"]),
+            (["id:doc_abc123"], ["doc_abc123"]),
+            ("", []),
+            ([], []),
+            (None, []),
+        ],
+    )
+    def test_normalizes_stringified_and_list_inputs(
+        self, raw: Any, expected: list[str]
+    ):
+        assert _normalize_observation_ids(raw) == expected
+
+
+@pytest.mark.asyncio
+class TestDeleteObservationsStringifiedIds:
+    """Regression test for issue #719: stringified observation_ids must not crash."""
+
+    async def test_delete_accepts_stringified_id_list(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A bracketed-string observation_ids payload deletes the same row as a real list."""
+        _, _, _, _, _, documents = tool_test_data
+        ctx = make_tool_context(include_observation_ids=True)
+
+        doc_id = documents[0].id
+        # LLM/tool-call output sometimes emits a stringified list rather than a JSON array.
+        result = await _handle_delete_observations(
+            ctx, {"observation_ids": f"[{doc_id}]"}
+        )
+
+        assert "Deleted 1 observations" in result
+
+        db_session.expire(documents[0])
+        stmt = select(models.Document).where(models.Document.id == doc_id)
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is not None
+        assert doc.deleted_at is not None
+
 
 
 @pytest.mark.asyncio
