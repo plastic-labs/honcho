@@ -6,6 +6,8 @@ into a single warning-level issue so they stop spawning a fresh error issue per
 transaction (fleet-wide saturation symptom, tracked in DEV-1852).
 """
 
+from typing import TYPE_CHECKING, cast
+
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
@@ -13,9 +15,16 @@ from sqlalchemy.exc import OperationalError
 from src.exceptions import ResourceNotFoundException
 from src.telemetry.sentry import default_before_send
 
+if TYPE_CHECKING:
+    from sentry_sdk._types import Event, Hint
 
-def _hint(exc: BaseException) -> dict[str, object]:
-    return {"exc_info": (type(exc), exc, None)}
+
+def _hint(exc: BaseException) -> "Hint":
+    return cast("Hint", {"exc_info": (type(exc), exc, None)})
+
+
+def _event(**kwargs: object) -> "Event":
+    return cast("Event", cast(object, dict(kwargs)))
 
 
 def test_connection_timeout_is_consolidated_and_downgraded() -> None:
@@ -29,7 +38,7 @@ def test_connection_timeout_is_consolidated_and_downgraded() -> None:
 
 def test_unrelated_operational_error_passes_through() -> None:
     exc = OperationalError("SELECT 1", {}, Exception("some other db failure"))
-    event = {"level": "error"}
+    event = _event(level="error")
     assert default_before_send(event, _hint(exc)) == {"level": "error"}
 
 
@@ -43,5 +52,6 @@ def test_honcho_and_validation_errors_are_dropped() -> None:
 
 
 def test_events_without_exc_info_pass_through() -> None:
-    assert default_before_send({"x": 1}, None) == {"x": 1}
-    assert default_before_send({"x": 1}, {}) == {"x": 1}
+    event = _event(release="1.0")
+    assert default_before_send(event, None) == {"release": "1.0"}
+    assert default_before_send(event, cast("Hint", {})) == {"release": "1.0"}
