@@ -20,9 +20,7 @@ from . import VectorQueryResult, VectorRecord, VectorStore
 
 logger = logging.getLogger(__name__)
 
-# Type aliases for Turbopuffer's filter formats
-EqFilter = tuple[str, Literal["Eq"], Any]
-InFilter = tuple[str, Literal["In"], Sequence[Any]]
+# Type alias for Turbopuffer's AND filter format
 AndFilter = tuple[Literal["And"], Sequence[Filter]]
 
 DISTANCE_METRIC = "cosine_distance"
@@ -245,13 +243,17 @@ class TurbopufferVectorStore(VectorStore):
         if not filters:
             return None
 
-        filter_list: list[EqFilter | InFilter] = []
+        filter_list: list[Filter] = []
         for key, value in filters.items():
             # Check if value is a dict with "in" operator
             if isinstance(value, dict) and "in" in value:
                 # Membership filter using "In" operator
-                in_values = cast(Sequence[Any], value["in"])
-                filter_list.append((key, "In", in_values))
+                in_values = list(cast(Sequence[Any], value["in"]))
+                filter_list.append(self._membership_filter(key, in_values))
+            elif isinstance(value, list | tuple | set):
+                # Bare-list sugar: same membership semantics as {"in": [...]}
+                in_values = list(cast(Sequence[Any], value))
+                filter_list.append(self._membership_filter(key, in_values))
             else:
                 # Simple equality filter using "Eq" operator
                 filter_list.append((key, "Eq", cast(Any, value)))
@@ -265,6 +267,20 @@ class TurbopufferVectorStore(VectorStore):
         # Combine multiple filters with AND
         and_filter: AndFilter = ("And", filter_list)
         return and_filter
+
+    @staticmethod
+    def _membership_filter(key: str, values: list[Any]) -> Filter:
+        """Build an "In" membership filter, failing closed on an empty list.
+
+        Turbopuffer's empty-"In" semantics are undocumented, so an empty
+        allowlist emits an explicit contradiction (`Eq(x) AND NotEq(x)` is
+        false for every document) rather than risk a fail-open widening.
+        Mirrors lancedb's `1 = 0` guard.
+        """
+        if not values:
+            never: AndFilter = ("And", [(key, "Eq", ""), (key, "NotEq", "")])
+            return never
+        return (key, "In", values)
 
     async def delete_many(self, namespace: str, ids: list[str]) -> None:
         """

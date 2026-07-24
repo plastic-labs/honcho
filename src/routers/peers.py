@@ -312,7 +312,9 @@ async def get_representation(
             workspace_id,
             observer=peer_id,
             observed=options.target if options.target is not None else peer_id,
-            session_name=options.session_id,
+            session_names=[options.session_id]
+            if options.session_id is not None
+            else None,
             include_semantic_query=options.search_query,
             embedding=embedding,
             semantic_search_top_k=options.search_top_k,
@@ -475,7 +477,7 @@ async def get_peer_context(
             workspace_id,
             observer=peer_id,
             observed=observed,
-            session_name=None,  # Peer context is global, not session-scoped
+            session_names=None,  # Peer context is global, not session-scoped
             include_semantic_query=search_query,
             embedding=embedding,
             semantic_search_top_k=search_top_k,

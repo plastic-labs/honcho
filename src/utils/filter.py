@@ -1,7 +1,8 @@
 import datetime
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from logging import getLogger
 from typing import Any, TypeVar
+from typing import cast as typing_cast
 
 from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, or_
 from sqlalchemy.types import Numeric
@@ -27,6 +28,10 @@ COMPARISON_OPERATORS = {
 }
 
 NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
+
+# JSONB columns keep containment semantics: bare lists are not membership
+# sugar, and dict values map to nested-metadata conditions rather than IN/Eq.
+JSONB_COLUMNS = ("h_metadata", "configuration", "internal_metadata")
 
 ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING = {
     "id": "name",
@@ -238,6 +243,12 @@ def _build_field_condition(
     if value == "*":
         return None
 
+    # Bare-list sugar on regular columns: {"session_id": ["a", "b"]} is
+    # shorthand for {"session_id": {"in": ["a", "b"]}}. JSONB columns are
+    # excluded — a bare list there keeps JSONB containment semantics.
+    if isinstance(value, list | tuple | set) and column_name not in JSONB_COLUMNS:
+        value = {"in": list(typing_cast(Sequence[Any], value))}
+
     # Handle comparison operators vs regular values
     if isinstance(value, dict):
         # Check if this is a comparison operators dict by looking for known operators
@@ -248,12 +259,12 @@ def _build_field_condition(
         else:
             # This is a regular value that happens to be a dict
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
-            if column_name in ("h_metadata", "configuration", "internal_metadata"):
+            if column_name in JSONB_COLUMNS:
                 return _build_nested_metadata_conditions(column, value)  # pyright: ignore
             else:
                 return column == value
     else:
-        if column_name in ("h_metadata", "configuration", "internal_metadata"):
+        if column_name in JSONB_COLUMNS:
             return column.contains(value)
         else:
             return column == value
