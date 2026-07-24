@@ -821,6 +821,38 @@ async def test_structured_output_json_object_mode_request_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_output_json_object_mode_prompt_representation_schema_shape() -> None:
+    """PromptRepresentation schema hints explicit observations as content objects."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return(
+            '{"explicit": [{"content": "alice likes coffee"}]}'
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="glm-4.6",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=PromptRepresentation,
+        extra_params={"structured_output_mode": "json_object"},
+    )
+
+    call = _await_kwargs(client.chat.completions.create)
+    system_messages = [m for m in call["messages"] if m["role"] == "system"]
+    assert system_messages, "expected a system message carrying the schema"
+    system_content = system_messages[0]["content"]
+    schema = json.loads(system_content.split("JSON schema:\n", 1)[1])
+    explicit_description = schema["properties"]["explicit"]["description"]
+    assert '{"content": "The user is 25 years old"}' in explicit_description
+    assert "['The user is 25 years old'" not in explicit_description
+    assert isinstance(result.content, PromptRepresentation)
+    assert result.content.explicit[0].content == "alice likes coffee"
+
+
+@pytest.mark.asyncio
 async def test_structured_output_json_object_mode_repairs_markdown() -> None:
     """A provider that ignores json_object and returns prose must not crash —
     PromptRepresentation repairs to an empty representation, not an exception."""
