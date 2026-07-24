@@ -120,14 +120,14 @@ def traces_sampler(sampling_context: dict[str, Any]) -> float:
 def initialize_sentry(
     *,
     integrations: Sequence[Integration],
-    before_send: EventProcessor | None = None,
+    before_send: EventProcessor | None = default_before_send,
 ) -> None:
     """Initialize Sentry SDK with project settings.
 
     Args:
         integrations: Sentry SDK integrations to enable (e.g., Starlette, FastAPI).
-        before_send: Optional event filter override. Defaults to ``default_before_send``
-            so every entrypoint gets the shared filters unless it opts out explicitly.
+        before_send: Event filter override. Defaults to ``default_before_send`` so
+            every entrypoint gets the shared filters; pass ``None`` to opt out.
     """
     sentry_sdk.init(
         dsn=settings.SENTRY.DSN,
@@ -138,7 +138,7 @@ def initialize_sentry(
         # rate for real traffic and 0.0 for infra/scrape endpoints (see above).
         traces_sampler=traces_sampler,
         profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
-        before_send=before_send or default_before_send,
+        before_send=before_send,
         integrations=integrations,
     )
 

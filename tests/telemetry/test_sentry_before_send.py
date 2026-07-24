@@ -8,12 +8,14 @@ transaction (fleet-wide saturation symptom, tracked in DEV-1852).
 
 from typing import TYPE_CHECKING, cast
 
+import pytest
+import sentry_sdk
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 from src.exceptions import ResourceNotFoundException
-from src.telemetry.sentry import default_before_send
+from src.telemetry.sentry import default_before_send, initialize_sentry
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
@@ -55,3 +57,26 @@ def test_events_without_exc_info_pass_through() -> None:
     event = _event(release="1.0")
     assert default_before_send(event, None) == {"release": "1.0"}
     assert default_before_send(event, cast("Hint", {})) == {"release": "1.0"}
+
+
+def _captured_before_send(monkeypatch: pytest.MonkeyPatch, **kwargs: object) -> object:
+    captured: dict[str, object] = {}
+
+    def fake_init(**init_kwargs: object) -> None:
+        captured.update(init_kwargs)
+
+    monkeypatch.setattr(sentry_sdk, "init", fake_init)
+    initialize_sentry(integrations=[], **kwargs)  # pyright: ignore[reportArgumentType]
+    return captured["before_send"]
+
+
+def test_initialize_sentry_defaults_to_shared_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _captured_before_send(monkeypatch) is default_before_send
+
+
+def test_initialize_sentry_explicit_none_bypasses_shared_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _captured_before_send(monkeypatch, before_send=None) is None
