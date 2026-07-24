@@ -7,7 +7,9 @@ import pytest
 
 from src import crud, models
 from src.config import settings
+from src.crud.representation import RepresentationManager
 from src.deriver.deriver import process_representation_tasks_batch
+from src.exceptions import RepresentationSaveError
 from src.llm import HonchoLLMCallResponse
 from src.utils.representation import (
     ExplicitObservationBase,
@@ -69,6 +71,122 @@ class TestDeriverProcessing:
         )
         assert kwargs["model_config"].stop_sequences == expected_config.stop_sequences
         assert "llm_settings" not in kwargs
+
+    async def test_all_observer_saves_failing_surfaces_failure(self):
+        """When every observer's save_representation fails (e.g. embedding retries
+        exhausted under a sustained 429), the batch must surface the failure to the
+        queue manager — by raising — instead of swallowing it and reporting success.
+        Without this, the work unit is marked processed with zero documents saved:
+        silent memory loss (#728)."""
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(timezone.utc),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="The user has a dog named Rover")
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        failing_save = AsyncMock(side_effect=RuntimeError("429 RESOURCE_EXHAUSTED"))
+        emitted: list[Any] = []
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", failing_save),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
+            pytest.raises(RepresentationSaveError, match="save_representation failed"),
+        ):
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob"],
+                observed="alice",
+                queue_item_message_ids=[1],
+            )
+
+        # Telemetry must be emitted *before* the raise so a total save failure is
+        # still visible to metrics consumers. Guards against emit() being moved
+        # after the raise, which would reintroduce invisible total failures.
+        assert emitted, "expected telemetry to be emitted before the raised failure"
+        assert emitted[-1].observer_count == 0
+        assert emitted[-1].failed_observer_count == 1
+
+    async def test_partial_observer_failure_is_processed_and_surfaced(self):
+        """When some observers save and one fails, the batch does NOT raise (the unit
+        stays processed and the saved observers are kept), and the failure is surfaced
+        discoverably via telemetry — not just a log line (#728 partial case, D2)."""
+        message = Mock(
+            id=1,
+            public_id="msg_1",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="alice",
+            content="hello",
+            token_count=5,
+            created_at=datetime.now(timezone.utc),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+
+        mock_response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    ExplicitObservationBase(content="The user has a dog named Rover")
+                ]
+            ),
+            input_tokens=10,
+            output_tokens=5,
+            finish_reasons=["STOP"],
+        )
+
+        # bob succeeds (returns a CreateDocumentsResult), carol fails.
+        partial_save = AsyncMock(
+            side_effect=[
+                crud.CreateDocumentsResult(),
+                RuntimeError("429 RESOURCE_EXHAUSTED"),
+            ]
+        )
+        emitted: list[Any] = []
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+            patch.object(RepresentationManager, "save_representation", partial_save),
+            patch("src.deriver.deriver.emit", side_effect=emitted.append),
+        ):
+            # Must NOT raise — the saved observer's work is kept, unit stays processed.
+            await process_representation_tasks_batch(
+                messages=[message],
+                message_level_configuration=configuration,
+                observers=["bob", "carol"],
+                observed="alice",
+                queue_item_message_ids=[1],
+            )
+
+        assert emitted, "expected a telemetry event to be emitted"
+        event = emitted[-1]
+        assert event.observer_count == 1
+        assert event.failed_observer_count == 1
 
     async def test_process_representation_tasks_batch_passes_custom_instructions_into_prompt(
         self,
