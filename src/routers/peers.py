@@ -28,6 +28,7 @@ from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils.schema_conversion import json_response_schema_to_pydantic
+from src.utils.scopes import is_scope_peer_name, validate_no_scope_peer_names
 from src.utils.search import search
 from src.utils.types import embedding_call_purpose
 
@@ -52,7 +53,11 @@ async def get_peers(
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db: AsyncSession = read_db,
 ):
-    """Get all Peers for a Workspace, paginated with optional filters."""
+    """Get all Peers for a Workspace, paginated with optional filters.
+
+    Scope peers are excluded by default; set `kind` to "scope" for scope peers
+    only, or "all" for everything.
+    """
     filter_param = None
     if options and hasattr(options, "filters"):
         filter_param = options.filters
@@ -65,6 +70,7 @@ async def get_peers(
             workspace_name=workspace_id,
             filters=filter_param,
             reverse=reverse,
+            kind=options.kind if options else None,
         ),
     )
 
@@ -98,6 +104,14 @@ async def get_or_create_peer(
         if not jwt_params.p:
             raise AuthenticationException("Peer ID not found in query parameter or JWT")
         peer.name = jwt_params.p
+
+    # The scope namespace is reserved: scope peers are only created through
+    # the scopes facade (POST /workspaces/{workspace_id}/scopes).
+    validate_no_scope_peer_names(
+        [peer.name],
+        action="Use the scopes routes to create scopes.",
+    )
+
     result = await crud.get_or_create_peers(
         db, workspace_name=workspace_id, peers=[peer]
     )
@@ -187,6 +201,13 @@ async def chat(
     Query a Peer's representation using natural language. Performs agentic search and reasoning to comprehensively
     answer the query based on all latent knowledge gathered about the peer from their messages and conclusions.
     """
+    # Scope peers are never observed, so no representation of them exists to
+    # query. (A scope peer as the path-level observer is a Phase 2b concern.)
+    if options.target is not None and is_scope_peer_name(options.target):
+        raise ValidationException(
+            "Scope peers cannot be a chat target: no representation is formed of a scope."
+        )
+
     # The session id arrives in the body, so require_auth can't gate on it. A
     # peer-scoped key may only scope a chat to a session its peer belongs to;
     # without this check it could read any session's messages (the dialectic
@@ -294,6 +315,12 @@ async def get_representation(
     If a target is provided, we get the Representation of the target from the perspective of the Peer.
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
+    # Scope peers are never observed, so no representation of them exists.
+    if options.target is not None and is_scope_peer_name(options.target):
+        raise ValidationException(
+            "Scope peers cannot be a representation target: no representation is formed of a scope."
+        )
+
     try:
         embedding: list[float] | None = None
         if options.search_query:

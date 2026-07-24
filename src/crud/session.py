@@ -29,10 +29,12 @@ from src.exceptions import (
     ResourceNotFoundException,
 )
 from src.utils.filter import apply_filter
+from src.utils.scopes import scope_peer_name
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
 from .peer import get_or_create_peers, get_peer
+from .scope import SCOPE_MEMBERSHIP_CONFIG, get_or_create_scopes
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
@@ -273,6 +275,30 @@ async def get_or_create_session(
             fetch_after_upsert=False,
         )
 
+    # Add the session to any requested scopes: create-or-get each scope peer
+    # and record an observer membership (observe_others=true, observe_me=false).
+    # No backfill happens here — membership only affects messages ingested
+    # after this point (backfill is DEV-1999).
+    scopes_result = None
+    if session.scopes:
+        scopes_result = await get_or_create_scopes(
+            db,
+            workspace_name=workspace_name,
+            scopes=[
+                schemas.ScopeCreate(name=scope_name) for scope_name in session.scopes
+            ],
+        )
+        await _get_or_add_peers_to_session(
+            db,
+            workspace_name=workspace_name,
+            session_name=session.name,
+            peer_names={
+                scope_peer_name(scope_name): SCOPE_MEMBERSHIP_CONFIG
+                for scope_name in session.scopes
+            },
+            fetch_after_upsert=False,
+        )
+
     await db.commit()
 
     # Run deferred cache operations from workspace/peer creation
@@ -280,6 +306,8 @@ async def get_or_create_session(
         await ws_result.post_commit()
     if peers_result is not None:
         await peers_result.post_commit()
+    if scopes_result is not None:
+        await scopes_result.post_commit()
 
     # Only update cache if session data changed or was newly created
     if needs_cache_update:
@@ -976,6 +1004,30 @@ async def set_peers_for_session(
     await db.commit()
     await peers_result.post_commit()
     return peers
+
+
+async def upsert_session_peers(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_names: dict[str, schemas.SessionPeerConfig],
+    *,
+    fetch_after_upsert: bool = True,
+) -> list[models.SessionPeer]:
+    """Public wrapper around the session-peer membership upsert.
+
+    Exists for other crud modules (currently the scopes facade in
+    ``src/crud/scope.py``) that manage memberships directly, bypassing the
+    route-level scope-peer guardrails. See ``_get_or_add_peers_to_session``
+    for semantics.
+    """
+    return await _get_or_add_peers_to_session(
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        peer_names=peer_names,
+        fetch_after_upsert=fetch_after_upsert,
+    )
 
 
 async def _get_or_add_peers_to_session(

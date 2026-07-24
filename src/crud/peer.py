@@ -1,7 +1,7 @@
 """CRUD helpers for peer records and peer-scoped session queries."""
 
 from logging import getLogger
-from typing import Any
+from typing import Any, Literal
 
 from cashews import NOT_NONE
 from sqlalchemy import Select, select
@@ -15,6 +15,7 @@ from src.config import settings
 from src.crud.workspace import get_or_create_workspace
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.models import Peer
+from src.utils import scopes as scopes_util
 from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
 
@@ -215,9 +216,28 @@ async def get_peers(
     workspace_name: str,
     filters: dict[str, Any] | None = None,
     reverse: bool = False,
+    kind: Literal["scope", "all"] | None = None,
 ) -> Select[tuple[models.Peer]]:
-    """Build a filtered peer list query ordered by creation time."""
+    """Build a filtered peer list query ordered by creation time.
+
+    Args:
+        workspace_name: Name of the workspace
+        filters: Filter peers by metadata
+        reverse: Whether to reverse the default creation order
+        kind: Which kinds of peers to include. None (default) excludes scope
+            peers (peers whose configuration carries ``{"kind": "scope"}``),
+            "scope" returns only scope peers, and "all" returns everything.
+    """
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
+
+    if kind is None:
+        stmt = stmt.where(
+            ~models.Peer.configuration.contains({"kind": scopes_util.SCOPE_KIND})
+        )
+    elif kind == "scope":
+        stmt = stmt.where(
+            models.Peer.configuration.contains({"kind": scopes_util.SCOPE_KIND})
+        )
 
     stmt = apply_filter(stmt, models.Peer, filters)
 
