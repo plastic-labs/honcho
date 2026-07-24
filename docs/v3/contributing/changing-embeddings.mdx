@@ -40,6 +40,9 @@ Concretely, for either a dim change or a model change:
    export EMBEDDING_MODEL_CONFIG__TRANSPORT=openai
    export EMBEDDING_MODEL_CONFIG__MODEL=nomic-embed-text
    export EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://your-ollama:11434/v1
+   # Non-OpenAI models need a matching tokenizer; otherwise chunk-size decisions
+   # use Honcho's tiktoken fallback and can be rejected by the provider (see #827).
+   # export EMBEDDING_MODEL_CONFIG__TOKENIZER=hf:nomic-ai/nomic-embed-text
    alembic upgrade head
    uv run python scripts/configure_embeddings.py --dry-run
    uv run python scripts/configure_embeddings.py --yes
