@@ -151,7 +151,7 @@ class TestMessageCrudAllowlistIntersection:
             session_name=None,
             text="needle",
             observer=peer.name,
-            allowed_sessions=[session_a],
+            session_names=[session_a],
         )
         contents = [m.content for matches, _ in snippets for m in matches]
         assert contents == ["needle in alpha"]
@@ -164,7 +164,7 @@ class TestMessageCrudAllowlistIntersection:
             session_name=None,
             text="needle",
             observer=peer.name,
-            allowed_sessions=[foreign],
+            session_names=[foreign],
         )
         assert snippets == []
 
@@ -174,7 +174,7 @@ class TestMessageCrudAllowlistIntersection:
             session_name=None,
             text="needle",
             observer=peer.name,
-            allowed_sessions=[session_a, session_b],
+            session_names=[session_a, session_b],
         )
         assert len(snippets) == 2
 
@@ -193,7 +193,7 @@ class TestMessageCrudAllowlistIntersection:
             workspace_name=workspace.name,
             session_name=None,
             observer=peer.name,
-            allowed_sessions=[session_a],
+            session_names=[session_a],
         )
         assert [m.content for m in messages] == ["needle in alpha"]
 
@@ -203,7 +203,7 @@ class TestMessageCrudAllowlistIntersection:
             workspace_name=workspace.name,
             session_name=None,
             observer=peer.name,
-            allowed_sessions=[],
+            session_names=[],
         )
         assert messages == []
 
