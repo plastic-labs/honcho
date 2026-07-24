@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 from enum import Enum
-from functools import cache
+from functools import cache, lru_cache
 from inspect import cleandoc as c
 from typing import TypedDict
 
@@ -15,6 +15,8 @@ from src.cache.client import cache as cache_client
 from src.config import ConfiguredModelSettings, settings
 from src.crud.session import session_cache_key
 from src.dependencies import tracked_db
+# TODO: move _custom_instructions_section to shared utility
+from src.deriver.prompts import _custom_instructions_section
 from src.exceptions import ResourceNotFoundException
 from src.llm import HonchoLLMCallResponse, honcho_llm_call
 from src.llm.types import LLMTelemetryContext
@@ -58,6 +60,7 @@ class Summary(TypedDict):
 
 
 def to_schema_summary(s: Summary) -> schemas.Summary:
+    """Convert a Summary TypedDict to a Pydantic Summary schema object."""
     return schemas.Summary(
         content=s["content"],
         message_id=s["message_id"],
@@ -82,6 +85,7 @@ __all__ = [
 
 
 def _get_summary_model_config() -> ConfiguredModelSettings:
+    """Return the configured model settings for summary generation."""
     return settings.SUMMARY.MODEL_CONFIG
 
 
@@ -102,8 +106,10 @@ def short_summary_prompt(
     formatted_messages: str,
     output_words: int,
     previous_summary_text: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """Generate the short summary prompt."""
+    custom_instructions_section = _custom_instructions_section(custom_instructions)
     return c(f"""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
@@ -118,6 +124,7 @@ Provide a concise, factual summary that captures the essence of the conversation
 
 Return only the summary without any explanation or meta-commentary.
 
+{custom_instructions_section}
 <previous_summary>
 {previous_summary_text}
 </previous_summary>
@@ -134,8 +141,10 @@ def long_summary_prompt(
     formatted_messages: str,
     output_words: int,
     previous_summary_text: str,
+    custom_instructions: str | None = None,
 ) -> str:
     """Generate the long summary prompt."""
+    custom_instructions_section = _custom_instructions_section(custom_instructions)
     return c(f"""
 You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
 
@@ -152,6 +161,7 @@ Provide a thorough and detailed summary that captures the essence of the convers
 
 Return only the summary without any explanation or meta-commentary.
 
+{custom_instructions_section}
 <previous_summary>
 {previous_summary_text}
 </previous_summary>
@@ -164,36 +174,41 @@ Hard limit: {output_words} words maximum. If needed, drop lower-priority detail 
 """)
 
 
-@cache
-def estimate_short_summary_prompt_tokens() -> int:
-    """Estimate tokens for the short summary prompt (without messages/previous_summary)."""
+@lru_cache(maxsize=128)
+def estimate_short_summary_prompt_tokens(
+    custom_instructions: str | None = None,
+) -> int:
+    """Estimate tokens for the short summary prompt, optionally including custom instructions."""
     try:
         return estimate_tokens(
             short_summary_prompt(
                 formatted_messages="",
                 output_words=0,
                 previous_summary_text="",
+                custom_instructions=custom_instructions,
             )
         )
     except Exception:
-        # Return a rough estimate if estimation fails
         return 200
 
 
-@cache
-def estimate_long_summary_prompt_tokens() -> int:
-    """Estimate tokens for the long summary prompt (without messages/previous_summary)."""
+@lru_cache(maxsize=128)
+def estimate_long_summary_prompt_tokens(
+    custom_instructions: str | None = None,
+) -> int:
+    """Estimate tokens for the long summary prompt, optionally including custom instructions."""
     try:
         return estimate_tokens(
             long_summary_prompt(
                 formatted_messages="",
                 output_words=0,
                 previous_summary_text="",
+                custom_instructions=custom_instructions,
             )
         )
     except Exception:
-        # Return a rough estimate if estimation fails
         return 200
+
 
 
 @conditional_observe(name="Create Short Summary")
@@ -201,9 +216,23 @@ async def create_short_summary(
     formatted_messages: str,
     input_tokens: int,
     previous_summary: str | None = None,
+    custom_instructions: str | None = None,
     *,
     workspace_name: str | None = None,
 ) -> HonchoLLMCallResponse[str]:
+    """
+    Generate a short summary via an LLM call.
+
+    Args:
+        formatted_messages: Pre-formatted conversation messages.
+        input_tokens: Token count of the input (messages + previous summary).
+        previous_summary: Previous summary text for continuity, if any.
+        custom_instructions: Optional custom instructions from configuration.
+        workspace_name: Workspace name for telemetry attribution.
+
+    Returns:
+        The LLM response containing the short summary text and token counts.
+    """
     # input_tokens indicates how many tokens the message list + previous summary take up
     # we want to optimize short summaries to be smaller than the actual content being summarized
     # so we ask the agent to produce a word count roughly equal to either the input, or the max
@@ -217,7 +246,10 @@ async def create_short_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = short_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+        formatted_messages,
+        output_words,
+        previous_summary_text,
+        custom_instructions=custom_instructions,
     )
 
     # Mint a root span id.
@@ -242,9 +274,22 @@ async def create_short_summary(
 async def create_long_summary(
     formatted_messages: str,
     previous_summary: str | None = None,
+    custom_instructions: str | None = None,
     *,
     workspace_name: str | None = None,
 ) -> HonchoLLMCallResponse[str]:
+    """
+    Generate a comprehensive long summary via an LLM call.
+
+    Args:
+        formatted_messages: Pre-formatted conversation messages.
+        previous_summary: Previous summary text for continuity, if any.
+        custom_instructions: Optional custom instructions from configuration.
+        workspace_name: Workspace name for telemetry attribution.
+
+    Returns:
+        The LLM response containing the long summary text and token counts.
+    """
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
     output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
@@ -255,7 +300,10 @@ async def create_long_summary(
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
     prompt = long_summary_prompt(
-        formatted_messages, output_words, previous_summary_text
+        formatted_messages,
+        output_words,
+        previous_summary_text,
+        custom_instructions=custom_instructions,
     )
 
     # Mint a root span id.
@@ -452,6 +500,13 @@ async def _create_and_save_summary(
         previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
         input_tokens = messages_tokens + previous_summary_tokens
 
+    # Extract custom_instructions from the summarizer's own configuration.
+    # This is separate from reasoning custom_instructions — workspace
+    # operators may want summaries in a different style than deriver output.
+    custom_instructions: str | None = None
+    if configuration.summary and configuration.summary.custom_instructions is not None:
+        custom_instructions = configuration.summary.custom_instructions
+
     (
         new_summary,
         is_fallback,
@@ -466,6 +521,7 @@ async def _create_and_save_summary(
         last_message_id=last_message_id,
         last_message_content_preview=last_message_content_preview,
         message_count=message_count,
+        custom_instructions=custom_instructions,
         workspace_name=workspace_name,
     )
 
@@ -473,9 +529,13 @@ async def _create_and_save_summary(
     # save-summary path and the telemetry emit below can use it
     # without basedpyright tripping on a possibly-unbound name.
     if summary_type == SummaryType.SHORT:
-        prompt_tokens = estimate_short_summary_prompt_tokens()
+        prompt_tokens = estimate_short_summary_prompt_tokens(
+            custom_instructions
+        )
     else:
-        prompt_tokens = estimate_long_summary_prompt_tokens()
+        prompt_tokens = estimate_long_summary_prompt_tokens(
+            custom_instructions
+        )
 
     # Step 3: Save to database with new transaction
     if not is_fallback:
@@ -561,6 +621,7 @@ async def _create_summary(
     last_message_id: int,
     last_message_content_preview: str,
     message_count: int,
+    custom_instructions: str | None = None,
     *,
     workspace_name: str | None = None,
 ) -> tuple[Summary, bool, int, int]:
@@ -576,6 +637,8 @@ async def _create_summary(
         last_message_id: ID of the last message
         last_message_content_preview: Preview of last message content for fallback
         message_count: Number of messages for fallback
+        custom_instructions: Optional workspace-level custom instructions for prompt
+        workspace_name: Optional workspace name for telemetry
 
     Returns:
         A tuple of (Summary, is_fallback, llm_input_tokens, llm_output_tokens)
@@ -594,12 +657,14 @@ async def _create_summary(
                 formatted_messages,
                 input_tokens,
                 previous_summary_text,
+                custom_instructions=custom_instructions,
                 workspace_name=workspace_name,
             )
         else:
             response = await create_long_summary(
                 formatted_messages,
                 previous_summary_text,
+                custom_instructions=custom_instructions,
                 workspace_name=workspace_name,
             )
 
