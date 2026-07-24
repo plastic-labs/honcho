@@ -9,17 +9,56 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 import sentry_sdk
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
+from sqlalchemy.exc import OperationalError
 
 from src.config import settings
+from src.exceptions import HonchoException
 
 P = ParamSpec("P")
 T = TypeVar("T")
 
 if TYPE_CHECKING:
-    from sentry_sdk._types import EventProcessor
+    from sentry_sdk._types import Event, EventProcessor, Hint
     from sentry_sdk.integrations import Integration
 
 logger = logging.getLogger(__name__)
+
+
+def default_before_send(event: Event, hint: Hint | None) -> Event | None:
+    """Filter/regroup known non-actionable events before Sentry ingests them.
+
+    Shared by every entrypoint (API + deriver) so filtering is process-agnostic.
+    """
+    if not hint:
+        return event
+
+    exc_info = hint.get("exc_info")
+    if not exc_info:
+        return event
+
+    _, exc_value, _ = exc_info
+    if isinstance(exc_value, HonchoException):
+        return None
+
+    # Filters out ValidationErrors and RequestValidationErrors (typically from Pydantic)
+    if isinstance(exc_value, ValidationError | RequestValidationError):
+        logger.info(f"Filtering out validation error from Sentry: {exc_value}")
+        return None
+
+    # DB connection-pool checkout timeouts are a fleet-wide saturation symptom, not a
+    # per-transaction bug. Collapse every occurrence into one issue (Sentry would otherwise
+    # split by transaction/endpoint) and drop to warning so it stops tripping error alerts.
+    # Watch it via a rate/spike metric alert instead. Root cause tracked in DEV-1852.
+    if isinstance(exc_value, OperationalError) and "connection timeout expired" in str(
+        exc_value
+    ):
+        event["fingerprint"] = ["honcho-db-connection-timeout"]
+        event["level"] = "warning"
+        return event
+
+    return event
 
 
 # Paths whose transactions carry no debugging value but are hit constantly
@@ -87,7 +126,8 @@ def initialize_sentry(
 
     Args:
         integrations: Sentry SDK integrations to enable (e.g., Starlette, FastAPI).
-        before_send: Optional event filter callback to suppress specific exceptions.
+        before_send: Optional event filter override. Defaults to ``default_before_send``
+            so every entrypoint gets the shared filters unless it opts out explicitly.
     """
     sentry_sdk.init(
         dsn=settings.SENTRY.DSN,
@@ -98,7 +138,7 @@ def initialize_sentry(
         # rate for real traffic and 0.0 for infra/scrape endpoints (see above).
         traces_sampler=traces_sampler,
         profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
-        before_send=before_send,
+        before_send=before_send or default_before_send,
         integrations=integrations,
     )
 
