@@ -39,6 +39,8 @@ from src.utils.agent_tools import (
     create_observations,
     create_tool_executor,
     extract_preferences,
+    get_observation_context,
+    get_recent_history,
 )
 
 # =============================================================================
@@ -801,6 +803,7 @@ class TestSearchMemory:
             context_window: int = 2,
             embedding: list[float] | None = None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (workspace_name, session_name, query, limit, context_window, observer)
             fallback_embeddings.append(embedding)
@@ -909,6 +912,7 @@ class TestSearchMessagesTemporal:
             context_window: int = 2,
             embedding: list[float] | None = None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (
                 workspace_name,
@@ -1502,6 +1506,7 @@ class TestExtractPreferences:
             context_window: int,
             embedding: list[float] | None,
             observer: str | None = None,
+            **_kwargs: Any,
         ) -> list[tuple[list[models.Message], list[models.Message]]]:
             _ = (limit, context_window, observer)
             embedding_args.append(embedding)
@@ -1848,3 +1853,63 @@ class TestObserverPeerNameWiring:
         await _handle_get_messages_by_date_range(ctx, {"after_date": "2024-01-01"})
 
         assert captured_kwargs["observer"] == ctx.observer
+
+
+@pytest.mark.asyncio
+class TestSessionAllowlistFailClosed:
+    """A specific session_name outside the session_names allowlist must fail closed.
+
+    Routes guard this too, but these CRUD/tool functions are reachable directly
+    from the dialectic loop, so the allowlist is enforced at the boundary.
+    """
+
+    async def test_get_recent_history_respects_allowlist(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, peer2, session, _messages, _ = tool_test_data
+
+        # session IS in the allowlist -> history returned
+        allowed = await get_recent_history(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observed=peer2.name,
+            session_names=[session.name],
+        )
+        assert allowed  # non-empty
+
+        # session is NOT in the allowlist -> fail closed
+        blocked = await get_recent_history(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observed=peer2.name,
+            session_names=["some-other-session"],
+        )
+        assert blocked == []
+
+    async def test_get_observation_context_fails_closed(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, peer1, _peer2, session, messages, _ = tool_test_data
+        blocked = await get_observation_context(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            message_ids=[messages[0].id],
+            observer=peer1.name,
+            session_names=["some-other-session"],
+        )
+        assert blocked == []
+
+    async def test_get_messages_by_date_range_fails_closed(
+        self, db_session: AsyncSession, tool_test_data: Any
+    ):
+        workspace, _peer1, _peer2, session, _messages, _ = tool_test_data
+        blocked = await crud.get_messages_by_date_range(
+            db_session,
+            workspace_name=workspace.name,
+            session_name=session.name,
+            session_names=["some-other-session"],
+        )
+        assert blocked == []

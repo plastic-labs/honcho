@@ -61,6 +61,67 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
 }
 
 
+MAX_SESSION_ALLOWLIST_ENTRIES = 1000
+
+
+def extract_session_allowlist(
+    filters: dict[str, Any] | None,
+) -> list[str] | None:
+    """Parse a recall-path ``filters`` body into a session allowlist.
+
+    The dialectic and representation endpoints accept a constrained subset of
+    the filter DSL: only the ``session_id`` key, valued as a single id, a bare
+    list of ids, or ``{"in": [...]}``. Unsupported keys or shapes raise
+    FilterError (422) rather than being silently ignored — a dropped filter
+    on these endpoints would widen recall scope.
+
+    Returns None when filters is None. An explicit empty list is preserved so
+    downstream consumers fail closed.
+    """
+    if filters is None:
+        return None
+
+    unsupported = set(filters) - {"session_id"}
+    if unsupported:
+        raise FilterError(
+            f"Unsupported filter key(s) for this endpoint: {sorted(unsupported)}. Only 'session_id' is supported."
+        )
+    if "session_id" not in filters:
+        raise FilterError("filters must contain 'session_id'")
+
+    value = filters["session_id"]
+    entries: list[Any]
+    if isinstance(value, str):
+        entries = [value]
+    elif isinstance(value, list):
+        entries = list(typing_cast(Sequence[Any], value))
+    elif (
+        isinstance(value, dict)
+        and set(typing_cast("dict[str, Any]", value)) == {"in"}
+        and isinstance(value["in"], list)
+    ):
+        entries = list(typing_cast(Sequence[Any], value["in"]))
+    else:
+        raise FilterError(
+            'filters.session_id must be a session id, a list of session ids, or {"in": [...]}'
+        )
+
+    if len(entries) > MAX_SESSION_ALLOWLIST_ENTRIES:
+        raise FilterError(
+            f"filters.session_id supports at most {MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+        )
+
+    allowlist: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, str) or not entry:
+            raise FilterError("filters.session_id entries must be non-empty strings")
+        if entry not in seen:
+            seen.add(entry)
+            allowlist.append(entry)
+    return allowlist
+
+
 def apply_filter(
     stmt: Select[tuple[T]], model_class: type[T], filters: dict[str, Any] | None = None
 ) -> Select[tuple[T]]:

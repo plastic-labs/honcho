@@ -177,6 +177,15 @@ class PeerRepresentationGet(BaseModel):
     session_id: str | None = Field(
         None, description="Optional session ID within which to scope the representation"
     )
+    filters: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional filters to scope the representation. This endpoint "
+            "supports only the 'session_id' key: a session id, a list of "
+            'session ids, or {"in": [...]}. When session_id is also set, it '
+            "must be included in the allowlist."
+        ),
+    )
     target: str | None = Field(
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
@@ -561,6 +570,16 @@ class MessageSearchOptions(BaseModel):
 class DialecticOptions(BaseModel):
     session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"
+    )
+    filters: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional filters to scope recall. This endpoint supports only the "
+            "'session_id' key: a session id, a list of session ids, or "
+            '{"in": [...]}. Recall (conclusions and messages) is restricted to '
+            "the allowlist; unsupported keys are rejected. When session_id is "
+            "also set, it must be included in the allowlist."
+        ),
     )
     target: str | None = Field(
         None,

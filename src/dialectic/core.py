@@ -70,6 +70,7 @@ class DialecticAgent:
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
         session_id: str | None = None,
+        session_names: list[str] | None = None,
     ):
         """
         Initialize the dialectic agent.
@@ -84,9 +85,13 @@ class DialecticAgent:
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
             reasoning_level: Level of reasoning to apply
             session_id: ID used for grouping traces (not session_name)
+            session_names: Optional session allowlist restricting all recall
+                (conclusions and messages) to these sessions; empty list
+                fails closed
         """
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
+        self.session_names: list[str] | None = session_names
         self.session_id: str | None = session_id
         self.observer: str = observer
         self.observed: str = observed
@@ -197,6 +202,7 @@ class DialecticAgent:
                 limit=prefetch_limit,
                 levels=["explicit"],
                 embedding=query_embedding,
+                session_names=self.session_names,
             )
 
             derived_repr = await search_memory(
@@ -207,6 +213,7 @@ class DialecticAgent:
                 limit=prefetch_limit,
                 levels=["deductive", "inductive", "contradiction"],
                 embedding=query_embedding,
+                session_names=self.session_names,
             )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
@@ -296,6 +303,7 @@ class DialecticAgent:
         ] = await create_tool_executor(
             workspace_name=self.workspace_name,
             session_name=self.session_name,
+            session_names=self.session_names,
             observer=self.observer,
             observed=self.observed,
             history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
