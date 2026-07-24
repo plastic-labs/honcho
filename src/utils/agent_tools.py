@@ -24,7 +24,12 @@ from src.telemetry.events import (
     emit,
 )
 from src.utils import summarizer
-from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
+from src.utils.formatting import (
+    format_datetime_utc,
+    format_new_turn_with_timestamp,
+    parse_datetime_iso,
+    utc_now_iso,
+)
 from src.utils.representation import Representation
 from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
 
@@ -845,6 +850,18 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["create_observations_inductive"],
 ]
 
+# Tools for the card-refresh specialist (card_refresh dream type).
+# Card-only maintenance: discovery plus update_peer_card. Deliberately
+# excludes every observation-mutating tool (create_observations*,
+# delete_observations) — a card refresh must never touch observations.
+CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
+    # Discovery tools
+    TOOLS["get_recent_observations"],
+    TOOLS["search_memory"],
+    # Action tool
+    TOOLS["update_peer_card"],
+]
+
 
 async def create_observations(
     observations: list[schemas.ObservationInput],
@@ -982,14 +999,16 @@ async def create_observations(
     accepted: list[schemas.DocumentCreate] = []
     if documents:
         async with tracked_db("create_observations.save") as db:
-            accepted = await crud.create_documents(
-                db,
-                documents=documents,
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-                deduplicate=True,
-            )
+            accepted = (
+                await crud.create_documents(
+                    db,
+                    documents=documents,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    deduplicate=True,
+                )
+            ).created_documents
         logger.info(
             "Created %d observations in %s/%s/%s",
             len(accepted),
@@ -1332,6 +1351,52 @@ def _normalize_observation_id(obs_id: str) -> str:
     return obs_id.strip()
 
 
+async def _latest_source_timestamp(
+    ctx: ToolContext,
+    observations: list[schemas.ObservationInput],
+) -> str | None:
+    """Latest ``message_created_at`` across all source observations in the batch.
+
+    Dreamer conclusions (deductive/inductive) are derived from existing
+    observations referenced by ``source_ids`` rather than from live messages.
+    Their logical timestamp is the point when the conclusion became possible
+    from its evidence, not when the dreamer happened to run, so we date
+    ``internal_metadata["message_created_at"]`` to the most recent source
+    observation. The physical ``Document.created_at`` column remains the insert
+    time. Returns None if no source_ids resolve to a usable timestamp (caller
+    falls back to now).
+    """
+    source_ids: list[str] = []
+    for obs in observations:
+        if obs.source_ids:
+            source_ids.extend(obs.source_ids)
+    if not source_ids:
+        return None
+
+    latest: datetime | None = None
+    async with tracked_db("create_observations.source_ts", read_only=True) as db:
+        docs = await crud.fetch_documents_by_ids(
+            db,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            document_ids=list(set(source_ids)),
+        )
+        for doc in docs:
+            raw = doc.internal_metadata.get("message_created_at")
+            if not isinstance(raw, str):
+                continue
+            try:
+                # always tz-aware, so the comparison below can't crash on mixed formats
+                parsed = parse_datetime_iso(raw)
+            except ValueError:
+                continue
+            if latest is None or parsed > latest:
+                latest = parsed
+
+    return format_datetime_utc(latest) if latest is not None else None
+
+
 async def _handle_create_observations_impl(
     ctx: ToolContext,
     tool_input: dict[str, Any],
@@ -1383,6 +1448,21 @@ async def _handle_create_observations_impl(
                 )
             )
             continue
+        # Session-purity invariant: explicit observations record what was
+        # directly derived from a session's messages. Agents that are not
+        # processing messages (dreamer specialists, dialectic) must not mint
+        # them — consolidation output belongs at a derived level.
+        if not ctx.current_messages and validated.level == "explicit":
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=validated.content[:50],
+                    error=(
+                        "Only message ingestion can create 'explicit' observations; "
+                        "use a derived level (deductive/inductive/contradiction)"
+                    ),
+                )
+            )
+            continue
         observations.append(validated)
 
     if not observations:
@@ -1394,10 +1474,16 @@ async def _handle_create_observations_impl(
     # Determine message context
     if ctx.current_messages:
         message_ids = [msg.id for msg in ctx.current_messages]
-        message_created_at = str(ctx.current_messages[-1].created_at)
+        # same ISO-8601 Z format as the dreamer path below
+        message_created_at = format_datetime_utc(ctx.current_messages[-1].created_at)
     else:
+        # Dreamer path: no current messages. Backdate the conclusion to the
+        # latest source observation, which is when the inference became possible.
+
         message_ids = []
-        message_created_at = utc_now_iso()
+        message_created_at = (
+            await _latest_source_timestamp(ctx, observations)
+        ) or utc_now_iso()
 
     # Use lock to serialize database writes (prevents concurrent commit issues)
     async with ctx.db_lock:

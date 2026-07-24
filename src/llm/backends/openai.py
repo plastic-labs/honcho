@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import weakref
 from collections.abc import AsyncIterator
-from functools import cache
 from typing import Any, cast
 
 from openai import BadRequestError, LengthFinishReasonError
@@ -22,21 +22,35 @@ from src.llm.structured_output import (
 logger = logging.getLogger(__name__)
 
 
-@cache
+# The point of this being a WeakKeyDictionary, as opposed to a regular dict, is that it
+# does not hold a reference to the keyed BaseModel so that when a dynamically created
+# type is no longer referenced it becomes eligible for garbage collection. This avoids a
+# memory leak.
+_json_object_instruction_cache: weakref.WeakKeyDictionary[type[BaseModel], str] = (
+    weakref.WeakKeyDictionary()
+)
+
+
 def _json_object_instruction(response_format: type[BaseModel]) -> str:
     """Schema-injection instruction for json_object mode.
 
     The JSON schema is static per response_format class, so cache the serialized
-    instruction — the deriver issues one structured call per batch on the worker
-    hot path and would otherwise re-walk the schema + re-serialize it every call.
+    instruction — the deriver would otherwise re-walk the schema + re-serialize
+    it every call.
     """
-    # "JSON" must appear in the messages to satisfy the json_object contract.
-    return (
-        "You must respond with a single JSON object that conforms exactly to "
-        "the following JSON schema. Do not include any text, markdown, or code "
-        "fences outside the JSON object.\n\nJSON schema:\n"
+    cached = _json_object_instruction_cache.get(response_format)
+    if cached is not None:
+        return cached
+    # Some OpenAI-compatible providers enforce this JSON-object precondition with
+    # a case-sensitive substring check, so include lowercase "json" explicitly.
+    instruction = (
+        "You must respond with a single JSON object (json) that conforms "
+        "exactly to the following JSON schema. Do not include any text, "
+        "markdown, or code fences outside the JSON object.\n\nJSON schema:\n"
         f"{json.dumps(response_format.model_json_schema())}"
     )
+    _json_object_instruction_cache[response_format] = instruction
+    return instruction
 
 
 def _uses_max_completion_tokens(model: str) -> bool:
@@ -171,6 +185,24 @@ class OpenAIBackend:
                     response, response_format, model, empty_on_missing=True
                 )
                 return self._normalize_response(response, content_override=content)
+            if tools:
+                # parse() refuses non-strict function tools, and our agent tool
+                # schemas are deliberately non-strict (see _convert_tools), so
+                # tool-loop iterations use create() with an explicit json_schema
+                # response_format — same server-side schema enforcement, no
+                # strict-tools requirement — mirroring the streaming path.
+                params["response_format"] = self._json_schema_response_format(
+                    response_format
+                )
+                response = await self._client.chat.completions.create(**params)
+                # Tool-call turns carry no consumable content — the tool loop
+                # ignores it — and parsing their empty text would raise.
+                if getattr(response.choices[0].message, "tool_calls", None):
+                    return self._normalize_response(response)
+                content = self._parse_or_repair_structured_content(
+                    response, response_format, model, empty_on_missing=False
+                )
+                return self._normalize_response(response, content_override=content)
             params["response_format"] = response_format
             try:
                 response = await self._client.chat.completions.parse(**params)
@@ -273,13 +305,9 @@ class OpenAIBackend:
             else:
                 # Streaming create() can't take a BaseModel like parse() does;
                 # convert to a json_schema dict.
-                params["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_format.__name__,
-                        "schema": response_format.model_json_schema(),
-                    },
-                }
+                params["response_format"] = self._json_schema_response_format(
+                    response_format
+                )
         elif response_format is not None:
             params["response_format"] = response_format
         elif extra_params and extra_params.get("json_mode"):
@@ -420,6 +448,20 @@ class OpenAIBackend:
             reasoning_details=extract_openai_reasoning_details(response),
             raw_response=response,
         )
+
+    @staticmethod
+    def _json_schema_response_format(
+        response_format: type[BaseModel],
+    ) -> dict[str, Any]:
+        """Build the response_format param for create() calls that can't use
+        parse(): streaming, and requests carrying non-strict function tools."""
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_format.__name__,
+                "schema": response_format.model_json_schema(),
+            },
+        }
 
     @staticmethod
     def _structured_output_mode(extra_params: dict[str, Any] | None) -> str | None:

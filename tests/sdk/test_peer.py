@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator, Iterator
 from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel
 
 from sdks.python.src.honcho.client import Honcho
 from sdks.python.src.honcho.peer import Peer
@@ -626,3 +627,166 @@ async def test_peer_representation_with_all_params(
             max_conclusions=5,
         )
         assert isinstance(result, str)
+
+
+class ChatFoodPreferences(BaseModel):
+    favorite: str
+    confidence: float
+
+
+CHAT_SCHEMA_DICT = {
+    "type": "object",
+    "properties": {"items": {"type": "array", "items": {"type": "string"}}},
+    "required": ["items"],
+}
+
+
+@pytest.mark.asyncio
+async def test_peer_chat_response_format_pydantic(client_fixture: tuple[Honcho, str]):
+    """A Pydantic model class is sent as JSON Schema and the response content
+    is parsed back into a model instance."""
+    honcho_client, client_type = client_fixture
+    content = '{"favorite": "sushi", "confidence": 0.9}'
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id="test-rf-async-peer")
+
+        async def mock_post(*_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"content": content}
+
+        with patch.object(
+            peer._honcho._async_http_client,  # pyright: ignore[reportPrivateUsage]
+            "post",
+            side_effect=mock_post,
+        ) as mock:
+            result = await peer.aio.chat(
+                "What do I like?", response_format=ChatFoodPreferences
+            )
+    else:
+        peer = honcho_client.peer(id="test-rf-peer")
+        with patch.object(
+            peer._honcho._http,  # pyright: ignore[reportPrivateUsage]
+            "post",
+            return_value={"content": content},
+        ) as mock:
+            result = peer.chat("What do I like?", response_format=ChatFoodPreferences)
+
+    body = mock.call_args.kwargs["body"]
+    assert body["response_format"] == ChatFoodPreferences.model_json_schema()
+    assert isinstance(result, ChatFoodPreferences)
+    assert result.favorite == "sushi"
+
+
+@pytest.mark.asyncio
+async def test_peer_chat_response_format_dict(client_fixture: tuple[Honcho, str]):
+    """A raw JSON Schema dict is sent as-is and the response stays a string."""
+    honcho_client, client_type = client_fixture
+    content = '{"items": ["sushi"]}'
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id="test-rf-dict-async-peer")
+
+        async def mock_post(*_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"content": content}
+
+        with patch.object(
+            peer._honcho._async_http_client,  # pyright: ignore[reportPrivateUsage]
+            "post",
+            side_effect=mock_post,
+        ) as mock:
+            result = await peer.aio.chat(
+                "What do I like?", response_format=CHAT_SCHEMA_DICT
+            )
+    else:
+        peer = honcho_client.peer(id="test-rf-dict-peer")
+        with patch.object(
+            peer._honcho._http,  # pyright: ignore[reportPrivateUsage]
+            "post",
+            return_value={"content": content},
+        ) as mock:
+            result = peer.chat("What do I like?", response_format=CHAT_SCHEMA_DICT)
+
+    body = mock.call_args.kwargs["body"]
+    assert body["response_format"] == CHAT_SCHEMA_DICT
+    assert result == content
+
+
+@pytest.mark.asyncio
+async def test_peer_chat_response_format_empty_content(
+    client_fixture: tuple[Honcho, str],
+):
+    """Empty/None content returns None even when a Pydantic class was given."""
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id="test-rf-empty-async-peer")
+
+        async def mock_post(*_args: object, **_kwargs: object) -> dict[str, object]:
+            return {"content": None}
+
+        with patch.object(
+            peer._honcho._async_http_client,  # pyright: ignore[reportPrivateUsage]
+            "post",
+            side_effect=mock_post,
+        ):
+            result = await peer.aio.chat(
+                "What do I like?", response_format=ChatFoodPreferences
+            )
+    else:
+        peer = honcho_client.peer(id="test-rf-empty-peer")
+        with patch.object(
+            peer._honcho._http,  # pyright: ignore[reportPrivateUsage]
+            "post",
+            return_value={"content": None},
+        ):
+            result = peer.chat("What do I like?", response_format=ChatFoodPreferences)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_peer_chat_stream_response_format(client_fixture: tuple[Honcho, str]):
+    """chat_stream sends the schema in the body; chunks stay raw text."""
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        peer = await honcho_client.aio.peer(id="test-rf-stream-async-peer")
+
+        async def mock_astream(
+            *_args: object, **_kwargs: object
+        ) -> AsyncIterator[bytes]:
+            yield b'data: {"delta": {"content": "{\\"favorite\\":"}}\n'
+            yield b'data: {"delta": {"content": "\\"sushi\\",\\"confidence\\":0.9}"}}\n'
+            yield b'data: {"done": true}\n'
+
+        with patch.object(
+            peer._honcho._async_http_client,  # pyright: ignore[reportPrivateUsage]
+            "stream",
+            side_effect=mock_astream,
+        ) as mock:
+            result = await peer.aio.chat_stream(
+                "What do I like?", response_format=ChatFoodPreferences
+            )
+            chunks = [chunk async for chunk in result]
+    else:
+        peer = honcho_client.peer(id="test-rf-stream-peer")
+
+        def mock_stream(*_args: object, **_kwargs: object) -> Iterator[bytes]:
+            yield b'data: {"delta": {"content": "{\\"favorite\\":"}}\n'
+            yield b'data: {"delta": {"content": "\\"sushi\\",\\"confidence\\":0.9}"}}\n'
+            yield b'data: {"done": true}\n'
+
+        with patch.object(
+            peer._honcho._http,  # pyright: ignore[reportPrivateUsage]
+            "stream",
+            side_effect=mock_stream,
+        ) as mock:
+            result = peer.chat_stream(
+                "What do I like?", response_format=ChatFoodPreferences
+            )
+            chunks = list(result)
+
+    body = mock.call_args.kwargs["body"]
+    assert body["response_format"] == ChatFoodPreferences.model_json_schema()
+    accumulated = "".join(chunks)
+    assert ChatFoodPreferences.model_validate_json(accumulated).favorite == "sushi"

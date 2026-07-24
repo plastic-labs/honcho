@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
@@ -28,6 +29,7 @@ from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils.filter import extract_session_allowlist
+from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.search import search
 from src.utils.types import embedding_call_purpose
 
@@ -217,6 +219,14 @@ async def chat(
         if not set(session_allowlist) <= member_sessions:
             raise AuthenticationException("JWT not permissioned for this resource")
 
+    # Convert the caller's JSON Schema so malformed schemas fail immediately with 422
+    response_model: type[BaseModel] | None = None
+    if options.response_format is not None:
+        try:
+            response_model = json_response_schema_to_pydantic(options.response_format)
+        except ValueError as e:
+            raise ValidationException(f"Invalid response_format: {e}") from None
+
     # Get or create the peer to ensure it exists
     async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
         peers_result = await crud.get_or_create_peers(
@@ -255,6 +265,7 @@ async def chat(
                     observed=options.target if options.target is not None else peer_id,
                     reasoning_level=options.reasoning_level,
                     session_names=session_allowlist,
+                    response_model=response_model,
                 )
             ),
             media_type="text/event-stream",
@@ -270,6 +281,7 @@ async def chat(
         observed=options.target if options.target is not None else peer_id,
         reasoning_level=options.reasoning_level,
         session_names=session_allowlist,
+        response_model=response_model,
     )
 
     # Prometheus metrics
