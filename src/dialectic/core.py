@@ -70,6 +70,7 @@ class DialecticAgent:
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
         session_id: str | None = None,
+        custom_instructions: str | None = None,
     ):
         """
         Initialize the dialectic agent.
@@ -84,6 +85,7 @@ class DialecticAgent:
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
             reasoning_level: Level of reasoning to apply
             session_id: ID used for grouping traces (not session_name)
+            custom_instructions: Optional workspace/session instructions for the answer
         """
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
@@ -94,13 +96,18 @@ class DialecticAgent:
         self.observed_peer_card: list[str] | None = observed_peer_card
         self.metric_key: str | None = metric_key
         self.reasoning_level: ReasoningLevel = reasoning_level
+        self.custom_instructions: str | None = custom_instructions
 
         # Initialize conversation history with system prompt
         self.messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": prompts.agent_system_prompt(
-                    observer, observed, observer_peer_card, observed_peer_card
+                    observer,
+                    observed,
+                    observer_peer_card,
+                    observed_peer_card,
+                    custom_instructions,
                 ),
             }
         ]

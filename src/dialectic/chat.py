@@ -82,6 +82,7 @@ async def agentic_chat(
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
+        custom_instructions=configuration.reasoning.custom_instructions,
     )
 
     return await agent.answer(query, response_model=response_model)
@@ -151,6 +152,7 @@ async def agentic_chat_stream(
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
+        custom_instructions=configuration.reasoning.custom_instructions,
     )
 
     async for chunk in agent.answer_stream(query, response_model=response_model):
