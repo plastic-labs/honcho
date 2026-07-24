@@ -1,5 +1,7 @@
 import datetime
 from collections.abc import Sequence
+from dataclasses import dataclass, field
+from enum import Enum
 from logging import getLogger
 from typing import Any, cast
 
@@ -441,6 +443,39 @@ def _normalize_content(content: str) -> str:
     return content.strip().lower()
 
 
+def _dedup_key(
+    content: str, level: str, session_name: str | None
+) -> tuple[str, str, str | None]:
+    """Build the exact-match dedup key for a document.
+
+    Dedup never crosses levels: a same-content document at a different level is
+    a different kind of record (an explicit fact is not interchangeable with a
+    deductive conclusion that happens to share its text).
+
+    For **explicit** documents dedup additionally never crosses sessions.
+    Explicit documents are session-pure records of what was derived from that
+    session's messages — the Scopes copy-by-session model depends on this — so
+    a repeat of the same fact in a different session must produce a new
+    document in that session rather than reinforce another session's row.
+    Derived levels (deductive/inductive/contradiction) are consolidations and
+    may still dedup across sessions.
+    """
+    return (
+        _normalize_content(content),
+        level,
+        session_name if level == "explicit" else None,
+    )
+
+
+@dataclass
+class CreateDocumentsResult:
+    created_documents: list[schemas.DocumentCreate] = field(default_factory=list)
+    exact_dup_in_batch_count: int = 0
+    exact_dup_existing_count: int = 0
+    semantic_dup_rejected_count: int = 0
+    semantic_dup_replaced_count: int = 0
+
+
 async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
@@ -449,7 +484,7 @@ async def create_documents(
     observer: str,
     observed: str,
     deduplicate: bool = False,
-) -> list[schemas.DocumentCreate]:
+) -> CreateDocumentsResult:
     """
     Create multiple documents with optional duplicate detection.
 
@@ -477,9 +512,10 @@ async def create_documents(
     # exact-content dedup (independent of `deduplicate`): pre-fetch
     # existing live documents whose normalized content matches anything in this
     # batch, scoped to (workspace, observer, observed). The SQL normalization must
-    # mirror _normalize_content.
+    # mirror _normalize_content. Matching is further scoped per-document by
+    # level (always) and session (for explicit documents) via _dedup_key.
     batch_normalized: set[str] = {_normalize_content(d.content) for d in documents}
-    existing_by_normalized: dict[str, models.Document] = {}
+    existing_by_key: dict[tuple[str, str, str | None], models.Document] = {}
     if batch_normalized:
         # The `normalized_content_sql.in_(...)` filter below narrows to the
         # (workspace, observer, observed) partition via the single-column indexes,
@@ -507,29 +543,54 @@ async def create_documents(
             )
         )
         for existing_doc in existing_result.scalars():
-            # If multiple historical rows share normalized content, reinforcing
+            # If multiple historical rows share a dedup key, reinforcing
             # one is sufficient; keep the first.
-            existing_by_normalized.setdefault(
-                _normalize_content(existing_doc.content), existing_doc
+            existing_by_key.setdefault(
+                _dedup_key(
+                    existing_doc.content,
+                    existing_doc.level,
+                    existing_doc.session_name,
+                ),
+                existing_doc,
             )
 
-    # Tracks normalized content already accepted from this batch so exact
+    # Tracks dedup keys already accepted from this batch so exact
     # duplicates within a single inference call collapse to one document.
-    seen_in_batch: set[str] = set()
+    seen_in_batch: set[tuple[str, str, str | None]] = set()
 
+    exact_dup_existing_count = 0
+    exact_dup_in_batch_count = 0
+    semantic_dup_rejected_count = 0
+    semantic_dup_replaced_count = 0
     for doc in documents:
         try:
-            normalized_content = _normalize_content(doc.content)
+            # Session-purity invariant: an explicit document must always carry
+            # the session it was derived from. Refuse to write session-less
+            # explicit documents rather than silently minting global explicit
+            # memory (the Scopes copy-by-session model depends on explicit
+            # documents staying session-pure).
+            if doc.level == "explicit" and doc.session_name is None:
+                logger.error(
+                    "Refusing to create explicit document without session_name in %s/%s/%s (session-purity invariant): %r",
+                    workspace_name,
+                    observer,
+                    observed,
+                    doc.content[:80],
+                )
+                continue
+
+            dedup_key = _dedup_key(doc.content, doc.level, doc.session_name)
 
             # Exact-match dedup, always on:
             # 1) collapse exact duplicates within this batch (drop silently).
-            if normalized_content in seen_in_batch:
+            if dedup_key in seen_in_batch:
+                exact_dup_in_batch_count += 1
                 continue
-            seen_in_batch.add(normalized_content)
+            seen_in_batch.add(dedup_key)
 
             # 2) drop exact duplicates of an existing live document, recording
             #    the re-derivation as reinforcement on the existing row.
-            existing_match = existing_by_normalized.get(normalized_content)
+            existing_match = existing_by_key.get(dedup_key)
             if existing_match is not None:
                 # Reinforce the existing row. greatest(...) keeps the bump atomic
                 # server-side (concurrent workers can't lose an increment) while
@@ -542,16 +603,22 @@ async def create_documents(
                     doc.times_derived,
                 )
                 await db.flush()
+                exact_dup_existing_count += 1
                 continue
 
             # for each document, if deduplicate is True, perform a process
             # that checks against existing documents and either rejects this document
             # as a duplicate OR deletes an existing document that is a duplicate.
             if deduplicate:
-                is_duplicate = await is_rejected_duplicate(
+                duplicate_result = await is_rejected_duplicate(
                     db, doc, workspace_name, observer=observer, observed=observed
                 )
-                if is_duplicate:
+                if duplicate_result is SemanticRejectionResult.REPLACED_EXISTING:
+                    # Existing doc was soft-deleted in favor of this one; the
+                    # new doc still gets inserted below.
+                    semantic_dup_replaced_count += 1
+                elif duplicate_result is SemanticRejectionResult.REJECTED:
+                    semantic_dup_rejected_count += 1
                     continue
 
             metadata_dict = doc.metadata.model_dump(exclude_none=True)
@@ -703,7 +770,13 @@ async def create_documents(
             "Failed to create documents due to integrity constraint violation"
         ) from e
 
-    return accepted_documents
+    return CreateDocumentsResult(
+        created_documents=accepted_documents,
+        exact_dup_existing_count=exact_dup_existing_count,
+        exact_dup_in_batch_count=exact_dup_in_batch_count,
+        semantic_dup_rejected_count=semantic_dup_rejected_count,
+        semantic_dup_replaced_count=semantic_dup_replaced_count,
+    )
 
 
 async def delete_document(
@@ -1053,6 +1126,12 @@ async def create_observations(
     return honcho_documents
 
 
+class SemanticRejectionResult(Enum):
+    NOT_DUPLICATE = 0
+    REPLACED_EXISTING = 1
+    REJECTED = 2
+
+
 async def is_rejected_duplicate(
     db: AsyncSession,
     doc: schemas.DocumentCreate,
@@ -1060,7 +1139,7 @@ async def is_rejected_duplicate(
     *,
     observer: str,
     observed: str,
-) -> bool:
+) -> SemanticRejectionResult:
     """
     Check if a document is a duplicate of an existing document.
 
@@ -1080,7 +1159,20 @@ async def is_rejected_duplicate(
     If the document is a duplicate AND the existing document is superior,
     increments the existing document's ``times_derived`` to record the
     reinforcement, then returns True.
+
+    Merges are scoped so they never cross document levels, and never cross
+    sessions for explicit-level documents (session-purity invariant: an
+    explicit document records what was derived from exactly one session, so
+    a near-duplicate from another session must not reinforce or replace it).
     """
+    filters: dict[str, Any] = {"level": doc.level}
+    if doc.level == "explicit":
+        if doc.session_name is None:
+            # create_documents refuses session-less explicit documents; if one
+            # reaches here anyway it has no valid merge partner.
+            return SemanticRejectionResult.NOT_DUPLICATE
+        filters["session_name"] = doc.session_name
+
     # Step 1: Find potential duplicates using cosine similarity
     similar_docs = await query_documents(
         db=db,
@@ -1088,13 +1180,14 @@ async def is_rejected_duplicate(
         query=doc.content,
         observer=observer,
         observed=observed,
+        filters=filters,
         max_distance=0.05,
         top_k=1,
         embedding=doc.embedding,
     )
 
     if not similar_docs:
-        return False
+        return SemanticRejectionResult.NOT_DUPLICATE
 
     existing_doc = similar_docs[0]
 
@@ -1121,7 +1214,9 @@ async def is_rejected_duplicate(
         # Soft-delete the existing document - reconciliation will clean up vectors and hard-delete
         existing_doc.deleted_at = datetime.datetime.now(datetime.timezone.utc)
         await db.flush()
-        return False  # Don't reject the new document
+        return (
+            SemanticRejectionResult.REPLACED_EXISTING
+        )  # Don't reject the new document
 
     # Existing document has more information, reject the new one but record the
     # reinforcement: a semantic duplicate was derived again. greatest(...) keeps
@@ -1138,7 +1233,7 @@ async def is_rejected_duplicate(
         doc.content,
         existing_doc.content,
     )
-    return True
+    return SemanticRejectionResult.REJECTED
 
 
 async def cleanup_soft_deleted_documents(

@@ -1,0 +1,56 @@
+name: Build and Push to GCP Artifact Registry (Staging)
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to deploy (without v prefix)"
+        required: true
+        type: string
+        default: "manual"
+
+env:
+  GCP_PROJECT_ID: ${{ secrets.STAGING_GCP_PROJECT_ID }}
+  GCP_AR_LOCATION: ${{ secrets.STAGING_GCP_AR_LOCATION }}
+  GCP_AR_REPO: ${{ secrets.STAGING_GCP_AR_REPO }}
+  IMAGE_NAME: ${{ secrets.STAGING_IMAGE_NAME }}
+  GCP_SA_KEY: ${{ secrets.STAGING_GCP_SA_KEY }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ env.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_AR_LOCATION }}-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          # Determine the image label based on trigger type
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            IMAGE_LABEL="deployment-${VERSION}"
+          else
+            IMAGE_LABEL="deployment-${GITHUB_REF_NAME}"
+          fi
+          BASE="${{ env.GCP_AR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_AR_REPO }}/${{ env.IMAGE_NAME }}"
+          TAG="$BASE:$IMAGE_LABEL"
+          docker build -t "$TAG" .
+          docker push "$TAG"

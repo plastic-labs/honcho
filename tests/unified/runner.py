@@ -357,6 +357,7 @@ class UnifiedTestExecutor:
                 session=step.session_id,
                 target=step.observed_peer_id,
                 reasoning_level=step.reasoning_level,
+                response_format=step.response_format,
             )
             return response
 

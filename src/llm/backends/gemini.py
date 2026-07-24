@@ -15,7 +15,7 @@ from src.llm.caching import (
     gemini_cache_store,
 )
 from src.llm.request_builder import coerce_passthrough_mapping
-from src.llm.structured_output import repair_response_model_json
+from src.llm.structured_output import repair_response_model_json, schema_instruction
 
 GEMINI_BLOCKED_FINISH_REASONS = {
     "SAFETY",
@@ -30,6 +30,29 @@ class GeminiBackend:
 
     def __init__(self, client: Any) -> None:
         self._client: Any = client
+
+    @staticmethod
+    def _append_schema_instruction(
+        contents: list[dict[str, Any]] | str,
+        response_format: type[BaseModel],
+    ) -> list[dict[str, Any]] | str:
+        """Append the schema instruction to the final turn.
+
+        Used when tools accompany a response_format: native response_schema +
+        function calling is a Gemini 3 preview feature and earlier models
+        reject the pairing, so instruct the model and rely on parse + repair.
+        Returns a new list — _convert_messages shallow-copies parts-style
+        messages, so in-place appends would leak into the caller's history
+        and accumulate across tool-loop iterations.
+        """
+        instruction = schema_instruction(response_format, tools_present=True)
+        if isinstance(contents, str):
+            return contents + instruction
+        if not contents:
+            return contents
+        last = contents[-1]
+        parts: list[Any] = [*(last.get("parts") or []), {"text": instruction}]
+        return [*contents[:-1], {**last, "parts": parts}]
 
     async def complete(
         self,
@@ -61,6 +84,10 @@ class GeminiBackend:
         )
         if system_instruction:
             config["system_instruction"] = system_instruction
+        if tools and isinstance(response_format, type):
+            # The final turn is never part of the cached prefix, so this is
+            # safe to do before cache attachment.
+            contents = self._append_schema_instruction(contents, response_format)
 
         cache_policy = (
             extra_params.get("cache_policy")
@@ -130,6 +157,10 @@ class GeminiBackend:
         )
         if system_instruction:
             config["system_instruction"] = system_instruction
+        if tools and isinstance(response_format, type):
+            # The final turn is never part of the cached prefix, so this is
+            # safe to do before cache attachment.
+            contents = self._append_schema_instruction(contents, response_format)
 
         cache_policy = (
             extra_params.get("cache_policy")
@@ -228,7 +259,11 @@ class GeminiBackend:
             config["tools"] = self._convert_tools(tools)
         if tool_choice:
             config["tool_config"] = self._convert_tool_choice(tool_choice)
-        if response_format is not None:
+        # Native structured output combined with function calling is a
+        # Gemini 3 preview feature; earlier models reject the pairing. With
+        # tools present, callers inject a schema instruction instead (see
+        # _append_schema_instruction) and rely on parse + repair downstream.
+        if response_format is not None and not tools:
             config["response_mime_type"] = "application/json"
             config["response_schema"] = response_format
         elif extra_params and extra_params.get("json_mode") and not tools:
@@ -335,7 +370,10 @@ class GeminiBackend:
                 )
 
         content: Any = "\n".join(text_parts) if text_parts else ""
-        if response_format is not None:
+        # Tool-call turns carry no consumable content — the tool loop ignores
+        # it — and parsing their (empty) text would raise through the repair
+        # fallback, failing the iteration.
+        if response_format is not None and not tool_calls:
             parsed_response = getattr(response, "parsed", None)
             if isinstance(parsed_response, response_format):
                 content = parsed_response

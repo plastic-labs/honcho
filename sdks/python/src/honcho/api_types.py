@@ -503,6 +503,7 @@ class DialecticParams(BaseModel):
     query: str = Field(min_length=1, max_length=10000)
     stream: bool = False
     reasoning_level: ReasoningLevel = "low"
+    response_format: dict[str, Any] | None = None
 
 
 class DialecticResponse(BaseModel):

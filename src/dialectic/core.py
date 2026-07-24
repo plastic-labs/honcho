@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
 from nanoid import generate as generate_nanoid
+from pydantic import BaseModel
 
 from src import crud
 from src.config import ConfiguredModelSettings, ReasoningLevel, settings
@@ -413,7 +414,9 @@ class DialecticAgent:
             )
         )
 
-    async def answer(self, query: str) -> str:
+    async def answer(
+        self, query: str, response_model: type[BaseModel] | None = None
+    ) -> str:
         """
         Answer a query about the peer using agentic tool calling.
 
@@ -424,6 +427,8 @@ class DialecticAgent:
 
         Args:
             query: The question to answer about the peer
+            response_model: Optional Pydantic model the final synthesis must
+                conform to. When set, the returned string is JSON.
 
         Returns:
             The synthesized answer string
@@ -446,25 +451,38 @@ class DialecticAgent:
             else settings.DIALECTIC.MAX_OUTPUT_TOKENS
         )
 
-        response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            model_config=_get_dialectic_level_model_config(self.reasoning_level),
-            prompt="",  # Ignored since we pass messages
-            max_tokens=max_tokens,
-            tools=tools,
-            tool_choice=level_settings.TOOL_CHOICE,
-            tool_executor=tool_executor,
-            max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
-            messages=self.messages,
-            max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
-            trace_name="dialectic_chat",
-            telemetry=self._telemetry_context(track_name="Dialectic Agent"),
+        # cast: `type[BaseModel] | None` matches neither the parsed nor the
+        # plain-text overload statically, so pyright resolves the stream
+        # overload — but without stream=True the call is non-streaming.
+        response = cast(  # pyright: ignore[reportInvalidCast]
+            HonchoLLMCallResponse[Any],
+            await honcho_llm_call(
+                model_config=_get_dialectic_level_model_config(self.reasoning_level),
+                prompt="",  # Ignored since we pass messages
+                max_tokens=max_tokens,
+                tools=tools,
+                tool_choice=level_settings.TOOL_CHOICE,
+                tool_executor=tool_executor,
+                max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                messages=self.messages,
+                max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+                trace_name="dialectic_chat",
+                telemetry=self._telemetry_context(track_name="Dialectic Agent"),
+                response_model=response_model,
+            ),
         )
+
+        # With response_model, the backend parses content into a model
+        # instance; the API contract is a JSON string.
+        content = response.content
+        if isinstance(content, BaseModel):
+            content = content.model_dump_json(by_alias=True)
 
         self._log_response_metrics(
             task_name=task_name,
             run_id=run_id,
             start_time=start_time,
-            response_content=response.content,
+            response_content=content,
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
             cache_read_input_tokens=response.cache_read_input_tokens,
@@ -475,9 +493,11 @@ class DialecticAgent:
             hit_input_token_cap=response.hit_input_token_cap,
         )
 
-        return response.content
+        return content
 
-    async def answer_stream(self, query: str) -> AsyncIterator[str]:
+    async def answer_stream(
+        self, query: str, response_model: type[BaseModel] | None = None
+    ) -> AsyncIterator[str]:
         """
         Answer a query about the peer using agentic tool calling, streaming the response.
 
@@ -488,6 +508,9 @@ class DialecticAgent:
 
         Args:
             query: The question to answer about the peer
+            response_model: Optional Pydantic model the final synthesis must
+                conform to. When set, the streamed text accumulates to JSON
+                (chunks are raw text; no parsing happens on the stream path).
 
         Yields:
             Chunks of the response text as they are generated
@@ -526,6 +549,7 @@ class DialecticAgent:
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
                 telemetry=self._telemetry_context(track_name="Dialectic Agent Stream"),
+                response_model=response_model,
             ),
         )
 

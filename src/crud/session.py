@@ -74,6 +74,7 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
     key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
     prefix=SESSION_LOCK_PREFIX,
+    check_interval=settings.CACHE.LOCK_WAIT_CHECK_INTERVAL_SECONDS,
 )
 async def _fetch_session(
     db: AsyncSession,

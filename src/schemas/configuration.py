@@ -17,6 +17,10 @@ class DreamType(str, Enum):
     """Types of dreams that can be triggered."""
 
     OMNI = "omni"
+    # Lightweight card-only refresh: runs a single specialist restricted to
+    # peer-card tools. Used for event-driven refreshes (scope membership
+    # changes, cold starts) — never creates or deletes observations.
+    CARD_REFRESH = "card_refresh"
 
 
 class ReasoningConfiguration(BaseModel):

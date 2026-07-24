@@ -5,6 +5,7 @@ from .collection import (
 )
 from .deriver import get_deriver_status, get_queue_status
 from .document import (
+    CreateDocumentsResult,
     create_documents,
     create_observations,
     delete_document,
@@ -91,6 +92,7 @@ __all__ = [
     "get_deriver_status",
     "get_queue_status",
     # Document
+    "CreateDocumentsResult",
     "create_documents",
     "create_observations",
     "fetch_documents_by_ids",
