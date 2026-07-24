@@ -280,7 +280,7 @@ async def chat(
     workspace-wide questions ("what themes are common across users?",
     "which peers discussed X?").
     """
-    from typing import Any as _Any
+    from collections.abc import AsyncIterator
 
     from pydantic import BaseModel as _BaseModel
 
@@ -299,7 +299,7 @@ async def chat(
 
     if options.stream:
 
-        async def format_sse_stream(chunks: _Any) -> _Any:
+        async def format_sse_stream(chunks: AsyncIterator[str]) -> AsyncIterator[str]:
             async for chunk in chunks:
                 yield f"data: {json.dumps({'delta': {'content': chunk}, 'done': False})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
