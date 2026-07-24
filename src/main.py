@@ -136,6 +136,10 @@ async def lifespan(_: FastAPI):
     register_db_pool_collector("api")
     register_db_query_instrumentation("api")
 
+    # Pre-materialize bounded-label counter children at 0 so metrics are visible
+    # in Prometheus before the first event (no-op if metrics off).
+    prometheus_metrics.initialize_bounded_metrics(instance_type="api")
+
     # Validate embedding schema before serving any traffic. Fails closed: if
     # the configured EMBEDDING_VECTOR_DIMENSIONS does not match the physical
     # pgvector columns, the process refuses to start rather than silently

@@ -10,6 +10,7 @@ from src.db import engine, register_db_query_instrumentation
 from src.startup import validate_embedding_schema
 from src.telemetry import (
     initialize_telemetry_async,
+    prometheus_metrics,
     register_db_pool_collector,
     shutdown_telemetry,
 )
@@ -25,6 +26,10 @@ def start_metrics_server() -> None:
     # Expose DB connection-pool stats for this deriver instance.
     register_db_pool_collector("deriver")
     register_db_query_instrumentation("deriver")
+
+    # Pre-materialize bounded-label counter children at 0 so metrics are visible
+    # in Prometheus before the first event (no-op if metrics off).
+    prometheus_metrics.initialize_bounded_metrics(instance_type="deriver")
     logger.info("Prometheus metrics server started on port 9090")
 
 
