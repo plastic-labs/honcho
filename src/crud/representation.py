@@ -179,6 +179,7 @@ class RepresentationManager:
                 message_ids=message_ids,
                 premises=obs_premises,
                 message_created_at=format_datetime_utc(message_created_at),
+                source_indices=getattr(obs, "source_indices", []),
             )
 
             documents_to_create.append(

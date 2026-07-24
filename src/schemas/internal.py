@@ -56,6 +56,11 @@ class DocumentMetadata(BaseModel):
         default=None,
         description="Confidence level (high, medium, low) -- only applicable for inductive documents",
     )
+    source_indices: list[int] = Field(
+        default_factory=list,
+        description="0-based indices into the deriver batch's message list "
+        "indicating which messages directly support this observation",
+    )
 
 
 class DocumentCreate(DocumentBase):

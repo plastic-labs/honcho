@@ -103,10 +103,10 @@ async def process_representation_tasks_batch(
         "id",
     )
 
-    # Format messages with timestamps
+    # Format messages with timestamps and 0-based indices for source citation
     formatted_messages = "\n".join(
-        format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
-        for msg in messages
+        f"[{i}] {format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)}"
+        for i, msg in enumerate(messages)
     )
 
     # Track token usage - count only tokens from messages being processed
