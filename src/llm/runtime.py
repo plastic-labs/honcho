@@ -357,7 +357,7 @@ class AttemptPlan:
 
     provider: ModelTransport
     model: str
-    client: ProviderClient
+    client: ProviderClient | None
     thinking_budget_tokens: int | None
     reasoning_effort: ReasoningEffortType
     selected_config: ModelConfig
