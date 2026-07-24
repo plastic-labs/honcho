@@ -189,7 +189,13 @@ Each model config supports an `overrides.provider_params` dict for passing arbit
 [deriver.model_config.overrides.provider_params]
 # These are passed directly to the provider SDK
 verbosity = "low"
+# Per-request timeout in seconds; useful for queued workers that can wait longer
+timeout = 3600.0
 ```
+
+Because provider params live on each model config, background workers such as
+the Deriver and Dreamer can use longer request timeouts while synchronous
+chat paths keep tighter defaults.
 
 #### Transport passthrough keys
 

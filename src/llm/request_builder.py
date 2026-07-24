@@ -14,7 +14,12 @@ from pydantic import BaseModel
 from src.config import ModelConfig, PromptCachePolicy
 from src.exceptions import ValidationException
 
-from .backend import CompletionResult, ProviderBackend, StreamChunk
+from .backend import (
+    CompletionResult,
+    ProviderBackend,
+    StreamChunk,
+    request_timeout_from_extra_params,
+)
 
 # Operator escape-hatch keys recognized inside ModelConfig.provider_params.
 PASSTHROUGH_KEYS = ("extra_body", "extra_headers", "extra_query")
@@ -99,6 +104,14 @@ def build_config_extra_params(config: ModelConfig) -> dict[str, Any]:
     return extra_params
 
 
+def _normalize_extra_params(extra_params: dict[str, Any]) -> dict[str, Any]:
+    """Normalize shared extra params before they reach provider backends."""
+    timeout = request_timeout_from_extra_params(extra_params)
+    if timeout is None:
+        return extra_params
+    return {**extra_params, "timeout": timeout}
+
+
 async def execute_completion(
     backend: ProviderBackend,
     config: ModelConfig,
@@ -120,6 +133,7 @@ async def execute_completion(
         **build_config_extra_params(config),
         **(extra_params or {}),
     }
+    merged_extra_params = _normalize_extra_params(merged_extra_params)
     if cache_policy is not None:
         merged_extra_params["cache_policy"] = cache_policy
 
@@ -158,6 +172,7 @@ async def execute_stream(
         **build_config_extra_params(config),
         **(extra_params or {}),
     }
+    merged_extra_params = _normalize_extra_params(merged_extra_params)
     if cache_policy is not None:
         merged_extra_params["cache_policy"] = cache_policy
 

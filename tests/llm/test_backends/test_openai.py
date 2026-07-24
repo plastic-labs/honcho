@@ -510,6 +510,7 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
     assert call["tool_choice"] == "required"
 
 
+@pytest.mark.asyncio
 async def test_openai_backend_translates_canonical_any_tool_choice_to_required() -> (
     None
 ):
@@ -569,6 +570,78 @@ async def test_openai_backend_translates_canonical_any_tool_choice_to_required()
 )
 def test_openai_convert_tool_choice(canonical: Any, expected: Any) -> None:
     assert OpenAIBackend._convert_tool_choice(canonical) == expected  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_passes_timeout_to_completion_request() -> None:
+    """OpenAI completion requests receive per-request provider timeout."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"timeout": 12.5},
+    )
+
+    assert _await_kwargs(client.chat.completions.create)["timeout"] == 12.5
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_passes_timeout_to_structured_parse_request() -> None:
+    """OpenAI structured parse requests receive per-request provider timeout."""
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        parsed=_StructuredResponse(answer="ok"),
+                        content='{"answer":"ok"}',
+                        tool_calls=[],
+                        refusal=None,
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+        extra_params={"timeout": "30"},
+    )
+
+    assert _await_kwargs(client.chat.completions.parse)["timeout"] == 30.0
 
 
 @pytest.mark.parametrize(

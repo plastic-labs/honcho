@@ -99,6 +99,40 @@ async def test_gemini_backend_maps_thinking_effort_to_thinking_level() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_backend_maps_timeout_to_http_options() -> None:
+    """Gemini requests receive provider timeout through config http_options."""
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    finish_reason=SimpleNamespace(name="STOP"),
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="ok")]),
+                )
+            ],
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=12,
+                candidates_token_count=6,
+            ),
+            parsed=None,
+        )
+    )
+
+    backend = GeminiBackend(client)
+    await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"timeout": "90"},
+    )
+
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    assert await_args.kwargs["config"]["http_options"].timeout == 90_000
+
+
+@pytest.mark.asyncio
 async def test_gemini_backend_rejects_budget_and_effort_together() -> None:
     backend = GeminiBackend(Mock())
 
@@ -385,7 +419,7 @@ async def test_gemini_backend_forwards_provider_params_extra_headers() -> None:
     if await_args is None:
         raise AssertionError("Expected Gemini generate_content call")
     call = await_args.kwargs
-    assert call["config"]["http_options"]["headers"] == {"X-Trace-Id": "abc123"}
+    assert call["config"]["http_options"].headers == {"X-Trace-Id": "abc123"}
 
 
 @pytest.mark.asyncio
