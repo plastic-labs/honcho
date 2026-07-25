@@ -1463,7 +1463,7 @@ class VectorStoreSettings(HonchoSettings):
     MILVUS_DB_NAME: str | None = None
     MILVUS_CONSISTENCY_LEVEL: (
         Literal["Strong", "Session", "Bounded", "Eventually"] | None
-    ) = None
+    ) = "Session"
 
     RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
         300  # 5 minutes

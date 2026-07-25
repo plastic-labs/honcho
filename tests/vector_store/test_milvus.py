@@ -5,11 +5,10 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 
-from src.config import settings
+from src.config import VectorStoreSettings, settings
 from src.vector_store import VectorRecord
 from src.vector_store.milvus import (
     MAX_COLLECTION_NAME_LENGTH,
@@ -24,27 +23,9 @@ def _helper_store() -> MilvusVectorStore:
     return object.__new__(MilvusVectorStore)
 
 
-class _ScoreOnlySearchClient:
-    def has_collection(self, *, collection_name: str) -> bool:
-        assert collection_name
-        return True
-
-    def search(self, **kwargs: Any) -> list[list[dict[str, Any]]]:
-        assert kwargs["search_params"] == {"metric_type": "COSINE"}
-        return [
-            [
-                {
-                    "id": "vec_close",
-                    "score": 0.9,
-                    "entity": {"message_id": "msg_1"},
-                },
-                {
-                    "id": "vec_far",
-                    "score": 0.2,
-                    "entity": {"message_id": "msg_2"},
-                },
-            ]
-        ]
+def test_default_consistency_level_is_session() -> None:
+    consistency_field = VectorStoreSettings.model_fields["MILVUS_CONSISTENCY_LEVEL"]
+    assert consistency_field.default == "Session"
 
 
 def test_collection_name_is_valid_stable_and_bounded() -> None:
@@ -96,23 +77,20 @@ def test_projection_settings_map_to_milvus_output_fields() -> None:
     ]
 
 
-@pytest.mark.asyncio
-async def test_query_converts_milvus_score_to_cosine_distance(
+def test_cosine_distance_normalizes_real_milvus_distance_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(settings.EMBEDDING, "VECTOR_DIMENSIONS", 4)
+    def milvus_lite_version(_: str) -> str:
+        return "3.0"
+
     store = _helper_store()
-    store.client = cast(Any, _ScoreOnlySearchClient())
 
-    results = await store.query(
-        "honcho.msg.test",
-        [1.0, 0.0, 0.0, 0.0],
-        max_distance=0.5,
-    )
+    monkeypatch.setattr(settings.VECTOR_STORE, "MILVUS_URI", "./milvus.db")
+    monkeypatch.setattr("src.vector_store.milvus.package_version", milvus_lite_version)
+    assert store._hit_cosine_distance({"distance": 0.0}) == 0.0  # pyright: ignore[reportPrivateUsage]
 
-    assert [result.id for result in results] == ["vec_close"]
-    assert abs(results[0].score - 0.1) < 1e-12
-    assert results[0].metadata == {"message_id": "msg_1"}
+    monkeypatch.setattr(settings.VECTOR_STORE, "MILVUS_URI", "http://localhost:19530")
+    assert store._hit_cosine_distance({"distance": 1.0}) == 0.0  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.asyncio
@@ -124,7 +102,7 @@ async def test_milvus_lite_round_trip(
     )
     monkeypatch.setattr(settings.VECTOR_STORE, "MILVUS_TOKEN", None)
     monkeypatch.setattr(settings.VECTOR_STORE, "MILVUS_DB_NAME", None)
-    monkeypatch.setattr(settings.VECTOR_STORE, "MILVUS_CONSISTENCY_LEVEL", "Strong")
+    monkeypatch.setattr(settings.VECTOR_STORE, "MILVUS_CONSISTENCY_LEVEL", "Session")
     monkeypatch.setattr(settings.EMBEDDING, "VECTOR_DIMENSIONS", 4)
 
     store = MilvusVectorStore()

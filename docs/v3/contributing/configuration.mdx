@@ -326,7 +326,7 @@ Existing deployments at 1536 with `text-embedding-3-small` need no action — st
 
 The script refuses to ALTER tables that already contain non-null embeddings. To switch dim or model on a populated deployment, stand up a new deployment at the new configuration and migrate data out of band; there is no in-place re-embedding affordance. See [Changing Embeddings](./changing-embeddings) for the destroy + rebuild recipe and the same-dim model-swap caveat.
 
-External vector stores (Turbopuffer, LanceDB) do not need bootstrap setup. Namespaces are per-workspace and lazy-created on first write at whatever dim the embedding client returns. Use `--report` to inventory the existing namespaces against the configured dim:
+External vector stores (Turbopuffer, LanceDB, Milvus) do not need bootstrap setup. Namespaces are per-workspace and lazy-created on first write at whatever dim the embedding client returns. Use `--report` to inventory the existing namespaces against the configured dim:
 
 ```bash
 uv run python scripts/configure_embeddings.py --report
@@ -336,7 +336,7 @@ The startup validator at `src/startup/embedding_validator.py` enforces the dim i
 
 `VECTOR_STORE_DIMENSIONS` is **deprecated**. `EMBEDDING_VECTOR_DIMENSIONS` is the single source of truth; setting `VECTOR_STORE_DIMENSIONS` explicitly emits a startup warning and is otherwise ignored. The field will be removed in a future release; drop it from your `.env` to silence the warning.
 
-The `VECTOR_STORE_MIGRATED` flag still exists and still controls dual-write / cutover semantics for legacy tenants moving between storage backends (pgvector ↔ turbopuffer ↔ lancedb). It is unrelated to dimension configuration after this release.
+The `VECTOR_STORE_MIGRATED` flag still exists and still controls dual-write / cutover semantics for legacy tenants moving between storage backends (pgvector ↔ turbopuffer ↔ lancedb ↔ milvus). It is unrelated to dimension configuration after this release.
 
 ### Feature-Specific Model Configuration
 
@@ -609,7 +609,7 @@ VECTOR_STORE_LANCEDB_PATH=./lancedb_data
 VECTOR_STORE_MILVUS_URI=./milvus.db
 VECTOR_STORE_MILVUS_TOKEN=
 VECTOR_STORE_MILVUS_DB_NAME=
-VECTOR_STORE_MILVUS_CONSISTENCY_LEVEL=
+VECTOR_STORE_MILVUS_CONSISTENCY_LEVEL=Session
 ```
 
 LanceDB is an optional extra and is not included in the default Docker image. Build with `docker build --build-arg INSTALL_LANCEDB=true .` (or `INSTALL_LANCEDB=true docker compose up -d --build`), or run `uv sync --extra lancedb` for manual setups. Note the extra is unavailable on Intel macOS.
@@ -757,6 +757,7 @@ ENABLED = false
 [vector_store]
 TYPE = "pgvector"
 MILVUS_URI = "./milvus.db"
+MILVUS_CONSISTENCY_LEVEL = "Session"
 
 [sentry]
 ENABLED = false
