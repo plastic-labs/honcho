@@ -48,17 +48,31 @@ authentication; it is not an upstream Codex OAuth token.
 Supported Chat controls are: messages, model, stream, tools, tool_choice
 (`none`, `auto`, `required`, or a named function), parallel_tool_calls,
 reasoning_effort, response_format (`json_object`/`json_schema`), and
-max_tokens/max_completion_tokens (translated to `max_output_tokens`). Conflicting
-output-limit aliases and invalid values are rejected. Controls that cannot be
-represented safely by Codex Responses (temperature, top_p, stop, penalties,
-seed, stream_options, logprobs, n, and user) are rejected with a clear 400 rather
-than silently dropped.
+max_tokens/max_completion_tokens (translated to `max_output_tokens`). The current
+Honcho OpenAI streaming backend's `stream_options: {"include_usage": true}` is
+accepted; the relay emits an OpenAI-compatible final usage chunk before `[DONE]`.
+Conflicting output-limit aliases and invalid values are rejected. Controls that
+cannot be represented safely by Codex Responses (temperature, top_p, stop,
+penalties, seed, logprobs, n, user, verbosity, reasoning, and SDK passthrough
+fields such as extra_body) are rejected with a clear 400 rather than silently
+dropped. Other unknown top-level fields and malformed supported fields are also
+rejected with a clear 400.
 
 Responses streams must end in `response.completed` or `response.incomplete`.
-Provider errors, malformed data, EOF/truncation, and transport failures are
-returned as sanitized errors; an already-started downstream stream emits one
+The relay stops reading immediately after the first valid terminal event and
+closes the upstream response. Provider HTTP error bodies are sanitized to a
+stable OpenAI-compatible error while preserving the upstream status code;
+credential, malformed data, malformed usage, EOF/truncation, and transport
+failures are sanitized as well. An already-started downstream stream emits one
 error event followed by one `[DONE]`. Incomplete content-filter results map to
 `content_filter`; other incomplete results map to `length`.
+
+The credential document must contain a mapping at
+`providers.openai-codex.tokens.access_token` with a non-empty string token.
+Missing, corrupt, or malformed documents and non-ASCII/empty transport tokens
+return a sanitized 503 credential error. Malformed or opaque JWT claims are
+never decoded into headers or reflected in errors; if the upstream rejects such
+a token, its HTTP error is sanitized.
 
 ## Reproducible checks
 

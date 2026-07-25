@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -128,7 +129,7 @@ async def test_stream_completion_translates_codex_sse() -> None:
 
 
 @pytest.mark.asyncio
-async def test_upstream_http_error_status_and_body_are_preserved() -> None:
+async def test_upstream_http_error_is_sanitized() -> None:
     error_body = '{"error":{"type":"invalid_request_error","message":"bad model"}}'
 
     async def handler(_: httpx.Request) -> httpx.Response:
@@ -140,7 +141,23 @@ async def test_upstream_http_error_status_and_body_are_preserved() -> None:
     await client.aclose()
 
     assert response.status_code == 401
-    assert bytes(response.body).decode() == error_body
+    assert json.loads(bytes(response.body).decode()) == {"error": {"message": "Codex provider request failed", "code": "provider_error"}}
+
+
+def test_stream_upstream_http_error_is_sanitized() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="PROVIDER_PRIVATE_DETAIL", headers={"content-type": "text/plain"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    app = create_app(CodexRelay(client=client, access_token="test-token"))
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-5.6-luna", "messages": [], "stream": True},
+        )
+    assert response.status_code == 500
+    assert response.json() == {"error": {"message": "Codex provider request failed", "code": "provider_error"}}
+    assert "PROVIDER_PRIVATE_DETAIL" not in response.text
 
 
 def test_health_smoke() -> None:
@@ -167,6 +184,53 @@ def test_auth_store_reads_only_canonical_provider_token(tmp_path: Any) -> None:
     assert list(tmp_path.iterdir()) == [path]
 
 
+@pytest.mark.parametrize(
+    "document",
+    [
+        {"providers": []},
+        {"providers": {"openai-codex": []}},
+        {"providers": {"openai-codex": {"tokens": {"access_token": ""}}}},
+        {"providers": {"openai-codex": {"tokens": {"access_token": 123}}}},
+    ],
+)
+def test_malformed_auth_documents_are_sanitized_at_route(tmp_path: Any, document: dict[str, Any]) -> None:
+    path = tmp_path / "auth.json"
+    path.write_text(json.dumps(document))
+    app = create_app(CodexRelay(auth_path=path))
+    with TestClient(app) as client:
+        response = client.post("/v1/chat/completions", json={"messages": []})
+    assert response.status_code == 503
+    assert response.json() == {"error": {"message": "Codex credential source unavailable", "code": "credential_unavailable"}}
+
+
+def test_corrupt_auth_document_and_non_ascii_token_are_sanitized(tmp_path: Any) -> None:
+    path = tmp_path / "auth.json"
+    path.write_text("{not-json")
+    app = create_app(CodexRelay(auth_path=path))
+    with TestClient(app) as client:
+        response = client.post("/v1/chat/completions", json={"messages": []})
+    assert response.status_code == 503
+    assert "not-json" not in response.text
+
+    non_ascii = create_app(CodexRelay(access_token="x.☃.y"))
+    with TestClient(non_ascii) as client:
+        response = client.post("/v1/chat/completions", json={"messages": []})
+    assert response.status_code == 503
+    assert "☃" not in response.text
+
+    async def unauthorized(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text='{"error":{"message":"private auth detail"}}')
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(unauthorized))
+    malformed = create_app(CodexRelay(client=client, access_token="x.%%%.y"))
+    with TestClient(malformed) as test_client:
+        response = test_client.post("/v1/chat/completions", json={"messages": []})
+    assert response.status_code == 401
+    assert "private auth detail" not in response.text
+    assert "%%" not in response.text
+    asyncio.run(client.aclose())
+
+
 def test_tool_controls_are_translated_or_rejected() -> None:
     request = build_responses_request({
         "messages": [{"role": "user", "content": "x"}],
@@ -180,6 +244,35 @@ def test_tool_controls_are_translated_or_rejected() -> None:
     assert request["max_output_tokens"] == 20
     with pytest.raises(RelayError, match="unsupported"):
         build_responses_request({"messages": [], "temperature": 0.2})
+
+
+@pytest.mark.parametrize("field", ["verbosity", "reasoning", "extra_body", "unknown_control"])
+def test_request_allowlist_rejects_untranslated_top_level_controls(field: str) -> None:
+    with pytest.raises(RelayError, match="unsupported Chat Completions parameter"):
+        build_responses_request({"messages": [], field: {"value": 1}})
+
+
+def test_stream_options_include_usage_is_supported_and_validated() -> None:
+    request = build_responses_request({"messages": [], "stream_options": {"include_usage": True}})
+    assert "stream_options" not in request
+    with pytest.raises(RelayError, match="stream_options"):
+        build_responses_request({"messages": [], "stream_options": {"include_usage": "yes"}})
+    with pytest.raises(RelayError, match="stream_options"):
+        build_responses_request({"messages": [], "stream_options": {"other": True}})
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("tools", ["not-an-object"], "tool"),
+        ("tool_choice", {"type": "function"}, "tool_choice"),
+        ("parallel_tool_calls", "yes", "parallel_tool_calls"),
+        ("response_format", {"type": "xml"}, "response_format"),
+    ],
+)
+def test_malformed_supported_fields_are_rejected(field: str, value: Any, message: str) -> None:
+    with pytest.raises(RelayError, match=message):
+        build_responses_request({"messages": [], field: value})
 
 
 def test_aggregate_requires_terminal_and_ignores_post_terminal_data() -> None:
@@ -205,6 +298,61 @@ def test_aggregate_provider_and_malformed_events_are_sanitized() -> None:
     assert "SECRET_TOKEN" not in str(provider.value)
     with pytest.raises(RelayError, match="malformed"):
         aggregate_codex_sse("event: response.completed\ndata: {not-json}\n\n")
+    with pytest.raises(RelayError, match="object"):
+        aggregate_codex_sse("event: response.completed\ndata: [1,2,3]\n\n")
+
+
+def test_aggregate_rejects_malformed_usage_and_terminal_shapes() -> None:
+    with pytest.raises(RelayError, match="usage"):
+        aggregate_codex_sse(
+            'event: response.completed\ndata: {"response":{"usage":{"input_tokens":"bad"}}}\n\n'
+        )
+    with pytest.raises(RelayError, match="terminal"):
+        aggregate_codex_sse('event: response.completed\ndata: {"response":[]}\n\n')
+
+
+@pytest.mark.asyncio
+async def test_stream_stops_without_reading_after_terminal_and_rejects_non_object() -> None:
+    class BlockingAfterTerminal(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.read_after_terminal = False
+            self.closed = False
+            self._release = asyncio.Event()
+
+        async def __aiter__(self):
+            yield b"event: response.completed\n"
+            yield b'data: {"response":{"id":"r","usage":{"input_tokens":1,"output_tokens":1}}}\n'
+            yield b"\n"
+            self.read_after_terminal = True
+            await self._release.wait()
+
+        async def aclose(self) -> None:
+            self.closed = True
+            self._release.set()
+
+    stream = BlockingAfterTerminal()
+    response = httpx.Response(200, stream=stream, headers={"content-type": "text/event-stream"})
+    relay = CodexRelay(access_token="synthetic")
+    chunks = await asyncio.wait_for(
+        _collect(relay.stream_chat(response, "gpt-5.6-luna")), timeout=1
+    )
+    assert chunks[-1] == b"data: [DONE]\n\n"
+    assert stream.read_after_terminal is False
+    assert stream.closed is True
+
+    async def non_object(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="data: [1,2,3]\n\n", headers={"content-type": "text/event-stream"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(non_object))
+    relay = CodexRelay(client=client, access_token="synthetic")
+    upstream = await relay.open_upstream({"messages": []})
+    streamed = b"".join([chunk async for chunk in relay.stream_chat(upstream, "gpt-5.6-luna")])
+    assert b"provider_stream_error" in streamed
+    await client.aclose()
+
+
+async def _collect(iterator: Any) -> list[bytes]:
+    return [chunk async for chunk in iterator]
 
 
 def test_non_loopback_requires_key_and_rejects_before_upstream() -> None:
@@ -324,10 +472,13 @@ async def test_current_openai_sdk_and_backend_in_process_paths() -> None:
         pytest.skip(f"upstream backend dependencies unavailable: {exc}")
 
     seen: list[dict[str, Any]] = []
+    responses: list[httpx.Response] = []
 
     async def upstream(request: httpx.Request) -> httpx.Response:
         seen.append(json.loads(request.content))
-        return httpx.Response(200, text=TEXT_SSE, headers={"content-type": "text/event-stream"})
+        response = httpx.Response(200, text=TEXT_SSE, headers={"content-type": "text/event-stream"})
+        responses.append(response)
+        return response
 
     relay_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
     relay = CodexRelay(client=relay_client, access_token="synthetic")
@@ -341,14 +492,41 @@ async def test_current_openai_sdk_and_backend_in_process_paths() -> None:
     stream = await sdk.chat.completions.create(model="gpt-5.6-luna", messages=[{"role": "user", "content": "stream"}], stream=True)
     streamed = [chunk async for chunk in stream]
     backend = OpenAIBackend(sdk)
+    backend_stream = backend.stream(model="gpt-5.6-luna", messages=[{"role": "user", "content": "backend stream"}], max_tokens=20)
+    backend_chunks = [chunk async for chunk in backend_stream]
+    from openai import BadRequestError
+    with pytest.raises(BadRequestError, match="verbosity"):
+        unsupported_stream = backend.stream(
+            model="gpt-5.6-luna",
+            messages=[{"role": "user", "content": "verbosity"}],
+            max_tokens=20,
+            extra_params={"verbosity": "high"},
+        )
+        [chunk async for chunk in unsupported_stream]
+    with pytest.raises(BadRequestError, match="reasoning"):
+        unsupported_reasoning = backend.stream(
+            model="gpt-5.6-luna",
+            messages=[{"role": "user", "content": "reasoning"}],
+            max_tokens=20,
+            extra_params={"extra_body": {"reasoning": {"max_tokens": 256}}},
+        )
+        [chunk async for chunk in unsupported_reasoning]
     backend_result = await backend.complete(model="gpt-5.6-luna", messages=[{"role": "user", "content": "backend"}], max_tokens=20)
 
     assert normal.choices[0].message.content == "Hello world"
     assert structured.choices[0].message.content == "Hello world"
     assert tool.choices[0].finish_reason == "stop"
     assert streamed[-1].choices[0].finish_reason == "stop"
+    assert "".join(chunk.content for chunk in backend_chunks if chunk.content) == "Hello world"
+    assert backend_chunks[-1].is_done is True
+    assert backend_chunks[-1].finish_reason == "stop"
+    assert backend_chunks[-1].output_tokens == 4
     assert backend_result.content == "Hello world"
     assert seen[2]["parallel_tool_calls"] is False
     assert seen[1]["text"] == {"format": {"type": "json_object"}}
+    backend_stream_request = next(body for body in seen if "backend stream" in json.dumps(body))
+    assert backend_stream_request["stream"] is True
+    assert "stream_options" not in backend_stream_request
+    assert all(response.is_closed for response in responses)
     await sdk_http.aclose()
     await relay_client.aclose()

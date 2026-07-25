@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hmac
 import json
 import logging
@@ -129,49 +130,69 @@ def _assistant_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _response_tool(tool: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(tool, dict):
-        return None
+        raise RelayError("tool must be an object", status_code=400)
     if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
         function = tool["function"]
         name = function.get("name")
         if not isinstance(name, str) or not name:
-            return None
+            raise RelayError("function tool name must be a non-empty string", status_code=400)
+        parameters = function.get("parameters", {"type": "object"})
+        if not isinstance(parameters, dict):
+            raise RelayError("function tool parameters must be an object", status_code=400)
+        description = function.get("description", "")
+        if description is not None and not isinstance(description, str):
+            raise RelayError("function tool description must be a string", status_code=400)
+        strict = function.get("strict", False)
+        if not isinstance(strict, bool):
+            raise RelayError("function tool strict must be a boolean", status_code=400)
         return {
             "type": "function",
             "name": name,
-            "description": str(function.get("description") or ""),
-            "parameters": function.get("parameters") or {"type": "object"},
-            "strict": bool(function.get("strict", False)),
+            "description": description or "",
+            "parameters": parameters,
+            "strict": strict,
         }
     # Honcho's provider-independent tool shape is also accepted directly.
     name = tool.get("name")
     if isinstance(name, str) and name:
+        parameters = tool.get("input_schema") or tool.get("parameters") or {"type": "object"}
+        if not isinstance(parameters, dict):
+            raise RelayError("tool parameters must be an object", status_code=400)
+        strict = tool.get("strict", False)
+        if not isinstance(strict, bool):
+            raise RelayError("tool strict must be a boolean", status_code=400)
         return {
             "type": "function",
             "name": name,
             "description": str(tool.get("description") or ""),
-            "parameters": tool.get("input_schema") or tool.get("parameters") or {"type": "object"},
-            "strict": bool(tool.get("strict", False)),
+            "parameters": parameters,
+            "strict": strict,
         }
-    return None
+    raise RelayError("tool must contain a named function", status_code=400)
 
 
 def _response_format(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
-        return None
+        raise RelayError("response_format must be an object", status_code=400)
     kind = value.get("type")
     if kind == "json_object":
         return {"format": {"type": "json_object"}}
     if kind == "json_schema":
         schema = value.get("json_schema")
-        if isinstance(schema, dict):
-            fmt: dict[str, Any] = {
-                "type": "json_schema",
-                "name": str(schema.get("name") or "response"),
-                "schema": schema.get("schema") or {},
-                "strict": bool(schema.get("strict", True)),
-            }
-            return {"format": fmt}
-    return None
+        if not isinstance(schema, dict):
+            raise RelayError("response_format.json_schema must be an object", status_code=400)
+        name = schema.get("name", "response")
+        shape = schema.get("schema", {})
+        strict = schema.get("strict", True)
+        if not isinstance(name, str) or not name:
+            raise RelayError("response_format.json_schema.name must be a non-empty string", status_code=400)
+        if not isinstance(shape, dict):
+            raise RelayError("response_format.json_schema.schema must be an object", status_code=400)
+        if not isinstance(strict, bool):
+            raise RelayError("response_format.json_schema.strict must be a boolean", status_code=400)
+        fmt: dict[str, Any] = {"type": "json_schema", "name": name, "schema": shape, "strict": strict}
+        return {"format": fmt}
+    raise RelayError("response_format has an unsupported type", status_code=400)
 
 
 def _responses_tool_choice(value: Any) -> str | dict[str, str] | None:
@@ -190,9 +211,16 @@ def _responses_tool_choice(value: Any) -> str | dict[str, str] | None:
     raise RelayError("tool_choice has an unsupported shape", status_code=400)
 
 
+_CHAT_REQUEST_FIELDS = {
+    "model", "messages", "stream", "tools", "tool_choice", "parallel_tool_calls",
+    "reasoning_effort", "response_format", "max_tokens", "max_completion_tokens",
+    "stream_options",
+}
+
 _UNSUPPORTED_CHAT_FIELDS = {
     "temperature", "top_p", "stop", "presence_penalty", "frequency_penalty",
-    "seed", "stream_options", "logprobs", "top_logprobs", "n", "user",
+    "seed", "logprobs", "top_logprobs", "n", "user", "verbosity", "reasoning",
+    "extra_body", "extra_headers", "extra_query",
 }
 
 
@@ -201,9 +229,20 @@ def build_responses_request(chat_request: dict[str, Any]) -> dict[str, Any]:
     messages = chat_request.get("messages")
     if not isinstance(messages, list):
         raise RelayError("messages must be a list", status_code=400)
-    unsupported = sorted(key for key in _UNSUPPORTED_CHAT_FIELDS if chat_request.get(key) is not None)
+    unknown = sorted(set(chat_request) - _CHAT_REQUEST_FIELDS - _UNSUPPORTED_CHAT_FIELDS)
+    if unknown:
+        raise RelayError(f"unsupported Chat Completions parameter: {unknown[0]}", status_code=400)
+    unsupported = sorted(key for key in _UNSUPPORTED_CHAT_FIELDS if key in chat_request)
     if unsupported:
         raise RelayError(f"unsupported Chat Completions parameter: {unsupported[0]}", status_code=400)
+    if "stream" in chat_request and not isinstance(chat_request["stream"], bool):
+        raise RelayError("stream must be a boolean", status_code=400)
+    if "stream_options" in chat_request:
+        options = chat_request["stream_options"]
+        if not isinstance(options, dict) or set(options) - {"include_usage"}:
+            raise RelayError("stream_options only supports include_usage", status_code=400)
+        if "include_usage" in options and not isinstance(options["include_usage"], bool):
+            raise RelayError("stream_options.include_usage must be a boolean", status_code=400)
     instructions: list[str] = []
     input_items: list[dict[str, Any]] = []
     for message in messages:
@@ -248,21 +287,25 @@ def build_responses_request(chat_request: dict[str, Any]) -> dict[str, Any]:
         "stream": True,
     }
     effort = chat_request.get("reasoning_effort")
-    if isinstance(effort, str) and effort:
+    if effort is not None and (not isinstance(effort, str) or not effort):
+        raise RelayError("reasoning_effort must be a non-empty string", status_code=400)
+    if effort:
         request["reasoning"] = {"effort": effort, "summary": "auto"}
-    tools = [_response_tool(tool) for tool in (chat_request.get("tools") or [])]
-    request_tools = [tool for tool in tools if tool is not None]
+    raw_tools = chat_request.get("tools")
+    if raw_tools is not None and not isinstance(raw_tools, list):
+        raise RelayError("tools must be a list", status_code=400)
+    request_tools = [_response_tool(tool) for tool in (raw_tools or [])]
+    choice = _responses_tool_choice(chat_request["tool_choice"]) if "tool_choice" in chat_request else None
     if request_tools:
         request["tools"] = request_tools
-        choice = _responses_tool_choice(chat_request.get("tool_choice"))
         if choice is not None:
             request["tool_choice"] = choice
-        if "parallel_tool_calls" in chat_request:
-            if not isinstance(chat_request["parallel_tool_calls"], bool):
-                raise RelayError("parallel_tool_calls must be a boolean", status_code=400)
-            request["parallel_tool_calls"] = chat_request["parallel_tool_calls"]
-    elif chat_request.get("tool_choice") not in (None, "none"):
+    elif choice not in (None, "none"):
         raise RelayError("tool_choice requires tools", status_code=400)
+    if "parallel_tool_calls" in chat_request:
+        if not isinstance(chat_request["parallel_tool_calls"], bool):
+            raise RelayError("parallel_tool_calls must be a boolean", status_code=400)
+        request["parallel_tool_calls"] = chat_request["parallel_tool_calls"]
     limits = [chat_request.get("max_completion_tokens"), chat_request.get("max_tokens")]
     if limits[0] is not None and limits[1] is not None and limits[0] != limits[1]:
         raise RelayError("max_completion_tokens and max_tokens disagree", status_code=400)
@@ -271,7 +314,7 @@ def build_responses_request(chat_request: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
             raise RelayError("output token limit must be a positive integer", status_code=400)
         request["max_output_tokens"] = limit
-    response_format = _response_format(chat_request.get("response_format"))
+    response_format = _response_format(chat_request["response_format"]) if "response_format" in chat_request else None
     if response_format:
         request["text"] = response_format
     return request
@@ -298,7 +341,9 @@ def _sse_events(lines: Iterable[str]) -> Iterable[dict[str, Any]]:
             raise ProviderStreamError("Codex returned malformed stream data", status_code=502) from exc
         if isinstance(payload, dict) and name and "type" not in payload:
             payload["type"] = name
-        return payload if isinstance(payload, dict) else None
+        if not isinstance(payload, dict):
+            raise ProviderStreamError("Codex returned a non-object stream event", status_code=502)
+        return payload
 
     for raw_line in lines:
         line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else str(raw_line)
@@ -322,11 +367,36 @@ def _nested(payload: Any, key: str) -> Any:
 
 
 def _usage(value: Any) -> dict[str, int]:
-    if not isinstance(value, dict):
+    if value is None:
         return {}
-    prompt = int(value.get("input_tokens") or value.get("prompt_tokens") or 0)
-    completion = int(value.get("output_tokens") or value.get("completion_tokens") or 0)
+    if not isinstance(value, dict):
+        raise ProviderStreamError("Codex returned malformed usage data", status_code=502)
+
+    def count(*keys: str) -> int:
+        raw = next((value[key] for key in keys if key in value), 0)
+        if not isinstance(raw, int) or isinstance(raw, bool) or raw < 0:
+            raise ProviderStreamError("Codex returned malformed usage data", status_code=502)
+        return raw
+
+    prompt = count("input_tokens", "prompt_tokens")
+    completion = count("output_tokens", "completion_tokens")
     return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
+
+
+def _terminal_response(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
+    response = event.get("response")
+    if not isinstance(response, dict):
+        raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
+    for key in ("id", "model"):
+        if key in response and response[key] is not None and not isinstance(response[key], str):
+            raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
+    if "incomplete_details" in response:
+        details = response["incomplete_details"]
+        if details is not None and not isinstance(details, dict):
+            raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
+        if isinstance(details, dict) and "reason" in details and not isinstance(details["reason"], str):
+            raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
+    return response, _usage(response.get("usage"))
 
 
 def _provider_error(payload: dict[str, Any]) -> ProviderStreamError:
@@ -346,7 +416,7 @@ def aggregate_codex_sse(raw: str | Iterable[str]) -> AggregatedResponse:
     terminal_type: str | None = None
     for event in _sse_events(raw.splitlines() if isinstance(raw, str) else raw):
         if terminal:
-            continue
+            break
         event_type = str(event.get("type") or "")
         if event_type in {"error", "response.failed"}:
             raise _provider_error(event)
@@ -375,14 +445,12 @@ def aggregate_codex_sse(raw: str | Iterable[str]) -> AggregatedResponse:
                     }
                 )
         elif event_type in {"response.completed", "response.incomplete"}:
-            response = event.get("response")
-            if not isinstance(response, dict):
-                raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
+            response, usage = _terminal_response(event)
             terminal = True
             terminal_type = event_type
             result.response_id = response.get("id")
             result.model = response.get("model")
-            result.usage = _usage(response.get("usage"))
+            result.usage = usage
             if event_type == "response.incomplete":
                 details = response.get("incomplete_details")
                 reason = details.get("reason") if isinstance(details, dict) else None
@@ -446,10 +514,12 @@ class AuthStore:
         return value
 
     def _candidate(self, state: dict[str, Any]) -> str:
-        provider = state.get("providers", {}).get("openai-codex", {})
+        providers = state.get("providers")
+        provider = providers.get("openai-codex") if isinstance(providers, dict) else None
         tokens = provider.get("tokens") if isinstance(provider, dict) else None
-        if isinstance(tokens, dict) and isinstance(tokens.get("access_token"), str):
-            return tokens["access_token"]
+        token = tokens.get("access_token") if isinstance(tokens, dict) else None
+        if isinstance(token, str) and token.strip():
+            return token
         raise RelayError("No Codex access token is available", status_code=503)
 
     async def token(self, *, force_refresh: bool = False) -> str:
@@ -461,13 +531,21 @@ class AuthStore:
 def _account_id_from_token(token: str) -> str | None:
     """Return only the canonical account id claim; malformed/opaque tokens are safe."""
     try:
-        encoded = token.split(".")[1]
-        encoded += "=" * (-len(encoded) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(encoded))
+        encoded = token.split(".")[1].encode("ascii")
+        encoded += b"=" * (-len(encoded) % 4)
+        claims = json.loads(base64.b64decode(encoded, altchars=b"-_", validate=True))
         auth = claims.get("https://api.openai.com/auth") if isinstance(claims, dict) else None
         account_id = auth.get("chatgpt_account_id") if isinstance(auth, dict) else None
         return account_id if isinstance(account_id, str) and account_id else None
-    except (IndexError, TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError):
+    except (
+        IndexError,
+        TypeError,
+        ValueError,
+        binascii.Error,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        UnicodeEncodeError,
+    ):
         return None
 
 
@@ -499,6 +577,12 @@ class CodexRelay:
             token = await self.token_provider(force_refresh)
         else:
             token = await self.auth.token(force_refresh=force_refresh)
+        if not isinstance(token, str) or not token.strip():
+            raise RelayError("Codex credential source is unavailable", status_code=503)
+        try:
+            token.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise RelayError("Codex credential source is unavailable", status_code=503) from exc
         headers = {
             "Accept": "text/event-stream",
             "Authorization": f"Bearer {token}",
@@ -525,7 +609,8 @@ class CodexRelay:
         try:
             raw = await response.aread()
             if response.status_code >= 400:
-                return Response(content=raw, status_code=response.status_code, media_type=response.headers.get("content-type"))
+                status = response.status_code if response.status_code < 600 else 502
+                return _error_response(RelayError("Codex provider request failed", status_code=status))
             try:
                 result = aggregate_codex_sse(raw.decode("utf-8", errors="replace"))
             except RelayError as exc:
@@ -534,7 +619,9 @@ class CodexRelay:
         finally:
             await response.aclose()
 
-    async def stream_chat(self, response: httpx.Response, model: str) -> AsyncIterator[bytes]:
+    async def stream_chat(
+        self, response: httpx.Response, model: str, *, include_usage: bool = False
+    ) -> AsyncIterator[bytes]:
         response_id = f"chatcmpl-relay-{uuid.uuid4().hex}"
         created = int(time.time())
         first_delta = True
@@ -551,7 +638,9 @@ class CodexRelay:
                 raise ProviderStreamError("Codex returned malformed stream data", status_code=502) from exc
             if isinstance(event, dict) and event_name and "type" not in event:
                 event["type"] = event_name
-            return event if isinstance(event, dict) else None
+            if not isinstance(event, dict):
+                raise ProviderStreamError("Codex returned a non-object stream event", status_code=502)
+            return event
 
         async def translate(event: dict[str, Any]) -> AsyncIterator[bytes]:
             nonlocal first_delta, terminal
@@ -572,9 +661,9 @@ class CodexRelay:
                     tool_calls.append(call)
                     yield _sse_line({"id": response_id, "object": "chat.completion.chunk", "created": created, "model": model, "choices": [{"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}]})
             elif event_type in {"response.completed", "response.incomplete"}:
-                response = event.get("response")
-                if not isinstance(response, dict):
-                    raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
+                response, usage = _terminal_response(event)
+                if include_usage and "usage" not in response:
+                    raise ProviderStreamError("Codex returned malformed usage data", status_code=502)
                 terminal = True
                 details = response.get("incomplete_details")
                 reason = details.get("reason") if isinstance(details, dict) else None
@@ -583,6 +672,8 @@ class CodexRelay:
                 else:
                     finish = "tool_calls" if tool_calls else "length" if event_type == "response.incomplete" else "stop"
                 yield _sse_line({"id": response_id, "object": "chat.completion.chunk", "created": created, "model": model, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]})
+                if include_usage:
+                    yield _sse_line({"id": response_id, "object": "chat.completion.chunk", "created": created, "model": model, "choices": [], "usage": usage})
                 yield b"data: [DONE]\n\n"
 
         event_name: str | None = None
@@ -596,16 +687,19 @@ class CodexRelay:
                     if event is not None:
                         async for chunk in translate(event):
                             yield chunk
+                        if terminal:
+                            break
                 elif line.startswith(":"):
                     continue
                 elif line.startswith("event:"):
                     event_name = line[6:].strip()
                 elif line.startswith("data:"):
                     data_lines.append(line[5:].lstrip())
-            event = event_payload(event_name, data_lines)
-            if event is not None:
-                async for chunk in translate(event):
-                    yield chunk
+            if not terminal:
+                event = event_payload(event_name, data_lines)
+                if event is not None:
+                    async for chunk in translate(event):
+                        yield chunk
             if not terminal:
                 raise ProviderStreamError("Codex stream ended without a terminal response", status_code=502)
         except (RelayError, httpx.HTTPError):
@@ -656,15 +750,24 @@ def create_app(relay: CodexRelay | None = None, *, inbound_key: str | None = Non
             if body.get("stream") is True:
                 upstream = await relay.open_upstream(body)
                 if upstream.status_code >= 400:
-                    raw = await upstream.aread()
-                    await upstream.aclose()
-                    return Response(content=raw, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
-                return StreamingResponse(relay.stream_chat(upstream, str(body.get("model") or "")), media_type="text/event-stream")
+                    try:
+                        status = upstream.status_code if upstream.status_code < 600 else 502
+                        return _error_response(RelayError("Codex provider request failed", status_code=status))
+                    finally:
+                        await upstream.aclose()
+                options = body.get("stream_options") or {}
+                include_usage = bool(options.get("include_usage")) if isinstance(options, dict) else False
+                return StreamingResponse(
+                    relay.stream_chat(upstream, str(body.get("model") or ""), include_usage=include_usage),
+                    media_type="text/event-stream",
+                )
             return await relay.complete(body)
         except RelayError as exc:
             return _error_response(exc)
         except (httpx.HTTPError, OSError):
             return _error_response(RelayError("Codex provider request failed", status_code=502))
+        except UnicodeError:
+            return _error_response(RelayError("Codex credential source is unavailable", status_code=503))
         except (json.JSONDecodeError, ValueError):
             return _error_response(RelayError("Invalid JSON request body", status_code=400))
 
