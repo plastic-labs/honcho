@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from src.codex_relay import (
     AuthStore,
     CodexRelay,
+    CredentialError,
     RelayError,
     aggregate_codex_sse,
     build_responses_request,
@@ -507,6 +508,106 @@ async def test_account_claim_header_and_opaque_token_are_safe() -> None:
     await response.aclose()
     assert seen["account"] is None
     await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "provider_error",
+    [
+        OSError("OS_PRIVATE_DETAIL"),
+        ValueError("VALUE_PRIVATE_DETAIL"),
+        RuntimeError("RUNTIME_PRIVATE_DETAIL"),
+        httpx.ConnectError("HTTP_PRIVATE_DETAIL"),
+        UnicodeError("UNICODE_PRIVATE_DETAIL"),
+        Exception("GENERIC_PRIVATE_DETAIL"),
+    ],
+    ids=["oserror", "value", "runtime", "http", "unicode", "generic"],
+)
+def test_injected_token_provider_exception_types_are_sanitized_at_route(provider_error: Exception) -> None:
+    calls: list[bool] = []
+
+    async def provider(force_refresh: bool) -> str:
+        calls.append(force_refresh)
+        raise provider_error
+
+    app = create_app(CodexRelay(token_provider=provider))
+    with TestClient(app) as client:
+        response = client.post("/v1/chat/completions", json={"messages": []})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {"message": "Codex credential source unavailable", "code": "credential_unavailable"}
+    }
+    assert str(provider_error) not in response.text
+    assert calls == [False]
+
+
+def test_credential_error_payload_is_never_reflected_at_route() -> None:
+    private_payload = {"error": {"message": "PRIVATE_CREDENTIAL_PAYLOAD", "code": "private_code"}}
+
+    async def provider(_: bool) -> str:
+        raise CredentialError("PRIVATE_CREDENTIAL_EXCEPTION", status_code=418, payload=private_payload)
+
+    app = create_app(CodexRelay(token_provider=provider))
+    with TestClient(app) as client:
+        response = client.post("/v1/chat/completions", json={"messages": []})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {"message": "Codex credential source unavailable", "code": "credential_unavailable"}
+    }
+    assert "PRIVATE_CREDENTIAL" not in response.text
+    assert "private_code" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_initial_401_is_closed_when_forced_refresh_provider_fails() -> None:
+    class ClosingStream(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.closed: bool = False
+
+        async def __aiter__(self):
+            yield b""
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    initial_stream = ClosingStream()
+    refreshes: list[bool] = []
+
+    async def provider(force_refresh: bool) -> str:
+        refreshes.append(force_refresh)
+        if force_refresh:
+            raise RuntimeError("REFRESH_PRIVATE_DETAIL")
+        return "synthetic-stale"
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, stream=initial_stream)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    app = create_app(CodexRelay(client=client, token_provider=provider))
+
+    route_client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://relay")
+    response = await route_client.post("/v1/chat/completions", json={"messages": []})
+    await route_client.aclose()
+    await client.aclose()
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {"message": "Codex credential source unavailable", "code": "credential_unavailable"}
+    }
+    assert "REFRESH_PRIVATE_DETAIL" not in response.text
+    assert refreshes == [False, True]
+    assert initial_stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_injected_token_provider_does_not_catch_cancellation() -> None:
+    async def provider(_: bool) -> str:
+        raise asyncio.CancelledError
+
+    relay = CodexRelay(token_provider=provider)
+    with pytest.raises(asyncio.CancelledError):
+        await relay.open_upstream({"messages": []})
 
 
 @pytest.mark.asyncio

@@ -503,17 +503,21 @@ def _chat_response(result: AggregatedResponse, requested_model: str) -> dict[str
 
 
 def _error_response(error: RelayError) -> JSONResponse:
-    if isinstance(error.payload, dict):
-        payload = error.payload
-    elif isinstance(error, CredentialError):
+    if isinstance(error, CredentialError):
         payload = {"error": {"message": "Codex credential source unavailable", "code": "credential_unavailable"}}
+        status_code = 503
+    elif isinstance(error.payload, dict):
+        payload = error.payload
+        status_code = error.status_code
     elif error.status_code == 400:
         # Input-validation details are safe and useful to the caller. Provider,
         # credential, and filesystem failures may contain secrets or local paths.
         payload = {"error": {"message": str(error), "code": "invalid_request"}}
+        status_code = error.status_code
     else:
         payload = {"error": {"message": "Codex provider request failed", "code": "provider_error"}}
-    return JSONResponse(payload, status_code=error.status_code)
+        status_code = error.status_code
+    return JSONResponse(payload, status_code=status_code)
 
 
 class AuthStore:
@@ -598,7 +602,10 @@ class CodexRelay:
             if self.access_token is not None:
                 token = self.access_token
             elif self.token_provider is not None:
-                token = await self.token_provider(force_refresh)
+                try:
+                    token = await self.token_provider(force_refresh)
+                except Exception as exc:
+                    raise CredentialError("Codex credential source is unavailable", status_code=503) from exc
             else:
                 token = await self.auth.token(force_refresh=force_refresh)
         except CredentialError:
