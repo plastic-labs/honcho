@@ -30,8 +30,6 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 logger = logging.getLogger("codex_relay")
 CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_AUTH_PATH = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))) / "auth.json"
-CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
-CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 
 class RelayError(RuntimeError):
@@ -132,7 +130,7 @@ def _assistant_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
     return converted
 
 
-def _response_tool(tool: dict[str, Any]) -> dict[str, Any] | None:
+def _response_tool(tool: Any) -> dict[str, Any]:
     if not isinstance(tool, dict):
         raise RelayError("tool must be an object", status_code=400)
     if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
@@ -741,9 +739,9 @@ class CodexRelay:
                     tool_calls.append(call)
                     yield _sse_line({"id": response_id, "object": "chat.completion.chunk", "created": created, "model": model, "choices": [{"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}]})
             elif event_type in {"response.completed", "response.incomplete"}:
-                response, usage = _terminal_response(event, require_usage=include_usage)
+                terminal_response, usage = _terminal_response(event, require_usage=include_usage)
                 terminal = True
-                details = response.get("incomplete_details")
+                details = terminal_response.get("incomplete_details")
                 reason = details.get("reason") if isinstance(details, dict) else None
                 if event_type == "response.incomplete" and reason in {"content_filter", "content_filtering"}:
                     finish = "content_filter"
@@ -798,6 +796,7 @@ def _is_loopback(host: str) -> bool:
 
 def create_app(relay: CodexRelay | None = None, *, inbound_key: str | None = None, bind_host: str = "127.0.0.1") -> FastAPI:
     relay = relay or CodexRelay()
+    inbound_key = inbound_key or None
     if not _is_loopback(bind_host) and not inbound_key:
         raise ValueError("inbound_key is required for non-loopback binds")
 
@@ -819,7 +818,9 @@ def create_app(relay: CodexRelay | None = None, *, inbound_key: str | None = Non
         if inbound_key is not None:
             supplied = request.headers.get("authorization", "")
             candidate = supplied[7:] if supplied.lower().startswith("bearer ") else ""
-            if not candidate or not hmac.compare_digest(candidate, inbound_key):
+            candidate_bytes = candidate.encode("utf-8")
+            key_bytes = inbound_key.encode("utf-8")
+            if not candidate_bytes or not hmac.compare_digest(candidate_bytes, key_bytes):
                 return JSONResponse({"error": {"message": "Invalid relay authentication", "code": "relay_unauthorized"}}, status_code=401)
         try:
             body = await request.json()

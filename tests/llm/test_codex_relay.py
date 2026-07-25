@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from typing import Any
 
@@ -204,7 +205,6 @@ def test_auth_store_is_read_only_and_reports_missing_source(tmp_path: Any) -> No
     path = tmp_path / "auth.json"
     store = AuthStore(path)
     with pytest.raises(RelayError, match="credential source"):
-        import asyncio
         asyncio.run(store.token())
 
 
@@ -212,7 +212,6 @@ def test_auth_store_reads_only_canonical_provider_token(tmp_path: Any) -> None:
     path = tmp_path / "auth.json"
     path.write_text(json.dumps({"providers": {"openai-codex": {"tokens": {"access_token": "synthetic"}}}}))
     store = AuthStore(path)
-    import asyncio
     assert asyncio.run(store.token()) == "synthetic"
     assert list(tmp_path.iterdir()) == [path]
 
@@ -465,6 +464,21 @@ def test_non_loopback_requires_key_and_rejects_before_upstream() -> None:
         create_app(CodexRelay(access_token="synthetic"), bind_host="0.0.0.0")
 
 
+def test_empty_inbound_key_is_unconfigured_on_loopback_but_required_off_host() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=TEXT_SSE)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    app = create_app(CodexRelay(client=client, access_token="synthetic"), inbound_key="")
+    with TestClient(app) as test_client:
+        response = test_client.post("/v1/chat/completions", json={"messages": []})
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Hello world"
+
+    with pytest.raises(ValueError, match="inbound_key"):
+        create_app(CodexRelay(access_token="synthetic"), inbound_key="", bind_host="0.0.0.0")
+
+
 def test_relay_auth_rejects_missing_wrong_and_malformed_before_upstream() -> None:
     calls = 0
 
@@ -484,10 +498,35 @@ def test_relay_auth_rejects_missing_wrong_and_malformed_before_upstream() -> Non
     assert calls == 1
 
 
+def test_non_ascii_bearer_candidate_returns_normal_unauthorized_response() -> None:
+    calls = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, text=TEXT_SSE)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    app = create_app(
+        CodexRelay(client=client, access_token="synthetic"),
+        inbound_key="relay-secret",
+        bind_host="192.0.2.10",
+    )
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/v1/chat/completions",
+            headers={b"Authorization": b"Bearer \xc3\xa9"},
+            json={"messages": []},
+        )
+    assert response.status_code == 401
+    assert response.json() == {
+        "error": {"message": "Invalid relay authentication", "code": "relay_unauthorized"}
+    }
+    assert calls == 0
+
+
 @pytest.mark.asyncio
 async def test_account_claim_header_and_opaque_token_are_safe() -> None:
-    import base64
-
     def enc(value: Any) -> str:
         return base64.urlsafe_b64encode(json.dumps(value).encode()).decode().rstrip("=")
 
