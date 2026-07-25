@@ -43,6 +43,10 @@ class RelayError(RuntimeError):
         self.payload = payload
 
 
+class CredentialError(RelayError):
+    """A failure resolving or validating the local Codex credential source."""
+
+
 class ProviderStreamError(RelayError):
     """The provider sent a terminal error inside an otherwise successful SSE stream."""
 
@@ -366,14 +370,20 @@ def _nested(payload: Any, key: str) -> Any:
     return payload.get(key) if isinstance(payload, dict) else None
 
 
-def _usage(value: Any) -> dict[str, int]:
+def _usage(value: Any, *, required: bool = False) -> dict[str, int]:
     if value is None:
+        if required:
+            raise ProviderStreamError("Codex returned malformed usage data", status_code=502)
         return {}
     if not isinstance(value, dict):
         raise ProviderStreamError("Codex returned malformed usage data", status_code=502)
 
     def count(*keys: str) -> int:
-        raw = next((value[key] for key in keys if key in value), 0)
+        raw = next((value[key] for key in keys if key in value), None)
+        if raw is None and required:
+            raise ProviderStreamError("Codex returned malformed usage data", status_code=502)
+        if raw is None:
+            raw = 0
         if not isinstance(raw, int) or isinstance(raw, bool) or raw < 0:
             raise ProviderStreamError("Codex returned malformed usage data", status_code=502)
         return raw
@@ -383,7 +393,9 @@ def _usage(value: Any) -> dict[str, int]:
     return {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
 
 
-def _terminal_response(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
+def _terminal_response(
+    event: dict[str, Any], *, require_usage: bool = False
+) -> tuple[dict[str, Any], dict[str, int]]:
     response = event.get("response")
     if not isinstance(response, dict):
         raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
@@ -396,7 +408,7 @@ def _terminal_response(event: dict[str, Any]) -> tuple[dict[str, Any], dict[str,
             raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
         if isinstance(details, dict) and "reason" in details and not isinstance(details["reason"], str):
             raise ProviderStreamError("Codex returned malformed terminal data", status_code=502)
-    return response, _usage(response.get("usage"))
+    return response, _usage(response.get("usage"), required=require_usage)
 
 
 def _provider_error(payload: dict[str, Any]) -> ProviderStreamError:
@@ -408,60 +420,71 @@ def _provider_error(payload: dict[str, Any]) -> ProviderStreamError:
     return ProviderStreamError("Codex provider returned an error", status_code=status, payload={"error": {"message": "Codex provider request failed", "code": code}})
 
 
-def aggregate_codex_sse(raw: str | Iterable[str]) -> AggregatedResponse:
+def _aggregate_event(
+    result: AggregatedResponse,
+    arguments: dict[str, list[str]],
+    event: dict[str, Any],
+    *,
+    require_usage: bool = False,
+) -> bool:
+    event_type = str(event.get("type") or "")
+    if event_type in {"error", "response.failed"}:
+        raise _provider_error(event)
+    if "output_text.delta" in event_type:
+        result.content += str(event.get("delta") or "")
+    elif "reasoning" in event_type and "delta" in event_type:
+        result.reasoning += str(event.get("delta") or "")
+    elif "function_call_arguments.delta" in event_type:
+        item_id = str(event.get("item_id") or event.get("call_id") or "")
+        arguments.setdefault(item_id, []).append(str(event.get("delta") or ""))
+    elif event_type == "response.output_item.done":
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "function_call":
+            call_id = str(item.get("call_id") or item.get("id") or f"call_{len(result.tool_calls)}")
+            raw_args = item.get("arguments")
+            if not isinstance(raw_args, str):
+                raw_args = "".join(arguments.get(str(item.get("id") or call_id), []))
+            result.tool_calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": str(item.get("name") or ""),
+                        "arguments": raw_args or "{}",
+                    },
+                }
+            )
+    elif event_type in {"response.completed", "response.incomplete"}:
+        response, usage = _terminal_response(event, require_usage=require_usage)
+        result.response_id = response.get("id")
+        result.model = response.get("model")
+        result.usage = usage
+        if event_type == "response.incomplete":
+            details = response.get("incomplete_details")
+            reason = details.get("reason") if isinstance(details, dict) else None
+            result.finish_reason = "content_filter" if reason in {"content_filter", "content_filtering"} else "length"
+        return True
+    return False
+
+
+def _finish_aggregate(result: AggregatedResponse) -> AggregatedResponse:
+    if result.tool_calls:
+        result.finish_reason = "tool_calls"
+    return result
+
+
+def aggregate_codex_sse(raw: str | Iterable[str], *, require_usage: bool = False) -> AggregatedResponse:
     """Aggregate Codex SSE events into the fields used by Chat Completions."""
     result = AggregatedResponse()
     arguments: dict[str, list[str]] = {}
     terminal = False
-    terminal_type: str | None = None
     for event in _sse_events(raw.splitlines() if isinstance(raw, str) else raw):
-        if terminal:
-            break
-        event_type = str(event.get("type") or "")
-        if event_type in {"error", "response.failed"}:
-            raise _provider_error(event)
-        if "output_text.delta" in event_type:
-            result.content += str(event.get("delta") or "")
-        elif "reasoning" in event_type and "delta" in event_type:
-            result.reasoning += str(event.get("delta") or "")
-        elif "function_call_arguments.delta" in event_type:
-            item_id = str(event.get("item_id") or event.get("call_id") or "")
-            arguments.setdefault(item_id, []).append(str(event.get("delta") or ""))
-        elif event_type == "response.output_item.done":
-            item = event.get("item")
-            if isinstance(item, dict) and item.get("type") == "function_call":
-                call_id = str(item.get("call_id") or item.get("id") or f"call_{len(result.tool_calls)}")
-                raw_args = item.get("arguments")
-                if not isinstance(raw_args, str):
-                    raw_args = "".join(arguments.get(str(item.get("id") or call_id), []))
-                result.tool_calls.append(
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": str(item.get("name") or ""),
-                            "arguments": raw_args or "{}",
-                        },
-                    }
-                )
-        elif event_type in {"response.completed", "response.incomplete"}:
-            response, usage = _terminal_response(event)
+        if _aggregate_event(result, arguments, event, require_usage=require_usage):
             terminal = True
-            terminal_type = event_type
-            result.response_id = response.get("id")
-            result.model = response.get("model")
-            result.usage = usage
-            if event_type == "response.incomplete":
-                details = response.get("incomplete_details")
-                reason = details.get("reason") if isinstance(details, dict) else None
-                result.finish_reason = "content_filter" if reason in {"content_filter", "content_filtering"} else "length"
-
-
-    if not terminal or terminal_type not in {"response.completed", "response.incomplete"}:
+            break
+    if not terminal:
         raise ProviderStreamError("Codex stream ended without a terminal response", status_code=502)
-    if result.tool_calls:
-        result.finish_reason = "tool_calls"
-    return result
+    return _finish_aggregate(result)
 
 
 def _chat_response(result: AggregatedResponse, requested_model: str) -> dict[str, Any]:
@@ -482,12 +505,12 @@ def _chat_response(result: AggregatedResponse, requested_model: str) -> dict[str
 def _error_response(error: RelayError) -> JSONResponse:
     if isinstance(error.payload, dict):
         payload = error.payload
+    elif isinstance(error, CredentialError):
+        payload = {"error": {"message": "Codex credential source unavailable", "code": "credential_unavailable"}}
     elif error.status_code == 400:
         # Input-validation details are safe and useful to the caller. Provider,
         # credential, and filesystem failures may contain secrets or local paths.
         payload = {"error": {"message": str(error), "code": "invalid_request"}}
-    elif error.status_code == 503:
-        payload = {"error": {"message": "Codex credential source unavailable", "code": "credential_unavailable"}}
     else:
         payload = {"error": {"message": "Codex provider request failed", "code": "provider_error"}}
     return JSONResponse(payload, status_code=error.status_code)
@@ -508,9 +531,9 @@ class AuthStore:
             with self.path.open(encoding="utf-8") as handle:
                 value = json.load(handle)
         except (OSError, json.JSONDecodeError) as exc:
-            raise RelayError("Hermes credential source is unavailable", status_code=503) from exc
+            raise CredentialError("Hermes credential source is unavailable", status_code=503) from exc
         if not isinstance(value, dict):
-            raise RelayError("Hermes credential source is invalid", status_code=503)
+            raise CredentialError("Hermes credential source is invalid", status_code=503)
         return value
 
     def _candidate(self, state: dict[str, Any]) -> str:
@@ -520,11 +543,11 @@ class AuthStore:
         token = tokens.get("access_token") if isinstance(tokens, dict) else None
         if isinstance(token, str) and token.strip():
             return token
-        raise RelayError("No Codex access token is available", status_code=503)
+        raise CredentialError("No Codex access token is available", status_code=503)
 
     async def token(self, *, force_refresh: bool = False) -> str:
         if force_refresh:
-            raise RelayError("credential refresh is owned by Hermes, not the relay", status_code=503)
+            raise CredentialError("credential refresh is owned by Hermes, not the relay", status_code=503)
         return self._candidate(self._read())
 
 
@@ -571,18 +594,23 @@ class CodexRelay:
             await self.client.aclose()
 
     async def _send(self, payload: dict[str, Any], *, force_refresh: bool = False) -> httpx.Response:
-        if self.access_token is not None:
-            token = self.access_token
-        elif self.token_provider is not None:
-            token = await self.token_provider(force_refresh)
-        else:
-            token = await self.auth.token(force_refresh=force_refresh)
+        try:
+            if self.access_token is not None:
+                token = self.access_token
+            elif self.token_provider is not None:
+                token = await self.token_provider(force_refresh)
+            else:
+                token = await self.auth.token(force_refresh=force_refresh)
+        except CredentialError:
+            raise
+        except RelayError as exc:
+            raise CredentialError("Codex credential source is unavailable", status_code=503) from exc
         if not isinstance(token, str) or not token.strip():
-            raise RelayError("Codex credential source is unavailable", status_code=503)
+            raise CredentialError("Codex credential source is unavailable", status_code=503)
         try:
             token.encode("ascii")
         except UnicodeEncodeError as exc:
-            raise RelayError("Codex credential source is unavailable", status_code=503) from exc
+            raise CredentialError("Codex credential source is unavailable", status_code=503) from exc
         headers = {
             "Accept": "text/event-stream",
             "Authorization": f"Bearer {token}",
@@ -606,16 +634,61 @@ class CodexRelay:
 
     async def complete(self, chat_request: dict[str, Any]) -> Response:
         response = await self.open_upstream(chat_request)
+        include_usage = (
+            isinstance(chat_request.get("stream_options"), dict)
+            and chat_request["stream_options"].get("include_usage") is True
+        )
+        result = AggregatedResponse()
+        arguments: dict[str, list[str]] = {}
+        event_name: str | None = None
+        data_lines: list[str] = []
+        terminal = False
+
+        def event_payload() -> dict[str, Any] | None:
+            raw = "\n".join(data_lines).strip()
+            if not raw or raw == "[DONE]":
+                return None
+            try:
+                event: Any = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ProviderStreamError("Codex returned malformed stream data", status_code=502) from exc
+            if isinstance(event, dict) and event_name and "type" not in event:
+                event["type"] = event_name
+            if not isinstance(event, dict):
+                raise ProviderStreamError("Codex returned a non-object stream event", status_code=502)
+            return event
+
         try:
-            raw = await response.aread()
             if response.status_code >= 400:
                 status = response.status_code if response.status_code < 600 else 502
                 return _error_response(RelayError("Codex provider request failed", status_code=status))
-            try:
-                result = aggregate_codex_sse(raw.decode("utf-8", errors="replace"))
-            except RelayError as exc:
-                return _error_response(exc)
-            return JSONResponse(_chat_response(result, str(chat_request.get("model") or "")))
+            async for line in response.aiter_lines():
+                if line == "":
+                    event = event_payload()
+                    event_name = None
+                    data_lines = []
+                    if event is not None and _aggregate_event(
+                        result, arguments, event, require_usage=include_usage
+                    ):
+                        terminal = True
+                        break
+                elif line.startswith(":"):
+                    continue
+                elif line.startswith("event:"):
+                    event_name = line[6:].strip()
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
+            if not terminal:
+                event = event_payload()
+                if event is not None:
+                    terminal = _aggregate_event(
+                        result, arguments, event, require_usage=include_usage
+                    )
+            if not terminal:
+                raise ProviderStreamError("Codex stream ended without a terminal response", status_code=502)
+            return JSONResponse(_chat_response(_finish_aggregate(result), str(chat_request.get("model") or "")))
+        except RelayError as exc:
+            return _error_response(exc)
         finally:
             await response.aclose()
 
@@ -661,9 +734,7 @@ class CodexRelay:
                     tool_calls.append(call)
                     yield _sse_line({"id": response_id, "object": "chat.completion.chunk", "created": created, "model": model, "choices": [{"index": 0, "delta": {"tool_calls": [call]}, "finish_reason": None}]})
             elif event_type in {"response.completed", "response.incomplete"}:
-                response, usage = _terminal_response(event)
-                if include_usage and "usage" not in response:
-                    raise ProviderStreamError("Codex returned malformed usage data", status_code=502)
+                response, usage = _terminal_response(event, require_usage=include_usage)
                 terminal = True
                 details = response.get("incomplete_details")
                 reason = details.get("reason") if isinstance(details, dict) else None

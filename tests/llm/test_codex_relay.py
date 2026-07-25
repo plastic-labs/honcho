@@ -144,6 +144,38 @@ async def test_upstream_http_error_is_sanitized() -> None:
     assert json.loads(bytes(response.body).decode()) == {"error": {"message": "Codex provider request failed", "code": "provider_error"}}
 
 
+@pytest.mark.asyncio
+async def test_provider_http_503_keeps_provider_classification_for_non_stream() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="PROVIDER_OUTAGE_DETAIL")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    relay = CodexRelay(client=client, access_token="test-token")
+    response = await relay.complete({"messages": []})
+    await client.aclose()
+
+    assert response.status_code == 503
+    assert json.loads(bytes(response.body).decode()) == {
+        "error": {"message": "Codex provider request failed", "code": "provider_error"}
+    }
+    assert "PROVIDER_OUTAGE_DETAIL" not in bytes(response.body).decode()
+
+
+def test_provider_http_503_keeps_provider_classification_for_stream() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="PROVIDER_OUTAGE_DETAIL")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    app = create_app(CodexRelay(client=client, access_token="test-token"))
+    with TestClient(app) as test_client:
+        response = test_client.post("/v1/chat/completions", json={"messages": [], "stream": True})
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {"message": "Codex provider request failed", "code": "provider_error"}
+    }
+    assert "PROVIDER_OUTAGE_DETAIL" not in response.text
+
+
 def test_stream_upstream_http_error_is_sanitized() -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="PROVIDER_PRIVATE_DETAIL", headers={"content-type": "text/plain"})
@@ -292,6 +324,18 @@ data: {\"type\":\"response.output_text.delta\",\"delta\":\"bad\"}
         aggregate_codex_sse('event: response.output_text.delta\ndata: {"delta":"partial"}\n\n')
 
 
+def test_aggregate_does_not_request_another_input_after_terminal() -> None:
+    def fail_if_read() -> Any:
+        yield "event: response.completed"
+        yield 'data: {"response":{"id":"r","usage":{"input_tokens":1,"output_tokens":2}}}'
+        yield ""
+        raise AssertionError("aggregate requested input after terminal event")
+
+    result = aggregate_codex_sse(fail_if_read())
+    assert result.content == ""
+    assert result.usage == {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+
+
 def test_aggregate_provider_and_malformed_events_are_sanitized() -> None:
     with pytest.raises(RelayError, match="provider") as provider:
         aggregate_codex_sse('event: error\ndata: {"message":"SECRET_TOKEN"}\n\n')
@@ -348,6 +392,66 @@ async def test_stream_stops_without_reading_after_terminal_and_rejects_non_objec
     upstream = await relay.open_upstream({"messages": []})
     streamed = b"".join([chunk async for chunk in relay.stream_chat(upstream, "gpt-5.6-luna")])
     assert b"provider_stream_error" in streamed
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_non_stream_completion_stops_without_reading_after_terminal() -> None:
+    class BlockingAfterTerminal(httpx.AsyncByteStream):
+        def __init__(self) -> None:
+            self.read_after_terminal = False
+            self.closed = False
+            self._release = asyncio.Event()
+
+        async def __aiter__(self):
+            yield b"event: response.output_text.delta\n"
+            yield b'data: {"delta":"ok"}\n'
+            yield b"\n"
+            yield b"event: response.completed\n"
+            yield b'data: {"response":{"id":"r","usage":{"input_tokens":1,"output_tokens":2}}}\n'
+            yield b"\n"
+            self.read_after_terminal = True
+            await self._release.wait()
+
+        async def aclose(self) -> None:
+            self.closed = True
+            self._release.set()
+
+    stream = BlockingAfterTerminal()
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=stream, headers={"content-type": "text/event-stream"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    relay = CodexRelay(client=client, access_token="synthetic")
+    response = await asyncio.wait_for(
+        relay.complete({"messages": [{"role": "user", "content": "hi"}]}), timeout=1
+    )
+    assert response.status_code == 200
+    body = json.loads(bytes(response.body).decode())
+    assert body["choices"][0]["message"]["content"] == "ok"
+    assert body["usage"]["total_tokens"] == 3
+    assert stream.read_after_terminal is False
+    assert stream.closed is True
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_include_usage_rejects_null_terminal_usage() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text='event: response.completed\ndata: {"response":{"id":"r","usage":null}}\n\n',
+            headers={"content-type": "text/event-stream"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    relay = CodexRelay(client=client, access_token="synthetic")
+    upstream = await relay.open_upstream({"messages": []})
+    streamed = b"".join([chunk async for chunk in relay.stream_chat(upstream, "gpt-5.6-luna", include_usage=True)])
+    assert streamed.count(b"provider_stream_error") == 1
+    assert b'"finish_reason"' not in streamed
+    assert streamed.endswith(b"data: [DONE]\n\n")
     await client.aclose()
 
 
@@ -433,6 +537,9 @@ async def test_injected_token_provider_retries_once_and_sanitizes_failure() -> N
     with TestClient(broken_app) as test_client:
         result = test_client.post("/v1/chat/completions", json={"messages": []})
     assert result.status_code == 503
+    assert result.json() == {
+        "error": {"message": "Codex credential source unavailable", "code": "credential_unavailable"}
+    }
     assert "provider secret" not in result.text
     await client.aclose()
 
@@ -475,8 +582,14 @@ async def test_current_openai_sdk_and_backend_in_process_paths() -> None:
     responses: list[httpx.Response] = []
 
     async def upstream(request: httpx.Request) -> httpx.Response:
-        seen.append(json.loads(request.content))
-        response = httpx.Response(200, text=TEXT_SSE, headers={"content-type": "text/event-stream"})
+        body = json.loads(request.content)
+        seen.append(body)
+        stream_text = (
+            'event: response.completed\ndata: {"response":{"id":"r","usage":null}}\n\n'
+            if "null usage" in json.dumps(body)
+            else TEXT_SSE
+        )
+        response = httpx.Response(200, text=stream_text, headers={"content-type": "text/event-stream"})
         responses.append(response)
         return response
 
@@ -494,6 +607,38 @@ async def test_current_openai_sdk_and_backend_in_process_paths() -> None:
     backend = OpenAIBackend(sdk)
     backend_stream = backend.stream(model="gpt-5.6-luna", messages=[{"role": "user", "content": "backend stream"}], max_tokens=20)
     backend_chunks = [chunk async for chunk in backend_stream]
+
+    null_stream = await sdk.chat.completions.create(
+        model="gpt-5.6-luna",
+        messages=[{"role": "user", "content": "null usage"}],
+        stream=True,
+        stream_options={"include_usage": True},
+    )
+    sdk_null_error: Exception | None = None
+    try:
+        sdk_null_chunks = [chunk async for chunk in null_stream]
+    except Exception as exc:
+        sdk_null_chunks = []
+        sdk_null_error = exc
+    assert sdk_null_error is not None
+    assert "Codex provider stream failed" in str(sdk_null_error)
+    assert not any(
+        chunk.choices and chunk.choices[0].finish_reason for chunk in sdk_null_chunks
+    )
+
+    backend_null_stream = backend.stream(
+        model="gpt-5.6-luna", messages=[{"role": "user", "content": "null usage"}], max_tokens=20
+    )
+    backend_null_error: Exception | None = None
+    try:
+        backend_null_chunks = [chunk async for chunk in backend_null_stream]
+    except Exception as exc:
+        backend_null_chunks = []
+        backend_null_error = exc
+    assert backend_null_error is not None
+    assert "Codex provider stream failed" in str(backend_null_error)
+    assert not any(chunk.is_done and chunk.output_tokens is None for chunk in backend_null_chunks)
+
     from openai import BadRequestError
     with pytest.raises(BadRequestError, match="verbosity"):
         unsupported_stream = backend.stream(
