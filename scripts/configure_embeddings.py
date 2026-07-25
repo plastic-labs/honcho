@@ -16,9 +16,9 @@ The bootstrap sequence for a self-hosted install is:
 Existing 1536 deployments need no action — step 2 is a no-op when settings
 already match the schema.
 
-This script never creates or modifies external-store namespaces. Turbopuffer
-and LanceDB namespaces are per-workspace and lazy-created on first write by
-application code; their dim is implicitly pinned at that point. Use
+This script never creates or modifies external-store namespaces. Turbopuffer,
+LanceDB, and Milvus namespaces are per-workspace and lazy-created on first write
+by application code; their dim is implicitly pinned at that point. Use
 ``--report`` to enumerate existing namespaces against the configured dim.
 """
 

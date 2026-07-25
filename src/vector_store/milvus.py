@@ -11,6 +11,8 @@ import hashlib
 import logging
 import re
 from collections.abc import Callable, Sequence
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from typing import Any, ParamSpec, TypeVar, cast
 
 from pymilvus import DataType, MilvusClient
@@ -44,6 +46,16 @@ STANDARD_METADATA_FIELDS: tuple[str, ...] = (
 RESERVED_FIELDS = {ID_FIELD, VECTOR_FIELD, METADATA_FIELD}
 _VALID_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _UNSAFE_COLLECTION_CHARS = re.compile(r"[^A-Za-z0-9_]")
+
+
+def _uses_lite_3_cosine_distance(uri: str) -> bool:
+    """Return whether the client uses Milvus Lite 3.0 distance semantics."""
+    if "://" in uri:
+        return False
+    try:
+        return package_version("milvus-lite") in {"3.0", "3.0.0"}
+    except PackageNotFoundError:
+        return False
 
 
 class MilvusVectorStore(VectorStore):
@@ -364,6 +376,10 @@ class MilvusVectorStore(VectorStore):
             "limit": top_k,
             "search_params": {"metric_type": DISTANCE_METRIC},
         }
+        if settings.VECTOR_STORE.MILVUS_CONSISTENCY_LEVEL:
+            search_kwargs["consistency_level"] = (
+                settings.VECTOR_STORE.MILVUS_CONSISTENCY_LEVEL
+            )
         if output_fields is not None:
             search_kwargs["output_fields"] = output_fields
 
@@ -399,11 +415,16 @@ class MilvusVectorStore(VectorStore):
 
     def _hit_cosine_distance(self, hit: dict[str, Any]) -> float:
         """Return Honcho cosine distance from a Milvus search hit."""
-        if "distance" in hit:
-            return float(hit["distance"])
-        if "score" in hit:
-            return 1.0 - float(hit["score"])
-        return 0.0
+        if "distance" not in hit:
+            return 0.0
+
+        raw_distance = float(hit["distance"])
+        # Milvus Lite 3.0 reports COSINE distance while Milvus server and
+        # Zilliz Cloud report COSINE similarity. Keep this workaround scoped
+        # to the affected Lite release: https://github.com/milvus-io/milvus-lite/issues/343
+        if _uses_lite_3_cosine_distance(settings.VECTOR_STORE.MILVUS_URI):
+            return raw_distance
+        return 1.0 - raw_distance
 
     def _output_fields(self, include_attributes: bool | list[str]) -> list[str] | None:
         """Translate Honcho projection settings to Milvus output fields."""

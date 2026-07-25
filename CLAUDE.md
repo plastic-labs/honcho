@@ -247,6 +247,7 @@ src/
 ├── vector_store/        # Optional external vector stores (pgvector is default,
 │   │                    #   implemented via MessageEmbedding/Document in models+crud)
 │   ├── lancedb.py
+│   ├── milvus.py
 │   └── turbopuffer.py
 ├── telemetry/           # Observability
 │   ├── emitter.py        # CloudEvents emitter
@@ -289,7 +290,7 @@ src/
 5. **Provider-agnostic LLM layer** (`src/llm/`): all model calls go through `honcho_llm_call()`. Backends (`anthropic`, `gemini`, `openai`) sit behind a registry; per-agent `MODEL_CONFIG` with fallback chains is resolved at call time.
 6. **Dialectic reasoning tiers**: 5 levels (`minimal` → `max`); each level has its own model config and tool set (`minimal` uses a reduced toolset).
 7. **Hybrid search**: Postgres FTS (GIN index on `to_tsvector('english', content)`) + vector similarity (HNSW on `MessageEmbedding.embedding`). `MessageEmbedding` is a separate table from `Message` with its own `sync_state` so embedding is decoupled from message creation.
-8. **Pluggable external vector stores**: defaults to pgvector inline; can swap to turbopuffer or lancedb (`VECTOR_STORE_*` config; `src/vector_store/`).
+8. **Pluggable external vector stores**: defaults to pgvector inline; can swap to turbopuffer, lancedb, or milvus (`VECTOR_STORE_*` config; `src/vector_store/`).
 9. **Composite-FK multi-tenancy**: `workspace_name` participates in nearly every composite FK. Cross-workspace data leakage is structurally impossible at the schema level.
 10. **Scoped Authentication**: JWTs can be scoped to workspace, peer, or session level.
 11. **Batch Operations**: Bulk message creation up to 100 messages per request.
