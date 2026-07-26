@@ -1282,3 +1282,56 @@ def test_settings_signature_tracks_tokenizer(
     after = wrapper._get_settings_signature()  # pyright: ignore[reportPrivateUsage]
 
     assert before != after
+
+
+def test_warmup_defers_missing_api_key_instead_of_failing_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A keyless embedding config must not crash startup: warmup logs and
+    defers the failure to first use, matching pre-warmup lazy behavior."""
+    from src.embedding_client import EmbeddingClient
+
+    wrapper = EmbeddingClient()
+    monkeypatch.setattr(EmbeddingClient, "_instance", None)
+    monkeypatch.setattr(EmbeddingClient, "_instance_signature", None)
+    monkeypatch.setattr(
+        wrapper,
+        "_resolve_runtime_config",
+        lambda: EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key=None,
+        ),
+    )
+
+    with caplog.at_level("WARNING", logger="src.embedding_client"):
+        wrapper.warmup()
+
+    assert EmbeddingClient._instance is None  # pyright: ignore[reportPrivateUsage]
+    assert "warmup failed" in caplog.text
+
+
+def test_warmup_still_fails_fast_on_bad_tokenizer_spec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicitly configured tokenizer spec that cannot load is a
+    misconfiguration of the tokenizer feature and must keep failing startup."""
+    from src.embedding_client import EmbeddingClient
+
+    wrapper = EmbeddingClient()
+    monkeypatch.setattr(EmbeddingClient, "_instance", None)
+    monkeypatch.setattr(EmbeddingClient, "_instance_signature", None)
+    monkeypatch.setattr(
+        wrapper,
+        "_resolve_runtime_config",
+        lambda: EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            tokenizer="tiktoken:",
+        ),
+    )
+
+    with pytest.raises(ValidationException, match="requires an encoding name"):
+        wrapper.warmup()

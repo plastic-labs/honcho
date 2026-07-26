@@ -805,9 +805,23 @@ class EmbeddingClient:
         ``hf:`` tokenizer specs fetch from the Hugging Face Hub; doing that on
         the first request would stall the event loop under the singleton lock.
         Calling this from the API and deriver lifespans moves any tokenizer
-        download off the request path and fails the process fast on a bad spec.
+        download off the request path and fails the process fast on a bad
+        tokenizer spec. Any other construction error (e.g. a missing API key)
+        is logged and deferred to first use, so deployments that never embed
+        keep starting up exactly as they did before warmup existed.
         """
-        self._get_client()
+        try:
+            self._get_client()
+        except ValidationException:
+            # An explicitly configured tokenizer spec that cannot load is a
+            # misconfiguration of this feature; keep failing fast.
+            raise
+        except Exception:
+            logger.warning(
+                "Embedding client warmup failed; embedding calls will fail "
+                + "until the embedding configuration is fixed",
+                exc_info=True,
+            )
 
     def _get_settings_signature(self) -> tuple[object, ...]:
         runtime_config = self._resolve_runtime_config()
