@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import time
@@ -118,8 +119,10 @@ async def lifespan(_: FastAPI):
     await validate_embedding_schema(engine)
 
     # Eagerly build the embedding client so an hf: tokenizer download happens
-    # here, not on the first request under the singleton lock.
-    embedding_client.warmup()
+    # here, not on the first request under the singleton lock. Run it in a
+    # worker thread: the download is blocking network I/O and would otherwise
+    # stall the event loop (signal handling, telemetry) during startup.
+    await asyncio.to_thread(embedding_client.warmup)
 
     try:
         await init_cache()
