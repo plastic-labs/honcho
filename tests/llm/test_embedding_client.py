@@ -259,6 +259,48 @@ async def test_openai_batch_embed_forwards_dimensions(
     assert fake.calls[0]["dimensions"] == 768
 
 
+@pytest.mark.asyncio
+async def test_openai_embed_requests_float_encoding_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The single-query path must request float embeddings explicitly.
+
+    Without an explicit encoding_format, the openai SDK defaults to base64,
+    which OpenAI-compatible providers such as OpenRouter answer with empty
+    embedding data for models that don't support base64 encoding.
+    """
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+    )
+
+    await client.embed("hello")
+
+    assert fake.calls[0]["encoding_format"] == "float"
+
+
+@pytest.mark.asyncio
+async def test_openai_batch_embed_requests_float_encoding_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The batch path must request float embeddings explicitly, like embed()."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+    )
+
+    await client.batch_embed({"a": "hello", "b": "world"})
+
+    assert len(fake.calls) == 1
+    assert fake.calls[0]["encoding_format"] == "float"
+
+
 def _build_embedding_settings(
     env: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
