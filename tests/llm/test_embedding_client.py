@@ -60,7 +60,11 @@ async def test_openai_embedding_client_uses_configured_model_and_dimensions(
 
     assert embedding == [0.1] * 8
     assert fake_embeddings.calls == [
-        {"model": "text-embedding-3-small", "input": ["hello world"]}
+        {
+            "model": "text-embedding-3-small",
+            "input": ["hello world"],
+            "encoding_format": "float",
+        }
     ]
 
 
@@ -200,6 +204,7 @@ async def test_openai_embed_forwards_dimensions_when_send_dimensions_true(
         {
             "model": "text-embedding-3-small",
             "input": ["hello"],
+            "encoding_format": "float",
             "dimensions": 768,
         }
     ]
@@ -219,7 +224,13 @@ async def test_openai_embed_omits_dimensions_when_send_dimensions_false(
 
     await client.embed("hello")
 
-    assert fake.calls == [{"model": "text-embedding-3-small", "input": ["hello"]}]
+    assert fake.calls == [
+        {
+            "model": "text-embedding-3-small",
+            "input": ["hello"],
+            "encoding_format": "float",
+        }
+    ]
 
 
 @pytest.mark.asyncio
