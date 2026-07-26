@@ -1020,30 +1020,36 @@ async def _get_or_add_peers_to_session(
         result = await db.execute(select_stmt)
         return list(result.scalars().all())
 
-    # Only validate observer limit if we're adding peers with observe_others=True
-    new_observer_count = count_observers_in_config(peer_names)
+    # Active peers retain their stored configuration. Only new and departed peers
+    # contribute their submitted observer configuration to the effective total.
+    active_peer_names_stmt = select(models.SessionPeer.peer_name).where(
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.left_at.is_(None),
+        models.SessionPeer.peer_name.in_(peer_names),
+    )
+    result = await db.execute(active_peer_names_stmt)
+    active_peer_names = set(result.scalars())
 
-    if new_observer_count > 0:
-        # Use a single efficient query to count existing observers not being updated
-        # This uses PostgreSQL's JSONB operators to check the observe_others field directly
-        existing_observers_stmt = select(func.count()).where(
-            models.SessionPeer.session_name == session_name,
-            models.SessionPeer.workspace_name == workspace_name,
-            models.SessionPeer.left_at.is_(None),  # Only active peers
-            models.SessionPeer.peer_name.notin_(
-                peer_names.keys()
-            ),  # Exclude peers being updated
-            models.SessionPeer.configuration["observe_others"].astext.cast(
-                Boolean
-            ),  # Only observers
-        )
-        result = await db.execute(existing_observers_stmt)
-        existing_observer_count = result.scalar() or 0
+    existing_observers_stmt = select(func.count()).where(
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.left_at.is_(None),
+        models.SessionPeer.configuration["observe_others"].astext.cast(Boolean),
+    )
+    result = await db.execute(existing_observers_stmt)
+    existing_observer_count = result.scalar() or 0
+    submitted_observer_count = count_observers_in_config(
+        {
+            peer_name: configuration
+            for peer_name, configuration in peer_names.items()
+            if peer_name not in active_peer_names
+        }
+    )
+    total_observers = existing_observer_count + submitted_observer_count
 
-        total_observers = existing_observer_count + new_observer_count
-
-        if total_observers > settings.SESSION_OBSERVERS_LIMIT:
-            raise ObserverException(session_name, total_observers)
+    if total_observers > settings.SESSION_OBSERVERS_LIMIT:
+        raise ObserverException(session_name, total_observers)
 
     # Use upsert to handle both new peers and rejoining peers
     stmt = pg_insert(models.SessionPeer).values(

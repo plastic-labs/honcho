@@ -6,14 +6,111 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.config import settings
 from src.crud.session import (
     _get_or_add_peers_to_session,  # pyright: ignore[reportPrivateUsage]
 )
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ObserverException, ResourceNotFoundException
 
 
 class TestSessionCRUD:
     """Test suite for session CRUD operations"""
+
+    @pytest.mark.asyncio
+    async def test_add_peers_counts_active_observer_stored_configuration(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """An active observer remains counted when its submitted config disables it."""
+        workspace, active_observer = sample_data
+        new_observer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        session = models.Session(name=str(generate_nanoid()), workspace_name=workspace.name)
+        db_session.add_all([new_observer, session])
+        await db_session.flush()
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 1)
+
+        await db_session.execute(
+            models.session_peers_table.insert().values(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                peer_name=active_observer.name,
+                joined_at=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+                configuration={"observe_others": True},
+            )
+        )
+        await db_session.flush()
+
+        with pytest.raises(ObserverException):
+            await _get_or_add_peers_to_session(
+                db_session,
+                workspace.name,
+                session.name,
+                {
+                    active_observer.name: schemas.SessionPeerConfig(
+                        observe_others=False
+                    ),
+                    new_observer.name: schemas.SessionPeerConfig(observe_others=True),
+                },
+            )
+
+    @pytest.mark.asyncio
+    async def test_add_peers_ignores_active_non_observer_submitted_configuration(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """An active non-observer does not consume capacity from a submitted config."""
+        workspace, active_non_observer = sample_data
+        existing_observer = models.Peer(
+            name=str(generate_nanoid()), workspace_name=workspace.name
+        )
+        session = models.Session(name=str(generate_nanoid()), workspace_name=workspace.name)
+        db_session.add_all([existing_observer, session])
+        await db_session.flush()
+        monkeypatch.setattr(settings, "SESSION_OBSERVERS_LIMIT", 1)
+
+        await db_session.execute(
+            models.session_peers_table.insert(),
+            [
+                {
+                    "workspace_name": workspace.name,
+                    "session_name": session.name,
+                    "peer_name": active_non_observer.name,
+                    "joined_at": datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+                    "configuration": {"observe_others": False},
+                },
+                {
+                    "workspace_name": workspace.name,
+                    "session_name": session.name,
+                    "peer_name": existing_observer.name,
+                    "joined_at": datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+                    "configuration": {"observe_others": True},
+                },
+            ],
+        )
+        await db_session.flush()
+
+        await _get_or_add_peers_to_session(
+            db_session,
+            workspace.name,
+            session.name,
+            {
+                active_non_observer.name: schemas.SessionPeerConfig(observe_others=True),
+            },
+        )
+        active_configuration = await db_session.scalar(
+            select(models.SessionPeer.configuration).where(
+                models.SessionPeer.workspace_name == workspace.name,
+                models.SessionPeer.session_name == session.name,
+                models.SessionPeer.peer_name == active_non_observer.name,
+            )
+        )
+        assert active_configuration == {"observe_others": False}
 
     @pytest.mark.asyncio
     async def test_add_peers_preserves_active_members_and_rejoins_departed_members(
