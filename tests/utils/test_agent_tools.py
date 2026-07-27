@@ -1857,7 +1857,7 @@ class TestObserverPeerNameWiring:
 
 @pytest.mark.asyncio
 class TestSessionAllowlistFailClosed:
-    """A specific session_name outside the session_names allowlist must fail closed.
+    """A specific session_name outside the session_allowlist allowlist must fail closed.
 
     Routes guard this too, but these CRUD/tool functions are reachable directly
     from the dialectic loop, so the allowlist is enforced at the boundary.
@@ -1874,7 +1874,7 @@ class TestSessionAllowlistFailClosed:
             workspace_name=workspace.name,
             session_name=session.name,
             observed=peer2.name,
-            session_names=[session.name],
+            session_allowlist=[session.name],
         )
         assert allowed  # non-empty
 
@@ -1884,7 +1884,7 @@ class TestSessionAllowlistFailClosed:
             workspace_name=workspace.name,
             session_name=session.name,
             observed=peer2.name,
-            session_names=["some-other-session"],
+            session_allowlist=["some-other-session"],
         )
         assert blocked == []
 
@@ -1898,7 +1898,7 @@ class TestSessionAllowlistFailClosed:
             session_name=session.name,
             message_ids=[messages[0].id],
             observer=peer1.name,
-            session_names=["some-other-session"],
+            session_allowlist=["some-other-session"],
         )
         assert blocked == []
 
@@ -1910,6 +1910,6 @@ class TestSessionAllowlistFailClosed:
             db_session,
             workspace_name=workspace.name,
             session_name=session.name,
-            session_names=["some-other-session"],
+            session_allowlist=["some-other-session"],
         )
         assert blocked == []

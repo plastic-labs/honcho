@@ -26,7 +26,7 @@ async def agentic_chat(
     observer: str,
     observed: str,
     reasoning_level: ReasoningLevel = "low",
-    session_names: list[str] | None = None,
+    session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
 ) -> str:
     """
@@ -39,7 +39,7 @@ async def agentic_chat(
         observer: The peer making the query
         observed: The peer being queried about
         reasoning_level: Level of reasoning to apply
-        session_names: Optional session allowlist restricting all recall
+        session_allowlist: Optional session allowlist restricting all recall
         response_model: Optional Pydantic model the answer must conform to.
             When set, the returned string is JSON matching the model's schema.
 
@@ -84,7 +84,7 @@ async def agentic_chat(
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
-        session_names=session_names,
+        session_allowlist=session_allowlist,
     )
 
     return await agent.answer(query, response_model=response_model)
@@ -97,7 +97,7 @@ async def agentic_chat_stream(
     observer: str,
     observed: str,
     reasoning_level: ReasoningLevel = "low",
-    session_names: list[str] | None = None,
+    session_allowlist: list[str] | None = None,
     response_model: type[BaseModel] | None = None,
 ) -> AsyncIterator[str]:
     """
@@ -110,7 +110,7 @@ async def agentic_chat_stream(
         observer: The peer making the query
         observed: The peer being queried about
         reasoning_level: Level of reasoning to apply
-        session_names: Optional session allowlist restricting all recall
+        session_allowlist: Optional session allowlist restricting all recall
         response_model: Optional Pydantic model the answer must conform to.
             When set, the streamed text accumulates to JSON matching the
             model's schema.
@@ -156,7 +156,7 @@ async def agentic_chat_stream(
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
-        session_names=session_names,
+        session_allowlist=session_allowlist,
     )
 
     async for chunk in agent.answer_stream(query, response_model=response_model):

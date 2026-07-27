@@ -320,7 +320,7 @@ class TestRepresentationManagerSessionScoping:
         session_a, _, manager = await self._setup(db_session, test_workspace, test_peer)
 
         results = await manager._query_documents_recent(  # pyright: ignore[reportPrivateUsage]
-            db_session, top_k=10, session_names=[session_a.name]
+            db_session, top_k=10, session_allowlist=[session_a.name]
         )
 
         contents = [doc.content for doc in results]
@@ -337,7 +337,7 @@ class TestRepresentationManagerSessionScoping:
         session_a, _, manager = await self._setup(db_session, test_workspace, test_peer)
 
         results = await manager._query_documents_most_derived(  # pyright: ignore[reportPrivateUsage]
-            db_session, top_k=10, session_names=[session_a.name]
+            db_session, top_k=10, session_allowlist=[session_a.name]
         )
 
         contents = [doc.content for doc in results]
@@ -361,12 +361,15 @@ class TestRepresentationManagerSessionScoping:
                 query="anything",
                 top_k=5,
                 embedding=[0.1],
-                session_names=[session_a.name],
+                session_allowlist=[session_a.name],
             )
 
         assert mock_query.await_args is not None
         assert mock_query.await_args.kwargs["filters"] == {
-            "session_name": {"in": [session_a.name]}
+            "session_name": {"in": [session_a.name]},
+            # Scoped recall serves only levels with a trustworthy session
+            # stamp (ALLOWLIST_SAFE_LEVELS / DEV-2201).
+            "level": {"in": ["explicit"]},
         }
 
     @pytest.mark.asyncio
@@ -403,7 +406,7 @@ class TestRepresentationManagerSessionScoping:
 
         representation = await manager.get_working_representation(
             db=db_session,
-            session_names=[session_a.name],
+            session_allowlist=[session_a.name],
             include_most_derived=True,
         )
 
@@ -425,7 +428,7 @@ class TestRepresentationManagerSessionScoping:
 
         representation = await manager.get_working_representation(
             db=db_session,
-            session_names=[],
+            session_allowlist=[],
             include_most_derived=True,
         )
 
@@ -441,13 +444,29 @@ class TestRepresentationManagerSessionScoping:
             "workspace", observer="observer", observed="observed"
         )
 
-        assert manager._build_filter_conditions(session_names=[]) == {  # pyright: ignore[reportPrivateUsage]
-            "session_name": {"in": []}
+        # Scoping also narrows to levels whose session stamp is trustworthy
+        # (see ALLOWLIST_SAFE_LEVELS / DEV-2201).
+        assert manager._build_filter_conditions(session_allowlist=[]) == {  # pyright: ignore[reportPrivateUsage]
+            "session_name": {"in": []},
+            "level": {"in": ["explicit"]},
         }
-        # None means unscoped — no session filter emitted.
-        assert manager._build_filter_conditions(session_names=None) == {}  # pyright: ignore[reportPrivateUsage]
-        assert manager._build_filter_conditions(session_names=["s1"]) == {  # pyright: ignore[reportPrivateUsage]
-            "session_name": {"in": ["s1"]}
+        # None means unscoped — no session filter and no level narrowing.
+        assert manager._build_filter_conditions(session_allowlist=None) == {}  # pyright: ignore[reportPrivateUsage]
+        assert manager._build_filter_conditions(session_allowlist=["s1"]) == {  # pyright: ignore[reportPrivateUsage]
+            "session_name": {"in": ["s1"]},
+            "level": {"in": ["explicit"]},
+        }
+        # A requested level outside the safe set yields an empty `in`, which
+        # matches nothing rather than falling back to unscoped recall.
+        assert manager._build_filter_conditions(  # pyright: ignore[reportPrivateUsage]
+            level="inductive", session_allowlist=["s1"]
+        ) == {
+            "session_name": {"in": ["s1"]},
+            "level": {"in": []},
+        }
+        # ...while an unscoped level filter is left exactly as asked.
+        assert manager._build_filter_conditions(level="inductive") == {  # pyright: ignore[reportPrivateUsage]
+            "level": "inductive"
         }
 
 
