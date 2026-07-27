@@ -5,6 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from src import models
+from src.dialectic.context_renderer import render_untrusted_context
 from src.utils.formatting import parse_datetime_iso
 
 
@@ -508,13 +509,26 @@ class Representation(BaseModel):
 
         return "\n".join(parts)
 
-    def format_as_markdown(self, include_ids: bool = False) -> str:
+    def _source_message_ids(self) -> list[int]:
+        """Return unique source message IDs for provenance in rendered output."""
+        message_ids: list[int] = []
+        for observation in (
+            self.explicit + self.deductive + self.inductive + self.contradiction
+        ):
+            message_ids.extend(observation.message_ids)
+        return sorted(set(message_ids))
+
+    def format_as_markdown(
+        self, include_ids: bool = False, authority_envelope: bool = False
+    ) -> str:
         """
         Format a Representation object as markdown.
         NOTE: we always strip subsecond precision from the timestamps.
 
         Args:
             include_ids: If True, include observation IDs for use with get_reasoning_chain
+            authority_envelope: If True, wrap the rendered representation as
+                untrusted advisory context with provenance metadata.
 
         Returns:
             Formatted markdown string
@@ -577,7 +591,15 @@ class Representation(BaseModel):
                 parts.append("")
             parts.append("")
 
-        return "\n".join(parts)
+        rendered = "\n".join(parts)
+        if not authority_envelope:
+            return rendered
+        return render_untrusted_context(
+            source="honcho.representation",
+            title="Peer Representation (Untrusted Advisory)",
+            content=rendered,
+            source_message_ids=self._source_message_ids(),
+        )
 
     @classmethod
     def from_documents(cls, documents: Sequence[models.Document]) -> "Representation":
