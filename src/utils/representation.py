@@ -60,6 +60,20 @@ class ExplicitObservationBase(BaseModel):
     content: str = Field(description="The explicit observation")
 
 
+class PromptExplicitObservation(ExplicitObservationBase):
+    """Deriver output with an explicit target-attribution decision."""
+
+    is_durable_target_fact: bool = Field(
+        description=(
+            "True only for a durable identity, capability, preference, relationship, "
+            "or action of the target peer itself. False when the observation merely "
+            "records that the target heard, knew, acknowledged, repeated, reported, "
+            "or stated a fact about another peer. For example, 'assistant prefers "
+            "concise plans' is true; 'assistant knows the user plays tennis' is false."
+        )
+    )
+
+
 class DeductiveObservationBase(BaseModel):
     source_ids: list[str] = Field(
         description="Document IDs of premise observations for tree traversal",
@@ -113,8 +127,12 @@ class PromptRepresentation(BaseModel):
     The representation format that is used when getting structured output from an LLM.
     """
 
-    explicit: list[ExplicitObservationBase] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+    explicit: list[PromptExplicitObservation] = Field(
+        description=(
+            "Durable facts about the target peer directly supported by any speaker's "
+            "message. Use direct quotes or clear paraphrases only, without unsupported "
+            "interpretation or inference."
+        ),
         default_factory=list,
     )
 
@@ -672,6 +690,7 @@ class Representation(BaseModel):
                     session_name=session_name,
                 )
                 for e in prompt_representation.explicit
+                if e.is_durable_target_fact
             ],
             deductive=[],
             inductive=[],

@@ -21,7 +21,7 @@ from src.utils.representation import (
     DeductiveObservation,
     # DeductiveObservationBase,
     ExplicitObservation,
-    ExplicitObservationBase,
+    PromptExplicitObservation,
     PromptRepresentation,
     Representation,
 )
@@ -412,8 +412,12 @@ class TestPromptRepresentationConversion:
         """
         prompt_rep = PromptRepresentation(
             explicit=[
-                ExplicitObservationBase(content="User likes coffee"),
-                ExplicitObservationBase(content="User works remotely"),
+                PromptExplicitObservation(
+                    content="User likes coffee", is_durable_target_fact=True
+                ),
+                PromptExplicitObservation(
+                    content="User works remotely", is_durable_target_fact=True
+                ),
             ],
         )
 

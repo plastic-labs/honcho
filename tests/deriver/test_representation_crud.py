@@ -3,7 +3,7 @@ import datetime
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
-    ExplicitObservationBase,
+    PromptExplicitObservation,
     PromptRepresentation,
     Representation,
 )
@@ -84,7 +84,7 @@ def test_prompt_representation_conversion():
     Therefore, from_prompt_representation only converts explicit observations.
     """
     pr = PromptRepresentation(
-        explicit=[ExplicitObservationBase(content="A")],
+        explicit=[PromptExplicitObservation(content="A", is_durable_target_fact=True)],
         # Deductive observations in PromptRepresentation are ignored by from_prompt_representation
         # because the Deriver only produces explicit observations
         # deductive=[
@@ -106,3 +106,29 @@ def test_prompt_representation_conversion():
     # (they would be created directly by the Dreamer via the create_observations tool)
     assert len(rep.deductive) == 0
     assert rep.explicit[0].created_at == timestamp
+
+
+def test_prompt_representation_drops_non_durable_target_facts():
+    pr = PromptRepresentation(
+        explicit=[
+            PromptExplicitObservation(
+                content="assistant knows the user plays tennis",
+                is_durable_target_fact=False,
+            ),
+            PromptExplicitObservation(
+                content="assistant prefers concise plans",
+                is_durable_target_fact=True,
+            ),
+        ]
+    )
+
+    rep = Representation.from_prompt_representation(
+        pr,
+        message_ids=[1],
+        session_name="s",
+        created_at=datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc),
+    )
+
+    assert [observation.content for observation in rep.explicit] == [
+        "assistant prefers concise plans"
+    ]
