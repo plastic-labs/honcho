@@ -10,7 +10,7 @@ from src.config import settings
 from src.deriver.deriver import process_representation_tasks_batch
 from src.llm import HonchoLLMCallResponse
 from src.utils.representation import (
-    ExplicitObservationBase,
+    PromptExplicitObservation,
     PromptRepresentation,
     Representation,
 )
@@ -338,7 +338,12 @@ class TestDeriverProcessing:
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(
-                explicit=[ExplicitObservationBase(content="alice says hello")]
+                explicit=[
+                    PromptExplicitObservation(
+                        content="alice says hello",
+                        is_durable_target_fact=True,
+                    )
+                ]
             ),
             input_tokens=10,
             output_tokens=5,
@@ -391,6 +396,77 @@ class TestDeriverProcessing:
         assert event.exact_dup_existing_count == 22
         assert event.semantic_dup_rejected_count == 33
         assert event.semantic_dup_replaced_count == 44
+
+    async def test_cross_speaker_evidence_preserves_all_message_provenance(
+        self,
+    ) -> None:
+        user_context = Mock(
+            id=6,
+            public_id="msg_user_context",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="user",
+            content="We were discussing weekly activities",
+            token_count=6,
+            created_at=datetime.now(timezone.utc),
+        )
+        assistant_evidence = Mock(
+            id=7,
+            public_id="msg_assistant_user_fact",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="assistant",
+            content="The user plays tennis on Tuesdays",
+            token_count=7,
+            created_at=datetime.now(timezone.utc),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        response = HonchoLLMCallResponse(
+            content=PromptRepresentation(
+                explicit=[
+                    PromptExplicitObservation(
+                        content="user plays tennis on Tuesdays",
+                        is_durable_target_fact=True,
+                    )
+                ]
+            ),
+            input_tokens=20,
+            output_tokens=8,
+            finish_reasons=["STOP"],
+        )
+        manager = Mock()
+        manager.save_representation = AsyncMock(
+            return_value=crud.CreateDocumentsResult()
+        )
+
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new_callable=AsyncMock,
+                return_value=response,
+            ),
+            patch(
+                "src.deriver.deriver.RepresentationManager",
+                return_value=manager,
+            ),
+        ):
+            await process_representation_tasks_batch(
+                messages=[user_context, assistant_evidence],
+                message_level_configuration=configuration,
+                observers=["user"],
+                observed="user",
+                queue_item_message_ids=[7],
+            )
+
+        saved_representation, saved_message_ids, *_ = (
+            manager.save_representation.await_args.args
+        )
+        assert saved_message_ids == [6, 7]
+        assert saved_representation.explicit[0].content == (
+            "user plays tennis on Tuesdays"
+        )
 
 
 class TestBackwardsCompatibility:
