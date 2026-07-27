@@ -36,12 +36,10 @@ def test_minimal_deriver_prompt_separates_speaker_from_subject() -> None:
         messages="assistant: You play tennis on Tuesdays",
     )
 
-    assert (
-        "The label before `:` identifies the speaker, not necessarily the subject"
-        in prompt
-    )
+    assert "Each message prefix identifies the speaker" in prompt
+    assert '"speaker":"assistant","addressee":"user"' in prompt
     assert "`I`/`me`/`my` refer to the speaker" in prompt
-    assert "`you`/`your` refer to the addressee" in prompt
+    assert "`you`/`your` refer only to the labeled addressee" in prompt
     assert (
         "Another speaker's statement about the target peer is valid evidence" in prompt
     )
@@ -56,15 +54,18 @@ def test_minimal_deriver_prompt_separates_speaker_from_subject() -> None:
     assert "return no observations" in prompt
     assert "Omit any observation whose subject is ambiguous" in prompt
     assert (
-        "TARGET `assistant`, MESSAGE `assistant: You play tennis on Tuesdays` "
+        'TARGET `assistant`, MESSAGE `{"speaker":"assistant",'
+        '"addressee":"user"}: You play tennis on Tuesdays` '
         "→ no observation about `assistant`"
     ) in prompt
     assert (
-        "TARGET `assistant`, MESSAGE `assistant: I prefer concise responses` "
+        'TARGET `assistant`, MESSAGE `{"speaker":"assistant",'
+        '"addressee":"user"}: I prefer concise responses` '
         '→ "assistant prefers concise responses"'
     ) in prompt
     assert (
-        "TARGET `user`, MESSAGE `assistant: You play tennis on Tuesdays` "
+        'TARGET `user`, MESSAGE `{"speaker":"assistant",'
+        '"addressee":"user"}: You play tennis on Tuesdays` '
         '→ "user plays tennis on Tuesdays"'
     ) in prompt
     assert "alice works remotely on Fridays" in prompt

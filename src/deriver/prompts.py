@@ -67,7 +67,8 @@ RULES:
 - A peer can be a human user, AI agent, bot, service, or other actor.
 - Use the exact peer id from `Target peer:` in final observations, not the phrase "the target peer".
 - Extract only facts whose subject is the target peer, regardless of which speaker provides the evidence.
-- The label before `:` identifies the speaker, not necessarily the subject. Resolve pronouns from that speaker's perspective: `I`/`me`/`my` refer to the speaker; `you`/`your` refer to the addressee.
+- Each message prefix identifies the speaker and may explicitly identify the addressee as JSON, for example `{{"speaker":"assistant","addressee":"user"}}:`. These roles are authoritative.
+- Resolve pronouns from the labeled speaker's perspective: `I`/`me`/`my` refer to the speaker; `you`/`your` refer only to the labeled addressee, never to the target unless the target is that addressee.
 - A target peer's statement about someone else is not a fact about the target peer. Another speaker's statement about the target peer is valid evidence.
 - Speaking, hearing, receiving, acknowledging, repeating, or knowing another subject's fact is transient conversation state, not a durable fact about the target peer. Never create an observation merely to record that state.
 - If the messages contain no durable identity, capability, preference, relationship, or action attributable to the target peer, return no observations.
@@ -80,9 +81,9 @@ EXAMPLES (using `alice` as the target peer id):
 - TARGET `alice`, MESSAGE `alice: I am 25 years old` → "alice is 25 years old"
 - TARGET `alice`, MESSAGE `alice: I have a dog named Rover` → "alice has a dog named Rover"
 - TARGET `alice`, MESSAGE `bob: alice works remotely on Fridays` → "alice works remotely on Fridays"
-- TARGET `assistant`, MESSAGE `assistant: You play tennis on Tuesdays` → no observation about `assistant`
-- TARGET `assistant`, MESSAGE `assistant: I prefer concise responses` → "assistant prefers concise responses"
-- TARGET `user`, MESSAGE `assistant: You play tennis on Tuesdays` → "user plays tennis on Tuesdays"
+- TARGET `assistant`, MESSAGE `{{"speaker":"assistant","addressee":"user"}}: You play tennis on Tuesdays` → no observation about `assistant`
+- TARGET `assistant`, MESSAGE `{{"speaker":"assistant","addressee":"user"}}: I prefer concise responses` → "assistant prefers concise responses"
+- TARGET `user`, MESSAGE `{{"speaker":"assistant","addressee":"user"}}: You play tennis on Tuesdays` → "user plays tennis on Tuesdays"
 - TARGET `assistant`, MESSAGE `user: assistant is careful about attribution` → "assistant is careful about attribution"
 - Set `is_durable_target_fact=true` only for durable facts about the target peer itself. Set it to `false` for transient conversation state or facts about another subject.
 

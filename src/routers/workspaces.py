@@ -186,7 +186,7 @@ async def get_queue_status(
             workspace_name=workspace_id,
             session_name=session_id,
             observer=observer_id,
-            observed=sender_id,
+            sender=sender_id,
         )
     except ValueError as e:
         logger.warning(f"Invalid request parameters: {str(e)}")
