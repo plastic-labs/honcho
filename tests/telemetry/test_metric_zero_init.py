@@ -12,10 +12,13 @@ would itself materialize the child and destroy the presence/absence signal.
 """
 
 from collections.abc import Iterator
+from typing import cast
+from uuid import uuid4
 
 import pytest
 from prometheus_client import REGISTRY
 
+from src.config import settings
 from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.prometheus.metrics import (
@@ -28,19 +31,36 @@ from src.telemetry.prometheus.metrics import (
     prometheus_metrics,
 )
 
-NS = "test"
+
+def unique_ns(tag: str) -> str:
+    """A ``namespace`` label value no other test can have materialized under.
+
+    Every assertion here reads the process-global ``REGISTRY``, which keeps a
+    child series for the rest of the session once anything materializes it. A
+    shared namespace (several other suites pin ``"test"``) would therefore let
+    another test's children satisfy a presence assertion, or break an absence
+    assertion, independently of what the initializer under test actually did.
+    """
+    return f"test_metric_zero_init_{tag}_{uuid4().hex[:8]}"
 
 
 @pytest.fixture
-def metrics_enabled(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def metrics_enabled(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """Enable metrics under a namespace unique to the requesting test."""
+    ns = unique_ns("enabled")
     monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
-    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", NS)
-    yield
+    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", ns)
+    yield ns
 
 
 def sample(name: str, **labels: str) -> float | None:
-    """Value of a series if it exists, else None. Never materializes it."""
-    return REGISTRY.get_sample_value(name, {"namespace": NS, **labels})
+    """Value of a series if it exists, else None. Never materializes it.
+
+    Resolves the namespace from settings, so it always reads the unique one the
+    active test pinned.
+    """
+    ns = cast(str, settings.METRICS.NAMESPACE)
+    return REGISTRY.get_sample_value(name, {"namespace": ns, **labels})
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +286,27 @@ def test_api_init_does_not_touch_deriver_counters():
     assert before == after
 
 
+@pytest.mark.usefixtures("metrics_enabled")
+def test_deriver_init_does_not_touch_api_counters():
+    """The inverse: deriver-only init must not materialize an API-only counter.
+
+    Without this, a deriver-startup regression could silently fabricate API
+    series (permanently-0 dialectic tokens on a process that never serves chat).
+    """
+    labels = dict(
+        token_type=TokenTypes.INPUT.value,
+        component=DialecticComponents.TOTAL.value,
+        reasoning_level=REASONING_LEVELS[0],
+    )
+    before = sample("dialectic_tokens_processed_total", **labels)
+    prometheus_metrics.initialize_bounded_metrics(instance_type="deriver")
+    after = sample("dialectic_tokens_processed_total", **labels)
+    assert before == after
+    # the API-process embed_now counters are equally off-limits
+    assert sample("embed_now_tasks_shed_total") is None
+    assert sample("embed_now_tasks_in_flight") is None
+
+
 # ---------------------------------------------------------------------------
 # Dropped-counter backfill (#927 shipped without a test)
 # ---------------------------------------------------------------------------
@@ -283,12 +324,6 @@ def test_dropped_counter_children_materialized():
 def test_init_noop_when_metrics_disabled(monkeypatch: pytest.MonkeyPatch):
     """With metrics disabled, init must not fabricate series for a fresh label."""
     monkeypatch.setattr("src.config.settings.METRICS.ENABLED", False)
-    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "disabled_ns")
+    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", unique_ns("disabled"))
     prometheus_metrics.initialize_bounded_metrics(instance_type="api")
-    assert (
-        REGISTRY.get_sample_value(
-            "telemetry_events_emitted_total",
-            {"namespace": "disabled_ns", "type": "message.created"},
-        )
-        is None
-    )
+    assert sample("telemetry_events_emitted_total", type="message.created") is None
