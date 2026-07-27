@@ -32,7 +32,7 @@ from src.telemetry.prometheus.metrics import (
     deriver_tokens_processed_counter,
     dialectic_tokens_processed_counter,
 )
-from src.utils.representation import ExplicitObservationBase, PromptRepresentation
+from src.utils.representation import PromptExplicitObservation, PromptRepresentation
 from src.utils.summarizer import (
     SummaryType,
     _create_and_save_summary,
@@ -183,7 +183,12 @@ def create_mock_deriver_response(
     """Create a mock LLM response for the deriver."""
     return HonchoLLMCallResponse(
         content=PromptRepresentation(
-            explicit=[ExplicitObservationBase(content="Test observation from deriver")],
+            explicit=[
+                PromptExplicitObservation(
+                    content="Test observation from deriver",
+                    is_durable_target_fact=True,
+                )
+            ],
         ),
         input_tokens=100,
         output_tokens=output_tokens,

@@ -184,7 +184,10 @@ async def process_representation_tasks_batch(
             component=DeriverComponents.OUTPUT_TOTAL.value,
         )
 
-    message_ids = [m.id for m in messages if m.peer_name == observed]
+    # Facts can be supported by any speaker in the prompt. Preserve the ordered,
+    # de-duplicated provenance for every message supplied as evidence instead of
+    # discarding cross-speaker sources.
+    message_ids = list(dict.fromkeys(message.id for message in messages))
 
     # Convert to Representation and save
     observations = Representation.from_prompt_representation(
