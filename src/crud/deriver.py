@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import Select, case, func, or_, select
+from sqlalchemy import Select, and_, case, func, or_, select
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ async def get_queue_status(
     session_name: str | None = None,
     *,
     observer: str | None = None,
-    observed: str | None = None,
+    sender: str | None = None,
 ) -> schemas.QueueStatus:
     """
     Get the processing queue status, optionally filtered by observer, sender, and/or session.
@@ -33,18 +33,18 @@ async def get_queue_status(
         workspace_name: Name of the workspace
         session_name: Optional session name to filter by
         observer: Optional name of the observer to filter by
-        observed: Optional name of the observed (message sender) to filter by
+        sender: Optional name of the message sender to filter by
     """
     # Normalize empty strings to None for consistent handling
     normalized_observer = observer if observer else None
-    normalized_observed = observed if observed else None
+    normalized_sender = sender if sender else None
     normalized_session_name = session_name if session_name else None
 
     stmt = _build_queue_status_query(
         workspace_name,
         normalized_session_name,
         observer=normalized_observer,
-        observed=normalized_observed,
+        sender=normalized_sender,
     )
     result = await db.execute(stmt)
     rows = result.fetchall()
@@ -71,7 +71,7 @@ async def get_deriver_status(
         workspace_name=workspace_name,
         session_name=session_name,
         observer=observer,
-        observed=observed,
+        sender=observed,
     )
 
 
@@ -84,11 +84,10 @@ def _build_queue_status_query(
     session_name: str | None,
     *,
     observer: str | None = None,
-    observed: str | None = None,
+    sender: str | None = None,
 ) -> Select[Any]:
     """Build SQL query for queue status with validation and aggregation."""
     observer_name_expr = models.QueueItem.payload["observer"].astext
-    observed_name_expr = models.QueueItem.payload["observed"].astext
 
     # Define conditions for cleaner window functions
     is_completed = models.QueueItem.processed
@@ -138,13 +137,22 @@ def _build_queue_status_query(
         )
         stmt = stmt.where(models.Session.name == session_name)
 
-    peer_conditions = []
+    peer_conditions: list[Any] = []
     if observer is not None:
-        peer_conditions.append(observer_name_expr == observer)  # pyright: ignore
-    if observed is not None:
-        peer_conditions.append(observed_name_expr == observed)  # pyright: ignore
+        peer_conditions.append(
+            or_(
+                observer_name_expr == observer,
+                models.QueueItem.payload["observers"].contains([observer]),
+            )
+        )
+    if sender is not None:
+        stmt = stmt.outerjoin(
+            models.Message,
+            models.QueueItem.message_id == models.Message.id,
+        )
+        peer_conditions.append(models.Message.peer_name == sender)
     if peer_conditions:
-        stmt = stmt.where(or_(*peer_conditions))  # pyright: ignore
+        stmt = stmt.where(and_(*peer_conditions))
 
     return stmt
 

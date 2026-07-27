@@ -20,6 +20,7 @@ class RepresentationPayload(BasePayload):
     content: str
     observers: list[str]
     observed: str
+    participants: list[str] | None = None
     created_at: datetime
     configuration: ResolvedConfiguration
 
@@ -179,6 +180,7 @@ def create_payload(
     *,
     observers: list[str] | None = None,
     observed: str | None = None,
+    participants: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Create a processed payload from a message for queue processing.
@@ -192,7 +194,8 @@ def create_payload(
         task_type: Type of task ('representation' or 'summary')
         message_seq_in_session: Required for summary tasks, must be None for representation
         observers: List of observer peer names (required for representation tasks)
-        observed: Name of the observed peer (*always* the peer who sent the message) (required for representation tasks)
+        observed: Name of the peer that the representation task should model (required for representation tasks)
+        participants: Active session peers used to resolve the message addressee
 
 
     Returns:
@@ -238,6 +241,7 @@ def create_payload(
                 created_at=created_at,
                 observers=observers,
                 observed=observed,
+                participants=participants,
                 configuration=configuration,
             )
         elif task_type == "summary":

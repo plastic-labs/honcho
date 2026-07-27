@@ -84,6 +84,122 @@ class TestQueueProcessing:
 
         return work_unit_key, queue_items
 
+    async def test_representation_batch_stops_at_observer_set_change(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+    ) -> None:
+        session, peers = sample_session_with_peers
+        user, assistant = peers[:2]
+        messages = [
+            models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=assistant.name,
+                content=f"Message {index}",
+                token_count=10,
+                seq_in_session=index,
+            )
+            for index in (1, 2)
+        ]
+        db_session.add_all(messages)
+        await db_session.commit()
+
+        work_unit_key = (
+            f"representation:{session.workspace_name}:{session.name}:{user.name}"
+        )
+        queue_items = [
+            models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload={
+                    "task_type": "representation",
+                    "session_name": session.name,
+                    "observed": user.name,
+                    "observers": observers,
+                },
+                processed=False,
+                workspace_name=session.workspace_name,
+                message_id=message.id,
+            )
+            for message, observers in zip(
+                messages,
+                ([user.name], [user.name, assistant.name]),
+                strict=True,
+            )
+        ]
+        db_session.add_all(queue_items)
+        await db_session.commit()
+
+        manager = QueueManager()
+        claimed = await manager.claim_work_units(db_session, [work_unit_key])
+        await db_session.commit()
+
+        batch = await manager.get_queue_item_batch(
+            "representation", work_unit_key, claimed[work_unit_key]
+        )
+
+        assert [item.message_id for item in batch.items_to_process] == [messages[0].id]
+
+    async def test_promoted_target_batch_includes_sender_predecessor(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+    ) -> None:
+        session, peers = sample_session_with_peers
+        user, assistant = peers[:2]
+        user_message = models.Message(
+            session_name=session.name,
+            workspace_name=session.workspace_name,
+            peer_name=user.name,
+            content="I have been thinking about a new hobby",
+            token_count=10,
+            seq_in_session=1,
+        )
+        assistant_message = models.Message(
+            session_name=session.name,
+            workspace_name=session.workspace_name,
+            peer_name=assistant.name,
+            content="Yes, you play tennis on Tuesdays",
+            token_count=10,
+            seq_in_session=2,
+        )
+        db_session.add_all([user_message, assistant_message])
+        await db_session.commit()
+
+        payload = {
+            "task_type": "representation",
+            "session_name": session.name,
+            "observed": user.name,
+            "observers": [user.name, assistant.name],
+        }
+        work_unit_key = construct_work_unit_key(session.workspace_name, payload)
+        queue_item = models.QueueItem(
+            session_id=session.id,
+            task_type="representation",
+            work_unit_key=work_unit_key,
+            payload=payload,
+            processed=False,
+            workspace_name=session.workspace_name,
+            message_id=assistant_message.id,
+        )
+        db_session.add(queue_item)
+        await db_session.commit()
+
+        manager = QueueManager()
+        claimed = await manager.claim_work_units(db_session, [work_unit_key])
+        await db_session.commit()
+
+        batch = await manager.get_queue_item_batch(
+            "representation", work_unit_key, claimed[work_unit_key]
+        )
+
+        assert [message.id for message in batch.messages_context] == [
+            user_message.id,
+            assistant_message.id,
+        ]
+
     async def test_get_and_claim_work_units(
         self,
         db_session: AsyncSession,

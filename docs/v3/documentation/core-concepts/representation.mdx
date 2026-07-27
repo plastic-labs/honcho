@@ -27,9 +27,9 @@ Honcho can build different representations based on what each peer observes. Thi
 
 There are two observation modes controlled by [configuration](/v3/documentation/features/advanced/configuration):
 
-**Honcho observing peers** (`observe_me`): When enabled (default), Honcho forms a representation of the peer based on all messages they've sent across all sessions. This is Honcho's understanding of that peer, built from everything they've said and done in your system. Set `observe_me: false` if you don't want Honcho to reason about that peer at all.
+**Honcho observing peers** (`observe_me`): When enabled (default), Honcho forms a representation of the peer from facts about that peer across their sessions. Those facts can be stated by the peer or by the other participant in a two-peer session. Set `observe_me: false` if you don't want Honcho to reason about that peer at all.
 
-**Peers observing others** (`observe_others`): When enabled at the session level, a peer will form representations of other peers in that session based only on messages they've observed. If Alice and Bob are in a session together and Alice has `observe_others: true`, Alice will form a representation of Bob based solely on what Bob said in sessions Alice participated in. Alice's representation of Bob will be completely different from Charlie's representation of Bob if they've observed different interactions.
+**Peers observing others** (`observe_others`): When enabled at the session level, a peer will form representations of other peers in that session based only on messages they've observed. In a two-peer session, the peer's own statements about the other participant can also supply facts about that participant. Alice's representation of Bob may differ substantially from Charlie's representation of Bob if they've observed different interactions.
 
 In the diagram below, assume `observe_me` isn't turned off (again, default behavior) and `observe_others` is turned on for both peers in a session that contains the peers Alice and Bob.
 

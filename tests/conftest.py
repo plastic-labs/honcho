@@ -856,7 +856,11 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
                         PromptExplicitObservation(
                             content="Test explicit observation",
                             is_durable_target_fact=True,
-                        )
+                        ),
+                        PromptExplicitObservation(
+                            content="Test non-durable observation",
+                            is_durable_target_fact=False,
+                        ),
                     ],
                     # deductive=[
                     #     DeductiveObservationBase(

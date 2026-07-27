@@ -98,7 +98,7 @@ def _detach_queue_batch_objects(
 def _resolve_batch_configuration(
     items_to_process: list[QueueItem],
 ) -> tuple[list[QueueItem], ResolvedConfiguration | None]:
-    """Keep only the initial homogeneous configuration prefix for a batch."""
+    """Keep only the initial homogeneous config and observer prefix for a batch."""
     if not items_to_process:
         return [], None
 
@@ -106,6 +106,8 @@ def _resolve_batch_configuration(
     resolved_config = (
         None if raw_config is None else ResolvedConfiguration.model_validate(raw_config)
     )
+    first_observers = _normalized_observers(items_to_process[0].payload)
+    first_participants = _normalized_participants(items_to_process[0].payload)
 
     valid_items: list[QueueItem] = []
     for item in items_to_process:
@@ -115,11 +117,51 @@ def _resolve_batch_configuration(
             if item_raw_config is None
             else ResolvedConfiguration.model_validate(item_raw_config)
         )
-        if item_config != resolved_config:
+        if (
+            item_config != resolved_config
+            or _normalized_observers(item.payload) != first_observers
+            or _normalized_participants(item.payload) != first_participants
+        ):
             break
         valid_items.append(item)
 
     return valid_items, resolved_config
+
+
+def _queue_item_observers(payload: dict[str, Any]) -> list[str]:
+    """Read observer collections from current or legacy queue payloads."""
+    observers = payload.get("observers")
+    if isinstance(observers, list):
+        return [
+            observer
+            for observer in cast(list[object], observers)
+            if isinstance(observer, str)
+        ]
+
+    legacy_observer = payload.get("observer")
+    return [legacy_observer] if isinstance(legacy_observer, str) else []
+
+
+def _normalized_observers(payload: dict[str, Any]) -> tuple[str, ...]:
+    """Return a stable observer-set key for representation batching."""
+    return tuple(sorted(set(_queue_item_observers(payload))))
+
+
+def _queue_item_participants(payload: dict[str, Any]) -> list[str]:
+    """Read the active-peer snapshot from a representation payload."""
+    participants = payload.get("participants")
+    if not isinstance(participants, list):
+        return []
+    return [
+        participant
+        for participant in cast(list[object], participants)
+        if isinstance(participant, str)
+    ]
+
+
+def _normalized_participants(payload: dict[str, Any]) -> tuple[str, ...]:
+    """Return a stable participant-set key for representation batching."""
+    return tuple(sorted(set(_queue_item_participants(payload))))
 
 
 class QueueManager:
@@ -656,16 +698,9 @@ class QueueManager:
                                 break
 
                             try:
-                                # Extract observers from the payload (handle both old and new format)
                                 payload = items_to_process[0].payload
-                                observers = payload.get("observers")
-                                if observers is None:
-                                    # Legacy format: single observer string
-                                    legacy_observer = payload.get("observer")
-                                    if legacy_observer:
-                                        observers = [legacy_observer]
-                                    else:
-                                        observers = []
+                                observers = _queue_item_observers(payload)
+                                participants = _queue_item_participants(payload)
 
                                 queue_item_message_ids = [
                                     item.message_id
@@ -677,6 +712,7 @@ class QueueManager:
                                     message_level_configuration,
                                     observers=observers,
                                     observed=work_unit.observed,
+                                    participants=participants,
                                     queue_item_message_ids=queue_item_message_ids,
                                     hit_batch_token_cap=batch_result.hit_batch_token_cap,
                                     was_flush_enabled=batch_result.was_flush_enabled,
@@ -883,12 +919,17 @@ class QueueManager:
                 .scalar_subquery()
             )
 
-            # Only include the preceding message if it's from a different peer than observed
-            # This provides conversational context (e.g., the question that prompted the response)
+            # Compare with the queued message author, which can differ from the
+            # representation target for cross-speaker evidence.
+            focused_sender_subq = (
+                select(models.Message.peer_name)
+                .where(models.Message.id == min_unprocessed_message_id_subq)
+                .scalar_subquery()
+            )
             preceding_message_id_subq = (
                 select(models.Message.id)
                 .where(models.Message.id == immediately_preceding_id_subq)
-                .where(models.Message.peer_name != parsed_key.observed)
+                .where(models.Message.peer_name != focused_sender_subq)
                 .scalar_subquery()
             )
 
