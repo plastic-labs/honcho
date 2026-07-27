@@ -328,7 +328,7 @@ async def get_representation(
             parent_category="api",
         )
         return schemas.RepresentationResponse(
-            representation=representation.format_as_markdown()
+            representation=representation.format_as_markdown(authority_envelope=True)
         )
     except ValueError as e:
         logger.warning(f"Failed to get representation for peer {peer_id}: {str(e)}")
@@ -499,7 +499,7 @@ async def get_peer_context(
         response = schemas.PeerContext(
             peer_id=peer_id,
             target_id=observed,
-            representation=representation.format_as_markdown(),
+            representation=representation.format_as_markdown(authority_envelope=True),
             peer_card=peer_card,
         )
         emit(

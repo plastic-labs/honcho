@@ -798,7 +798,7 @@ async def get_session_context(
         name=session_id,
         messages=messages,
         summary=summary,
-        peer_representation=representation.format_as_markdown(),
+        peer_representation=representation.format_as_markdown(authority_envelope=True),
         peer_card=card,
     )
     emit(

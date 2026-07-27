@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
+from src.dialectic.context_renderer import render_untrusted_context
 from src.embedding_client import embedding_client
 from src.models import Document
 from src.schemas import ResolvedConfiguration
@@ -49,6 +50,36 @@ PEER_CARD_ALLOWED_PREFIXES: tuple[str, ...] = (
 
 # Per-entry character cap to block evidence-bundle dumps and runaway lines.
 MAX_PEER_CARD_ENTRY_LENGTH = 200
+
+UNTRUSTED_CONTEXT_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "get_recent_history",
+        "search_memory",
+        "get_observation_context",
+        "search_messages",
+        "grep_messages",
+        "get_messages_by_date_range",
+        "search_messages_temporal",
+        "get_recent_observations",
+        "get_most_derived_observations",
+        "get_session_summary",
+        "get_peer_card",
+        "get_reasoning_chain",
+    }
+)
+
+
+def _tool_result_needs_untrusted_envelope(tool_name: str, is_error: bool) -> bool:
+    """Return True for read/context tools whose output is recalled user data."""
+    return not is_error and tool_name in UNTRUSTED_CONTEXT_TOOL_NAMES
+
+
+def _render_untrusted_tool_result(tool_name: str, result_str: str) -> str:
+    return render_untrusted_context(
+        source=f"honcho.tool_result.{tool_name}",
+        title=f"Tool Result: {tool_name} (Untrusted Advisory)",
+        content=result_str,
+    )
 
 
 def _validate_peer_card_entry(line: str) -> bool:
@@ -2530,6 +2561,9 @@ async def create_tool_executor(
                     metadata = handler_result.metadata
                 else:
                     result_str = handler_result
+                if _tool_result_needs_untrusted_envelope(tool_name, is_error):
+                    result_str = _render_untrusted_tool_result(tool_name, result_str)
+                    metadata = {**metadata, "instructional_authority": "none"}
                 # Log shape, not contents — `result_str` can carry retrieved
                 # observations, message snippets, peer-card text, etc. The
                 # AgentToolCallCompletedEvent telemetry captures the
