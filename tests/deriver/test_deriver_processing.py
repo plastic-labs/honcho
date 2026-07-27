@@ -397,10 +397,8 @@ class TestDeriverProcessing:
         assert event.semantic_dup_rejected_count == 33
         assert event.semantic_dup_replaced_count == 44
 
-    async def test_cross_speaker_evidence_preserves_all_message_provenance(
-        self,
-    ) -> None:
-        user_context = Mock(
+    async def test_cross_speaker_evidence_is_saved_for_target(self) -> None:
+        user_context_message = Mock(
             id=6,
             public_id="msg_user_context",
             session_name="session-1",
@@ -410,20 +408,21 @@ class TestDeriverProcessing:
             token_count=6,
             created_at=datetime.now(timezone.utc),
         )
-        assistant_evidence = Mock(
+        assistant_message = Mock(
             id=7,
             public_id="msg_assistant_user_fact",
             session_name="session-1",
             workspace_name="workspace-1",
             peer_name="assistant",
-            content="The user plays tennis on Tuesdays",
+            content="You play tennis on Tuesdays",
             token_count=7,
             created_at=datetime.now(timezone.utc),
         )
         configuration = Mock()
         configuration.reasoning.enabled = True
         configuration.reasoning.custom_instructions = None
-        response = HonchoLLMCallResponse(
+
+        mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(
                 explicit=[
                     PromptExplicitObservation(
@@ -445,21 +444,39 @@ class TestDeriverProcessing:
             patch(
                 "src.deriver.deriver.honcho_llm_call",
                 new_callable=AsyncMock,
-                return_value=response,
-            ),
+                return_value=mock_response,
+            ) as mock_llm_call,
             patch(
                 "src.deriver.deriver.RepresentationManager",
                 return_value=manager,
-            ),
+            ) as manager_class,
         ):
             await process_representation_tasks_batch(
-                messages=[user_context, assistant_evidence],
+                messages=[user_context_message, assistant_message],
                 message_level_configuration=configuration,
-                observers=["user"],
+                observers=["user", "assistant"],
                 observed="user",
+                participants=["user", "assistant"],
                 queue_item_message_ids=[7],
             )
 
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected deriver LLM call")
+        rendered_prompt = await_args.kwargs["prompt"]
+        assert (
+            '{"speaker":"assistant","addressee":"user"}: ' "You play tennis on Tuesdays"
+        ) in rendered_prompt
+
+        assert [kwargs for _, kwargs in manager_class.call_args_list] == [
+            {"workspace_name": "workspace-1", "observer": "user", "observed": "user"},
+            {
+                "workspace_name": "workspace-1",
+                "observer": "assistant",
+                "observed": "user",
+            },
+        ]
+        assert manager.save_representation.await_count == 2
         saved_representation, saved_message_ids, *_ = (
             manager.save_representation.await_args.args
         )
@@ -467,6 +484,65 @@ class TestDeriverProcessing:
         assert saved_representation.explicit[0].content == (
             "user plays tennis on Tuesdays"
         )
+
+    async def test_context_does_not_inherit_queued_participant_snapshot(self) -> None:
+        old_context_message = Mock(
+            id=6,
+            public_id="msg_old_context",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="assistant",
+            content="You should choose the venue",
+            token_count=6,
+            created_at=datetime.now(timezone.utc),
+        )
+        queued_message = Mock(
+            id=7,
+            public_id="msg_queued",
+            session_name="session-1",
+            workspace_name="workspace-1",
+            peer_name="assistant",
+            content="You play tennis on Tuesdays",
+            token_count=7,
+            created_at=datetime.now(timezone.utc),
+        )
+        configuration = Mock()
+        configuration.reasoning.enabled = True
+        configuration.reasoning.custom_instructions = None
+        response = HonchoLLMCallResponse(
+            content=PromptRepresentation(explicit=[]),
+            input_tokens=20,
+            output_tokens=8,
+            finish_reasons=["STOP"],
+        )
+
+        with patch(
+            "src.deriver.deriver.honcho_llm_call",
+            new_callable=AsyncMock,
+            return_value=response,
+        ) as mock_llm_call:
+            await process_representation_tasks_batch(
+                messages=[old_context_message, queued_message],
+                message_level_configuration=configuration,
+                observers=["user"],
+                observed="user",
+                participants=["user", "assistant"],
+                queue_item_message_ids=[7],
+            )
+
+        await_args = mock_llm_call.await_args
+        if await_args is None:
+            raise AssertionError("Expected deriver LLM call")
+        rendered_prompt = await_args.kwargs["prompt"]
+        assert "assistant: You should choose the venue" in rendered_prompt
+        assert (
+            '{"speaker":"assistant","addressee":"user"}: '
+            "You should choose the venue"
+        ) not in rendered_prompt
+        assert (
+            '{"speaker":"assistant","addressee":"user"}: '
+            "You play tennis on Tuesdays"
+        ) in rendered_prompt
 
 
 class TestBackwardsCompatibility:

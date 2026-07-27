@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -9,7 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.deriver import enqueue
-from src.deriver.enqueue import generate_queue_records
+from src.deriver.enqueue import (
+    PeerObservationConfiguration,
+    generate_queue_records,
+)
 from src.models import Peer, QueueItem, Workspace
 
 
@@ -286,6 +289,146 @@ class TestEnqueueFunction:
             assert observers is not None
             assert test_peer1.name in observers  # self-observation
             assert test_peer2.name in observers  # peer2 observes others
+
+    @pytest.mark.parametrize(
+        (
+            "assistant_observe_me",
+            "assistant_observe_others",
+            "user_observe_me",
+            "third_active_peer",
+            "expected_targets",
+        ),
+        [
+            (False, True, True, False, ["user"]),
+            (True, True, True, False, ["assistant", "user"]),
+            (False, False, True, False, []),
+            (False, True, False, False, []),
+            (False, True, True, True, []),
+        ],
+    )
+    async def test_assistant_message_enqueues_user_target_derivation(
+        self,
+        assistant_observe_me: bool,
+        assistant_observe_others: bool,
+        user_observe_me: bool,
+        third_active_peer: bool,
+        expected_targets: list[str],
+    ) -> None:
+        message = {
+            "message_id": 42,
+            "peer_name": "assistant",
+            "workspace_name": "workspace",
+            "session_name": "session",
+            "content": "You play tennis on Tuesdays",
+            "seq_in_session": 1,
+            "created_at": datetime.now(timezone.utc),
+        }
+        peers_config = {
+            "assistant": PeerObservationConfiguration(
+                {},
+                {
+                    "observe_me": assistant_observe_me,
+                    "observe_others": assistant_observe_others,
+                },
+                True,
+            ),
+            "user": PeerObservationConfiguration(
+                {},
+                {"observe_me": user_observe_me, "observe_others": False},
+                True,
+            ),
+        }
+        if third_active_peer:
+            peers_config["third-peer"] = PeerObservationConfiguration({}, {}, True)
+        resolved_configuration = schemas.ResolvedConfiguration(
+            reasoning=schemas.ResolvedReasoningConfiguration(enabled=True),
+            summary=schemas.ResolvedSummaryConfiguration(
+                enabled=False,
+                messages_per_short_summary=20,
+                messages_per_long_summary=60,
+            ),
+            peer_card=schemas.ResolvedPeerCardConfiguration(use=True, create=True),
+            dream=schemas.ResolvedDreamConfiguration(enabled=True),
+        )
+
+        records = await generate_queue_records(
+            db_session=AsyncMock(),
+            message=message,
+            peers_with_configuration=peers_config,
+            session_id="session-id",
+            conf=resolved_configuration,
+        )
+
+        representation_records = [
+            record for record in records if record["task_type"] == "representation"
+        ]
+        assert [
+            record["payload"]["observed"] for record in representation_records
+        ] == expected_targets
+
+        if "user" in expected_targets:
+            user_record = next(
+                record
+                for record in representation_records
+                if record["payload"]["observed"] == "user"
+            )
+            assert user_record["message_id"] == 42
+            assert user_record["payload"]["observers"] == ["user", "assistant"]
+            assert user_record["payload"]["participants"] == ["assistant", "user"]
+
+    async def test_promoted_target_dream_is_cancelled_after_enqueue(self) -> None:
+        queue_records = [
+            {
+                "workspace_name": "workspace",
+                "task_type": "representation",
+                "payload": {"observed": "assistant"},
+            },
+            {
+                "workspace_name": "workspace",
+                "task_type": "representation",
+                "payload": {"observed": "user"},
+            },
+        ]
+        scheduler = AsyncMock()
+
+        async def cancel_dreams(_workspace: str, target: str) -> set[str]:
+            if target == "assistant":
+                raise RuntimeError("scheduler unavailable")
+            return {"user-dream"}
+
+        scheduler.cancel_dreams_for_observed.side_effect = cancel_dreams
+        db_session = AsyncMock()
+
+        with (
+            patch("src.deriver.enqueue.tracked_db") as tracked_db_mock,
+            patch(
+                "src.deriver.enqueue.handle_session",
+                new_callable=AsyncMock,
+                return_value=queue_records,
+            ),
+            patch(
+                "src.deriver.enqueue.get_dream_scheduler",
+                return_value=scheduler,
+            ),
+        ):
+            tracked_db_mock.return_value.__aenter__.return_value = db_session
+            await enqueue(
+                [
+                    {
+                        "workspace_name": "workspace",
+                        "session_name": "session",
+                        "peer_name": "assistant",
+                    }
+                ]
+            )
+
+        scheduler.cancel_dreams_for_observed.assert_has_awaits(
+            [
+                call("workspace", "assistant"),
+                call("workspace", "user"),
+            ],
+            any_order=True,
+        )
 
     @pytest.mark.asyncio
     async def test_session_with_multiple_peers_some_observe_others(
@@ -757,7 +900,7 @@ class TestGetEffectiveObserveMeFunction:
         from src.deriver.enqueue import get_effective_observe_me
 
         # Empty peer configuration dict simulates sender who left after sending message
-        peers_with_configuration: dict[str, list[dict[str, Any]]] = {}
+        peers_with_configuration: dict[str, PeerObservationConfiguration] = {}
 
         result = get_effective_observe_me("missing_sender", peers_with_configuration)
 
@@ -769,8 +912,8 @@ class TestGetEffectiveObserveMeFunction:
         from src.deriver.enqueue import get_effective_observe_me
 
         # Sender present but with empty configurations
-        peers_with_configuration: dict[str, list[dict[str, Any]]] = {
-            "sender": [{}, {}]  # Empty peer config, empty session config
+        peers_with_configuration = {
+            "sender": PeerObservationConfiguration({}, {}, True)
         }
 
         result = get_effective_observe_me("sender", peers_with_configuration)
@@ -783,7 +926,7 @@ class TestGetEffectiveObserveMeFunction:
         from src.deriver.enqueue import get_effective_observe_me
 
         peers_with_configuration = {
-            "sender": [{"observe_me": False}, {}]  # Peer config with observe_me=False
+            "sender": PeerObservationConfiguration({"observe_me": False}, {}, True)
         }
 
         result = get_effective_observe_me("sender", peers_with_configuration)
@@ -795,10 +938,11 @@ class TestGetEffectiveObserveMeFunction:
         from src.deriver.enqueue import get_effective_observe_me
 
         peers_with_configuration = {
-            "sender": [
+            "sender": PeerObservationConfiguration(
                 {"observe_me": True},  # Peer config says True
                 {"observe_me": False},  # Session config says False - should win
-            ]
+                True,
+            )
         }
 
         result = get_effective_observe_me("sender", peers_with_configuration)
@@ -810,10 +954,11 @@ class TestGetEffectiveObserveMeFunction:
         from src.deriver.enqueue import get_effective_observe_me
 
         peers_with_configuration = {
-            "sender": [
+            "sender": PeerObservationConfiguration(
                 {"observe_me": False},  # Peer config says False
                 {"observe_me": None},  # Session config is None - should fall back
-            ]
+                True,
+            )
         }
 
         result = get_effective_observe_me("sender", peers_with_configuration)
@@ -848,7 +993,9 @@ class TestGetEffectiveObserveMeFunction:
                 observed = "missing_sender"
             else:
                 peers_with_configuration = {
-                    f"sender_{i}": [peer_config or {}, session_config or {}]
+                    f"sender_{i}": PeerObservationConfiguration(
+                        peer_config or {}, session_config or {}, True
+                    )
                 }
                 observed = f"sender_{i}"
 
@@ -1181,11 +1328,12 @@ class TestGenerateQueueRecordsSeqInSession:
             mock_crud.return_value = 200
             mock_db_session = AsyncMock()
 
-            peers_config: dict[str, list[Any]] = {
-                test_peer.name: [
+            peers_config = {
+                test_peer.name: PeerObservationConfiguration(
                     {"observe_me": True},
                     {"observe_others": True},
-                ]
+                    True,
+                )
             }
             resolved_configuration = schemas.ResolvedConfiguration(
                 reasoning=schemas.ResolvedReasoningConfiguration(enabled=True),
@@ -1261,11 +1409,12 @@ class TestGenerateQueueRecordsSeqInSession:
 
             mock_db_session = AsyncMock()
 
-            peers_config: dict[str, list[Any]] = {
-                test_peer.name: [
+            peers_config = {
+                test_peer.name: PeerObservationConfiguration(
                     {"observe_me": True},
                     {"observe_others": True},
-                ]
+                    True,
+                )
             }
             resolved_configuration = schemas.ResolvedConfiguration(
                 reasoning=schemas.ResolvedReasoningConfiguration(enabled=True),

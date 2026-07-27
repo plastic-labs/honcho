@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Literal
+from collections.abc import Mapping
+from typing import Any, Literal, NamedTuple
 
 from sqlalchemy import exists, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,14 @@ from src.utils.work_unit import construct_work_unit_key
 logger = logging.getLogger(__name__)
 
 
+class PeerObservationConfiguration(NamedTuple):
+    """Resolved peer settings used by representation queue routing."""
+
+    peer_configuration: dict[str, Any]
+    session_configuration: dict[str, Any]
+    is_active: bool
+
+
 async def enqueue(payload: list[dict[str, Any]]) -> None:
     """
     Add message(s) to the deriver queue for processing.
@@ -31,31 +40,13 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
         payload: List of message payload dictionaries
     """
 
-    # Cancel any pending dreams for affected collections since user is active again.
-    # This cancels dreams for all collections where observed=peer_name, which covers
-    # both self-observation and peer-to-peer observation cases.
-    dream_scheduler = get_dream_scheduler()
-    if dream_scheduler and payload:
-        cancelled_dreams: set[str] = set()
-        for message in payload:
-            workspace_name = message.get("workspace_name")
-            peer_name = message.get("peer_name")
-            if workspace_name and peer_name:
-                cancelled = await dream_scheduler.cancel_dreams_for_observed(
-                    workspace_name, peer_name
-                )
-                cancelled_dreams.update(cancelled)
+    if not payload:
+        return
 
-        if cancelled_dreams:
-            logger.info(
-                f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
-            )
-
+    queue_records: list[dict[str, Any]] = []
+    enqueue_succeeded = False
     async with tracked_db("message_enqueue") as db_session:
         try:
-            # Determine if batch or single processing
-            if not payload:  # Empty list check
-                return
             workspace_name = payload[0]["workspace_name"]
             session_name = payload[0]["session_name"]
 
@@ -70,6 +61,7 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 stmt = insert(QueueItem).returning(QueueItem)
                 await db_session.execute(stmt, queue_records)
                 await db_session.commit()
+            enqueue_succeeded = True
 
         except Exception as e:
             logger.exception("Failed to enqueue message(s)!")
@@ -77,6 +69,38 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 import sentry_sdk
 
                 sentry_sdk.capture_exception(e)
+
+    # New evidence resets inactivity for every representation target it affects,
+    # including a target promoted from a message authored by another peer.
+    dream_scheduler = get_dream_scheduler()
+    if dream_scheduler and enqueue_succeeded:
+        affected_targets = {
+            (message["workspace_name"], message["peer_name"]) for message in payload
+        }
+        affected_targets.update(
+            (record["workspace_name"], record["payload"]["observed"])
+            for record in queue_records
+            if record["task_type"] == "representation"
+        )
+        cancelled_dreams: set[str] = set()
+        for workspace_name, target in affected_targets:
+            try:
+                cancelled = await dream_scheduler.cancel_dreams_for_observed(
+                    workspace_name, target
+                )
+                cancelled_dreams.update(cancelled)
+            except Exception:
+                logger.exception(
+                    "Failed to cancel pending dreams for %s/%s after enqueue",
+                    workspace_name,
+                    target,
+                )
+
+        if cancelled_dreams:
+            logger.info(
+                "Cancelled %s pending dreams due to new evidence",
+                len(cancelled_dreams),
+            )
 
 
 async def handle_session(
@@ -139,7 +163,7 @@ async def handle_session(
 
 async def get_peers_with_configuration(
     db_session: AsyncSession, workspace_name: str, session_name: str
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, PeerObservationConfiguration]:
     """
     Retrieve peers with their configurations for a given session.
 
@@ -157,11 +181,11 @@ async def get_peers_with_configuration(
     peers_with_configuration_result = await db_session.execute(configuration_query)
     peers_with_configuration_list = peers_with_configuration_result.all()
     return {
-        row.peer_name: [
+        row.peer_name: PeerObservationConfiguration(
             row.peer_configuration,
             row.session_peer_configuration,
             row.is_active,
-        ]
+        )
         for row in peers_with_configuration_list
     }
 
@@ -173,6 +197,7 @@ def create_representation_record(
     *,
     observers: list[str],
     observed: str,
+    participants: list[str],
 ) -> dict[str, Any]:
     """
     Create a queue record for representation task.
@@ -182,7 +207,8 @@ def create_representation_record(
         conf: Resolved configuration for this particular message
         session_id: Optional session ID
         observers: List of observer peer names
-        observed: Name of the sender
+        observed: Peer that the representation task should model
+        participants: Active session peers when the message was enqueued
 
     Returns:
         Queue record dictionary with workspace_name and message_id as separate fields
@@ -201,6 +227,7 @@ def create_representation_record(
         task_type="representation",
         observers=observers,
         observed=observed,
+        participants=participants,
     )
     return {
         "work_unit_key": construct_work_unit_key(workspace_name, processed_payload),
@@ -254,47 +281,105 @@ def create_summary_record(
 
 
 def get_effective_observe_me(
-    observed: str, peers_with_configuration: dict[str, list[dict[str, Any]]]
+    target: str,
+    peers_with_configuration: Mapping[str, PeerObservationConfiguration],
 ) -> bool:
     """
-    Determine the effective observe_me setting for a sender, considering session and peer configurations.
+    Determine whether Honcho should form a representation of a target peer.
 
     Args:
-        observed: Name of the sender
+        target: Name of the peer to model
         peers_with_configuration: Dictionary of peer configurations
 
     Returns:
         True if observe_me is enabled, False otherwise
     """
-    # If the sender is not in peers_with_configuration, they left after sending a message.
-    # We'll use the default behavior of observing the sender by instantiating the default
+    # If the target is not in peers_with_configuration, they left after sending a message.
+    # Use the default behavior of observing the target by instantiating the default
     # peer-level and session-level configs.
-    configuration: list[Any] = peers_with_configuration.get(observed, [{}, {}])
-    sender_session_peer_config = (
-        schemas.SessionPeerConfig(**configuration[1]) if configuration[1] else None
+    configuration = peers_with_configuration.get(
+        target, PeerObservationConfiguration({}, {}, False)
     )
-    sender_peer_config = (
-        schemas.PeerConfig(**configuration[0])
-        if configuration[0]
+    target_session_peer_config = (
+        schemas.SessionPeerConfig(**configuration.session_configuration)
+        if configuration.session_configuration
+        else None
+    )
+    target_peer_config = (
+        schemas.PeerConfig(**configuration.peer_configuration)
+        if configuration.peer_configuration
         else schemas.PeerConfig()
     )
 
     # Session peer config takes precedence if it exists and has observe_me set
-    if sender_session_peer_config and sender_session_peer_config.observe_me is not None:
-        return sender_session_peer_config.observe_me
+    if target_session_peer_config and target_session_peer_config.observe_me is not None:
+        return target_session_peer_config.observe_me
 
     # Otherwise use peer config
     return (
-        sender_peer_config.observe_me
-        if sender_peer_config.observe_me is not None
+        target_peer_config.observe_me
+        if target_peer_config.observe_me is not None
         else True
     )
+
+
+def get_effective_observe_others(
+    peer: str,
+    peers_with_configuration: Mapping[str, PeerObservationConfiguration],
+) -> bool:
+    """Return whether an active session peer observes other peers.
+
+    Args:
+        peer: Name of the peer to check.
+        peers_with_configuration: Resolved configuration for the session peers.
+
+    Returns:
+        Whether the peer is active and has session-level observation enabled.
+    """
+    configuration = peers_with_configuration.get(
+        peer, PeerObservationConfiguration({}, {}, False)
+    )
+    if not configuration.is_active:
+        return False
+
+    session_peer_config = (
+        schemas.SessionPeerConfig(**configuration.session_configuration)
+        if configuration.session_configuration
+        else None
+    )
+    return bool(session_peer_config and session_peer_config.observe_others)
+
+
+def get_observers_for_target(
+    target: str,
+    peers_with_configuration: Mapping[str, PeerObservationConfiguration],
+) -> list[str]:
+    """Resolve the collections that should receive facts about a target peer.
+
+    Args:
+        target: Name of the peer being modeled.
+        peers_with_configuration: Resolved configuration for the session peers.
+
+    Returns:
+        Peer names that should receive the target's facts, or an empty list when
+        the target does not permit observation.
+    """
+    if not get_effective_observe_me(target, peers_with_configuration):
+        return []
+
+    observers = [target]
+    for peer_name in peers_with_configuration:
+        if peer_name == target:
+            continue
+        if get_effective_observe_others(peer_name, peers_with_configuration):
+            observers.append(peer_name)
+    return observers
 
 
 async def generate_queue_records(
     db_session: AsyncSession,
     message: dict[str, Any],
-    peers_with_configuration: dict[str, list[dict[str, Any]]],
+    peers_with_configuration: Mapping[str, PeerObservationConfiguration],
     session_id: str,
     conf: ResolvedConfiguration,
 ) -> list[dict[str, Any]]:
@@ -311,7 +396,7 @@ async def generate_queue_records(
     Returns:
         List of queue records for this message
     """
-    observed = message["peer_name"]
+    sender = message["peer_name"]
     message_id: int = message["message_id"]
 
     # Prefer the sequence captured during message creation; fallback only if missing
@@ -339,55 +424,47 @@ async def generate_queue_records(
             )
         )
 
-    # Check if the sender should be observed based on peer configuration
-    should_observe = get_effective_observe_me(observed, peers_with_configuration)
-
     if not conf.reasoning.enabled:
         return records
 
-    # Collect all observers into a single list
-    observers: list[str] = []
+    active_peers = [
+        peer_name
+        for peer_name, peer_conf in peers_with_configuration.items()
+        if peer_conf.is_active
+    ]
+    targets = [sender]
+    active_other_peers = [
+        peer_name for peer_name in active_peers if peer_name != sender
+    ]
+    # Messages have no addressee field. In a two-peer session, a peer that
+    # observes others can unambiguously supply evidence about the other peer.
+    if len(active_other_peers) == 1 and get_effective_observe_others(
+        sender, peers_with_configuration
+    ):
+        targets.append(active_other_peers[0])
 
-    if should_observe:
-        # Self-observation: the sender observes themselves
-        observers.append(observed)
-
-        # Other peers who want to observe
-        for peer_name, peer_conf in peers_with_configuration.items():
-            if peer_name == observed:
-                continue
-
-            # If the observer peer has left the session, skip them
-            if not peer_conf[2]:
-                continue
-
-            session_peer_config = (
-                schemas.SessionPeerConfig(**peer_conf[1]) if peer_conf[1] else None
+    observer_count = 0
+    for target in targets:
+        observers = get_observers_for_target(target, peers_with_configuration)
+        if observers:
+            observer_count += len(observers)
+            records.append(
+                create_representation_record(
+                    message,
+                    conf,
+                    observed=target,
+                    observers=observers,
+                    participants=active_peers,
+                    session_id=session_id,
+                )
             )
-
-            if session_peer_config is None or not session_peer_config.observe_others:
-                continue
-
-            observers.append(peer_name)
-
-    # Create a single record with all observers (if any)
-    if observers:
-        records.append(
-            create_representation_record(
-                message,
-                conf,
-                observed=observed,
-                observers=observers,
-                session_id=session_id,
-            )
-        )
 
     logger.debug(
-        "message %s from %s created %s queue items with %s observers",
+        "message %s from %s created %s queue items across %s observer collections",
         message_id,
-        observed,
+        sender,
         len(records),
-        len(observers),
+        observer_count,
     )
 
     return records

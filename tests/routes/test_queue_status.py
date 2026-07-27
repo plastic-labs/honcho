@@ -170,22 +170,83 @@ class TestDeriverStatusEndpoint:
             params={"sender_id": peer.name},
         )
         assert response.status_code == 200
-        assert response.json()["total_work_units"] == 5
-        assert response.json()["pending_work_units"] == 5
-        # Test with both (OR filter)
+        assert response.json()["total_work_units"] == 0
+        assert response.json()["pending_work_units"] == 0
+        # Test with both filters
         response = client.get(
             f"/v3/workspaces/{workspace.name}/queue/status",
             params={"observer_id": peer.name, "sender_id": peer.name},
         )
         assert response.status_code == 200
-        assert response.json()["total_work_units"] == 5
-        assert response.json()["pending_work_units"] == 5
-        # Test with different observer and sender (should be ok)
+        assert response.json()["total_work_units"] == 0
+        assert response.json()["pending_work_units"] == 0
+        # Test with different observer and sender
         response = client.get(
             f"/v3/workspaces/{workspace.name}/queue/status",
             params={"observer_id": peer.name, "sender_id": "different"},
         )
         assert response.status_code == 200
+        assert response.json()["total_work_units"] == 0
+
+    async def test_sender_filter_uses_message_author_for_promoted_target(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ) -> None:
+        workspace, user = sample_data
+        assistant = models.Peer(workspace_name=workspace.name, name="assistant")
+        session = models.Session(workspace_name=workspace.name, name="session")
+        db_session.add_all([assistant, session])
+        await db_session.commit()
+
+        message = models.Message(
+            workspace_name=workspace.name,
+            session_name=session.name,
+            peer_name=assistant.name,
+            content="You play tennis on Tuesdays",
+            token_count=10,
+            seq_in_session=1,
+        )
+        db_session.add(message)
+        await db_session.commit()
+
+        payload = {
+            "observed": user.name,
+            "observers": [user.name, assistant.name],
+            "task_type": "representation",
+            "workspace_name": workspace.name,
+            "session_name": session.name,
+        }
+        db_session.add(
+            models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=construct_work_unit_key(workspace.name, payload),
+                payload=payload,
+                processed=False,
+                workspace_name=workspace.name,
+                message_id=message.id,
+            )
+        )
+        await db_session.commit()
+
+        assistant_response = client.get(
+            f"/v3/workspaces/{workspace.name}/queue/status",
+            params={"sender_id": assistant.name},
+        )
+        user_response = client.get(
+            f"/v3/workspaces/{workspace.name}/queue/status",
+            params={"sender_id": user.name},
+        )
+        observer_response = client.get(
+            f"/v3/workspaces/{workspace.name}/queue/status",
+            params={"observer_id": assistant.name},
+        )
+
+        assert assistant_response.json()["total_work_units"] == 1
+        assert user_response.json()["total_work_units"] == 0
+        assert observer_response.json()["total_work_units"] == 1
 
     async def test_get_deriver_status_with_sessions_breakdown(
         self,
