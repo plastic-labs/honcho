@@ -41,7 +41,7 @@ router = APIRouter(
 # scopes facade so the observer mechanics stay internal.
 _SCOPES_ROUTE_GUIDANCE = (
     "Scope membership is managed via the scopes routes "
-    "(/workspaces/{workspace_id}/scopes/{scope_id}/sessions) or the `scopes` "
+    "(/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions) or the `scopes` "
     "field at session creation."
 )
 

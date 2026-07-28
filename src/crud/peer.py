@@ -43,6 +43,7 @@ async def get_or_create_peers(
     peers: list[schemas.PeerCreate],
     *,
     _retry: bool = False,
+    _pending_invalidation: list[str] | None = None,
 ) -> GetOrCreateResult[list[models.Peer]]:
     """
     Get an existing list of peers or create new peers if they don't exist.
@@ -53,6 +54,8 @@ async def get_or_create_peers(
         workspace_name: Name of the workspace
         peers: List of peer creation schemas
         _retry: Whether to retry the operation
+        _pending_invalidation: Names of peers already mutated by a prior attempt,
+            whose cache keys must still be purged. See the retry branch below.
 
     Returns:
         GetOrCreateResult containing the list of peers and whether any were created
@@ -123,11 +126,26 @@ async def get_or_create_peers(
             raise ConflictException(
                 f"Unable to create or get peers: {peer_names}"
             ) from None
-        return await get_or_create_peers(db, workspace_name, peers, _retry=True)
+        # `begin_nested()` autoflushes the mutations above *before* opening the
+        # savepoint, so they are already committed-in-transaction and the rollback
+        # doesn't undo them — nor does it expire the now-clean ORM state. The retry
+        # would therefore compare already-updated values, find no change, and skip
+        # the purge. Carry the names forward so the invalidation can't be lost.
+        return await get_or_create_peers(
+            db,
+            workspace_name,
+            peers,
+            _retry=True,
+            _pending_invalidation=(_pending_invalidation or [])
+            + [p.name for p in changed_peers],
+        )
 
     # Capture peer names eagerly so the closure holds plain strings, not ORM objects
     _cache_keys_to_invalidate = [
-        peer_cache_key(workspace_name, p.name) for p in changed_peers + new_peers
+        peer_cache_key(workspace_name, name)
+        for name in dict.fromkeys(
+            (_pending_invalidation or []) + [p.name for p in changed_peers + new_peers]
+        )
     ]
 
     async def _invalidate_peer_cache():

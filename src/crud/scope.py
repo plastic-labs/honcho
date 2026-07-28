@@ -51,6 +51,7 @@ async def get_or_create_scopes(
     scopes: list[schemas.ScopeCreate],
     *,
     _retry: bool = False,
+    _pending_invalidation: list[str] | None = None,
 ) -> GetOrCreateResult[list[models.Peer]]:
     """
     Get existing scopes or create new ones if they don't exist.
@@ -66,6 +67,9 @@ async def get_or_create_scopes(
         db: Database session
         workspace_name: Name of the workspace
         scopes: List of scope creation schemas (unprefixed names)
+        _retry: Whether this is the retry attempt
+        _pending_invalidation: Names of scope peers already mutated by a prior
+            attempt, whose cache keys must still be purged. See the retry branch.
 
     Returns:
         GetOrCreateResult containing the backing peers and whether any were
@@ -122,10 +126,24 @@ async def get_or_create_scopes(
             raise ConflictException(
                 f"Unable to create or get scopes: {sorted(peer_names)}"
             ) from None
-        return await get_or_create_scopes(db, workspace_name, scopes, _retry=True)
+        # `begin_nested()` autoflushes the mutations above *before* opening the
+        # savepoint, so they survive the rollback and leave the ORM state clean —
+        # the retry would compare already-updated values, find no change, and skip
+        # the purge. Carry the names forward so the invalidation can't be lost.
+        return await get_or_create_scopes(
+            db,
+            workspace_name,
+            scopes,
+            _retry=True,
+            _pending_invalidation=(_pending_invalidation or [])
+            + [p.name for p in changed_peers],
+        )
 
     _cache_keys_to_invalidate = [
-        peer_cache_key(workspace_name, p.name) for p in changed_peers + new_peers
+        peer_cache_key(workspace_name, name)
+        for name in dict.fromkeys(
+            (_pending_invalidation or []) + [p.name for p in changed_peers + new_peers]
+        )
     ]
 
     async def _invalidate_peer_cache():
