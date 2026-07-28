@@ -79,7 +79,8 @@ class DialecticComponents(Enum):
 # fabricate impossible always-0 series (e.g. output/prompt, or
 # ingestion/previous_summary). Explicit literal, drift-guarded by
 # tests/telemetry/test_metric_zero_init.py. Sources: track_deriver_input_tokens
-# (utils/tokens.py) + the OUTPUT_TOTAL sites in deriver.py / summarizer.py.
+# (src/utils/tokens.py) + the OUTPUT_TOTAL sites in src/deriver/deriver.py and
+# src/utils/summarizer.py.
 _DERIVER_TOKEN_COMBOS_BY_TASK: dict[str, tuple[tuple[str, str], ...]] = {
     DeriverTaskTypes.INGESTION.value: (
         (TokenTypes.INPUT.value, DeriverComponents.PROMPT.value),
@@ -383,14 +384,6 @@ class PrometheusMetrics:
         except Exception as e:
             self._handle_metric_error("_touch", e)
 
-    def _set_gauge_zero(self, gauge: NamespacedGauge) -> None:
-        """Materialize a (namespace-only) gauge at 0. Fail-soft, like ``_touch``:
-        a startup init must never propagate an exception into process boot."""
-        try:
-            gauge.labels().set(0)
-        except Exception as e:
-            self._handle_metric_error("_set_gauge_zero", e)
-
     def initialize_telemetry_dropped_metrics(self, *, reasons: list[str]) -> None:
         """Pre-create telemetry_events_dropped child series at 0.
 
@@ -470,7 +463,7 @@ class PrometheusMetrics:
             self._touch(telemetry_events_emitted_counter, type=event_type)
         for event_type in HIGH_VOLUME_EVENT_TYPES:
             self._touch(telemetry_events_sampled_out_counter, type=event_type)
-        self._set_gauge_zero(telemetry_buffer_size_gauge)
+        self.set_telemetry_buffer_size(size=0)
 
         if instance_type == "api":
             # dialectic tokens: token_type x component(total) x reasoning_level
@@ -484,7 +477,7 @@ class PrometheusMetrics:
                     )
             # embed_now fast path runs as an API-process background task
             self._touch(embed_now_tasks_shed_counter)
-            self._set_gauge_zero(embed_now_tasks_in_flight_gauge)
+            self.set_embed_now_tasks_in_flight(0)
 
         elif instance_type == "deriver":
             # deriver tokens: only the VALID (token_type, component) tuples per
@@ -511,9 +504,10 @@ class PrometheusMetrics:
                         specialist_name=specialist.name,
                         token_type=token_type.value,
                     )
-            # embedding backlog gauge — set live each reconciliation cycle; init
-            # at 0 so it's visible before the first cycle.
-            self._set_gauge_zero(message_embeddings_pending_gauge)
+            # embedding backlog gauge — refreshed per-replica from
+            # ReconcilerScheduler._scheduler_loop; init at 0 so it is visible
+            # before the first refresh.
+            self.set_message_embeddings_pending(count=0)
 
     def set_telemetry_buffer_size(self, *, size: int) -> None:
         try:

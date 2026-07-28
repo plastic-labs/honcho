@@ -712,8 +712,13 @@ async def record_pending_embeddings_backlog() -> None:
     (worse, given this metric is zero-initialized) a confident permanent 0 it had
     never measured. The count is a property of the database, not of the process,
     so every replica must refresh it on its own timer for ``max()``/``avg()`` to
-    mean anything. One indexed COUNT per replica per interval is negligible —
-    ``ix_message_embeddings_sync_state_last_sync_at`` covers it.
+    mean anything.
+
+    Cost: one COUNT per replica per scheduler interval (~5 min by default).
+    ``ix_message_embeddings_sync_state_last_sync_at`` makes the scan proportional
+    to the pending BACKLOG rather than to the whole table — which is not the same
+    as cheap: after an embedding outage the backlog is exactly what is large. It
+    stays a small duty cycle, and the cost shrinks as the reconciler drains.
 
     Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
     """

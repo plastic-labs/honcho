@@ -1,6 +1,6 @@
 """Tests for startup zero-initialization of bounded-label metrics.
 
-Backfills the coverage PR #927 shipped without, and covers the generalization:
+Asserts that:
 - bounded-label counter children are materialized at 0 before any event,
 - high-cardinality / impossible label combinations are deliberately NOT,
 - per-process init doesn't materialize the other process's counters,
@@ -65,9 +65,8 @@ def sample(name: str, **labels: str) -> float | None:
 
 
 # ---------------------------------------------------------------------------
-# Drift guards (pure logic — no registry). These are the repo-visible collaborator
-# notes: adding an event type / token component without updating the registry
-# fails here with a pointer to what to fix.
+# Drift guards (pure logic — no registry). Adding an event type / token component
+# without updating the registry fails here, with a pointer to what to fix.
 # ---------------------------------------------------------------------------
 
 
@@ -193,10 +192,9 @@ def test_deriver_init_materializes_token_and_backlog():
                 is not None
             )
     # dreamer specialists are derived from the concrete BaseSpecialist subclasses.
-    # Derived here too, rather than hardcoded: a hardcoded pair would keep passing
-    # when a third specialist is added (it only asserts presence), silently leaving
-    # the new one uncovered — which is exactly what happened when CardRefreshSpecialist
-    # landed.
+    # Derived here too, rather than hardcoded: a hardcoded list would keep passing
+    # when a new specialist is added (it only asserts presence), silently leaving
+    # the new one uncovered.
     specialist_names = {
         name
         for cls in walk_subclasses(BaseSpecialist)
@@ -313,7 +311,7 @@ def test_deriver_init_does_not_touch_api_counters():
 
 
 # ---------------------------------------------------------------------------
-# Dropped-counter backfill (#927 shipped without a test)
+# telemetry_events_dropped: per-emitter child materialization
 # ---------------------------------------------------------------------------
 
 

@@ -21,7 +21,7 @@ from src.reconciler.scheduler import ReconcilerScheduler
 
 
 @pytest.fixture(autouse=True)
-def _reset_scheduler_singleton():
+def _reset_scheduler_singleton():  # pyright: ignore[reportUnusedFunction]
     ReconcilerScheduler.reset_singleton()
     yield
     ReconcilerScheduler.reset_singleton()
@@ -43,7 +43,10 @@ async def test_scheduler_loop_refreshes_backlog_gauge(
         calls += 1
         refreshed.set()
 
-    async def _never_enqueue(_task: object) -> bool:
+    # Patched onto the class, so it is invoked as a bound method — it needs the
+    # `self` parameter or the call raises TypeError, which `_scheduler_loop`
+    # would then swallow, leaving this guard silently inert.
+    async def _never_enqueue(_self: object, _task: object) -> bool:
         return False
 
     monkeypatch.setattr(

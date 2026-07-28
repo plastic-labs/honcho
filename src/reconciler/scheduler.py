@@ -146,10 +146,13 @@ class ReconcilerScheduler:
 
     async def _scheduler_loop(self) -> None:
         """
-        Main scheduler loop that enqueues tasks based on their intervals.
+        Main scheduler loop that enqueues tasks based on their intervals, and
+        refreshes the service-wide pending-embeddings backlog gauge each pass.
 
         Each task has its own interval and the loop checks all tasks on each
-        iteration, enqueueing any that are due.
+        iteration, enqueueing any that are due. The loop sleeps until the next
+        task is due, so the gauge's refresh cadence tracks the SHORTEST task
+        interval.
         """
         try:
             while not self._shutdown_event.is_set():
