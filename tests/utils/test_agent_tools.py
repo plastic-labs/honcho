@@ -391,6 +391,48 @@ class TestCreateObservations:
         assert doc is not None
         assert doc.source_ids == [real_id]
 
+    async def test_contradiction_rejected_when_only_one_real_source_remains(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A contradiction must still have two real sources after fabricated
+        source IDs are removed."""
+        *_, documents = tool_test_data
+        real_id = documents[0].id
+        ctx = make_tool_context(current_messages=None)
+
+        result = await _handle_create_observations(
+            ctx,
+            {
+                "observations": [
+                    {
+                        "content": "Conflicting claims with one invented citation",
+                        "level": "contradiction",
+                        "source_ids": [
+                            real_id,
+                            "fabricated-id-that-does-not-exist",
+                        ],
+                        "sources": [
+                            "The user said they prefer tea",
+                            "The user said they prefer coffee",
+                        ],
+                    },
+                ]
+            },
+        )
+
+        assert "Created 0 observations" in result
+        assert "Failed 1" in result
+        assert "requires at least 2 real source(s)" in str(result)
+
+        stmt = select(models.Document).where(
+            models.Document.content == "Conflicting claims with one invented citation"
+        )
+        doc = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert doc is None
+
     async def test_mixed_batch_keeps_grounded_rejects_ungrounded(
         self,
         db_session: AsyncSession,
