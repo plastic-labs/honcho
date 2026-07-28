@@ -18,18 +18,19 @@ from uuid import uuid4
 import pytest
 from prometheus_client import REGISTRY
 
-from src.config import settings
+from src.config import REASONING_LEVELS, settings
+from src.dreamer.specialists import BaseSpecialist
 from src.telemetry.events import ALL_EVENT_TYPES, HIGH_VOLUME_EVENT_TYPES
 from src.telemetry.events.base import BaseEvent
 from src.telemetry.prometheus.metrics import (
     _DERIVER_TOKEN_COMBOS_BY_TASK,  # pyright: ignore[reportPrivateUsage]
-    REASONING_LEVELS,
     DeriverComponents,
     DeriverTaskTypes,
     DialecticComponents,
     TokenTypes,
     prometheus_metrics,
 )
+from src.utils.types import walk_subclasses
 
 
 def unique_ns(tag: str) -> str:
@@ -70,12 +71,6 @@ def sample(name: str, **labels: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def _walk_event_subclasses(cls: type[BaseEvent]) -> Iterator[type[BaseEvent]]:
-    for sub in cls.__subclasses__():
-        yield sub
-        yield from _walk_event_subclasses(sub)
-
-
 def test_all_event_types_registry_matches_subclasses():
     """ALL_EVENT_TYPES must equal every BaseEvent subclass's _event_type.
 
@@ -85,7 +80,7 @@ def test_all_event_types_registry_matches_subclasses():
     """
     discovered = {
         event_type
-        for cls in _walk_event_subclasses(BaseEvent)
+        for cls in walk_subclasses(BaseEvent)
         if (event_type := getattr(cls, "_event_type", None)) is not None
     }
     assert set(ALL_EVENT_TYPES) == discovered
@@ -96,7 +91,7 @@ def test_high_volume_registry_matches_subclasses():
     """HIGH_VOLUME_EVENT_TYPES must equal the high_volume-classed subclasses."""
     discovered = {
         event_type
-        for cls in _walk_event_subclasses(BaseEvent)
+        for cls in walk_subclasses(BaseEvent)
         if (event_type := getattr(cls, "_event_type", None)) is not None
         and getattr(cls, "_volume_class", None) == "high_volume"
     }
@@ -197,8 +192,18 @@ def test_deriver_init_materializes_token_and_backlog():
                 )
                 is not None
             )
-    # dreamer specialists are derived from the concrete BaseSpecialist subclasses
-    for specialist_name in ("deduction", "induction"):
+    # dreamer specialists are derived from the concrete BaseSpecialist subclasses.
+    # Derived here too, rather than hardcoded: a hardcoded pair would keep passing
+    # when a third specialist is added (it only asserts presence), silently leaving
+    # the new one uncovered — which is exactly what happened when CardRefreshSpecialist
+    # landed.
+    specialist_names = {
+        name
+        for cls in walk_subclasses(BaseSpecialist)
+        if (name := getattr(cls, "name", None)) is not None
+    }
+    assert {"deduction", "induction", "card_refresh"} <= specialist_names
+    for specialist_name in specialist_names:
         assert (
             sample(
                 "dreamer_tokens_processed_total",
@@ -206,7 +211,7 @@ def test_deriver_init_materializes_token_and_backlog():
                 token_type=TokenTypes.INPUT.value,
             )
             is not None
-        )
+        ), f"specialist {specialist_name!r} was not zero-initialized"
     assert sample("message_embeddings_pending") == 0.0  # gauge zero-init
 
 

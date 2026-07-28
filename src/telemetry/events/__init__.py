@@ -147,8 +147,14 @@ __all__ = [
 # Explicit registry of CloudEvents `type` values, used to pre-materialize the
 # `telemetry_events_emitted` / `telemetry_events_sampled_out` counter children at
 # 0 so those metrics are visible in Prometheus before any event fires (see
-# src/telemetry/prometheus/metrics.py:initialize_bounded_metrics and
-# .meta design telemetry-counter-zero-init).
+# src/telemetry/prometheus/metrics.py:initialize_bounded_metrics for why absent
+# and zero are worth distinguishing).
+#
+# This is an explicit literal rather than a set derived from BaseEvent
+# subclasses: the derived version would silently follow whatever happens to be
+# imported at init time, so a type could drop out of the registry without any
+# code change. Pairing a hand-maintained list with a drift-guard test keeps the
+# failure loud and at the right moment.
 #
 # ⚠️ When you add a new BaseEvent subclass, add its `_event_type` here (and to
 # HIGH_VOLUME_EVENT_TYPES if `_volume_class == "high_volume"`). The drift-guard

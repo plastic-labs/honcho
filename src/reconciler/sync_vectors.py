@@ -701,13 +701,21 @@ async def _cleanup_pgvector_batch(
         return True
 
 
-async def _record_pending_embeddings_backlog() -> None:
+async def record_pending_embeddings_backlog() -> None:
     """Set the pending-embeddings backlog gauge to the current count of
     MessageEmbedding rows awaiting a vector (sync_state='pending').
 
-    Called at the end of each reconciliation cycle so the gauge reflects the
-    residual backlog after the sweep. Best-effort: a metrics/DB hiccup here must
-    never fail the reconciliation cycle.
+    Called from ``ReconcilerScheduler._scheduler_loop`` — deliberately NOT from
+    ``run_vector_reconciliation_cycle``. The cycle runs off the queue behind
+    work-unit dedup, so exactly one deriver replica executes it; driving the
+    gauge from there would leave every other replica exporting a stale value, or
+    (worse, given this metric is zero-initialized) a confident permanent 0 it had
+    never measured. The count is a property of the database, not of the process,
+    so every replica must refresh it on its own timer for ``max()``/``avg()`` to
+    mean anything. One indexed COUNT per replica per interval is negligible —
+    ``ix_message_embeddings_sync_state_last_sync_at`` covers it.
+
+    Best-effort: a metrics/DB hiccup here must never break the scheduler loop.
     """
     if not settings.METRICS.ENABLED:
         return
@@ -754,7 +762,6 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             if not (embs_work or cleanup_work):
                 break
         logger.debug("Vector reconciliation cycle completed (pgvector mode)")
-        await _record_pending_embeddings_backlog()
         return metrics
 
     # External vector store mode - reconcile documents, embeddings, and cleanup
@@ -782,5 +789,4 @@ async def run_vector_reconciliation_cycle() -> ReconciliationMetrics:
             break
 
     logger.debug("Vector reconciliation cycle completed")
-    await _record_pending_embeddings_backlog()
     return metrics

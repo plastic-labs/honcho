@@ -21,6 +21,7 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.models import QueueItem
+from src.reconciler.sync_vectors import record_pending_embeddings_backlog
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,13 @@ class ReconcilerScheduler:
         try:
             while not self._shutdown_event.is_set():
                 now = datetime.now(timezone.utc)
+
+                # Refresh the pending-embeddings backlog gauge on EVERY replica,
+                # not just whichever one wins the sync_vectors work unit — the
+                # count is DB-global, so a replica that never ran a cycle would
+                # otherwise export a stale (or zero-initialized) value forever.
+                # See record_pending_embeddings_backlog for the full rationale.
+                await record_pending_embeddings_backlog()
 
                 # Check each task and enqueue if due
                 for task_name, task in RECONCILER_TASKS.items():
