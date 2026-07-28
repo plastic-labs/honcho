@@ -5,6 +5,7 @@ from typing import Any, TypeVar
 from typing import cast as typing_cast
 
 from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
 
 from ..exceptions import FilterError
@@ -345,6 +346,14 @@ def _build_field_condition(
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
             if column_name in JSONB_COLUMNS:
                 return _build_nested_metadata_conditions(column, value)  # pyright: ignore
+            elif not isinstance(column.type, JSONB):
+                # A dict against a scalar column compiles fine but fails in the
+                # driver at execute time ("cannot adapt type 'dict'") as a 500.
+                # Reject unknown operator dicts here as a 422 instead.
+                keys = sorted(typing_cast("dict[str, Any]", value))
+                raise FilterError(
+                    f"Invalid filter for column '{key}': unsupported operator(s) {keys}. Expected one of {sorted(COMPARISON_OPERATORS)} or a scalar value."
+                )
             else:
                 return column == value
     else:
