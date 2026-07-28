@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 import pytest
 from sqlalchemy import select
@@ -14,6 +14,7 @@ from sqlalchemy.dialects.postgresql import psycopg as psycopg_dialect
 from src.exceptions import FilterError
 from src.models import Document, Message, Peer, Session
 from src.utils.filter import apply_filter
+from src.utils.types import DocumentLevel
 
 
 def test_unknown_operator_dict_on_scalar_column_raises():
@@ -144,6 +145,67 @@ def test_ne_none_on_numeric_column_is_not_null():
 def test_null_operand_on_non_ne_operator_raises():
     with pytest.raises(FilterError):
         apply_filter(select(Message), Message, {"token_count": {"gt": None}})
+
+
+def test_enum_column_rejects_an_unknown_value():
+    """An invalid level silently matched nothing, which reads as "no results"
+    rather than "you sent a value that cannot exist"."""
+    with pytest.raises(FilterError):
+        apply_filter(select(Document), Document, {"level": "banana"})
+
+
+@pytest.mark.parametrize("level", get_args(DocumentLevel))
+def test_enum_column_accepts_every_declared_level(level: str):
+    """Derived from the Literal, so a new level (e.g. "abduction") is covered
+    here the moment it is declared — no second list to keep in sync."""
+    stmt = apply_filter(select(Document), Document, {"level": level})
+    assert stmt.whereclause is not None
+
+
+def test_empty_in_list_matches_nothing_rather_than_everything():
+    """Dropping an empty IN would widen the query to every row. Session scoping
+    relies on an empty allowlist failing closed."""
+    stmt = apply_filter(select(Document), Document, {"session_id": {"in": []}})
+    assert stmt.whereclause is not None
+    assert "IN" in str(stmt.whereclause)
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"created_at": "2026-01-01"},
+        {"created_at": {"gte": "2026-01-01"}},
+        {"token_count": "5"},
+        {"token_count": {"gt": "5"}},
+    ],
+)
+def test_equality_and_comparison_paths_coerce_alike(filters: dict[str, Any]):
+    """The two paths had different rules: comparison operators parsed datetimes
+    and coerced numbers, bare equality bound the raw string and 500'd on
+    `timestamp with time zone = character varying`."""
+    stmt = apply_filter(select(Message), Message, filters)
+    assert stmt.whereclause is not None
+
+
+@pytest.mark.parametrize(
+    ("model", "filters"),
+    [
+        (Message, {"token_count": {"contains": 5}}),  # integer ~~* text
+        (Message, {"created_at": {"contains": "x"}}),  # timestamptz ~~* text
+        (Document, {"metadata": {"gte": 5}}),  # jsonb >= integer
+        (Document, {"metadata": {"contains": "x"}}),  # jsonb ~~* text
+        (Document, {"source_ids": "abc"}),  # jsonb = character varying
+        (Document, {"session_id": 5}),  # text = integer
+        (Document, {"session_id": True}),  # text = boolean
+        (Message, {"created_at": 5}),  # timestamptz = integer
+        (Document, {"embedding": 5}),  # no python_type at all
+    ],
+)
+def test_incompatible_operand_types_are_rejected(model: Any, filters: dict[str, Any]):
+    """Each of these compiled cleanly and failed in Postgres as
+    `operator does not exist: <coltype> <op> <operandtype>`."""
+    with pytest.raises(FilterError):
+        apply_filter(select(model), model, filters)
 
 
 # --- Invariants over the whole DSL -------------------------------------------
