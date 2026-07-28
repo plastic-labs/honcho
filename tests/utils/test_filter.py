@@ -129,7 +129,7 @@ def test_ne_string_on_text_column_compares_as_string():
     """Regression: numeric operators float()-cast on every column type, so a
     string inequality on a text column was rejected as a bad number."""
     stmt = apply_filter(select(Document), Document, {"session_id": {"ne": "abc"}})
-    assert "session_name !=" in str(stmt)
+    assert "session_name IS DISTINCT FROM" in str(stmt)
 
 
 def test_numeric_operator_still_validates_on_numeric_column():
@@ -206,6 +206,60 @@ def test_incompatible_operand_types_are_rejected(model: Any, filters: dict[str, 
     `operator does not exist: <coltype> <op> <operandtype>`."""
     with pytest.raises(FilterError):
         apply_filter(select(model), model, filters)
+
+
+def _where(model: Any, filters: dict[str, Any]) -> str:
+    stmt = apply_filter(select(model), model, filters)
+    return str(stmt.compile(dialect=psycopg_dialect.dialect())).split("WHERE")[-1]
+
+
+def test_not_is_null_safe():
+    """`NOT (col = v)` is NULL when col is NULL, so plain negation drops rows
+    whose column is unset — even though an unset column is not `v`."""
+    where = _where(Document, {"NOT": [{"session_id": "abc"}]})
+    assert "IS NOT true" in where
+
+
+def test_ne_is_null_safe():
+    where = _where(Document, {"session_id": {"ne": "abc"}})
+    assert "IS DISTINCT FROM" in where
+
+
+def test_not_is_null_safe_over_a_compound_condition():
+    """Negation has to survive nesting, not just single comparisons."""
+    where = _where(
+        Document, {"NOT": [{"AND": [{"session_id": "a"}, {"level": "explicit"}]}]}
+    )
+    assert "IS NOT true" in where
+    assert "AND" in where
+
+
+def test_not_is_null_safe_over_contains():
+    where = _where(Document, {"NOT": [{"session_id": {"contains": "x"}}]})
+    assert "ILIKE" in where
+    assert "IS NOT true" in where
+
+
+def test_ne_null_still_renders_is_not_null():
+    """The null operand is intercepted before the operator dispatch, so this
+    path is unchanged by null-safe `ne`."""
+    assert "IS NOT NULL" in _where(Document, {"session_id": {"ne": None}})
+
+
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        ({"session_id": "abc"}, "session_name ="),
+        ({"session_id": {"contains": "x"}}, "ILIKE"),
+    ],
+)
+def test_positive_predicates_are_unchanged(filters: dict[str, Any], expected: str):
+    """A NULL column does not equal or contain anything, so positive predicates
+    correctly exclude those rows and must keep their plain operators."""
+    where = _where(Document, filters)
+    assert expected in where
+    assert "IS NOT true" not in where
+    assert "IS DISTINCT FROM" not in where
 
 
 # --- Invariants over the whole DSL -------------------------------------------

@@ -5,7 +5,7 @@ from logging import getLogger
 from typing import Any, TypeVar, get_args
 from typing import cast as typing_cast
 
-from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, or_
+from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
 
@@ -425,8 +425,15 @@ def _build_filter_conditions(
                 _depth=_depth + 1,
             )
             if sub_condition is not None:
+                # `IS NOT TRUE` rather than `NOT`: under SQL's three-valued
+                # logic a comparison against a NULL column is NULL, and `NOT
+                # NULL` is NULL, so plain negation drops rows whose column is
+                # unset — even though an unset column does not match what is
+                # being excluded. NOT [{"session_id": "abc"}] must include
+                # documents that have no session, since those are not "abc".
+                # Composes over compound sub-conditions: (a AND b) IS NOT TRUE.
                 not_conditions.append(
-                    not_(sub_condition)
+                    sub_condition.is_not(True)
                 )  # Apply NOT to each condition individually
         if not_conditions:
             conditions.append(and_(*not_conditions))  # Then AND them together
@@ -767,7 +774,11 @@ def _build_comparison_conditions(
         elif operator == "lt":
             condition = column < casted_value
         elif operator == "ne":
-            condition = column != casted_value
+            # IS DISTINCT FROM, not <>: `NULL <> 'abc'` is NULL, so plain
+            # inequality drops rows whose column is unset. Identical to <>
+            # whenever no NULL is involved, and keeps `ne` agreeing with the
+            # NOT operator instead of quietly returning a different row set.
+            condition = column.is_distinct_from(casted_value)
         elif operator == "in":
             if hasattr(op_value, "__iter__") and not isinstance(op_value, str | bytes):
                 # Handle wildcard in iterable - if present, matches everything, so no condition needed
