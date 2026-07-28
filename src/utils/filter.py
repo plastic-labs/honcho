@@ -79,6 +79,35 @@ SCALAR_OPERAND_TYPES = (
 )
 
 
+def _coerce_numeric(op_value: Any) -> int | float | Decimal:
+    """Validate a numeric operand without losing precision.
+
+    float() rounds an int past 2**53 and flattens a Decimal, so an operand that
+    is already numeric is passed through untouched and only strings are parsed.
+    int() is tried before float() so "5" stays exact while "5.5" still parses.
+    bool is narrowed to int: it is an int subclass, but binding it as a boolean
+    against a numeric column produces SQL Postgres has no operator for.
+
+    Args:
+        op_value: The operand to validate.
+
+    Returns:
+        The operand as an exact numeric value.
+
+    Raises:
+        ValueError, TypeError: If the operand is not numeric. Callers convert
+            these to FilterError.
+    """
+    if isinstance(op_value, bool):
+        return int(op_value)
+    if isinstance(op_value, int | float | Decimal):
+        return op_value
+    try:
+        return int(op_value)
+    except ValueError:
+        return float(op_value)
+
+
 def _require_bindable_operand(
     column_name: str, op_value: Any, operator: str = ""
 ) -> None:
@@ -670,7 +699,7 @@ def _build_comparison_conditions(
             # number. On a text column, `ne` is a string comparison.
             if operator in NUMERIC_OPERATORS and is_numeric_column:
                 try:
-                    casted_value = float(op_value)
+                    casted_value = _coerce_numeric(op_value)
                 except (TypeError, ValueError):
                     raise FilterError(
                         f"Invalid numeric value: {op_value}. Expected a number, got {type(op_value).__name__}"

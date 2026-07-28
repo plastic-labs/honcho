@@ -35,7 +35,34 @@ def test_known_operator_dict_on_scalar_column_still_works():
 
 def test_dict_on_jsonb_column_still_works():
     stmt = apply_filter(select(Document), Document, {"metadata": {"kind": "note"}})
-    assert "internal_metadata" in str(stmt)
+    # Assert on the WHERE clause specifically: internal_metadata is in the
+    # SELECT projection either way, so checking the whole statement passes even
+    # when no condition was applied at all.
+    assert stmt.whereclause is not None
+    assert "internal_metadata" in str(stmt.whereclause)
+    compiled = stmt.compile(dialect=postgresql.dialect())
+    assert {"kind": "note"} in [bind.value for bind in compiled.binds.values()]
+
+
+def test_numeric_operand_keeps_integer_precision():
+    """float() rounds anything past 2**53, silently shifting the comparison."""
+    big = 2**53 + 1
+    stmt = apply_filter(select(Message), Message, {"token_count": {"gt": big}})
+    compiled = stmt.compile(dialect=postgresql.dialect())
+    assert big in [bind.value for bind in compiled.binds.values()]
+
+
+def test_fractional_operand_on_integer_column_is_not_truncated():
+    """Coercing to the column's int type would turn `lt 5.5` into `lt 5`."""
+    stmt = apply_filter(select(Message), Message, {"token_count": {"lt": 5.5}})
+    compiled = stmt.compile(dialect=postgresql.dialect())
+    assert 5.5 in [bind.value for bind in compiled.binds.values()]
+
+
+def test_numeric_string_operand_stays_exact():
+    stmt = apply_filter(select(Message), Message, {"token_count": {"gt": "5"}})
+    compiled = stmt.compile(dialect=postgresql.dialect())
+    assert 5 in [bind.value for bind in compiled.binds.values()]
 
 
 def test_ne_none_on_scalar_column_is_not_null():
