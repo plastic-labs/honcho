@@ -65,6 +65,48 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
 
 MAX_SESSION_ALLOWLIST_ENTRIES = 1000
 
+# Values that can be bound to a non-JSONB column. Anything else (dict, list,
+# bytes, arbitrary objects) compiles into a valid statement and then fails in
+# psycopg at execute time as an unhandled 500, so it is rejected up front.
+SCALAR_OPERAND_TYPES = (
+    str,
+    bool,
+    int,
+    float,
+    Decimal,
+    datetime.datetime,
+    datetime.date,
+)
+
+
+def _require_bindable_operand(
+    column_name: str, op_value: Any, operator: str = ""
+) -> None:
+    """Reject an operand that cannot be bound to a scalar column.
+
+    For ``in``, each element is checked: a dict nested in the list is bound the
+    same way a bare dict operand would be, and fails identically.
+
+    Args:
+        column_name: Internal column name, for the error message.
+        op_value: The operand to check.
+        operator: The comparison operator, when the operand came from one.
+
+    Raises:
+        FilterError: If a value is neither None nor a scalar.
+    """
+    values: Sequence[Any] = (
+        typing_cast("Sequence[Any]", op_value)
+        if operator == "in" and isinstance(op_value, list | tuple | set)
+        else (op_value,)
+    )
+    for value in values:
+        if value is None or isinstance(value, SCALAR_OPERAND_TYPES):
+            continue
+        raise FilterError(
+            f"Invalid value for column '{column_name}': expected a scalar, got {type(value).__name__}"
+        )
+
 
 def extract_session_allowlist(
     filters: dict[str, Any] | None,
@@ -183,9 +225,21 @@ def apply_filter(
     if filters is None:
         return stmt
 
-    conditions = _build_filter_conditions(filters, model_class)
-    if conditions is not None:
-        stmt = stmt.where(conditions)
+    # Fail closed. The filter body is arbitrary client JSON, so any shape the
+    # DSL doesn't recognize must become a 422, not an unhandled 500 from
+    # somewhere deep in SQLAlchemy. The exception is still logged in full so a
+    # genuine bug in the builder stays visible rather than being swallowed.
+    try:
+        conditions = _build_filter_conditions(filters, model_class)
+        if conditions is not None:
+            stmt = stmt.where(conditions)
+    except FilterError:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error building filter for %s: %r", model_class.__name__, filters
+        )
+        raise FilterError("Invalid filter configuration") from None
 
     return stmt
 
@@ -361,6 +415,7 @@ def _build_field_condition(
         if column_name in JSONB_COLUMNS:
             return column.contains(value)
         else:
+            _require_bindable_operand(column_name, value)
             return column == value
 
 
@@ -592,6 +647,11 @@ def _build_comparison_conditions(
                 )
             conditions.append(column.is_not(None))
             continue
+
+        # Every operand bound to a scalar column must itself be a scalar. JSONB
+        # columns are exempt: a dict there is a containment match.
+        if not isinstance(column.type, JSONB):
+            _require_bindable_operand(column_name, op_value, operator)
 
         condition = None
 
