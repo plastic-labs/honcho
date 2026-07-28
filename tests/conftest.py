@@ -1,4 +1,6 @@
 import logging
+import os
+import uuid
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -128,11 +130,27 @@ def pytest_collection_modifyitems(
             item.add_marker(skip_live)
 
 
+_RUN_ID_ENV_VAR = "HONCHO_TEST_RUN_ID"
+
+
+def pytest_configure(config: pytest.Config) -> None:  # pyright: ignore[reportUnusedParameter]
+    """Stamp this pytest run with an id so its databases can't collide with another run's.
+
+    The xdist controller runs this first and its environment is inherited by the
+    workers it spawns, so `setdefault` gives every worker in a run the same id
+    while separate runs (concurrent worktrees, two agents, a local run alongside
+    CI) each get their own. Set the env var yourself to pin a stable name.
+    """
+
+    os.environ.setdefault(_RUN_ID_ENV_VAR, uuid.uuid4().hex[:8])
+
+
 def _get_test_db_url(worker_id: str) -> URL:
     """Get a worker-specific test database URL for pytest-xdist parallelism."""
 
-    db_name = "test_db" if worker_id == "master" else f"test_db_{worker_id}"
-    return CONNECTION_URI.set(database=db_name)
+    run_id = os.environ.get(_RUN_ID_ENV_VAR, "local")
+    suffix = "" if worker_id == "master" else f"_{worker_id}"
+    return CONNECTION_URI.set(database=f"test_db_{run_id}{suffix}")
 
 
 # Test API authorization - no longer needed as module-level constants
@@ -194,10 +212,20 @@ async def setup_test_database(db_url: URL):
 
 
 async def _truncate_all_tables(engine: AsyncEngine) -> None:
-    """Remove all data from every mapped table while resetting identities."""
+    """Remove all data from every mapped table between tests.
+
+    Uses DELETE rather than TRUNCATE: TRUNCATE rewrites the relfilenode of every
+    table and index it touches, so it costs a flat ~33ms for this schema's 11
+    tables / 41 indexes no matter how few rows a test actually wrote. DELETE of
+    the same (near-empty) tables, batched into one round trip, is ~3ms. Tables go
+    in reverse dependency order so foreign keys are satisfied without CASCADE.
+
+    This does not reset identity sequences, so tests must not assert on absolute
+    generated id values -- compare against the ids the test itself created.
+    """
 
     table_names: list[str] = []
-    for table in Base.metadata.sorted_tables:
+    for table in reversed(Base.metadata.sorted_tables):
         if table.schema:
             table_names.append(f'"{table.schema}"."{table.name}"')
         else:
@@ -206,9 +234,9 @@ async def _truncate_all_tables(engine: AsyncEngine) -> None:
     if not table_names:
         return
 
-    joined_names = ", ".join(table_names)
+    statement = "; ".join(f"DELETE FROM {name}" for name in table_names)
     async with engine.begin() as conn:
-        await conn.execute(text(f"TRUNCATE {joined_names} RESTART IDENTITY CASCADE"))
+        await conn.exec_driver_sql(statement)
 
 
 @pytest_asyncio.fixture(scope="session")
