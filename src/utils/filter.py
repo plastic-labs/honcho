@@ -347,8 +347,8 @@ def _build_field_condition(
             if column_name in JSONB_COLUMNS:
                 return _build_nested_metadata_conditions(column, value)  # pyright: ignore
             elif not isinstance(column.type, JSONB):
-                # A dict against a scalar column compiles fine but fails in the
-                # driver at execute time ("cannot adapt type 'dict'") as a 500.
+                # A dict against a scalar column compiles fine but fails in
+                # psycopg at execute time ("cannot adapt type 'dict'") as a 500.
                 # Reject unknown operator dicts here as a 422 instead.
                 keys = sorted(typing_cast("dict[str, Any]", value))
                 raise FilterError(
