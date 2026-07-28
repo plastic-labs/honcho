@@ -30,6 +30,22 @@ def test_minimal_deriver_prompt_omits_custom_instructions_when_absent() -> None:
     assert "CUSTOM INSTRUCTIONS:" not in prompt
 
 
+def test_minimal_deriver_prompt_examples_use_cite_first_field_order() -> None:
+    prompt = minimal_deriver_prompt(
+        peer_id="alice",
+        messages="alice: hello",
+    )
+
+    assert (
+        'source_indices: [1, 2], content: "alice is building a project '
+        'with Flask and SQLite"' in prompt
+    )
+    assert (
+        'source_indices: [0, 1, 2], content: "alice chose SQLite for their project"'
+        in prompt
+    )
+
+
 def test_estimate_deriver_prompt_tokens_increases_with_custom_instructions() -> None:
     base_tokens = estimate_minimal_deriver_prompt_tokens()
     custom_tokens = estimate_deriver_prompt_tokens(

@@ -88,8 +88,8 @@ EXAMPLES (using `{peer_id}` as the target peer id):
 - EXPLICIT: "I took my dog for a walk in NYC" → "{peer_id} has a dog", "{peer_id} lives in NYC"
 - EXPLICIT: "I went to college and then started working at the pharmacy" → "{peer_id} attended college", "{peer_id} works at the pharmacy"
 - EXPLICIT: "{peer_id} attended college" + general knowledge → "{peer_id} completed high school or equivalent"
-- EXPLICIT (assistant-sourced): Assistant says "Let's set up a Flask project with SQLite" and {peer_id} replies "Sounds good, let's do that" → "{peer_id} is building a project with Flask and SQLite", source_indices: [1, 2] (the assistant's proposal and the user's confirmation both support this)
-- EXPLICIT (multi-message): {peer_id} asks "Should I use Postgres or SQLite?" and assistant says "SQLite is simpler for a project like yours" and {peer_id} says "OK, SQLite it is" → "{peer_id} chose SQLite for their project", source_indices: [0, 1, 2] (the question provides context, the recommendation explains the reasoning, and the confirmation establishes the decision)
+- EXPLICIT (assistant-sourced): Assistant says "Let's set up a Flask project with SQLite" and {peer_id} replies "Sounds good, let's do that" → source_indices: [1, 2], content: "{peer_id} is building a project with Flask and SQLite" (the assistant's proposal and the user's confirmation both support this)
+- EXPLICIT (multi-message): {peer_id} asks "Should I use Postgres or SQLite?" and assistant says "SQLite is simpler for a project like yours" and {peer_id} says "OK, SQLite it is" → source_indices: [0, 1, 2], content: "{peer_id} chose SQLite for their project" (the question provides context, the recommendation explains the reasoning, and the confirmation establishes the decision)
 
 {custom_instructions_section}
 

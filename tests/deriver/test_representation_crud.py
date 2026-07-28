@@ -16,6 +16,13 @@ from src.utils.representation import (
 )
 
 
+def test_prompt_representation_schema_orders_citations_before_content() -> None:
+    schema = PromptRepresentation.model_json_schema()
+    explicit_properties = schema["$defs"]["ExplicitObservationBase"]["properties"]
+
+    assert list(explicit_properties) == ["source_indices", "content"]
+
+
 def test_representation_is_empty_and_diff():
     """is_empty and diff_representation behave per the new definitions."""
     now = datetime.datetime.now(datetime.timezone.utc)

@@ -97,7 +97,6 @@ class ObservationMetadata(BaseModel):
 
 
 class ExplicitObservationBase(BaseModel):
-    content: str = Field(description="The explicit observation")
     source_indices: list[int] = Field(
         default_factory=list,
         description=(
@@ -108,6 +107,7 @@ class ExplicitObservationBase(BaseModel):
             "Only include messages that directly support the observation."
         ),
     )
+    content: str = Field(description="The explicit observation")
 
 
 class DeductiveObservationBase(BaseModel):
