@@ -1,4 +1,5 @@
 import datetime
+import re
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from logging import getLogger
@@ -10,6 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
 
 from ..exceptions import FilterError
+from ..schemas.api import RESOURCE_NAME_PATTERN
 from .formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern, parse_datetime_iso
 from .types import DocumentLevel, VectorSyncState
 
@@ -233,6 +235,11 @@ def extract_session_allowlist(
     FilterError (422) rather than being silently ignored — a dropped filter
     on these endpoints would widen recall scope.
 
+    Entries must be well-formed session ids. Wildcards are not part of this
+    subset: the DSL treats ``*`` as "match everything" while the non-DSL
+    consumers of the allowlist treat it as a literal name, so it is rejected
+    rather than meaning two things at once.
+
     Args:
         filters: The raw ``filters`` body, or None.
         must_include: A session id that must appear in the parsed allowlist —
@@ -285,6 +292,17 @@ def extract_session_allowlist(
     for entry in entries:
         if not isinstance(entry, str) or not entry:
             raise FilterError("filters.session_id entries must be non-empty strings")
+        # Only names a session could actually have. The allowlist reaches
+        # queries three ways — direct `IN`, the filter DSL, and a Python
+        # membership test — and they don't agree on a value like "*", which the
+        # DSL reads as "drop the condition" while the others treat as a literal.
+        # Rejecting it here keeps the divergent value away from all three, and
+        # matches this endpoint's documented contract (an id, a list of ids, or
+        # {"in": [...]}) which never included wildcards.
+        if not re.fullmatch(RESOURCE_NAME_PATTERN, entry):
+            raise FilterError(
+                f"Invalid session id in filters.session_id: {entry!r}. Session ids match {RESOURCE_NAME_PATTERN}"
+            )
         if entry not in seen:
             seen.add(entry)
             allowlist.append(entry)
