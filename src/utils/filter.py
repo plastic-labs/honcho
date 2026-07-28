@@ -79,50 +79,62 @@ SCALAR_OPERAND_TYPES = (
 )
 
 
-def _coerce_numeric(op_value: Any) -> int | float | Decimal:
-    """Validate a numeric operand without losing precision.
+def _coerce_numeric(op_value: Any) -> float | Decimal:
+    """Validate a numeric operand without losing precision or overflowing.
 
-    float() rounds an int past 2**53 and flattens a Decimal, so an operand that
-    is already numeric is passed through untouched and only strings are parsed.
-    int() is tried before float() so "5" stays exact while "5.5" still parses.
-    bool is narrowed to int: it is an int subclass, but binding it as a boolean
+    Integers become Decimal rather than staying int. SQLAlchemy types the bind
+    from the operand, so a plain int renders an ``::INTEGER`` cast and anything
+    past int4 fails at execute time with "integer out of range" — even when the
+    comparison itself is meaningful. Decimal renders no cast, matching what
+    float() used to do, but keeps the value exact: float() rounds any int past
+    2**53 and would silently compare against a different number.
+
+    bool is narrowed first because it subclasses int; binding it as a boolean
     against a numeric column produces SQL Postgres has no operator for.
 
     Args:
         op_value: The operand to validate.
 
     Returns:
-        The operand as an exact numeric value.
+        The operand as an exact numeric value that binds without a cast.
 
     Raises:
         ValueError, TypeError: If the operand is not numeric. Callers convert
             these to FilterError.
     """
     if isinstance(op_value, bool):
-        return int(op_value)
-    if isinstance(op_value, int | float | Decimal):
+        return Decimal(int(op_value))
+    if isinstance(op_value, float):
         return op_value
+    if isinstance(op_value, int | Decimal):
+        return Decimal(op_value)
     try:
-        return int(op_value)
-    except ValueError:
-        return float(op_value)
+        return Decimal(str(op_value))
+    except ArithmeticError:
+        raise ValueError(f"not a number: {op_value!r}") from None
 
 
 def _require_bindable_operand(
-    column_name: str, op_value: Any, operator: str = ""
+    column_name: str, op_value: Any, operator: str = "", *, is_bool_column: bool = False
 ) -> None:
     """Reject an operand that cannot be bound to a scalar column.
 
     For ``in``, each element is checked: a dict nested in the list is bound the
     same way a bare dict operand would be, and fails identically.
 
+    A boolean column takes only ``true``/``false``. SQLAlchemy types the bind
+    from the operand rather than the column, so a string or int operand renders
+    as ``is_active = %(param)s::VARCHAR`` and Postgres rejects it at execute
+    time ("operator does not exist: boolean = character varying").
+
     Args:
         column_name: Internal column name, for the error message.
         op_value: The operand to check.
         operator: The comparison operator, when the operand came from one.
+        is_bool_column: Whether the target column is boolean.
 
     Raises:
-        FilterError: If a value is neither None nor a scalar.
+        FilterError: If a value is not bindable to the column.
     """
     values: Sequence[Any] = (
         typing_cast("Sequence[Any]", op_value)
@@ -130,7 +142,15 @@ def _require_bindable_operand(
         else (op_value,)
     )
     for value in values:
-        if value is None or isinstance(value, SCALAR_OPERAND_TYPES):
+        if value is None:
+            continue
+        if is_bool_column:
+            if isinstance(value, bool):
+                continue
+            raise FilterError(
+                f"Invalid value for column '{column_name}': expected true or false, got {type(value).__name__}"
+            )
+        if isinstance(value, SCALAR_OPERAND_TYPES):
             continue
         raise FilterError(
             f"Invalid value for column '{column_name}': expected a scalar, got {type(value).__name__}"
@@ -444,7 +464,12 @@ def _build_field_condition(
         if column_name in JSONB_COLUMNS:
             return column.contains(value)
         else:
-            _require_bindable_operand(column_name, value)
+            _require_bindable_operand(
+                column_name,
+                value,
+                is_bool_column=hasattr(column.type, "python_type")
+                and column.type.python_type is bool,
+            )
             return column == value
 
 
@@ -651,10 +676,19 @@ def _build_comparison_conditions(
         column.type.python_type, datetime.datetime
     )
 
+    # bool subclasses int, so a boolean column would otherwise be treated as
+    # numeric and have `true` coerced to 1 — which Postgres rejects against a
+    # boolean column ("operator does not exist: boolean <> integer").
+    is_bool_column = (
+        hasattr(column.type, "python_type") and column.type.python_type is bool
+    )
+
     # Numeric coercion applies only to actually-numeric columns. On a text
     # column, `ne` is a string comparison, not a failed float parse.
-    is_numeric_column = hasattr(column.type, "python_type") and issubclass(
-        column.type.python_type, int | float | Decimal
+    is_numeric_column = (
+        not is_bool_column
+        and hasattr(column.type, "python_type")
+        and issubclass(column.type.python_type, int | float | Decimal)
     )
 
     for operator, op_value in comparisons.items():
@@ -680,7 +714,9 @@ def _build_comparison_conditions(
         # Every operand bound to a scalar column must itself be a scalar. JSONB
         # columns are exempt: a dict there is a containment match.
         if not isinstance(column.type, JSONB):
-            _require_bindable_operand(column_name, op_value, operator)
+            _require_bindable_operand(
+                column_name, op_value, operator, is_bool_column=is_bool_column
+            )
 
         condition = None
 
@@ -738,6 +774,18 @@ def _build_comparison_conditions(
                                 casted_values.append(val)
                         if casted_values:
                             condition = column.in_(casted_values)
+                    elif is_numeric_column:
+                        # Same reason as the scalar path: a plain int renders an
+                        # ::INTEGER cast, so one out-of-range element fails the
+                        # whole IN at execute time.
+                        try:
+                            condition = column.in_(
+                                [_coerce_numeric(val) for val in op_value]
+                            )
+                        except (TypeError, ValueError):
+                            raise FilterError(
+                                f"Invalid numeric value in list for column '{column_name}': {op_value}"
+                            ) from None
                     else:
                         condition = column.in_(list(op_value))
             else:

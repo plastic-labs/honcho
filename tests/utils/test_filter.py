@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import psycopg as psycopg_dialect
 
 from src.exceptions import FilterError
 from src.models import Document, Message, Peer, Session
@@ -57,6 +58,57 @@ def test_fractional_operand_on_integer_column_is_not_truncated():
     stmt = apply_filter(select(Message), Message, {"token_count": {"lt": 5.5}})
     compiled = stmt.compile(dialect=postgresql.dialect())
     assert 5.5 in [bind.value for bind in compiled.binds.values()]
+
+
+def test_integer_operand_binds_without_an_integer_cast():
+    """A plain int bind renders `::INTEGER`, so any value past int4 fails at
+    execute time with "integer out of range" even when the comparison is
+    meaningful. Decimal renders no cast, which is what float() used to do."""
+    stmt = apply_filter(select(Message), Message, {"token_count": {"gt": 2**31}})
+    assert "::INTEGER" not in str(stmt.compile(dialect=psycopg_dialect.dialect()))
+
+
+def test_in_list_on_numeric_column_handles_out_of_range_values():
+    stmt = apply_filter(select(Message), Message, {"token_count": {"in": [1, 2**31]}})
+    assert "::INTEGER" not in str(stmt.compile(dialect=psycopg_dialect.dialect()))
+
+
+def test_in_list_on_numeric_column_rejects_garbage():
+    with pytest.raises(FilterError):
+        apply_filter(select(Message), Message, {"token_count": {"in": [1, "nope"]}})
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"is_active": True},
+        {"is_active": False},
+        {"is_active": {"ne": True}},
+        {"is_active": {"in": [True, False]}},
+    ],
+)
+def test_bool_column_accepts_native_booleans(filters: dict[str, Any]):
+    """bool subclasses int, so a boolean column would otherwise be coerced to 1
+    and rejected by Postgres as `boolean <> integer`."""
+    stmt = apply_filter(select(Session), Session, filters)
+    assert stmt.whereclause is not None
+    assert "is_active" in str(stmt.whereclause)
+
+
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"is_active": "true"},
+        {"is_active": "false"},
+        {"is_active": 1},
+        {"is_active": {"ne": "true"}},
+    ],
+)
+def test_bool_column_rejects_non_boolean_operands(filters: dict[str, Any]):
+    """These bind as VARCHAR/INTEGER against a boolean column, which Postgres
+    rejects at execute time — a 422 is the honest answer, not a 500."""
+    with pytest.raises(FilterError):
+        apply_filter(select(Session), Session, filters)
 
 
 def test_numeric_string_operand_stays_exact():
