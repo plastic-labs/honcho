@@ -78,23 +78,32 @@ class WorkspaceDialecticAgent(DialecticAgent):
         is known about them at a glance.
         """
         _ = query
-        async with tracked_db("dialectic.workspace_prefetch", read_only=True) as db:
-            stats = await crud.get_workspace_stats(db, self.workspace_name)
-            if stats.peer_count == 0:
-                return None
-            peers = await crud.get_active_peers(
-                db, self.workspace_name, limit=_PREFETCH_ACTIVE_PEERS
-            )
-            cards: dict[str, list[str]] = {}
-            for peer in peers:
-                card = await crud.get_peer_card(
-                    db,
-                    workspace_name=self.workspace_name,
-                    observer=peer.name,
-                    observed=peer.name,
+        # Like the base agent, prefetch failure degrades to no prefetched
+        # block rather than failing the whole request (the caller in
+        # _prepare_query does not guard this).
+        try:
+            async with tracked_db(
+                "dialectic.workspace_prefetch", read_only=True
+            ) as db:
+                stats = await crud.get_workspace_stats(db, self.workspace_name)
+                if stats.peer_count == 0:
+                    return None
+                peers = await crud.get_active_peers(
+                    db, self.workspace_name, limit=_PREFETCH_ACTIVE_PEERS
                 )
-                if card:
-                    cards[peer.name] = card
+                cards: dict[str, list[str]] = {}
+                for peer in peers:
+                    card = await crud.get_peer_card(
+                        db,
+                        workspace_name=self.workspace_name,
+                        observer=peer.name,
+                        observed=peer.name,
+                    )
+                    if card:
+                        cards[peer.name] = card
+        except Exception as e:
+            logger.warning(f"Failed to prefetch workspace overview: {e}")
+            return None
 
         lines: list[str] = [
             f"Peers: {stats.peer_count}",
@@ -145,6 +154,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
         return await create_workspace_tool_executor(
             workspace_name=self.workspace_name,
             session_name=self.session_name,
+            session_allowlist=self.session_allowlist,
             history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
             run_id=self._run_id,
             agent_type="workspace_dialectic",

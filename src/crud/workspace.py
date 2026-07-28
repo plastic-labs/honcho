@@ -653,11 +653,15 @@ async def get_active_peers(
         .where(models.Peer.workspace_name == workspace_name)
     )
 
+    # Peer name as secondary key so ties (notably all-NULL activity in young
+    # workspaces) return a stable order across calls.
     if sort_by == "message_count":
-        stmt = stmt.order_by(func.coalesce(subq.c.msg_count, 0).desc())
+        stmt = stmt.order_by(
+            func.coalesce(subq.c.msg_count, 0).desc(), models.Peer.name
+        )
     else:
         # Default: recent_activity — peers with most recent messages first
-        stmt = stmt.order_by(subq.c.last_msg_at.desc().nulls_last())
+        stmt = stmt.order_by(subq.c.last_msg_at.desc().nulls_last(), models.Peer.name)
 
     stmt = stmt.limit(limit)
 

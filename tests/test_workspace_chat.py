@@ -1196,3 +1196,88 @@ class TestFormatDocumentsWithAttribution:
 
         assert "coffee" in result.lower() or "programming" in result.lower()
         assert "remotely" in result.lower() or "works" in result.lower()
+
+
+# =============================================================================
+# Regression: workspace-flat message visibility without a pinned session
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestWorkspaceMessageToolsUnpinned:
+    """The workspace executor's observer='' sentinel must read as
+    'no perspective scoping' (None) at the crud boundary. Under #882's
+    resolve_session_scope, an empty STRING is looked up as a real peer with
+    no session memberships and denies every result — so these tests run the
+    message tools with NO session_name, the primary workspace-chat shape."""
+
+    async def test_grep_messages_finds_content_without_session(
+        self,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
+        workspace_test_data: Any,
+    ):
+        workspace, *_ = workspace_test_data
+
+        executor = await create_workspace_tool_executor(
+            workspace_name=workspace.name,
+        )
+        result = await executor("grep_messages", {"text": "Test message"})
+
+        assert isinstance(result, str)
+        assert "No messages found" not in result
+        assert "Test message" in result
+
+    async def test_date_range_finds_content_without_session(
+        self,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
+        workspace_test_data: Any,
+    ):
+        workspace, *_ = workspace_test_data
+
+        executor = await create_workspace_tool_executor(
+            workspace_name=workspace.name,
+        )
+        result = await executor("get_messages_by_date_range", {"limit": 10})
+
+        assert isinstance(result, str)
+        assert "Found" in result
+        assert "No messages found" not in result
+
+    async def test_session_allowlist_is_honored_when_set(
+        self,
+        db_session: AsyncSession,  # pyright: ignore[reportUnusedParameter]
+        workspace_test_data: Any,
+    ):
+        """When a caller ever passes an allowlist (scopes work, #897), the
+        fallthrough message tools must intersect with it — an allowlist
+        naming no real session yields no results."""
+        workspace, *_ = workspace_test_data
+
+        executor = await create_workspace_tool_executor(
+            workspace_name=workspace.name,
+            session_allowlist=["no-such-session"],
+        )
+        result = await executor("grep_messages", {"text": "Test message"})
+
+        assert isinstance(result, str)
+        assert "No messages found" in result
+
+
+@pytest.mark.asyncio
+async def test_workspace_prefetch_failure_degrades_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prefetch errors must not fail the request (parity with the base
+    agent's try/except): the agent proceeds with no prefetched block."""
+    from src.dialectic.workspace import WorkspaceDialecticAgent
+
+    async def boom(*args: Any, **kwargs: Any) -> Any:
+        _ = (args, kwargs)
+        raise RuntimeError("stats query exploded")
+
+    monkeypatch.setattr("src.dialectic.workspace.crud.get_workspace_stats", boom)
+
+    agent = WorkspaceDialecticAgent(workspace_name="w")
+    result = await agent._prefetch_relevant_observations("q")  # pyright: ignore[reportPrivateUsage]
+
+    assert result is None

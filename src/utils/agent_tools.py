@@ -2000,7 +2000,7 @@ async def _handle_get_observation_context(
             workspace_name=ctx.workspace_name,
             session_name=ctx.session_name,
             message_ids=tool_input["message_ids"],
-            observer=ctx.observer,
+            observer=ctx.observer or None,
             session_allowlist=ctx.session_allowlist,
         )
         if not messages:
@@ -2043,7 +2043,7 @@ async def _handle_search_messages(
         limit=limit,
         context_window=2,
         embedding=query_embedding,
-        observer=ctx.observer,
+        observer=ctx.observer or None,
         session_allowlist=ctx.session_allowlist,
     )
     search_meta: dict[str, Any] = {
@@ -2080,7 +2080,7 @@ async def _handle_grep_messages(
         text=text,
         limit=limit,
         context_window=context_window,
-        observer=ctx.observer,
+        observer=ctx.observer or None,
         session_allowlist=ctx.session_allowlist,
     )
     if not snippets:
@@ -2145,7 +2145,7 @@ async def _handle_get_messages_by_date_range(
             before_date=before_date,
             limit=limit,
             order=order,
-            observer=ctx.observer,
+            observer=ctx.observer or None,
             session_allowlist=ctx.session_allowlist,
         )
         msg_count = len(messages)
@@ -2221,7 +2221,7 @@ async def _handle_search_messages_temporal(
         context_window=context_window,
         session_allowlist=ctx.session_allowlist,
         embedding=query_embedding,
-        observer=ctx.observer,
+        observer=ctx.observer or None,
     )
     date_filter: list[str] = []
     if after_date_str:
@@ -2902,8 +2902,11 @@ def _estimate_tokens_safe(text: str | None) -> int | None:
 # The workspace agent is not bound to an (observer, observed) pair. Handlers
 # that need a pair take it from tool_input (the agent routes first, then
 # supplies the pair); the rest are workspace-scoped reads. Message-search
-# fallthrough handlers run with observer="" which crud treats as "no
-# perspective scoping" -- correct for a workspace-level read.
+# fallthrough handlers run with observer="" and normalize it to None at the
+# crud boundary (`ctx.observer or None`) -- None means "no perspective
+# scoping", which is correct for a workspace-level read. The empty string
+# must never reach resolve_session_scope: it would be looked up as a real
+# peer with no session memberships and deny all results.
 # ---------------------------------------------------------------------------
 
 
@@ -3024,6 +3027,7 @@ def _workspace_handler_resolver(tool_name: str) -> Any:
 async def create_workspace_tool_executor(
     workspace_name: str,
     session_name: str | None = None,
+    session_allowlist: list[str] | None = None,
     history_token_limit: int = 8192,
     run_id: str | None = None,
     agent_type: str | None = None,
@@ -3032,14 +3036,18 @@ async def create_workspace_tool_executor(
     """Tool executor for workspace-level operations (no bound peer pair).
 
     Reuses create_tool_executor's telemetry/error plumbing via the
-    handler_resolver seam; observer/observed are empty-string sentinels only
-    ever seen by handlers in _WORKSPACE_SAFE_FALLTHROUGH_TOOLS.
+    handler_resolver seam. observer/observed are empty-string sentinels only
+    ever seen by handlers in _WORKSPACE_SAFE_FALLTHROUGH_TOOLS, which
+    normalize them to None before hitting crud (None means "no perspective
+    scoping"; an empty string would read as a real peer with no sessions and
+    deny everything).
     """
     return await create_tool_executor(
         workspace_name=workspace_name,
         observer="",
         observed="",
         session_name=session_name,
+        session_allowlist=session_allowlist,
         include_observation_ids=True,
         history_token_limit=history_token_limit,
         run_id=run_id,
