@@ -1,5 +1,12 @@
 import datetime
+import logging
 
+import pytest
+
+from src import models
+from src.deriver.deriver import (
+    _format_messages_for_prompt,  # pyright: ignore[reportPrivateUsage]
+)
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -97,6 +104,7 @@ def test_prompt_representation_conversion():
     rep = Representation.from_prompt_representation(
         pr,
         message_ids=[1],
+        batch_message_ids=[1],
         session_name="s",
         created_at=timestamp,
     )
@@ -106,3 +114,53 @@ def test_prompt_representation_conversion():
     # (they would be created directly by the Dreamer via the create_observations tool)
     assert len(rep.deductive) == 0
     assert rep.explicit[0].created_at == timestamp
+
+
+def test_mixed_peer_source_indices_resolve_against_prompt_order(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    created_at = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    messages = [
+        models.Message(id=10, peer_name="bob", content="Which option?"),
+        models.Message(id=20, peer_name="alice", content="The first one"),
+        models.Message(id=30, peer_name="bob", content="Got it"),
+    ]
+    for message in messages:
+        message.created_at = created_at
+
+    formatted_messages, batch_message_ids = _format_messages_for_prompt(messages)
+    prompt_representation = PromptRepresentation(
+        explicit=[
+            ExplicitObservationBase(
+                content="Alice chose the first option",
+                source_indices=[0, 1, 3],
+            )
+        ]
+    )
+
+    with caplog.at_level(logging.WARNING, logger="src.utils.representation"):
+        representation = Representation.from_prompt_representation(
+            prompt_representation,
+            message_ids=[20],
+            batch_message_ids=batch_message_ids,
+            session_name="s",
+            created_at=created_at,
+        )
+
+    observation = representation.explicit[0]
+    assert observation.source_indices == [0, 1]
+    assert observation.batch_message_ids == [10, 20, 30]
+    assert [
+        (line[:3], message_id, line.split(": ", 1)[1])
+        for message_id, line in zip(
+            batch_message_ids, formatted_messages.splitlines(), strict=True
+        )
+    ] == [
+        ("[0]", 10, "Which option?"),
+        ("[1]", 20, "The first one"),
+        ("[2]", 30, "Got it"),
+    ]
+    assert [
+        observation.batch_message_ids[index] for index in observation.source_indices
+    ] == [10, 20]
+    assert "Dropping out-of-range source_indices [3]" in caplog.text

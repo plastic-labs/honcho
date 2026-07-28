@@ -422,6 +422,7 @@ class TestPromptRepresentationConversion:
         representation = Representation.from_prompt_representation(
             prompt_rep,
             message_ids=[123],
+            batch_message_ids=[123],
             session_name="test_session",
             created_at=timestamp,
         )
@@ -444,6 +445,7 @@ class TestPromptRepresentationConversion:
         representation = Representation.from_prompt_representation(
             empty_prompt_rep,
             message_ids=[1],
+            batch_message_ids=[1],
             session_name="test",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         )
