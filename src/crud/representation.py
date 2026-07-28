@@ -19,9 +19,11 @@ from src.telemetry.events import EmbeddingCallPurpose
 from src.telemetry.logging import accumulate_metric
 from src.utils.formatting import format_datetime_utc
 from src.utils.representation import (
+    ALLOWLIST_SAFE_LEVELS,
     DeductiveObservation,
     ExplicitObservation,
     Representation,
+    allowlist_safe_levels,
 )
 from src.utils.types import embedding_call_purpose
 
@@ -213,7 +215,7 @@ class RepresentationManager:
         self,
         *,
         db: AsyncSession | None = None,
-        session_name: str | None = None,
+        session_allowlist: list[str] | None = None,
         include_semantic_query: str | None = None,
         embedding: list[float] | None = None,
         semantic_search_top_k: int | None = None,
@@ -229,7 +231,10 @@ class RepresentationManager:
         Args:
             db: Optional database session. If provided, uses it directly;
                 otherwise creates a new session via tracked_db.
-            session_name: Optional session to filter by
+            session_allowlist: Optional session allowlist to filter by. Applied
+                uniformly to every query path (semantic, most-derived, and
+                recent). None means no session restriction; an empty list
+                fail-closes to an empty representation.
             include_semantic_query: Query for semantic search
             embedding: Pre-computed embedding for the semantic query.
             semantic_search_top_k: Number of semantic results
@@ -267,7 +272,7 @@ class RepresentationManager:
         if db is not None:
             return await self._get_working_representation_internal(
                 db,
-                session_name=session_name,
+                session_allowlist=session_allowlist,
                 include_semantic_query=include_semantic_query,
                 embedding=embedding,
                 semantic_search_top_k=semantic_search_top_k,
@@ -281,7 +286,7 @@ class RepresentationManager:
         ) as new_db:
             return await self._get_working_representation_internal(
                 new_db,
-                session_name=session_name,
+                session_allowlist=session_allowlist,
                 include_semantic_query=include_semantic_query,
                 embedding=embedding,
                 semantic_search_top_k=semantic_search_top_k,
@@ -296,7 +301,7 @@ class RepresentationManager:
         self,
         db: AsyncSession,
         *,
-        session_name: str | None = None,
+        session_allowlist: list[str] | None = None,
         include_semantic_query: str | None = None,
         embedding: list[float] | None = None,
         semantic_search_top_k: int | None = None,
@@ -305,6 +310,12 @@ class RepresentationManager:
         max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
     ) -> Representation:
         """Internal implementation of get_working_representation."""
+        # Fail closed on an empty allowlist. This must short-circuit before
+        # any query: downstream stores drop an `IN ()` clause with an empty
+        # list (lancedb), which would silently widen the scope instead.
+        if session_allowlist is not None and not session_allowlist:
+            return Representation()
+
         total = max_observations
 
         # Calculate how many observations to get from each source
@@ -345,6 +356,7 @@ class RepresentationManager:
                 top_k=semantic_observations,
                 max_distance=semantic_search_max_distance,
                 embedding=embedding,
+                session_allowlist=session_allowlist,
             )
             representation.merge_representation(
                 Representation.from_documents(semantic_docs)
@@ -353,7 +365,7 @@ class RepresentationManager:
         # Get most derived observations if requested
         if include_most_derived:
             derived_docs = await self._query_documents_most_derived(
-                db, top_k=top_observations
+                db, top_k=top_observations, session_allowlist=session_allowlist
             )
             representation.merge_representation(
                 Representation.from_documents(derived_docs)
@@ -361,7 +373,7 @@ class RepresentationManager:
 
         # Get recent observations
         recent_docs = await self._query_documents_recent(
-            db, top_k=recent_observations, session_name=session_name
+            db, top_k=recent_observations, session_allowlist=session_allowlist
         )
 
         representation.merge_representation(Representation.from_documents(recent_docs))
@@ -376,6 +388,7 @@ class RepresentationManager:
         max_distance: float | None = None,
         level: str | None = None,
         embedding: list[float] | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> list[models.Document]:
         """Query documents by semantic similarity."""
         try:
@@ -387,6 +400,7 @@ class RepresentationManager:
                     top_k,
                     max_distance,
                     embedding=embedding,
+                    session_allowlist=session_allowlist,
                 )
             else:
                 documents = await crud.query_documents(
@@ -398,6 +412,10 @@ class RepresentationManager:
                     max_distance=max_distance,
                     top_k=top_k,
                     embedding=embedding,
+                    filters=self._build_filter_conditions(
+                        session_allowlist=session_allowlist
+                    )
+                    or None,
                 )
                 db.expunge_all()
                 return list(documents)
@@ -407,7 +425,7 @@ class RepresentationManager:
             return []
 
     async def _query_documents_recent(
-        self, db: AsyncSession, top_k: int, session_name: str | None = None
+        self, db: AsyncSession, top_k: int, session_allowlist: list[str] | None = None
     ) -> list[models.Document]:
         """Query most recent documents."""
         stmt = (
@@ -419,8 +437,13 @@ class RepresentationManager:
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
                 *(
-                    [models.Document.session_name == session_name]
-                    if session_name is not None
+                    [
+                        models.Document.session_name.in_(session_allowlist),
+                        # Only levels with a trustworthy session stamp are
+                        # scopeable — see ALLOWLIST_SAFE_LEVELS.
+                        models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
+                    ]
+                    if session_allowlist is not None
                     else []
                 ),
             )
@@ -433,7 +456,7 @@ class RepresentationManager:
         return list(documents)
 
     async def _query_documents_most_derived(
-        self, db: AsyncSession, top_k: int
+        self, db: AsyncSession, top_k: int, session_allowlist: list[str] | None = None
     ) -> list[models.Document]:
         """Query most derived documents."""
         stmt = (
@@ -444,6 +467,16 @@ class RepresentationManager:
                 models.Document.observer == self.observer,
                 models.Document.observed == self.observed,
                 models.Document.deleted_at.is_(None),
+                *(
+                    [
+                        models.Document.session_name.in_(session_allowlist),
+                        # Only levels with a trustworthy session stamp are
+                        # scopeable — see ALLOWLIST_SAFE_LEVELS.
+                        models.Document.level.in_(ALLOWLIST_SAFE_LEVELS),
+                    ]
+                    if session_allowlist is not None
+                    else []
+                ),
             )
             .order_by(
                 models.Document.times_derived.desc(),
@@ -480,6 +513,7 @@ class RepresentationManager:
         count: int,
         max_distance: float | None = None,
         embedding: list[float] | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> list[models.Document]:
         """Query documents for a specific level."""
         documents = await crud.query_documents(
@@ -490,7 +524,9 @@ class RepresentationManager:
             query=query,
             max_distance=max_distance,
             top_k=count,
-            filters=self._build_filter_conditions(level),
+            filters=self._build_filter_conditions(
+                level, session_allowlist=session_allowlist
+            ),
             embedding=embedding,
         )
 
@@ -503,16 +539,31 @@ class RepresentationManager:
     def _build_filter_conditions(
         self,
         level: str | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Build filter conditions for document queries.
 
         Returns a flat dict of key-value pairs for vector store filtering.
+        Callers must not pass an empty session_allowlist list — empty allowlists
+        fail closed before any query is issued (see
+        _get_working_representation_internal).
         """
         filters: dict[str, Any] = {}
 
         if level:
             filters["level"] = level
+
+        # `is not None` (not truthiness): an explicit empty allowlist must emit
+        # an empty `in` so downstream stores fail closed, matching
+        # _query_documents_recent / _query_documents_most_derived. Truthiness
+        # here would silently drop the filter and widen scope.
+        if session_allowlist is not None:
+            filters["session_name"] = {"in": session_allowlist}
+            # Only levels with a trustworthy session stamp are scopeable. This
+            # overrides any narrower `level` above; an empty intersection emits
+            # `{"in": []}`, which matches nothing rather than everything.
+            filters["level"] = {"in": allowlist_safe_levels([level] if level else None)}
 
         return filters
 
@@ -526,7 +577,7 @@ async def get_working_representation(
     db: AsyncSession | None = None,
     observer: str,
     observed: str,
-    session_name: str | None = None,
+    session_allowlist: list[str] | None = None,
     include_semantic_query: str | None = None,
     embedding: list[float] | None = None,
     semantic_search_top_k: int | None = None,
@@ -559,7 +610,7 @@ async def get_working_representation(
     )
     return await manager.get_working_representation(
         db=db,
-        session_name=session_name,
+        session_allowlist=session_allowlist,
         include_semantic_query=include_semantic_query,
         embedding=embedding,
         semantic_search_top_k=semantic_search_top_k,
