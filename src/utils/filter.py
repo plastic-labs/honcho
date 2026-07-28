@@ -61,6 +61,83 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
 }
 
 
+MAX_SESSION_ALLOWLIST_ENTRIES = 1000
+
+
+def extract_session_allowlist(
+    filters: dict[str, Any] | None,
+    must_include: str | None = None,
+) -> list[str] | None:
+    """Parse a recall-path ``filters`` body into a session allowlist.
+
+    The dialectic and representation endpoints accept a constrained subset of
+    the filter DSL: only the ``session_id`` key, valued as a single id, a bare
+    list of ids, or ``{"in": [...]}``. Unsupported keys or shapes raise
+    FilterError (422) rather than being silently ignored — a dropped filter
+    on these endpoints would widen recall scope.
+
+    Args:
+        filters: The raw ``filters`` body, or None.
+        must_include: A session id that must appear in the parsed allowlist —
+            used by routes that also accept a top-level ``session_id``, so the
+            two can't contradict each other. Ignored when filters is None.
+
+    Returns:
+        None when filters is None. An explicit empty list is preserved so
+        downstream consumers fail closed.
+
+    Raises:
+        FilterError: On an unsupported key or shape, an over-cap list, or a
+            ``must_include`` session missing from the allowlist.
+    """
+    if filters is None:
+        return None
+
+    unsupported = set(filters) - {"session_id"}
+    if unsupported:
+        raise FilterError(
+            f"Unsupported filter key(s) for this endpoint: {sorted(unsupported)}. Only 'session_id' is supported."
+        )
+    if "session_id" not in filters:
+        raise FilterError("filters must contain 'session_id'")
+
+    value = filters["session_id"]
+    entries: list[Any]
+    if isinstance(value, str):
+        entries = [value]
+    elif isinstance(value, list):
+        entries = list(typing_cast(Sequence[Any], value))
+    elif (
+        isinstance(value, dict)
+        and set(typing_cast("dict[str, Any]", value)) == {"in"}
+        and isinstance(value["in"], list)
+    ):
+        entries = list(typing_cast(Sequence[Any], value["in"]))
+    else:
+        raise FilterError(
+            'filters.session_id must be a session id, a list of session ids, or {"in": [...]}'
+        )
+
+    if len(entries) > MAX_SESSION_ALLOWLIST_ENTRIES:
+        raise FilterError(
+            f"filters.session_id supports at most {MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+        )
+
+    allowlist: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, str) or not entry:
+            raise FilterError("filters.session_id entries must be non-empty strings")
+        if entry not in seen:
+            seen.add(entry)
+            allowlist.append(entry)
+
+    if must_include is not None and must_include not in seen:
+        raise FilterError("session_id must be included in filters.session_id")
+
+    return allowlist
+
+
 def apply_filter(
     stmt: Select[tuple[T]], model_class: type[T], filters: dict[str, Any] | None = None
 ) -> Select[tuple[T]]:
@@ -221,6 +298,13 @@ def _build_field_condition(
     if model_class.__name__ == "Message":
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key)
     elif model_class.__name__ == "Document":
+        # NOTE: unlike Message/Workspace, Document falls back to the raw key so
+        # internal callers can filter on internal column names. The session
+        # allowlist depends on this: recall passes {"session_name": {"in": ...}}
+        # (see search_memory in utils/agent_tools.py and RepresentationManager),
+        # and "session_name" is deliberately absent from the mapping below.
+        # Tightening this to a strict allowlist would break session scoping —
+        # fail-closed, since an unmapped key raises, but silently.
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS.get(
             key,
             key,  # fallback to the key itself if not found in the mapping for internal use here

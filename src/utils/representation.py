@@ -7,6 +7,35 @@ from pydantic import BaseModel, Field, field_validator
 from src import models
 from src.utils.formatting import parse_datetime_iso
 
+# Conclusion levels whose `session_name` stamp is trustworthy enough to scope on.
+#
+# Explicit conclusions come from the deriver over a single session's message
+# batch, so their stamp is authoritative. Deductive/inductive conclusions are
+# produced by the dreamer, which reads across *all* sessions (its discovery
+# tools default to session_only=False) but stamps its output with one session —
+# whichever holds the most recent explicit conclusion, see
+# dreamer/dream_scheduler.py. Serving those under a session allowlist would leak
+# conclusions synthesized from sessions outside it.
+#
+# ponytail: whole-level exclusion rather than per-conclusion provenance. The
+# reasoning trees already link each conclusion to its premises, so the real fix
+# is an authoritative source-session set per conclusion; until that exists this
+# fails closed. Tracked in DEV-2201.
+ALLOWLIST_SAFE_LEVELS = ("explicit",)
+
+
+def allowlist_safe_levels(levels: list[str] | None) -> list[str]:
+    """Narrow a level filter to those safe to serve under a session allowlist.
+
+    Returns the intersection with :data:`ALLOWLIST_SAFE_LEVELS`; ``None`` means
+    "no level filter requested" and yields the full safe set. An empty result
+    means the caller asked only for levels we can't scope, and should receive
+    nothing rather than unscoped conclusions.
+    """
+    if levels is None:
+        return list(ALLOWLIST_SAFE_LEVELS)
+    return [level for level in levels if level in ALLOWLIST_SAFE_LEVELS]
+
 
 def _strip_microseconds_and_timezone(timestamp: datetime) -> datetime:
     """
