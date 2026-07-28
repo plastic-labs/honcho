@@ -1,5 +1,6 @@
 import datetime
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 from logging import getLogger
 from typing import Any, TypeVar
 from typing import cast as typing_cast
@@ -566,6 +567,12 @@ def _build_comparison_conditions(
         column.type.python_type, datetime.datetime
     )
 
+    # Numeric coercion applies only to actually-numeric columns. On a text
+    # column, `ne` is a string comparison, not a failed float parse.
+    is_numeric_column = hasattr(column.type, "python_type") and issubclass(
+        column.type.python_type, int | float | Decimal
+    )
+
     for operator, op_value in comparisons.items():
         # Validate that the operator is supported
         if operator not in COMPARISON_OPERATORS:
@@ -573,6 +580,17 @@ def _build_comparison_conditions(
 
         # Handle wildcard - matches everything, so no condition needed
         if op_value == "*":
+            continue
+
+        # A null operand is a null check, not a value comparison, on every
+        # column type. Only `ne` is meaningful: {"col": None} already covers
+        # IS NULL via the equality path in _build_field_condition.
+        if op_value is None:
+            if operator != "ne":
+                raise FilterError(
+                    f"Operator '{operator}' does not accept null. Use {{\"ne\": null}} for a not-null check, or null on its own for a null check."
+                )
+            conditions.append(column.is_not(None))
             continue
 
         condition = None
@@ -588,11 +606,12 @@ def _build_comparison_conditions(
             # Use the validated datetime object directly instead of string interpolation
             casted_value = validated_datetime
         else:
-            # if the operator is a numeric operator, the value must cast to a number
-            if operator in NUMERIC_OPERATORS:
+            # On a numeric column, a numeric operator's value must cast to a
+            # number. On a text column, `ne` is a string comparison.
+            if operator in NUMERIC_OPERATORS and is_numeric_column:
                 try:
                     casted_value = float(op_value)
-                except ValueError:
+                except (TypeError, ValueError):
                     raise FilterError(
                         f"Invalid numeric value: {op_value}. Expected a number, got {type(op_value).__name__}"
                     ) from None
