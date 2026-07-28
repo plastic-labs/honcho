@@ -1446,6 +1446,11 @@ class AppSettings(HonchoSettings):
         "https://api.honcho.dev",
     ]
 
+    # Override the OpenAPI "Servers" dropdown in Swagger UI.
+    # When set, the self-hosted URL is used as the only server entry.
+    # Falls back to the default production + localhost entries when unset.
+    API_BASE_URL: str | None = None
+
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
     REASONING_TRACES_FILE: str | None = None  # Path to JSONL file for reasoning traces

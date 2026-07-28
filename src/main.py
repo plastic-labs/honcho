@@ -135,12 +135,21 @@ async def lifespan(_: FastAPI):
         await shutdown_telemetry()
 
 
-app = FastAPI(
-    lifespan=lifespan,
-    servers=[
+def _build_servers() -> list[dict[str, str]]:
+    """Build the OpenAPI servers list from settings, falling back to defaults."""
+    if settings.API_BASE_URL:
+        return [
+            {"url": settings.API_BASE_URL, "description": "Self-hosted deployment"},
+        ]
+    return [
         {"url": "https://api.honcho.dev", "description": "Production SaaS Platform"},
         {"url": "http://localhost:8000", "description": "Local Development Server"},
-    ],
+    ]
+
+
+app = FastAPI(
+    lifespan=lifespan,
+    servers=_build_servers(),
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition.""",
