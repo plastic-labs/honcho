@@ -661,6 +661,231 @@ class TestConclusionRoutes:
         assert "not found" in data["detail"].lower()
 
     @pytest.mark.asyncio
+    async def test_get_conclusion_success(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test getting a single conclusion by ID with attribution fields"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create collection
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        # Create premise conclusions and a derived conclusion referencing them
+        premise1 = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="User works late at night",
+            embedding=[0.1] * 1536,
+        )
+        premise2 = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="User prefers dark mode",
+            embedding=[0.1] * 1536,
+        )
+        db_session.add_all([premise1, premise2])
+        await db_session.flush()
+
+        derived = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="User is likely a night owl",
+            embedding=[0.1] * 1536,
+            level="deductive",
+            source_ids=[premise1.id, premise2.id],
+            times_derived=3,
+        )
+        db_session.add(derived)
+        await db_session.commit()
+
+        # Get conclusion by ID
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{derived.id}"
+        )
+
+        assert response.status_code == 200
+        conclusion = response.json()
+        assert conclusion["id"] == derived.id
+        assert conclusion["content"] == "User is likely a night owl"
+        assert conclusion["observer_id"] == test_peer.name
+        assert conclusion["observed_id"] == test_peer2.name
+        assert conclusion["level"] == "deductive"
+        assert conclusion["source_ids"] == [premise1.id, premise2.id]
+        assert conclusion["times_derived"] == 3
+
+        # Verify internal fields are NOT exposed
+        assert "embedding" not in conclusion
+        assert "internal_metadata" not in conclusion
+
+    @pytest.mark.asyncio
+    async def test_get_conclusion_legacy_source_ids(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that legacy internal_metadata.source_ids is coalesced into source_ids"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create collection
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        # Legacy documents stored source_ids in internal_metadata, not the column
+        doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Legacy derived conclusion",
+            embedding=[0.1] * 1536,
+            level="deductive",
+            internal_metadata={"source_ids": ["legacy_id_1", "legacy_id_2"]},
+        )
+        db_session.add(doc)
+        await db_session.commit()
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{doc.id}"
+        )
+
+        assert response.status_code == 200
+        conclusion = response.json()
+        assert conclusion["source_ids"] == ["legacy_id_1", "legacy_id_2"]
+
+    @pytest.mark.asyncio
+    async def test_get_conclusion_not_found(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test getting a non-existent conclusion"""
+        test_workspace, _test_peer = sample_data
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/nonexistent_id"
+        )
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_conclusion_soft_deleted(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that a soft-deleted conclusion returns 404"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create collection
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Conclusion to delete",
+            embedding=[0.1] * 1536,
+        )
+        db_session.add(doc)
+        await db_session.commit()
+
+        delete_response = client.delete(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{doc.id}"
+        )
+        assert delete_response.status_code == 204
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{doc.id}"
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_list_conclusions_includes_attribution_fields(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that list surfaces source_ids and times_derived"""
+        test_workspace, test_peer = sample_data
+
+        # Create another peer
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        # Create collection
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        doc = models.Document(
+            workspace_name=test_workspace.name,
+            observer=test_peer.name,
+            observed=test_peer2.name,
+            content="Derived conclusion",
+            embedding=[0.1] * 1536,
+            level="inductive",
+            source_ids=["src_1", "src_2"],
+            times_derived=2,
+        )
+        db_session.add(doc)
+        await db_session.commit()
+
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={
+                "filters": {
+                    "observer_id": test_peer.name,
+                    "observed_id": test_peer2.name,
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["source_ids"] == ["src_1", "src_2"]
+        assert items[0]["times_derived"] == 2
+
+    @pytest.mark.asyncio
     async def test_list_conclusions_nonexistent_session(
         self,
         client: TestClient,
@@ -738,6 +963,8 @@ class TestConclusionRoutes:
         assert conclusion["observed_id"] == doc.observed
         assert conclusion["session_id"] == doc.session_name
         assert conclusion["level"] == "explicit"
+        assert conclusion["source_ids"] is None
+        assert conclusion["times_derived"] == 1
         assert "created_at" in conclusion
 
         # Verify internal fields are NOT exposed

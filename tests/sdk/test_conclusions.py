@@ -405,6 +405,75 @@ async def test_observation_create_then_delete(
 
 
 @pytest.mark.asyncio
+async def test_observation_get_by_id(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests fetching a single conclusion by ID, including attribution fields.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-get-by-id-observer")
+        target = await honcho_client.aio.peer(id="test-obs-get-by-id-target")
+        session = await honcho_client.aio.session(id="test-obs-get-by-id-session")
+
+        # Ensure session and both peers exist
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = await obs_scope.aio.create(
+            [{"content": "Conclusion to fetch", "session_id": session.id}]
+        )
+
+        fetched = await obs_scope.aio.get(created[0].id)
+
+        assert isinstance(fetched, Conclusion)
+        assert fetched.id == created[0].id
+        assert fetched.content == "Conclusion to fetch"
+        assert fetched.observer_id == observer.id
+        assert fetched.observed_id == target.id
+        assert fetched.level == "explicit"
+        # User-created conclusions are explicit: no premises, derived once
+        assert fetched.source_ids is None
+        assert fetched.times_derived == 1
+    else:
+        observer = honcho_client.peer(id="test-obs-get-by-id-observer")
+        target = honcho_client.peer(id="test-obs-get-by-id-target")
+        session = honcho_client.session(id="test-obs-get-by-id-session")
+
+        # Ensure session and both peers exist
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = obs_scope.create(
+            [{"content": "Conclusion to fetch", "session_id": session.id}]
+        )
+
+        fetched = obs_scope.get(created[0].id)
+
+        assert isinstance(fetched, Conclusion)
+        assert fetched.id == created[0].id
+        assert fetched.content == "Conclusion to fetch"
+        assert fetched.observer_id == observer.id
+        assert fetched.observed_id == target.id
+        assert fetched.level == "explicit"
+        # User-created conclusions are explicit: no premises, derived once
+        assert fetched.source_ids is None
+        assert fetched.times_derived == 1
+
+
+@pytest.mark.asyncio
 async def test_self_observation_create(
     client_fixture: tuple[Honcho, str],
 ):

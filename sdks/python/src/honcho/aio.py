@@ -1600,6 +1600,19 @@ class ConclusionScopeAio:
             for item in data
         ]
 
+    async def get(self, conclusion_id: str) -> Conclusion:
+        """Get a single conclusion by ID asynchronously.
+
+        Returns:
+            The Conclusion object, including its attribution fields
+            (`source_ids`, `times_derived`)
+        """
+        await self._scope._honcho._ensure_workspace_async()
+        data = await self._scope._honcho._async_http_client.get(
+            routes.conclusion(self._scope.workspace_id, conclusion_id)
+        )
+        return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
+
     async def delete(self, conclusion_id: str) -> None:
         """Delete a conclusion by ID asynchronously."""
         await self._scope._honcho._ensure_workspace_async()

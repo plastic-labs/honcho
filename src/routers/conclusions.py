@@ -131,6 +131,28 @@ async def query_conclusions(
     return [schemas.Conclusion.model_validate(doc) for doc in documents]
 
 
+@router.get(
+    "/{conclusion_id}",
+    response_model=schemas.Conclusion,
+)
+async def get_conclusion(
+    workspace_id: str = Path(...),
+    conclusion_id: str = Path(...),
+    db: AsyncSession = read_db,
+) -> schemas.Conclusion:
+    """
+    Get a single Conclusion by ID.
+    """
+    documents = await crud.get_documents_by_ids(
+        db,
+        workspace_name=workspace_id,
+        document_ids=[conclusion_id],
+    )
+    if not documents:
+        raise ResourceNotFoundException("Conclusion not found")
+    return schemas.Conclusion.model_validate(documents[0])
+
+
 @router.delete(
     "/{conclusion_id}",
     status_code=204,

@@ -74,6 +74,11 @@ class Conclusion:
         level: Reasoning level ("explicit", "deductive", "inductive",
             "contradiction"). "explicit" conclusions are extracted directly
             from messages; the others are derived during dreaming.
+        source_ids: IDs of the conclusions this one was derived from (premises
+            for "deductive", supporting sources for "inductive", conflicting
+            conclusions for "contradiction"). None for "explicit" conclusions.
+        times_derived: Number of times this conclusion has been independently
+            derived.
         created_at: Timestamp for when the conclusion was created
     """
 
@@ -83,6 +88,8 @@ class Conclusion:
     observed_id: str
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
+    source_ids: list[str] | None = None
+    times_derived: int = 1
     created_at: datetime.datetime
 
     def __init__(
@@ -94,6 +101,8 @@ class Conclusion:
         session_id: str | None,
         created_at: datetime.datetime,
         level: ConclusionLevel = "explicit",
+        source_ids: list[str] | None = None,
+        times_derived: int = 1,
     ) -> None:
         self.id = id
         self.content = content
@@ -101,6 +110,8 @@ class Conclusion:
         self.observed_id = observed_id
         self.session_id = session_id
         self.level = level
+        self.source_ids = source_ids
+        self.times_derived = times_derived
         self.created_at = created_at
 
     @classmethod
@@ -113,6 +124,8 @@ class Conclusion:
             observed_id=data.observed_id,
             session_id=data.session_id,
             level=data.level,
+            source_ids=data.source_ids,
+            times_derived=data.times_derived,
             created_at=data.created_at,
         )
 
@@ -312,6 +325,23 @@ class ConclusionScope:
             Conclusion.from_api_response(ConclusionResponse.model_validate(item))
             for item in data
         ]
+
+    def get(self, conclusion_id: str) -> Conclusion:
+        """
+        Get a single conclusion by ID.
+
+        Args:
+            conclusion_id: The ID of the conclusion to retrieve
+
+        Returns:
+            The Conclusion object, including its attribution fields
+            (`source_ids`, `times_derived`)
+        """
+        self._honcho._ensure_workspace()
+        data = self._honcho._http.get(
+            routes.conclusion(self.workspace_id, conclusion_id)
+        )
+        return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
 
     def delete(self, conclusion_id: str) -> None:
         """
