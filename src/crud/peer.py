@@ -47,6 +47,31 @@ def peer_cache_key(workspace_name: str, peer_name: str) -> str:
     )
 
 
+def _reject_impossible_peer_names(names: Iterable[str]) -> None:
+    """Reject names that cannot correspond to any stored row, before querying.
+
+    ``PeerSpec`` accepts anything so existing names can be looked up, and the
+    full new-name rules run later on the insert path — but a couple of values
+    cannot be a legacy row *by construction*, and sending them to Postgres first
+    fails before that 422 can happen:
+
+    - NUL bytes: Postgres text cannot hold them, so psycopg raises DataError
+      during the lookup itself, surfacing as a 500.
+    - Over-length names: the ``peers.name`` CHECK caps them at
+      ``PEER_NAME_MAX_LENGTH``, so no stored row can exceed it.
+
+    Raises:
+        ValidationException: On a NUL byte or an over-length name.
+    """
+    if any("\x00" in name for name in names):
+        raise ValidationException("Peer name(s) must not contain NUL (0x00) bytes")
+    too_long = sorted({n for n in names if len(n) > PEER_NAME_MAX_LENGTH})
+    if too_long:
+        raise ValidationException(
+            f"Peer name(s) must be at most {PEER_NAME_MAX_LENGTH} characters"
+        )
+
+
 def _validate_new_peer_names(names: list[str]) -> None:
     """Validate peer names that are about to be created.
 
@@ -61,12 +86,8 @@ def _validate_new_peer_names(names: list[str]) -> None:
     scopes_util.validate_no_scope_peer_names(
         names, action="Use the scopes routes to create scopes."
     )
-    too_long = sorted({n for n in names if len(n) > PEER_NAME_MAX_LENGTH})
-    if too_long:
-        raise ValidationException(
-            f"Peer name(s) must be at most {PEER_NAME_MAX_LENGTH} characters"
-        )
-    # RESOURCE_NAME_PATTERN's `+` already rejects the empty name.
+    # Length and NUL bytes are already refused before the lookup by
+    # _reject_impossible_peer_names; RESOURCE_NAME_PATTERN's `+` rejects empty.
     offenders = sorted({n for n in names if not re.fullmatch(RESOURCE_NAME_PATTERN, n)})
     if offenders:
         raise ValidationException(
@@ -156,6 +177,9 @@ async def get_or_create_peers(
 
     await get_or_create_workspace(db, schemas.WorkspaceCreate(name=workspace_name))
     peer_names = [p.name for p in peers]
+    # Before the lookup: these values cannot match a stored row and would fail
+    # inside the query itself rather than as a clean 422.
+    _reject_impossible_peer_names(peer_names)
     stmt = (
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)

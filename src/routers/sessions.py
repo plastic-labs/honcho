@@ -745,6 +745,20 @@ async def get_session_context(
             "peer_target must be provided if peer_perspective is provided"
         )
 
+    # peer_target is the *observed* peer, and no representation or card is ever
+    # formed of a scope. peer_perspective (the observer) is left alone: a scope
+    # is a legitimate perspective, which is what Phase 2b's `scope` option builds on.
+    if peer_target is not None:
+        await crud.reject_scope_peers(
+            db,
+            workspace_id,
+            [peer_target],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be a"
+                " context target."
+            ),
+        )
+
     if not peer_target:
         # No representation or card needed
         summary, messages = await _get_session_context_task(

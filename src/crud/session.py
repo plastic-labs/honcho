@@ -7,7 +7,18 @@ from typing import cast as typing_cast
 
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
+from sqlalchemy import (
+    Select,
+    and_,
+    case,
+    cast,
+    delete,
+    exists,
+    func,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
@@ -34,7 +45,12 @@ from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
-from .peer import get_or_create_peers, get_peer, reject_scope_peers
+from .peer import (
+    get_or_create_peers,
+    get_peer,
+    reject_scope_peers,
+    scope_peer_clause,
+)
 from .scope import SCOPE_MEMBERSHIP_CONFIG, get_or_create_scopes
 from .workspace import get_or_create_workspace
 
@@ -848,9 +864,9 @@ async def remove_peers_from_session(
     await get_session(db, session_name, workspace_name)
 
     # Scope membership is ended through the scopes routes, which also reconcile
-    # the scope's copies. Checked here rather than in the route so it is adjacent
-    # to the UPDATE below, leaving no window for a concurrently-created scope to
-    # be silently detached from its sessions.
+    # the scope's copies. Rejected up front for a clear 422 rather than a silent
+    # no-op — but this check alone is only advisory: under READ COMMITTED a scope
+    # can be created between it and the UPDATE below.
     if not _allow_scope_peers:
         await reject_scope_peers(
             db,
@@ -870,6 +886,20 @@ async def remove_peers_from_session(
         )
         .values(left_at=func.now())
     )
+    if not _allow_scope_peers:
+        # Closes the window the advisory check above cannot: the exclusion is
+        # evaluated by Postgres as part of the UPDATE, so a scope committed after
+        # that check still cannot be detached here. Correlated rather than a join
+        # so the statement stays a plain UPDATE.
+        update_stmt = update_stmt.where(
+            ~exists(
+                select(models.Peer.id)
+                .where(models.Peer.workspace_name == workspace_name)
+                .where(models.Peer.name == models.SessionPeer.peer_name)
+                .where(scope_peer_clause())
+                .correlate(models.SessionPeer)
+            )
+        )
     await db.execute(update_stmt)
 
     await db.commit()

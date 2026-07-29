@@ -494,6 +494,19 @@ async def set_peer_card(
     # If no target specified, set the observer's own card
     observed = target if target is not None else peer_id
 
+    # A scope may be the *observer* of a card — the Dreamer writes (scope, observed)
+    # cards, which is how scoped peer cards exist — but never the observed. With no
+    # target, observed collapses to peer_id, so this also refuses a scope's self-card.
+    await crud.reject_scope_peers(
+        db,
+        workspace_id,
+        [observed],
+        action=(
+            "No representation is formed of a scope, so a scope cannot be the"
+            " subject of a peer card."
+        ),
+    )
+
     await crud.set_peer_card(
         db,
         workspace_id,
