@@ -27,9 +27,10 @@ from src.exceptions import (
     ConflictException,
     ObserverException,
     ResourceNotFoundException,
+    ValidationException,
 )
 from src.utils.filter import apply_filter
-from src.utils.scopes import scope_peer_name
+from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
@@ -99,6 +100,30 @@ async def _fetch_session(
         "configuration": obj.configuration,
         "created_at": obj.created_at,
     }
+
+
+def _reject_resolved_scope_peers(peers: list[models.Peer]) -> None:
+    """Reject scope peers among rows already resolved for a membership upsert.
+
+    The route-level guards check names *before* peers are resolved, which leaves a
+    check-then-upsert window: if a scope is created concurrently between that
+    check and the upsert below, the generic path would attach the now-flagged
+    scope peer with a default ``SessionPeerConfig()``, clobbering its
+    ``observe_others=True/observe_me=False`` membership config. This runs on the
+    resolved rows inside the same transaction as the upsert, so there is no
+    window and no extra query.
+
+    Raises:
+        ValidationException: If any resolved peer is a scope.
+    """
+    offenders = sorted(
+        p.name for p in peers if is_scope_peer(p.name, p.internal_metadata)
+    )
+    if offenders:
+        raise ValidationException(
+            f"Peer name(s) {offenders} are scopes."
+            + " Scope membership is managed via the scopes routes."
+        )
 
 
 def count_observers_in_config(
@@ -267,6 +292,7 @@ async def get_or_create_session(
                 schemas.PeerSpec(name=peer_name) for peer_name in session.peer_names
             ],
         )
+        _reject_resolved_scope_peers(peers_result.resource)
         await _get_or_add_peers_to_session(
             db,
             workspace_name=workspace_name,
@@ -992,6 +1018,7 @@ async def set_peers_for_session(
         workspace_name=workspace_name,
         peers=[schemas.PeerSpec(name=peer_name) for peer_name in peer_names],
     )
+    _reject_resolved_scope_peers(peers_result.resource)
 
     # Add new peers to session
     peers = await _get_or_add_peers_to_session(

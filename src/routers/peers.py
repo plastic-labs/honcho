@@ -138,17 +138,15 @@ async def update_peer(
 ):
     """Update a Peer's metadata and/or configuration.
 
-    Reserved-namespace names are refused outright. Name-based rather than
-    flag-based on purpose: every scope peer is named by ``scope_peer_name``, so
-    the prefix covers real scopes *and* stops ``crud.update_peer``'s get-or-create
-    from minting a new unflagged peer inside the reserved namespace — which a
-    flag-based check would wave through. It also needs no DB round-trip. The
-    trade-off is that a legacy peer occupying the namespace can't be updated via
-    this route; it couldn't be before either, and `configuration` is replaced
-    wholesale here, so the generic route must not touch the facade's namespace.
+    Three-way on the reserved namespace: a real scope is refused here (this route
+    replaces `configuration` wholesale, so it must never touch a facade-managed
+    peer); an existing *unflagged* peer that merely occupies the namespace is a
+    normal peer and updates fine; and a reserved-prefix name that does not exist
+    is refused by ``get_or_create_peers``' create-path validation rather than
+    being minted.
     """
-    validate_no_scope_peer_names(
-        [peer_id], action="Use the scopes routes to manage scopes."
+    await crud.reject_scope_peers(
+        db, workspace_id, [peer_id], action="Use the scopes routes to manage scopes."
     )
     updated_peer = await crud.update_peer(
         db, workspace_name=workspace_id, peer_name=peer_id, peer=peer

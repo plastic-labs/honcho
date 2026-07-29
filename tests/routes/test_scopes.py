@@ -15,9 +15,10 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import crud, models, schemas
 from src.config import settings
 from src.deriver.enqueue import enqueue
+from src.exceptions import ValidationException
 from src.models import Peer, QueueItem, Workspace
 from src.schemas.api import RESOURCE_NAME_PATTERN
 from src.security import JWTParams, create_jwt
@@ -814,3 +815,153 @@ async def test_crud_get_peer_resolves_scope_and_dotted_names(
     assert resolved.name == dotted
     # Has neither half of the invariant
     assert not is_scope_peer(resolved.name, resolved.internal_metadata)
+
+
+# ---------------------------------------------------------------------------
+# Name validation on the create path. PeerSpec carries no charset pattern so
+# existing names can be *looked up*, but anything crud is about to INSERT is a
+# new peer and must obey the public contract — otherwise request-controlled
+# names (message authors, session peer maps) mint squatters.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    ["not a valid name!@#", "has spaces", "emoji-\U0001f600"],
+)
+def test_message_author_cannot_create_invalid_peer_name(
+    client: TestClient, sample_data: tuple[Workspace, Peer], bad_name: str
+):
+    """A message author must not be able to create a non-conforming peer."""
+    test_workspace, _ = sample_data
+    session_name = _create_session(client, test_workspace.name)
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
+        json={"messages": [{"peer_id": bad_name, "content": "hello"}]},
+    )
+    assert response.status_code == 422, response.text
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list", json={"kind": "all"}
+    )
+    assert bad_name not in [p["id"] for p in response.json()["items"]]
+
+
+def test_message_author_cannot_squat_scope_namespace(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """The reserved namespace must not be reachable via the message author path.
+
+    Without create-path validation this minted an unflagged `scope.<name>` peer,
+    which then permanently 409-blocked creating that scope — a denial of service
+    on the namespace by any caller who can post a message.
+    """
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+    session_name = _create_session(client, test_workspace.name)
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
+        json={
+            "messages": [{"peer_id": scope_peer_name(scope_name), "content": "hello"}]
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert SCOPE_PEER_PREFIX in response.json()["detail"]
+
+    # The scope name is still available
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+
+
+def test_session_peer_map_cannot_squat_scope_namespace(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Same hole, via the session peer mapping rather than a message author."""
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": str(generate_nanoid()),
+            "peers": {scope_peer_name(scope_name): {}},
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+
+
+async def test_unflagged_squatter_can_still_be_updated(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """An existing unflagged peer in the namespace is a normal peer.
+
+    Three-way behavior on PUT /peers/{id}: a real scope is refused, an existing
+    unflagged squatter updates fine, and a missing reserved-prefix name is
+    refused by create-path validation rather than being minted.
+    """
+    test_workspace, _ = sample_data
+    squatter = scope_peer_name(str(generate_nanoid()))
+    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
+    await db_session.commit()
+
+    # existing unflagged peer -> allowed
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{squatter}",
+        json={"metadata": {"k": "v"}},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["metadata"] == {"k": "v"}
+
+    # real scope -> refused
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{scope_peer_name(scope_name)}",
+        json={"metadata": {"k": "v"}},
+    )
+    assert response.status_code == 422, response.text
+
+    # missing reserved-prefix name -> refused, not created
+    missing = scope_peer_name(str(generate_nanoid()))
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{missing}",
+        json={"metadata": {"k": "v"}},
+    )
+    assert response.status_code == 422, response.text
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list", json={"kind": "all"}
+    )
+    assert missing not in [p["id"] for p in response.json()["items"]]
+
+
+async def test_resolved_scope_peer_rejected_at_membership_upsert(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """The last-line guard runs on resolved rows, closing the check-then-upsert race.
+
+    Simulates the race by flagging the peer *after* the route-level name check
+    would have passed: the peer exists and is unflagged when named, and is a real
+    scope by the time membership is upserted.
+    """
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    backing = scope_peer_name(scope_name)
+    session_name = _create_session(client, test_workspace.name)
+
+    # crud-level: the resolved row is a scope, so membership must be refused even
+    # though the peer already exists (no create-path validation fires).
+    with pytest.raises(ValidationException):
+        await crud.get_or_create_session(
+            db_session,
+            session=schemas.SessionCreate(
+                name=session_name, peers={backing: schemas.SessionPeerConfig()}
+            ),
+            workspace_name=test_workspace.name,
+        )

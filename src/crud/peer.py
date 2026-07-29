@@ -1,5 +1,6 @@
 """CRUD helpers for peer records and peer-scoped session queries."""
 
+import re
 from collections.abc import Iterable
 from logging import getLogger
 from typing import Any, Literal
@@ -20,6 +21,7 @@ from src.exceptions import (
     ValidationException,
 )
 from src.models import Peer
+from src.schemas.api import RESOURCE_NAME_PATTERN
 from src.utils import scopes as scopes_util
 from src.utils.filter import apply_filter
 from src.utils.types import GetOrCreateResult
@@ -40,6 +42,27 @@ def peer_cache_key(workspace_name: str, peer_name: str) -> str:
             peer_name=peer_name,
         )
     )
+
+
+def _validate_new_peer_names(names: list[str]) -> None:
+    """Validate peer names that are about to be created.
+
+    Mirrors ``PeerCreate``'s contract for peers arriving through crud rather than
+    the peers route. The reserved prefix is reported separately because it is
+    also outside ``RESOURCE_NAME_PATTERN``, so the charset check would otherwise
+    mask the real problem.
+
+    Raises:
+        ValidationException: On a reserved-prefix or non-conforming name.
+    """
+    scopes_util.validate_no_scope_peer_names(
+        names, action="Use the scopes routes to create scopes."
+    )
+    offenders = sorted({n for n in names if not re.fullmatch(RESOURCE_NAME_PATTERN, n)})
+    if offenders:
+        raise ValidationException(
+            f"Peer name(s) {offenders} must match pattern {RESOURCE_NAME_PATTERN}"
+        )
 
 
 def scope_peer_clause() -> ColumnElement[bool]:
@@ -165,6 +188,17 @@ async def get_or_create_peers(
     # Find which peers need to be created
     existing_names = {p.name for p in existing_peers}
     peers_to_create = [p for p in peers if p.name not in existing_names]
+
+    # Names are validated on the *create* path only. `PeerSpec` deliberately
+    # carries no charset pattern so already-existing names (legacy dotted names,
+    # scope peers) can be looked up without a spurious 422 — but a name we are
+    # about to INSERT is a new peer, and new peers must obey the public contract.
+    # Without this, request-controlled names reach here unvalidated via message
+    # authors, session peer maps, and the chat observer path, letting a caller
+    # mint `scope.x` squatters (permanently 409-blocking that scope) or peers
+    # that violate RESOURCE_NAME_PATTERN outright.
+    if peers_to_create:
+        _validate_new_peer_names([p.name for p in peers_to_create])
 
     # Create new peers
     new_peers = [
