@@ -67,7 +67,7 @@ OPENAI_API_KEY = "your-api-key-here"
 
 # Embedding settings
 [embedding]
-VECTOR_DIMENSIONS = 1536
+VECTOR_DIMENSIONS = 1024
 MAX_INPUT_TOKENS = 8192
 MAX_TOKENS_PER_REQUEST = 300000
 

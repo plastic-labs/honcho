@@ -48,9 +48,9 @@ def _run_in_fresh_interpreter(env_overrides: dict[str, str]) -> dict[str, int]:
     return parsed
 
 
-def test_models_uses_default_1536_when_no_env_override() -> None:
+def test_models_uses_default_1024_when_no_env_override() -> None:
     dims = _run_in_fresh_interpreter({})
-    assert dims == {"message_embedding_dim": 1536, "document_dim": 1536}
+    assert dims == {"message_embedding_dim": 1024, "document_dim": 1024}
 
 
 def test_models_honors_explicit_embedding_vector_dimensions() -> None:

@@ -836,7 +836,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="eri loves cats and dogs and birds and snakes",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -856,7 +856,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="eri loves cats",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -1058,7 +1058,7 @@ class TestSessionPurityInvariant:
     ) -> schemas.DocumentCreate:
         return schemas.DocumentCreate(
             content=content,
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=session_name,
             level=level,  # pyright: ignore[reportArgumentType]
             metadata=schemas.DocumentMetadata(
