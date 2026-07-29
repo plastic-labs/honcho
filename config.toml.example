@@ -75,6 +75,14 @@ MAX_TOKENS_PER_REQUEST = 300000
 transport = "openai"
 model = "text-embedding-3-small"
 
+# Task prefixes for asymmetric embedding models (E5, BGE, GTE, Nomic,
+# EmbeddingGemma, Qwen3-Embedding, ...). These models are trained to receive a
+# short instruction prefix that differs for queries and documents; embedding
+# both sides identically measurably degrades retrieval. Leave empty for models
+# that do not use prefixes, such as OpenAI's.
+# query_prefix = "task: search result | query: "
+# document_prefix = "title: none | text: "
+
 # Optional module-level endpoint overrides
 # [embedding.model_config.overrides]
 # base_url = "https://embedding-proxy.internal.example/v1"

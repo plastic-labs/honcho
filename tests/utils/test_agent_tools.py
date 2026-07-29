@@ -334,10 +334,17 @@ class TestCreateObservations:
         """If batch embedding fails but individual embeds succeed, all observations are created."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
+        async def fail_batch_embed(
+            _texts: list[str], *, input_type: str = "document"
+        ) -> list[list[float]]:
+            _ = input_type
             raise RuntimeError("embedding provider timeout")
 
-        async def succeed_single_embed(_content: str) -> list[float]:
+        async def succeed_single_embed(
+            _content: str, *, input_type: str = "query"
+        ) -> list[float]:
+            # See the partial-failure test: the fallback is a document embed.
+            assert input_type == "document"
             return [0.1, 0.2, 0.3]
 
         created_documents: list[Any] = []
@@ -393,10 +400,19 @@ class TestCreateObservations:
         """If batch embedding fails and some individual embeds also fail, only successful ones are created."""
         workspace, peer1, peer2, session, _, _ = tool_test_data
 
-        async def fail_batch_embed(_texts: list[str]) -> list[list[float]]:
+        async def fail_batch_embed(
+            _texts: list[str], *, input_type: str = "document"
+        ) -> list[list[float]]:
+            _ = input_type
             raise RuntimeError("embedding provider timeout")
 
-        async def embed_per_observation(content: str) -> list[float]:
+        async def embed_per_observation(
+            content: str, *, input_type: str = "query"
+        ) -> list[float]:
+            # The fallback embeds stored observations, so it must ask for the
+            # document side or it lands in a different vector space than the
+            # batch path it is standing in for.
+            assert input_type == "document"
             if content == "Fails embed":
                 raise RuntimeError("single-item embed failure")
             return [0.1, 0.2, 0.3]

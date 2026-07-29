@@ -444,3 +444,170 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert len(out["long"]) > 1
     # Order preserved
     assert isinstance(out["long"][0], str)
+
+
+# ---------------------------------------------------------------------------
+# Asymmetric task prefixes
+# ---------------------------------------------------------------------------
+
+
+def _client_with_prefixes(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_embeddings: FakeOpenAIEmbeddingsAPI,
+    *,
+    max_input_tokens: int = 8192,
+) -> _EmbeddingClient:
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    return _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="embeddinggemma-300m",
+            api_key="test-key",
+            query_prefix="task: search result | query: ",
+            document_prefix="title: none | text: ",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=max_input_tokens,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_embed_applies_the_query_prefix_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+    client = _client_with_prefixes(monkeypatch, fake)
+
+    await client.embed("who is alice")
+
+    assert fake.calls[0]["input"] == ["task: search result | query: who is alice"]
+
+
+@pytest.mark.asyncio
+async def test_embed_can_be_asked_for_the_document_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The single-embed fallback around `simple_batch_embed` embeds stored
+    content, so it has to be able to land in the document space too."""
+    fake = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+    client = _client_with_prefixes(monkeypatch, fake)
+
+    await client.embed("alice lives in berlin", input_type="document")
+
+    assert fake.calls[0]["input"] == ["title: none | text: alice lives in berlin"]
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_defaults_to_the_document_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+    client = _client_with_prefixes(monkeypatch, fake)
+
+    await client.simple_batch_embed(["one", "two"])
+
+    assert fake.calls[0]["input"] == [
+        "title: none | text: one",
+        "title: none | text: two",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_can_be_asked_for_the_query_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batching several search queries must produce the same vectors as
+    embedding them one at a time through `embed`."""
+    fake = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+    client = _client_with_prefixes(monkeypatch, fake)
+
+    await client.simple_batch_embed(["what does she want"], input_type="query")
+
+    assert fake.calls[0]["input"] == ["task: search result | query: what does she want"]
+
+
+@pytest.mark.asyncio
+async def test_batch_embed_applies_the_document_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+    client = _client_with_prefixes(monkeypatch, fake)
+
+    await client.batch_embed({"a": "hello"})
+
+    assert fake.calls[0]["input"] == ["title: none | text: hello"]
+
+
+@pytest.mark.asyncio
+async def test_no_prefix_configured_leaves_input_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default config must be byte-identical to before this feature existed."""
+    fake = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai", model="text-embedding-3-small", api_key="test-key"
+        ),
+        vector_dimensions=8,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    await client.embed("plain")
+    await client.simple_batch_embed(["also plain"])
+
+    assert fake.calls[0]["input"] == ["plain"]
+    assert fake.calls[1]["input"] == ["also plain"]
+
+
+@pytest.mark.asyncio
+async def test_prefix_tokens_are_reserved_from_the_input_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A text that fits the raw cap but not the cap-minus-prefix must be
+    rejected, otherwise the prefixed payload silently overruns the model."""
+    fake = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+    client = _client_with_prefixes(monkeypatch, fake, max_input_tokens=12)
+
+    prefix_tokens = client._prefix_tokens["query"]  # pyright: ignore[reportPrivateUsage]
+    assert prefix_tokens > 0
+    text = "word " * (12 - prefix_tokens + 1)
+
+    with pytest.raises(ValueError, match="maximum token limit"):
+        await client.embed(text.strip())
+
+
+@pytest.mark.asyncio
+async def test_chunking_leaves_room_for_the_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chunks are sized against the net budget and stay unprefixed, so every
+    prefixed chunk still fits."""
+    fake = FakeOpenAIEmbeddingsAPI([0.1] * 8)
+    client = _client_with_prefixes(monkeypatch, fake, max_input_tokens=24)
+
+    long_text = "alpha beta gamma delta epsilon zeta eta theta " * 8
+    chunks = client.prepare_chunks({"a": long_text})["a"]
+
+    budget = client._budget("document")  # pyright: ignore[reportPrivateUsage]
+    document_prefix = "title: none | text: "
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert not chunk.startswith(document_prefix)
+        assert len(client.encoding.encode(document_prefix + chunk)) <= (
+            budget + client._prefix_tokens["document"]  # pyright: ignore[reportPrivateUsage]
+        )
