@@ -952,7 +952,7 @@ async def create_observations(
 
     # Validate all peers exist
     for peer_name in peers_to_validate:
-        await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+        await get_peer(db, workspace_name, peer_name)
 
     # Get or create all collections
     for observer, observed in collection_pairs:

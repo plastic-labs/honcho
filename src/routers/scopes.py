@@ -1,7 +1,7 @@
 """FastAPI routes for scope resources.
 
 A scope is a named grouping of sessions that provides a visibility boundary
-within a peer. Internally a scope is a peer named ``scope__<name>`` that
+within a peer. Internally a scope is a peer named ``scope.<name>`` that
 observes its member sessions and never speaks; these routes are the facade
 that keeps the observer/observed mechanics hidden.
 

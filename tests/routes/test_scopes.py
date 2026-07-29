@@ -1,10 +1,12 @@
 """Tests for the scopes facade: scope-kind peers, guardrails, and CRUD routes.
 
 A scope is a named grouping of sessions, implemented as a peer named
-``scope__<name>`` with configuration ``{"kind": "scope", "observe_me": false}``
-that observes its member sessions and never speaks. See src/utils/scopes.py.
+``scope.<name>`` carrying ``{"kind": "scope"}`` in ``internal_metadata`` and
+``{"observe_me": false}`` in ``configuration``, that observes its member sessions
+and never speaks. See src/utils/scopes.py.
 """
 
+import re
 from typing import Any
 
 import pytest
@@ -13,13 +15,15 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src import crud, models
 from src.config import settings
 from src.deriver.enqueue import enqueue
 from src.models import Peer, QueueItem, Workspace
+from src.schemas.api import RESOURCE_NAME_PATTERN
 from src.security import JWTParams, create_jwt
 from src.utils.scopes import (
     SCOPE_PEER_PREFIX,
+    is_scope_peer,
     is_scope_peer_name,
     scope_name_from_peer,
     scope_peer_name,
@@ -68,10 +72,13 @@ async def _get_session_peer(
 
 
 def test_scope_namespace_helpers():
-    assert scope_peer_name("therapy") == "scope__therapy"
-    assert is_scope_peer_name("scope__therapy")
+    assert scope_peer_name("therapy") == "scope.therapy"
+    assert is_scope_peer_name("scope.therapy")
     assert not is_scope_peer_name("therapy")
-    assert scope_name_from_peer("scope__therapy") == "therapy"
+    assert scope_name_from_peer("scope.therapy") == "therapy"
+    # The prefix must stay outside the peer-name charset, or an existing peer
+    # could occupy the scope namespace.
+    assert not re.fullmatch(RESOURCE_NAME_PATTERN, SCOPE_PEER_PREFIX)
 
 
 async def test_create_scope_creates_flagged_peer(
@@ -99,7 +106,10 @@ async def test_create_scope_creates_flagged_peer(
         .where(models.Peer.name == scope_peer_name(scope_name))
     )
     assert peer is not None
-    assert peer.configuration == {"kind": "scope", "observe_me": False}
+    # The kind flag lives in internal_metadata (not user-writable); only
+    # observe_me is in the user-visible configuration.
+    assert peer.internal_metadata == {"kind": "scope"}
+    assert peer.configuration == {"observe_me": False}
 
 
 def test_create_scope_idempotent(
@@ -126,7 +136,7 @@ def test_create_scope_rejects_invalid_names(
     assert response.status_code == 422
 
     # Scope names are unprefixed: double-prefixing is rejected
-    response = _create_scope(client, test_workspace.name, "scope__therapy")
+    response = _create_scope(client, test_workspace.name, "scope.therapy")
     assert response.status_code == 422
 
 
@@ -221,7 +231,12 @@ def test_scopes_routes_require_workspace_level_key(
 def test_peer_create_rejects_reserved_prefix(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """User-created peers may not use the reserved scope prefix."""
+    """User-created peers may not use the reserved scope prefix.
+
+    The prefix sits outside RESOURCE_NAME_PATTERN, so PeerCreate's own charset
+    validation rejects it at the schema boundary — one layer earlier than the
+    route's validate_no_scope_peer_names guard. Either way the caller gets 422.
+    """
     test_workspace, _ = sample_data
 
     response = client.post(
@@ -229,7 +244,7 @@ def test_peer_create_rejects_reserved_prefix(
         json={"name": f"{SCOPE_PEER_PREFIX}{generate_nanoid()}"},
     )
     assert response.status_code == 422
-    assert SCOPE_PEER_PREFIX in response.json()["detail"]
+    assert RESOURCE_NAME_PATTERN in str(response.json()["detail"])
 
 
 def test_peers_list_kind_filtering(
@@ -456,7 +471,8 @@ async def test_session_create_with_scopes(
             .where(models.Peer.name == scope_peer_name(scope_name))
         )
         assert peer is not None
-        assert peer.configuration == {"kind": "scope", "observe_me": False}
+        assert peer.internal_metadata == {"kind": "scope"}
+        assert peer.configuration == {"observe_me": False}
 
         session_peer = await _get_session_peer(
             db_session, test_workspace.name, session_name, scope_peer_name(scope_name)
@@ -480,7 +496,7 @@ def test_session_create_rejects_prefixed_scope_names(
 
     response = client.post(
         f"/v3/workspaces/{test_workspace.name}/sessions",
-        json={"id": str(generate_nanoid()), "scopes": ["scope__x"]},
+        json={"id": str(generate_nanoid()), "scopes": ["scope.x"]},
     )
     assert response.status_code == 422
 
@@ -595,3 +611,206 @@ async def test_scope_peer_observes_ingested_messages(
     assert observers is not None
     assert test_peer.name in observers  # self-observation
     assert scope_peer_name(scope_name) in observers  # the scope observes
+
+
+# ---------------------------------------------------------------------------
+# Dotted / legacy peer names must not 500 (regression for the PeerCreate-as-DTO
+# chokepoint). Names were length-only validated before migration
+# d429de0e5338, so pre-existing peers can contain '.' — and re-validating them
+# against PeerCreate's charset pattern raised a raw pydantic error, i.e. a 500.
+# ---------------------------------------------------------------------------
+
+
+async def test_legacy_dotted_peer_name_is_fully_usable(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """A pre-existing dotted peer name must work end to end, not 500."""
+    test_workspace, _ = sample_data
+    legacy_name = f"alice.smith.{generate_nanoid()}"
+
+    db_session.add(models.Peer(workspace_name=test_workspace.name, name=legacy_name))
+    await db_session.commit()
+
+    session_name = _create_session(client, test_workspace.name)
+
+    # Can author messages
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
+        json={"messages": [{"peer_id": legacy_name, "content": "hello"}]},
+    )
+    assert response.status_code in [200, 201], response.text
+
+    # Can be added to a session through the generic route
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+        json={legacy_name: {}},
+    )
+    assert response.status_code == 200, response.text
+
+    # Can be updated through the generic peer route
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{legacy_name}",
+        json={"metadata": {"k": "v"}},
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_legacy_prefixed_peer_without_flag_is_not_a_scope(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """A peer merely occupying the reserved namespace keeps working.
+
+    Only the name half of the invariant is present, so it is not a scope: it can
+    still author messages and shows up in the default peers list, while the
+    scopes facade refuses to treat it as a scope.
+    """
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+    squatter = scope_peer_name(scope_name)
+
+    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
+    await db_session.commit()
+
+    session_name = _create_session(client, test_workspace.name)
+
+    # Not a scope, so the message-author guard must not fire
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
+        json={"messages": [{"peer_id": squatter, "content": "hello"}]},
+    )
+    assert response.status_code in [200, 201], response.text
+
+    # Visible in the default (non-scope) peers list
+    response = client.post(f"/v3/workspaces/{test_workspace.name}/peers/list")
+    assert squatter in [p["id"] for p in response.json()["items"]]
+
+    # But the facade does not recognise it
+    response = client.get(f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}")
+    assert response.status_code == 404
+
+    response = client.post(f"/v3/workspaces/{test_workspace.name}/scopes/list")
+    assert scope_name not in [s["id"] for s in response.json()["items"]]
+
+
+async def test_forged_configuration_kind_does_not_make_a_scope(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    """`configuration` is user-writable, so it must not be load-bearing.
+
+    A peer that forges `{"kind": "scope"}` in configuration has neither the
+    reserved name nor the internal flag, so it stays an ordinary peer.
+    """
+    test_workspace, _ = sample_data
+    peer_name = str(generate_nanoid())
+
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{peer_name}",
+        json={"configuration": {"kind": "scope"}},
+    )
+    assert response.status_code == 200, response.text
+
+    # Still an ordinary peer: present in the default list, absent from scopes
+    response = client.post(f"/v3/workspaces/{test_workspace.name}/peers/list")
+    assert peer_name in [p["id"] for p in response.json()["items"]]
+
+    response = client.post(f"/v3/workspaces/{test_workspace.name}/scopes/list")
+    assert peer_name not in [s["id"] for s in response.json()["items"]]
+
+    # And can still author messages
+    session_name = _create_session(client, test_workspace.name)
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
+        json={"messages": [{"peer_id": peer_name, "content": "hello"}]},
+    )
+    assert response.status_code in [200, 201], response.text
+
+
+def test_update_peer_rejects_reserved_prefix(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """PUT on a reserved-namespace name is a clean 422, never a 500."""
+    test_workspace, _ = sample_data
+
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{scope_peer_name('therapy')}",
+        json={"metadata": {"k": "v"}},
+    )
+    assert response.status_code == 422
+    assert SCOPE_PEER_PREFIX in response.json()["detail"]
+
+
+async def test_scope_peer_cannot_be_chat_or_representation_observer(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """The path-level peer_id is guarded, not just `target`."""
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    backing = scope_peer_name(scope_name)
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{backing}/chat",
+        json={"query": "what do you know?"},
+    )
+    assert response.status_code == 422, response.text
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{backing}/representation",
+        json={},
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_internal_metadata_never_in_peer_response(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """The scope flag must not leak into any peer response body."""
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/list", json={"kind": "all"}
+    )
+    assert response.status_code == 200
+    for peer in response.json()["items"]:
+        assert "internal_metadata" not in peer
+        assert "kind" not in peer.get("configuration", {})
+
+
+async def test_crud_get_peer_resolves_scope_and_dotted_names(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """crud.get_peer must accept names outside RESOURCE_NAME_PATTERN.
+
+    This is the Dreamer's preflight path: DreamScheduler passes
+    ``collection.observer`` straight through, and scope peers have
+    ``observe_others=true``, so ``(scope.x, peer)`` collections exist and get
+    dreamt. While get_peer took a PeerCreate, every such dream died at preflight
+    on a raw pydantic ValidationError.
+    """
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+
+    resolved = await crud.get_peer(
+        db_session, test_workspace.name, scope_peer_name(scope_name)
+    )
+    assert resolved.name == scope_peer_name(scope_name)
+    assert is_scope_peer(resolved.name, resolved.internal_metadata)
+
+    dotted = f"legacy.dotted.{generate_nanoid()}"
+    db_session.add(models.Peer(workspace_name=test_workspace.name, name=dotted))
+    await db_session.commit()
+
+    resolved = await crud.get_peer(db_session, test_workspace.name, dotted)
+    assert resolved.name == dotted
+    # Has neither half of the invariant
+    assert not is_scope_peer(resolved.name, resolved.internal_metadata)

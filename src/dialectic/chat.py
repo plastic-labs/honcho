@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
 
-from src import crud, schemas
+from src import crud
 from src.config import ReasoningLevel
 from src.dependencies import tracked_db
 from src.dialectic.core import DialecticAgent
@@ -48,9 +48,9 @@ async def agentic_chat(
     """
     # Short-lived DB session for validation + config
     async with tracked_db("dialectic.preflight", read_only=True) as db:
-        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+        await crud.get_peer(db, workspace_name, observer)
         if observer != observed:
-            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
+            await crud.get_peer(db, workspace_name, observed)
 
         session = None
         if session_name:
@@ -120,9 +120,9 @@ async def agentic_chat_stream(
     """
     # Short-lived DB session for validation + config
     async with tracked_db("dialectic.preflight", read_only=True) as db:
-        await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+        await crud.get_peer(db, workspace_name, observer)
         if observer != observed:
-            await crud.get_peer(db, workspace_name, schemas.PeerCreate(name=observed))
+            await crud.get_peer(db, workspace_name, observed)
 
         session = None
         if session_name:

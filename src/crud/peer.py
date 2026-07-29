@@ -1,10 +1,11 @@
 """CRUD helpers for peer records and peer-scoped session queries."""
 
+from collections.abc import Iterable
 from logging import getLogger
 from typing import Any, Literal
 
 from cashews import NOT_NONE
-from sqlalchemy import Select, select
+from sqlalchemy import ColumnElement, Select, and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
@@ -13,7 +14,11 @@ from src import models, schemas
 from src.cache.client import cache, get_cache_namespace, safe_cache_delete
 from src.config import settings
 from src.crud.workspace import get_or_create_workspace
-from src.exceptions import ConflictException, ResourceNotFoundException
+from src.exceptions import (
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.models import Peer
 from src.utils import scopes as scopes_util
 from src.utils.filter import apply_filter
@@ -37,10 +42,63 @@ def peer_cache_key(workspace_name: str, peer_name: str) -> str:
     )
 
 
+def scope_peer_clause() -> ColumnElement[bool]:
+    """SQL form of ``is_scope_peer()``: reserved name prefix AND the internal kind flag.
+
+    Lives here rather than in ``crud/scope.py`` because that module already imports
+    from this one, and ``get_peers`` below needs the clause — the other direction
+    would be a cycle.
+
+    ``autoescape=True`` is future-proofing: '.' is not a LIKE wildcard, but '_' is,
+    so under a ``scope__``-style prefix an unescaped ``startswith`` would also match
+    ``scopeXY...``. Both columns are NOT NULL with defaults, so the negation
+    ``~scope_peer_clause()`` has no NULL-semantics trap.
+    """
+    return and_(
+        models.Peer.name.startswith(scopes_util.SCOPE_PEER_PREFIX, autoescape=True),
+        models.Peer.internal_metadata.contains({"kind": scopes_util.SCOPE_KIND}),
+    )
+
+
+async def reject_scope_peers(
+    db: AsyncSession,
+    workspace_name: str,
+    names: Iterable[str],
+    *,
+    action: str,
+) -> None:
+    """Reject peers that really are scopes, keyed off name AND flag.
+
+    Unlike a pure name check, a legacy peer that merely occupies the reserved
+    namespace (names were length-only validated before migration
+    ``d429de0e5338``, so ``scope.production`` is a possible user name) keeps
+    working normally instead of being locked out of its own data.
+
+    Costs nothing on the common path: with no reserved-prefix name in ``names``
+    there is no query at all.
+
+    Raises:
+        ValidationException: If any name resolves to a real scope peer.
+    """
+    candidates = sorted({n for n in names if scopes_util.is_scope_peer_name(n)})
+    if not candidates:
+        return
+
+    result = await db.execute(
+        select(models.Peer.name)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name.in_(candidates))
+        .where(scope_peer_clause())
+    )
+    offenders = sorted(row[0] for row in result.all())
+    if offenders:
+        raise ValidationException(f"Peer name(s) {offenders} are scopes. {action}")
+
+
 async def get_or_create_peers(
     db: AsyncSession,
     workspace_name: str,
-    peers: list[schemas.PeerCreate],
+    peers: list[schemas.PeerSpec],
     *,
     _retry: bool = False,
     _pending_invalidation: list[str] | None = None,
@@ -200,15 +258,20 @@ async def _fetch_peer(
 async def get_peer(
     db: AsyncSession,
     workspace_name: str,
-    peer: schemas.PeerCreate,
+    peer_name: str,
 ) -> models.Peer:
     """
     Get an existing peer.
 
+    Takes a plain name, not a create schema: this is a pure read, and validating
+    an already-existing name against ``PeerCreate``'s charset pattern turns a
+    lookup into a raw pydantic ValidationError (an HTTP 500) for legacy dotted
+    names and every ``scope.``-prefixed peer.
+
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        peer: Peer creation schema
+        peer_name: Name of the peer
 
     Returns:
         The peer if found
@@ -216,10 +279,10 @@ async def get_peer(
     Raises:
         ResourceNotFoundException: If the peer does not exist
     """
-    data = await _fetch_peer(db, workspace_name, peer.name)
+    data = await _fetch_peer(db, workspace_name, peer_name)
     if data is None:
         raise ResourceNotFoundException(
-            f"Peer {peer.name} not found in workspace {workspace_name}"
+            f"Peer {peer_name} not found in workspace {workspace_name}"
         )
 
     # Reconstruct ORM object from cached dict and merge into session
@@ -243,19 +306,16 @@ async def get_peers(
         filters: Filter peers by metadata
         reverse: Whether to reverse the default creation order
         kind: Which kinds of peers to include. None (default) excludes scope
-            peers (peers whose configuration carries ``{"kind": "scope"}``),
-            "scope" returns only scope peers, and "all" returns everything.
+            peers (see ``scope_peer_clause``: reserved name prefix AND the
+            ``{"kind": "scope"}`` internal_metadata flag), "scope" returns only
+            scope peers, and "all" returns everything.
     """
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
     if kind is None:
-        stmt = stmt.where(
-            ~models.Peer.configuration.contains({"kind": scopes_util.SCOPE_KIND})
-        )
+        stmt = stmt.where(~scope_peer_clause())
     elif kind == "scope":
-        stmt = stmt.where(
-            models.Peer.configuration.contains({"kind": scopes_util.SCOPE_KIND})
-        )
+        stmt = stmt.where(scope_peer_clause())
 
     stmt = apply_filter(stmt, models.Peer, filters)
 
@@ -288,7 +348,7 @@ async def update_peer(
             the peer
     """
     peers_result = await get_or_create_peers(
-        db, workspace_name, [schemas.PeerCreate(name=peer_name)]
+        db, workspace_name, [schemas.PeerSpec(name=peer_name)]
     )
     honcho_peer = peers_result.resource[0]
 

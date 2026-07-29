@@ -136,7 +136,20 @@ async def update_peer(
     peer: schemas.PeerUpdate = Body(..., description="Updated peer parameters"),
     db: AsyncSession = db,
 ):
-    """Update a Peer's metadata and/or configuration."""
+    """Update a Peer's metadata and/or configuration.
+
+    Reserved-namespace names are refused outright. Name-based rather than
+    flag-based on purpose: every scope peer is named by ``scope_peer_name``, so
+    the prefix covers real scopes *and* stops ``crud.update_peer``'s get-or-create
+    from minting a new unflagged peer inside the reserved namespace — which a
+    flag-based check would wave through. It also needs no DB round-trip. The
+    trade-off is that a legacy peer occupying the namespace can't be updated via
+    this route; it couldn't be before either, and `configuration` is replaced
+    wholesale here, so the generic route must not touch the facade's namespace.
+    """
+    validate_no_scope_peer_names(
+        [peer_id], action="Use the scopes routes to manage scopes."
+    )
     updated_peer = await crud.update_peer(
         db, workspace_name=workspace_id, peer_name=peer_id, peer=peer
     )
@@ -204,11 +217,23 @@ async def chat(
     answer the query based on all latent knowledge gathered about the peer from their messages and conclusions.
     """
     # Scope peers are never observed, so no representation of them exists to
-    # query. (A scope peer as the path-level observer is a Phase 2b concern.)
-    if options.target is not None and is_scope_peer_name(options.target):
-        raise ValidationException(
-            "Scope peers cannot be a chat target: no representation is formed of a scope."
-        )
+    # query. Covers the path-level observer too: a scope `peer_id` no longer
+    # errors out downstream now that crud.get_peer takes a plain name, and a
+    # scope peer as the path-level observer is a Phase 2b concern.
+    scope_candidates = [
+        n for n in (peer_id, options.target) if n is not None and is_scope_peer_name(n)
+    ]
+    if scope_candidates:
+        async with tracked_db("peers.chat.scope_check", read_only=True) as s_db:
+            await crud.reject_scope_peers(
+                s_db,
+                workspace_id,
+                scope_candidates,
+                action=(
+                    "No representation is formed of a scope, so a scope cannot "
+                    "be a chat observer or target."
+                ),
+            )
 
     # The session id arrives in the body, so require_auth can't gate on it. A
     # peer-scoped key may only scope a chat to a session its peer belongs to;
@@ -254,7 +279,7 @@ async def chat(
         peers_result = await crud.get_or_create_peers(
             peer_db,
             workspace_name=workspace_id,
-            peers=[schemas.PeerCreate(name=peer_id)],
+            peers=[schemas.PeerSpec(name=peer_id)],
         )
         await peer_db.commit()
     await peers_result.post_commit()
@@ -339,10 +364,23 @@ async def get_representation(
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
     # Scope peers are never observed, so no representation of them exists.
-    if options.target is not None and is_scope_peer_name(options.target):
-        raise ValidationException(
-            "Scope peers cannot be a representation target: no representation is formed of a scope."
-        )
+    # Covers the path-level observer as well as the target.
+    scope_candidates = [
+        n for n in (peer_id, options.target) if n is not None and is_scope_peer_name(n)
+    ]
+    if scope_candidates:
+        async with tracked_db(
+            "peers.representation.scope_check", read_only=True
+        ) as s_db:
+            await crud.reject_scope_peers(
+                s_db,
+                workspace_id,
+                scope_candidates,
+                action=(
+                    "No representation is formed of a scope, so a scope cannot "
+                    "be a representation observer or target."
+                ),
+            )
 
     # Parse the session allowlist from filters (422 on unsupported keys/shapes,
     # and on a session_id the allowlist doesn't cover).

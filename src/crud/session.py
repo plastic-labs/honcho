@@ -264,7 +264,7 @@ async def get_or_create_session(
             db,
             workspace_name=workspace_name,
             peers=[
-                schemas.PeerCreate(name=peer_name) for peer_name in session.peer_names
+                schemas.PeerSpec(name=peer_name) for peer_name in session.peer_names
             ],
         )
         await _get_or_add_peers_to_session(
@@ -990,7 +990,7 @@ async def set_peers_for_session(
     peers_result = await get_or_create_peers(
         db,
         workspace_name=workspace_name,
-        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
+        peers=[schemas.PeerSpec(name=peer_name) for peer_name in peer_names],
     )
 
     # Add new peers to session
@@ -1203,7 +1203,7 @@ async def set_peer_config(
     """
     # First, get the session and peer to ensure they exist
     await get_session(db, session_name, workspace_name)
-    await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+    await get_peer(db, workspace_name, peer_name)
 
     # Check if a SessionPeer entry already exists
     stmt = (

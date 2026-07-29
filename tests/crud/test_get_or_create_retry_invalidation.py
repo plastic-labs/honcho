@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import (
 
 from src import crud, models, schemas
 from src.crud.peer import peer_cache_key
-from src.crud.scope import SCOPE_PEER_CONFIGURATION
+from src.crud.scope import SCOPE_PEER_CONFIGURATION, SCOPE_PEER_INTERNAL_METADATA
 from src.utils.scopes import scope_peer_name
 
 
@@ -146,6 +146,7 @@ async def test_scope_retry_still_invalidates_mutated_scope(
             models.Peer(
                 name=scope_peer_name(racing_scope),
                 workspace_name=test_workspace.name,
+                internal_metadata=dict(SCOPE_PEER_INTERNAL_METADATA),
                 configuration=dict(SCOPE_PEER_CONFIGURATION),
             )
         ],

@@ -14,10 +14,10 @@ from src.embedding_client import embedding_client
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
-from src.utils.scopes import validate_no_scope_peer_names
 from src.utils.types import embedding_call_purpose
 from src.vector_store import get_external_vector_store
 
+from .peer import reject_scope_peers
 from .session import get_or_create_session
 
 logger = getLogger(__name__)
@@ -317,8 +317,14 @@ async def create_messages(
     Raises:
         ValidationException: If a message is authored by a scope peer
     """
-    # Scope peers are silent observers — they can never author messages.
-    validate_no_scope_peer_names(
+    # Scope peers are silent observers — they can never author messages. Keyed
+    # off name+flag so a legacy peer merely occupying the reserved namespace
+    # keeps ingesting. Must stay *before* get_or_create_session below: that call
+    # would create the scope peer and add it with a default SessionPeerConfig(),
+    # clobbering its observe_others=True/observe_me=False membership config.
+    await reject_scope_peers(
+        db,
+        workspace_name,
         (message.peer_name for message in messages),
         action="Scope peers cannot author messages.",
     )

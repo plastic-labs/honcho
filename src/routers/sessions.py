@@ -24,7 +24,6 @@ from src.security import JWTParams, require_auth
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils import summarizer
 from src.utils.representation import Representation
-from src.utils.scopes import validate_no_scope_peer_names
 from src.utils.search import search
 from src.utils.tokens import estimate_tokens
 from src.utils.types import embedding_call_purpose
@@ -322,8 +321,8 @@ async def get_or_create_session(
     # Scope peers may not be added through the generic peers mapping; use the
     # `scopes` field (which handles scope-peer creation and observer config).
     if session.peer_names:
-        validate_no_scope_peer_names(
-            session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
+        await crud.reject_scope_peers(
+            db, workspace_id, session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
         )
 
     # Handle session creation with proper error handling
@@ -461,7 +460,9 @@ async def add_peers_to_session(
 
     Scope peers cannot be added here; scope membership is managed via the scopes routes.
     """
-    validate_no_scope_peer_names(peers.keys(), action=_SCOPES_ROUTE_GUIDANCE)
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         result = await crud.get_or_create_session(
             db,
@@ -500,7 +501,9 @@ async def set_session_peers(
 
     Scope peers cannot be set here; scope membership is managed via the scopes routes.
     """
-    validate_no_scope_peer_names(peers.keys(), action=_SCOPES_ROUTE_GUIDANCE)
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.set_peers_for_session(
             db,
@@ -540,7 +543,9 @@ async def remove_peers_from_session(
 
     Scope peers cannot be removed here; scope membership is managed via the scopes routes.
     """
-    validate_no_scope_peer_names(peers, action=_SCOPES_ROUTE_GUIDANCE)
+    await crud.reject_scope_peers(
+        db, workspace_id, peers, action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.remove_peers_from_session(
             db,

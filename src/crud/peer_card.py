@@ -38,7 +38,7 @@ async def get_peer_card(
     Raises:
         ResourceNotFoundException: If the peer does not exist.
     """
-    peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
+    peer = await get_peer(db, workspace_name, observer)
     return cast(
         list[str] | None,
         peer.internal_metadata.get(
@@ -70,7 +70,7 @@ async def set_peer_card(
     """
     # Ensure the peer exists (get-or-create)
     peers_result = await get_or_create_peers(
-        db, workspace_name, [schemas.PeerCreate(name=observer)]
+        db, workspace_name, [schemas.PeerSpec(name=observer)]
     )
 
     stmt = (

@@ -1,8 +1,10 @@
 """CRUD helpers for scopes.
 
 A scope is a named grouping of sessions, implemented as a peer named
-``scope__<name>`` with configuration ``{"kind": "scope", "observe_me": false}``
-that observes its member sessions (``observe_others=true``) and never speaks.
+``scope.<name>`` carrying ``{"kind": "scope"}`` in ``internal_metadata`` (the
+authoritative, user-unwritable flag) and ``{"observe_me": false}`` in
+``configuration``, that observes its member sessions (``observe_others=true``)
+and never speaks.
 See ``src/utils/scopes.py`` for the namespace helpers.
 
 Membership only affects messages ingested *after* a session is added to a
@@ -21,21 +23,29 @@ from src.cache.client import safe_cache_delete
 from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.scopes import (
     SCOPE_KIND,
-    is_scope_peer_configuration,
+    is_scope_peer,
     scope_peer_name,
 )
 from src.utils.types import GetOrCreateResult
 
-from .peer import peer_cache_key
+from .peer import peer_cache_key, scope_peer_clause
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
 
-# Peer-level configuration stamped on every scope peer at creation. `kind` is
-# the authoritative scope flag; `observe_me: false` ensures no representation
-# is ever formed *of* a scope peer.
-SCOPE_PEER_CONFIGURATION: dict[str, str | bool] = {
+# Internal metadata stamped on every scope peer at creation. `kind` is the
+# authoritative scope flag and lives here — NOT in `configuration` — because
+# `configuration` is user-writable (`PeerCreate`/`PeerUpdate` accept a free-form
+# dict, and `update_peer` replaces it wholesale), so a user could forge or clear
+# the flag. `internal_metadata` appears in no API schema at all.
+SCOPE_PEER_INTERNAL_METADATA: dict[str, str] = {
     "kind": SCOPE_KIND,
+}
+
+# Peer-level configuration stamped on every scope peer at creation.
+# `observe_me: false` ensures no representation is ever formed *of* a scope peer.
+# This one stays user-visible: `observe_me` is a legitimate config knob.
+SCOPE_PEER_CONFIGURATION: dict[str, str | bool] = {
     "observe_me": False,
 }
 
@@ -93,7 +103,7 @@ async def get_or_create_scopes(
 
     changed_peers: list[models.Peer] = []
     for existing_peer in existing_peers:
-        if not is_scope_peer_configuration(existing_peer.configuration):
+        if not is_scope_peer(existing_peer.name, existing_peer.internal_metadata):
             raise ConflictException(
                 f"A peer named '{existing_peer.name}' already exists in workspace "
                 + f"{workspace_name} but is not a scope. Rename or delete that "
@@ -113,6 +123,7 @@ async def get_or_create_scopes(
             workspace_name=workspace_name,
             name=name,
             h_metadata=scope_schema.metadata or {},
+            internal_metadata=dict(SCOPE_PEER_INTERNAL_METADATA),
             configuration=dict(SCOPE_PEER_CONFIGURATION),
         )
         for name, scope_schema in peer_names.items()
@@ -161,11 +172,16 @@ async def get_scopes(
     workspace_name: str,
     reverse: bool = False,
 ) -> Select[tuple[models.Peer]]:
-    """Build a scope list query (peers with the scope kind flag) ordered by creation time."""
+    """Build a scope list query, ordered by creation time.
+
+    Requires both halves via ``scope_peer_clause`` (reserved name prefix AND the
+    internal kind flag), so a peer carrying a forged ``configuration`` cannot
+    inject itself into the scope list.
+    """
     stmt = (
         select(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
-        .where(models.Peer.configuration.contains({"kind": SCOPE_KIND}))
+        .where(scope_peer_clause())
     )
     if reverse:
         return stmt.order_by(models.Peer.created_at.desc(), models.Peer.id.desc())
@@ -197,7 +213,7 @@ async def get_scope(
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.Peer.name == scope_peer_name(scope_name))
     )
-    if peer is None or not is_scope_peer_configuration(peer.configuration):
+    if peer is None or not is_scope_peer(peer.name, peer.internal_metadata):
         raise ResourceNotFoundException(
             f"Scope {scope_name} not found in workspace {workspace_name}"
         )
