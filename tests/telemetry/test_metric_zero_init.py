@@ -324,6 +324,30 @@ def test_dropped_counter_children_materialized():
     assert sample("telemetry_events_dropped_total", reason="send_failed") is not None
 
 
+def test_dropped_counter_init_noop_when_metrics_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The per-emitter initializer must no-op when metrics are disabled.
+
+    The enabled/disabled pair above and below this line exists for
+    ``initialize_bounded_metrics`` (see
+    ``test_init_noop_when_metrics_disabled``); without this test the sibling
+    initializer had only the enabled half, so its ``METRICS.ENABLED`` guard
+    could be deleted with the suite staying green. The unique namespace is what
+    makes the absence assertion mean anything — the enabled test above
+    materializes these same two reason values under a different one.
+    """
+    monkeypatch.setattr("src.config.settings.METRICS.ENABLED", False)
+    monkeypatch.setattr(
+        "src.config.settings.METRICS.NAMESPACE", unique_ns("dropped_disabled")
+    )
+    prometheus_metrics.initialize_telemetry_dropped_metrics(
+        reasons=["buffer_full", "send_failed"]
+    )
+    assert sample("telemetry_events_dropped_total", reason="buffer_full") is None
+    assert sample("telemetry_events_dropped_total", reason="send_failed") is None
+
+
 def test_init_noop_when_metrics_disabled(monkeypatch: pytest.MonkeyPatch):
     """With metrics disabled, init must not fabricate series for a fresh label."""
     monkeypatch.setattr("src.config.settings.METRICS.ENABLED", False)
