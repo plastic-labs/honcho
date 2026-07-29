@@ -111,7 +111,7 @@ def test_prompt_representation_conversion():
     rep = Representation.from_prompt_representation(
         pr,
         message_ids=[1],
-        batch_message_ids=[1],
+        prompt_message_ids=[1],
         session_name="s",
         created_at=timestamp,
     )
@@ -135,7 +135,7 @@ def test_mixed_peer_source_indices_resolve_against_prompt_order(
     for message in messages:
         message.created_at = created_at
 
-    formatted_messages, batch_message_ids = _format_messages_for_prompt(messages)
+    formatted_messages, prompt_message_ids = _format_messages_for_prompt(messages)
     prompt_representation = PromptRepresentation(
         explicit=[
             ExplicitObservationBase(
@@ -149,25 +149,22 @@ def test_mixed_peer_source_indices_resolve_against_prompt_order(
         representation = Representation.from_prompt_representation(
             prompt_representation,
             message_ids=[20],
-            batch_message_ids=batch_message_ids,
+            prompt_message_ids=prompt_message_ids,
             session_name="s",
             created_at=created_at,
         )
 
     observation = representation.explicit[0]
     assert observation.source_indices == [0, 1]
-    assert observation.batch_message_ids == [10, 20, 30]
+    assert observation.source_message_ids == [10, 20]
     assert [
         (line[:3], message_id, line.split(": ", 1)[1])
         for message_id, line in zip(
-            batch_message_ids, formatted_messages.splitlines(), strict=True
+            prompt_message_ids, formatted_messages.splitlines(), strict=True
         )
     ] == [
         ("[0]", 10, "Which option?"),
         ("[1]", 20, "The first one"),
         ("[2]", 30, "Got it"),
     ]
-    assert [
-        observation.batch_message_ids[index] for index in observation.source_indices
-    ] == [10, 20]
     assert "Dropping out-of-range source_indices [3]" in caplog.text

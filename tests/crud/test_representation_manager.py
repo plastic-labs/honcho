@@ -483,7 +483,7 @@ class TestRepresentationManagerSave:
             source_indices=[0, 1],
             created_at=datetime.now(timezone.utc),
             message_ids=[20],
-            batch_message_ids=[10, 20],
+            source_message_ids=[10, 20],
             session_name="session",
         )
 
@@ -511,9 +511,11 @@ class TestRepresentationManagerSave:
         assert create_call is not None
         document = create_call.args[1][0]
         assert document.metadata.message_ids == [20]
-        assert document.metadata.batch_message_ids == [10, 20]
+        assert document.metadata.source_message_ids == [10, 20]
         assert document.metadata.source_indices == [0, 1]
-        assert document.metadata.model_dump(exclude_none=True)["batch_message_ids"] == [
+        assert document.metadata.model_dump(exclude_none=True)[
+            "source_message_ids"
+        ] == [
             10,
             20,
         ]

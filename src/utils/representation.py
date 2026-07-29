@@ -85,14 +85,14 @@ class ObservationMetadata(BaseModel):
     id: str = Field(default="", description="Document ID for this observation")
     created_at: datetime
     message_ids: list[int]
-    batch_message_ids: list[int] = Field(
+    source_message_ids: list[int] = Field(
         default_factory=list,
-        description="The full ordered message ID list enumerated in the deriver prompt",
+        description="Canonical citation message IDs resolved from source_indices",
     )
     session_name: str | None = None
     source_indices: list[int] = Field(
         default_factory=list,
-        description="0-based indices into the deriver batch's message list indicating which messages directly support this observation",
+        description="Per-derivation debugging provenance only: 0-based positions in the deriver batch that lose meaning across deduplication merges; source_message_ids is the canonical citation",
     )
 
 
@@ -642,8 +642,8 @@ class Representation(BaseModel):
                     message_ids=flatten_message_ids(
                         doc.internal_metadata.get("message_ids", [])
                     ),
-                    batch_message_ids=doc.internal_metadata.get(
-                        "batch_message_ids", []
+                    source_message_ids=doc.internal_metadata.get(
+                        "source_message_ids", []
                     ),
                     session_name=doc.session_name,
                     source_indices=doc.internal_metadata.get("source_indices", []),
@@ -713,7 +713,7 @@ class Representation(BaseModel):
         cls,
         prompt_representation: "PromptRepresentation",
         message_ids: list[int],
-        batch_message_ids: list[int],
+        prompt_message_ids: list[int],
         session_name: str,
         created_at: datetime,
     ) -> "Representation":
@@ -721,10 +721,12 @@ class Representation(BaseModel):
         explicit_observations: list[ExplicitObservation] = []
         for explicit in prompt_representation.explicit:
             valid_source_indices: list[int] = []
+            source_message_ids: list[int] = []
             invalid_source_indices: list[int] = []
             for source_index in explicit.source_indices:
-                if 0 <= source_index < len(batch_message_ids):
+                if 0 <= source_index < len(prompt_message_ids):
                     valid_source_indices.append(source_index)
+                    source_message_ids.append(prompt_message_ids[source_index])
                 else:
                     invalid_source_indices.append(source_index)
 
@@ -733,7 +735,7 @@ class Representation(BaseModel):
                     "Dropping out-of-range source_indices %s for observation %r; deriver batch contains %d messages",
                     invalid_source_indices,
                     explicit.content,
-                    len(batch_message_ids),
+                    len(prompt_message_ids),
                 )
 
             explicit_observations.append(
@@ -742,7 +744,7 @@ class Representation(BaseModel):
                     source_indices=valid_source_indices,
                     created_at=created_at,
                     message_ids=message_ids,
-                    batch_message_ids=batch_message_ids,
+                    source_message_ids=source_message_ids,
                     session_name=session_name,
                 )
             )
