@@ -129,7 +129,7 @@ async def tool_test_data(
     # Commit so data is visible to independent tracked_db sessions.
     # Tool handlers no longer share the test's db_session — they open
     # their own short-lived sessions via tracked_db.
-    # _truncate_all_tables handles cleanup between tests.
+    # _clear_all_tables handles cleanup between tests.
     await db_session.commit()
 
     yield workspace, peer1, peer2, session, messages, documents
