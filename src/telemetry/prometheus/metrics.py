@@ -432,12 +432,17 @@ class PrometheusMetrics:
         2. service-scoped additive (the token counters,
            ``telemetry_events_emitted``) — each instance holds a partial count
            and ``sum()`` reconstructs the whole, so multi-instance safe.
-        3. service-scoped non-additive — every instance claims to speak for the
-           whole service, so no aggregation is correct once they disagree. A
-           metric in this bucket MUST be refreshed by every instance on its own
-           timer (see ``message_embeddings_pending``, refreshed per replica from
-           ``ReconcilerScheduler._scheduler_loop``), or it does not belong in the
-           app at all — it belongs in an exporter that yields one series.
+        3. service-scoped non-additive — every instance reports the whole
+           service's value, so the instances are N witnesses to one fact rather
+           than N parts of one whole. ``sum()`` is therefore never correct here:
+           it scales with the replica count. Scale-preserving aggregations
+           (``max()``, ``avg()``, quantiles) ARE correct, but only while the
+           witnesses disagree by a bounded amount — which requires every
+           instance to refresh on its own timer (see
+           ``message_embeddings_pending``, refreshed per replica from
+           ``ReconcilerScheduler._scheduler_loop``). A bucket-3 metric that
+           cannot meet that bar does not belong in the app at all — it belongs
+           in an exporter that yields exactly one series.
 
         Prometheus stamps ``instance``/``job`` at scrape time, which is why
         buckets 1 and 2 need no special handling.
