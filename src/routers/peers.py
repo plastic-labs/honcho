@@ -30,7 +30,11 @@ from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
 from src.utils.filter import extract_session_allowlist
 from src.utils.schema_conversion import json_response_schema_to_pydantic
-from src.utils.scopes import is_scope_peer_name, validate_no_scope_peer_names
+from src.utils.scopes import (
+    is_scope_peer,
+    is_scope_peer_name,
+    validate_no_scope_peer_names,
+)
 from src.utils.search import search
 from src.utils.types import embedding_call_purpose
 
@@ -138,16 +142,13 @@ async def update_peer(
 ):
     """Update a Peer's metadata and/or configuration.
 
-    Three-way on the reserved namespace: a real scope is refused here (this route
-    replaces `configuration` wholesale, so it must never touch a facade-managed
-    peer); an existing *unflagged* peer that merely occupies the namespace is a
-    normal peer and updates fine; and a reserved-prefix name that does not exist
-    is refused by ``get_or_create_peers``' create-path validation rather than
-    being minted.
+    Three-way on the reserved namespace, all enforced inside ``crud.update_peer``
+    on the resolved row so there is no check-then-use window: a real scope is
+    refused (this route replaces `configuration` wholesale, so it must never touch
+    a facade-managed peer); an existing *unflagged* peer that merely occupies the
+    namespace is a normal peer and updates fine; and a reserved-prefix name that
+    does not exist is refused by create-path validation rather than being minted.
     """
-    await crud.reject_scope_peers(
-        db, workspace_id, [peer_id], action="Use the scopes routes to manage scopes."
-    )
     updated_peer = await crud.update_peer(
         db, workspace_name=workspace_id, peer_name=peer_id, peer=peer
     )
@@ -279,6 +280,15 @@ async def chat(
             workspace_name=workspace_id,
             peers=[schemas.PeerSpec(name=peer_id)],
         )
+        # Re-check on the resolved row: the name-level check above ran before the
+        # peer was resolved, so a scope created in between would be picked up here
+        # as existing and used as the chat observer.
+        observer = peers_result.resource[0]
+        if is_scope_peer(observer.name, observer.internal_metadata):
+            raise ValidationException(
+                "No representation is formed of a scope, so a scope cannot be a "
+                + "chat observer or target."
+            )
         await peer_db.commit()
     await peers_result.post_commit()
 

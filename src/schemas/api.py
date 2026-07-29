@@ -179,9 +179,16 @@ class PeerSpec(PeerBase):
     author, an existing row — including pre-``d429de0e5338`` legacy names containing
     '.' and every ``scope.``-prefixed peer name. Re-validating those turns a lookup
     into a raw pydantic ValidationError, i.e. an HTTP 500.
+
+    Carries **no** constraints at all, deliberately. Length limits here were the
+    same trap as the charset pattern: request-bound peer names (message authors,
+    session peer-map keys) have no length bound of their own, so an empty or
+    over-long name reached ``PeerSpec(...)`` and raised internally — again a 500.
+    Every rule for a *new* name lives in ``crud.peer._validate_new_peer_names``,
+    which runs on the insert path only.
     """
 
-    name: Annotated[str, Field(min_length=1, max_length=512)]
+    name: str
     metadata: _SanitizedMetadata | None = None
     configuration: dict[str, Any] | None = None
 

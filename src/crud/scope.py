@@ -353,4 +353,6 @@ async def remove_session_from_scope(
         workspace_name=workspace_name,
         session_name=session_name,
         peer_names={scope_peer_name(scope_name)},
+        # This *is* the supported path for ending scope membership.
+        _allow_scope_peers=True,
     )

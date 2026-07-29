@@ -28,6 +28,9 @@ from src.utils.types import GetOrCreateResult
 
 logger = getLogger(__name__)
 
+# Matches the peers.name CHECK constraint and PeerCreate's max_length.
+PEER_NAME_MAX_LENGTH = 512
+
 PEER_CACHE_KEY_TEMPLATE = "v2:workspace:{workspace_name}:peer:{peer_name}"
 PEER_LOCK_PREFIX = f"{get_cache_namespace()}:lock:v2"
 
@@ -58,6 +61,12 @@ def _validate_new_peer_names(names: list[str]) -> None:
     scopes_util.validate_no_scope_peer_names(
         names, action="Use the scopes routes to create scopes."
     )
+    too_long = sorted({n for n in names if len(n) > PEER_NAME_MAX_LENGTH})
+    if too_long:
+        raise ValidationException(
+            f"Peer name(s) must be at most {PEER_NAME_MAX_LENGTH} characters"
+        )
+    # RESOURCE_NAME_PATTERN's `+` already rejects the empty name.
     offenders = sorted({n for n in names if not re.fullmatch(RESOURCE_NAME_PATTERN, n)})
     if offenders:
         raise ValidationException(
@@ -385,6 +394,17 @@ async def update_peer(
         db, workspace_name, [schemas.PeerSpec(name=peer_name)]
     )
     honcho_peer = peers_result.resource[0]
+
+    # Refuse a real scope on the row just resolved, not on the name beforehand:
+    # this route replaces `configuration` wholesale, and a name-level check leaves
+    # a window in which a concurrently-created scope is resolved as existing (so
+    # create-path validation never fires) and then overwritten. An existing
+    # *unflagged* peer in the reserved namespace is an ordinary peer and passes.
+    if scopes_util.is_scope_peer(honcho_peer.name, honcho_peer.internal_metadata):
+        raise ValidationException(
+            f"Peer '{peer_name}' is a scope."
+            + " Use the scopes routes to manage scopes."
+        )
 
     needs_update = False
 

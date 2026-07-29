@@ -34,7 +34,7 @@ from src.utils.scopes import is_scope_peer, scope_peer_name
 from src.utils.types import GetOrCreateResult
 from src.vector_store import get_external_vector_store
 
-from .peer import get_or_create_peers, get_peer
+from .peer import get_or_create_peers, get_peer, reject_scope_peers
 from .scope import SCOPE_MEMBERSHIP_CONFIG, get_or_create_scopes
 from .workspace import get_or_create_workspace
 
@@ -822,6 +822,8 @@ async def remove_peers_from_session(
     workspace_name: str,
     session_name: str,
     peer_names: set[str],
+    *,
+    _allow_scope_peers: bool = False,
 ) -> bool:
     """
     Remove specified peers from a session.
@@ -831,15 +833,31 @@ async def remove_peers_from_session(
         workspace_name: Name of the workspace
         session_name: Name of the session
         peer_names: Set of peer names to remove from the session
+        _allow_scope_peers: Internal. Set only by the scopes facade, which ends
+            scope membership through this same path and must not be blocked by
+            the guard below.
 
     Returns:
         True if peers were removed successfully
 
     Raises:
         ResourceNotFoundException: If the session does not exist
+        ValidationException: If any named peer is a scope
     """
     # Verify session exists
     await get_session(db, session_name, workspace_name)
+
+    # Scope membership is ended through the scopes routes, which also reconcile
+    # the scope's copies. Checked here rather than in the route so it is adjacent
+    # to the UPDATE below, leaving no window for a concurrently-created scope to
+    # be silently detached from its sessions.
+    if not _allow_scope_peers:
+        await reject_scope_peers(
+            db,
+            workspace_name,
+            peer_names,
+            action="Scope membership is managed via the scopes routes.",
+        )
 
     # Soft delete specified session peers by setting left_at timestamp
     update_stmt = (
@@ -1227,10 +1245,18 @@ async def set_peer_config(
 
     Raises:
         ObserverException: If the update would exceed the observer limit
+        ValidationException: If the peer is a scope
     """
     # First, get the session and peer to ensure they exist
     await get_session(db, session_name, workspace_name)
-    await get_peer(db, workspace_name, peer_name)
+    peer = await get_peer(db, workspace_name, peer_name)
+
+    # A scope's membership config is the facade's, not the caller's: setting
+    # observe_others=false silently stops all fan-out into the scope, and
+    # observe_me=true makes Honcho form a representation *of* a scope, which
+    # never happens by design. Checked on the row just resolved above, so there
+    # is no check-then-use window and no extra query.
+    _reject_resolved_scope_peers([peer])
 
     # Check if a SessionPeer entry already exists
     stmt = (

@@ -965,3 +965,109 @@ async def test_resolved_scope_peer_rejected_at_membership_upsert(
             ),
             workspace_name=test_workspace.name,
         )
+
+
+def test_set_peer_config_cannot_disable_a_scope(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A scope's membership config belongs to the facade, not the caller.
+
+    `observe_others=false` would silently stop all fan-out into the scope, and
+    `observe_me=true` would make Honcho form a representation *of* a scope.
+    """
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    backing = scope_peer_name(scope_name)
+    session_name = _create_session(client, test_workspace.name)
+    assert (
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
+            json={"session_ids": [session_name]},
+        ).status_code
+        == 200
+    )
+
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers/{backing}/config",
+        json={"observe_others": False, "observe_me": True},
+    )
+    assert response.status_code == 422, response.text
+
+    # Observer semantics intact
+    current = client.get(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers/{backing}/config"
+    )
+    assert current.status_code == 200
+    assert current.json() == {"observe_me": False, "observe_others": True}
+
+
+async def test_unflagged_squatter_config_still_settable(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """The set_peer_config guard is flag-based, so a squatter is unaffected."""
+    test_workspace, _ = sample_data
+    squatter = scope_peer_name(str(generate_nanoid()))
+    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
+    await db_session.commit()
+
+    session_name = _create_session(client, test_workspace.name)
+    assert (
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+            json={squatter: {}},
+        ).status_code
+        == 200
+    )
+
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers/{squatter}/config",
+        json={"observe_others": False, "observe_me": True},
+    )
+    assert response.status_code == 204, response.text
+
+
+def test_generic_session_remove_cannot_detach_a_scope(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Scope membership must end through the scopes routes, which reconcile."""
+    test_workspace, _ = sample_data
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    session_name = _create_session(client, test_workspace.name)
+    assert (
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
+            json={"session_ids": [session_name]},
+        ).status_code
+        == 200
+    )
+
+    response = client.request(
+        "DELETE",
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+        json=[scope_peer_name(scope_name)],
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("bad_name", ["", "a" * 513])
+def test_degenerate_peer_names_are_422_not_500(
+    client: TestClient, sample_data: tuple[Workspace, Peer], bad_name: str
+):
+    """Empty and over-long author names must not reach PeerSpec and 500.
+
+    Request-bound peer names carry no length bound of their own, so these used to
+    raise a raw pydantic ValidationError inside crud, which the catch-all handler
+    turned into a 500.
+    """
+    test_workspace, _ = sample_data
+    session_name = _create_session(client, test_workspace.name)
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
+        json={"messages": [{"peer_id": bad_name, "content": "hello"}]},
+    )
+    assert response.status_code == 422, response.text
