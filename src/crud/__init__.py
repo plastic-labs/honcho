@@ -39,6 +39,7 @@ from .peer import (
     get_peer,
     get_peers,
     get_sessions_for_peer,
+    reject_scope_observed,
     reject_scope_peers,
     update_peer,
 )
@@ -123,6 +124,7 @@ __all__ = [
     # Peer
     "get_or_create_peers",
     "get_peer",
+    "reject_scope_observed",
     "reject_scope_peers",
     "get_peers",
     "update_peer",

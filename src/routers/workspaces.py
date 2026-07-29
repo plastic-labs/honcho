@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import db, read_db, tracked_db
+from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion, enqueue_dream
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
@@ -225,21 +225,9 @@ async def schedule_dream(
     observed = request.observed if request.observed is not None else request.observer
     dream_type = request.dream_type
 
-    # A scope is a legitimate dream *observer* — the Dreamer consolidates scoped
-    # collections — but never the observed: no representation is formed of a scope,
-    # so such a dream would build knowledge about one.
-    async with tracked_db(
-        "workspaces.schedule_dream.scope_check", read_only=True
-    ) as db:
-        await crud.reject_scope_peers(
-            db,
-            workspace_id,
-            [observed],
-            action=(
-                "No representation is formed of a scope, so a scope cannot be the"
-                " observed peer of a dream."
-            ),
-        )
+    # The authoritative observed-position check lives in enqueue_dream, in the same
+    # transaction as the queue insert. Nothing expensive happens before it here, so
+    # no early duplicate is needed.
 
     await enqueue_dream(
         workspace_id,

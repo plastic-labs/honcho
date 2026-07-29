@@ -73,6 +73,18 @@ async def get_or_create_scopes(
     Note: does not commit; the caller owns the transaction (mirror of
     ``get_or_create_peers``). Run ``result.post_commit()`` after committing.
 
+    Deliberately does NOT scan for pre-existing state naming the backing peer
+    (peer-card keys, pending dream queue items). ``reject_scope_observed`` now
+    refuses writes against a not-yet-existing reserved name, so no new such state
+    can be created; only data written before that guard existed could collide, and
+    since ``scope.`` was never a meaningful namespace then, any such row is
+    coincidental. The consequence would also be inert — a card or queue item
+    describing a scope, which nothing reads, because no representation is formed of
+    a scope. Detecting card keys means scanning every peer's ``internal_metadata``
+    for a label containing this name, i.e. a full table scan per scope creation:
+    disproportionate to that risk. Revisit if scope names ever become guessable
+    across tenants.
+
     Args:
         db: Database session
         workspace_name: Name of the workspace

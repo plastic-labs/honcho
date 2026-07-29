@@ -59,6 +59,7 @@ _PEER_PARAM_NAMES = {
     "observer_id",
     "observed",
     "observed_id",
+    "sender_id",
     "target",
     "peer_target",
     "peer_perspective",
@@ -91,6 +92,9 @@ class Case:
     schema_level: bool = False
     # Set when the squatter direction cannot be asserted here, with why.
     skip_squatter: str = ""
+    # ALLOW cases only: builder plus the status a real scope must receive, so the
+    # suite proves legitimate observer positions keep working.
+    allow_status: tuple[int, ...] = ()
     _: tuple[()] = field(default=(), repr=False)
 
     @property
@@ -197,6 +201,53 @@ def _b_remove_peers(c: TestClient, ws: str, s: str, p: str):
     return c.request("DELETE", f"/v3/workspaces/{ws}/sessions/{s}/peers", json=[p])
 
 
+def _b_conclusion_observer(c: TestClient, ws: str, _s: str, p: str):
+    return c.post(
+        f"/v3/workspaces/{ws}/conclusions",
+        json={
+            "conclusions": [
+                {
+                    "observer_id": p,
+                    "observed_id": _OTHER,
+                    "content": "something",
+                    "level": "explicit",
+                }
+            ]
+        },
+    )
+
+
+def _b_dream_observer(c: TestClient, ws: str, _s: str, p: str):
+    return c.post(
+        f"/v3/workspaces/{ws}/schedule_dream",
+        json={"observer": p, "observed": _OTHER, "dream_type": "omni"},
+    )
+
+
+def _b_card_observer_put(c: TestClient, ws: str, _s: str, p: str):
+    return c.put(
+        f"/v3/workspaces/{ws}/peers/{p}/card?target={_OTHER}",
+        json={"peer_card": ["note"]},
+    )
+
+
+def _b_card_observer_get(c: TestClient, ws: str, _s: str, p: str):
+    return c.get(f"/v3/workspaces/{ws}/peers/{p}/card?target={_OTHER}")
+
+
+def _b_context_perspective(c: TestClient, ws: str, s: str, p: str):
+    query = f"?peer_perspective={p}&peer_target={_OTHER}"
+    return c.get(f"/v3/workspaces/{ws}/sessions/{s}/context{query}")
+
+
+def _b_queue_status_observer(c: TestClient, ws: str, _s: str, p: str):
+    return c.get(f"/v3/workspaces/{ws}/queue/status?observer_id={p}")
+
+
+def _b_queue_status_sender(c: TestClient, ws: str, _s: str, p: str):
+    return c.get(f"/v3/workspaces/{ws}/queue/status?sender_id={p}")
+
+
 def _b_peer_config(c: TestClient, ws: str, s: str, p: str):
     return c.put(
         f"/v3/workspaces/{ws}/sessions/{s}/peers/{p}/config",
@@ -240,18 +291,72 @@ POLICY: tuple[Case, ...] = (
         build=_b_session_context_target,
     ),
     # ---- observer position: legitimately a scope ----
-    Case("POST", f"{_W}/conclusions", "observer_id", False, reason=_OBSERVER_OK),
-    Case("POST", f"{_W}/schedule_dream", "observer", False, reason=_OBSERVER_OK),
-    Case("PUT", f"{_W}/peers/{{peer_id}}/card", "peer_id", False, reason=_OBSERVER_OK),
-    Case("GET", f"{_W}/peers/{{peer_id}}/card", "peer_id", False, reason=_OBSERVER_OK),
+    Case(
+        "POST",
+        f"{_W}/conclusions",
+        "observer_id",
+        False,
+        reason=_OBSERVER_OK,
+        build=_b_conclusion_observer,
+        allow_status=(200, 201),
+    ),
+    Case(
+        "POST",
+        f"{_W}/schedule_dream",
+        "observer",
+        False,
+        reason=_OBSERVER_OK,
+        build=_b_dream_observer,
+        allow_status=(204,),
+    ),
+    Case(
+        "PUT",
+        f"{_W}/peers/{{peer_id}}/card",
+        "peer_id",
+        False,
+        reason=_OBSERVER_OK,
+        build=_b_card_observer_put,
+        allow_status=(200,),
+    ),
+    Case(
+        "GET",
+        f"{_W}/peers/{{peer_id}}/card",
+        "peer_id",
+        False,
+        reason=_OBSERVER_OK,
+        build=_b_card_observer_get,
+        allow_status=(200,),
+    ),
     Case(
         "GET",
         f"{_W}/sessions/{{session_id}}/context",
         "peer_perspective",
         False,
         reason=_OBSERVER_OK,
+        build=_b_context_perspective,
+        allow_status=(200,),
     ),
-    Case("GET", f"{_W}/queue/status", "observer_id", False, reason=_OBSERVER_OK),
+    Case(
+        "GET",
+        f"{_W}/queue/status",
+        "observer_id",
+        False,
+        reason=_OBSERVER_OK,
+        build=_b_queue_status_observer,
+        allow_status=(200,),
+    ),
+    Case(
+        "GET",
+        f"{_W}/queue/status",
+        "sender_id",
+        False,
+        reason=(
+            "Filter only. `sender_id` reaches CRUD as `observed`, but it selects "
+            "existing queue rows rather than creating knowledge about a peer."
+        ),
+        build=_b_queue_status_sender,
+        allow_status=(200,),
+    ),
     # ---- peer identity / membership mutation: never a scope ----
     Case(
         "POST",
@@ -499,11 +604,18 @@ def test_policy_entries_are_well_formed():
             assert case.build is not None, f"{case.key} refuses but has no builder"
             assert not case.reason, f"{case.key} refuses; reason is for allow cases"
         else:
-            assert case.build is None, f"{case.key} allows but has a builder"
             assert len(case.reason.strip()) > 30, f"{case.key} needs a real reason"
+            assert bool(case.build) == bool(case.allow_status), (
+                f"{case.key}: an allow case needs a builder and an expected "
+                "allow_status together, or neither"
+            )
 
 
 _REFUSING = tuple(case for case in POLICY if case.refuse)
+# Allow cases that additionally prove, behaviorally, that a real scope works here.
+_ALLOWING_EXERCISED = tuple(
+    case for case in POLICY if not case.refuse and case.build is not None
+)
 
 
 def _setup(client: TestClient, workspace: str) -> tuple[str, str]:
@@ -561,6 +673,48 @@ def test_refusing_position_rejects_a_real_scope(
             f"{case.key} returned 422 but not because of the scope; "
             f"detail: {detail[:200]}"
         )
+
+
+@pytest.mark.parametrize(
+    "case", _ALLOWING_EXERCISED, ids=lambda c: f"{c.method}:{c.position}"
+)
+def test_allowing_position_accepts_a_real_scope(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    case: Case,
+):
+    """A real scope works in every position marked ALLOW.
+
+    The other half of the contract. Refusal tests alone would be satisfied by a
+    guard that rejected scopes everywhere, which would break the feature: scoped
+    conclusions, scoped dreams and scoped peer cards all require a scope in the
+    observer position.
+    """
+    test_workspace, _ = sample_data
+    session_name, scope_name = _setup(client, test_workspace.name)
+    assert (
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/scopes", json={"id": scope_name}
+        ).status_code
+        == 201
+    )
+    backing = scope_peer_name(scope_name)
+    assert (
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
+            json={"session_ids": [session_name]},
+        ).status_code
+        == 200
+    )
+
+    assert case.build is not None
+    result = case.build(client, test_workspace.name, session_name, backing)
+    status = getattr(result, "status_code", None)
+    assert status in case.allow_status, (
+        f"{case.method} {case.path} refused a scope in the legitimate position "
+        f"{case.position!r}: expected {case.allow_status}, got {status} — "
+        f"{getattr(result, 'text', '')[:200]}"
+    )
 
 
 @pytest.mark.parametrize(

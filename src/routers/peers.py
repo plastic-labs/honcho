@@ -371,8 +371,10 @@ async def get_representation(
     If a target is provided, we get the Representation of the target from the perspective of the Peer.
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
-    # Scope peers are never observed, so no representation of them exists.
-    # Covers the path-level observer as well as the target.
+    # Fast-fail before any embedding work. Same guard as the authoritative one
+    # below, so a reserved name is refused here rather than after paying for an
+    # embedding; the check is repeated at the read because this session closes and
+    # a scope could be created in between.
     scope_candidates = [
         n for n in (peer_id, options.target) if n is not None and is_scope_peer_name(n)
     ]
@@ -380,7 +382,7 @@ async def get_representation(
         async with tracked_db(
             "peers.representation.scope_check", read_only=True
         ) as s_db:
-            await crud.reject_scope_peers(
+            await crud.reject_scope_observed(
                 s_db,
                 workspace_id,
                 scope_candidates,
@@ -409,26 +411,47 @@ async def get_representation(
             ):
                 embedding = await embedding_client.embed(options.search_query)
 
-        # If no target specified, get global representation (omniscient Honcho perspective)
-        representation = await crud.get_working_representation(
-            workspace_id,
-            observer=peer_id,
-            observed=options.target if options.target is not None else peer_id,
-            session_allowlist=[options.session_id]
-            if options.session_id is not None
-            else session_allowlist,
-            include_semantic_query=options.search_query,
-            embedding=embedding,
-            semantic_search_top_k=options.search_top_k,
-            semantic_search_max_distance=options.search_max_distance,
-            include_most_derived=options.include_most_frequent
-            if options.include_most_frequent is not None
-            else False,
-            max_observations=options.max_conclusions
-            if options.max_conclusions is not None
-            else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
-            parent_category="api",
-        )
+        observed = options.target if options.target is not None else peer_id
+        # Re-check and read in one short session, opened only now — after the
+        # embedding call above, so no connection is held across external work.
+        # The early check ran in a session that has since closed and, being
+        # name-based, also passed any reserved name that did not yet exist; a scope
+        # created in between would otherwise be used here. Sharing the session with
+        # the read means a scope committed after this check cannot have any
+        # conclusions in the collection the read then examines.
+        async with tracked_db(
+            "peers.representation.read", read_only=True
+        ) as read_session:
+            await crud.reject_scope_observed(
+                read_session,
+                workspace_id,
+                {peer_id, observed},
+                action=(
+                    "No representation is formed of a scope, so a scope cannot be"
+                    " a representation observer or target."
+                ),
+            )
+            # If no target specified, this is the global (omniscient) representation
+            representation = await crud.get_working_representation(
+                workspace_id,
+                db=read_session,
+                observer=peer_id,
+                observed=observed,
+                session_allowlist=[options.session_id]
+                if options.session_id is not None
+                else session_allowlist,
+                include_semantic_query=options.search_query,
+                embedding=embedding,
+                semantic_search_top_k=options.search_top_k,
+                semantic_search_max_distance=options.search_max_distance,
+                include_most_derived=options.include_most_frequent
+                if options.include_most_frequent is not None
+                else False,
+                max_observations=options.max_conclusions
+                if options.max_conclusions is not None
+                else settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
+                parent_category="api",
+            )
         return schemas.RepresentationResponse(
             representation=representation.format_as_markdown()
         )
@@ -494,19 +517,10 @@ async def set_peer_card(
     # If no target specified, set the observer's own card
     observed = target if target is not None else peer_id
 
-    # A scope may be the *observer* of a card — the Dreamer writes (scope, observed)
-    # cards, which is how scoped peer cards exist — but never the observed. With no
-    # target, observed collapses to peer_id, so this also refuses a scope's self-card.
-    await crud.reject_scope_peers(
-        db,
-        workspace_id,
-        [observed],
-        action=(
-            "No representation is formed of a scope, so a scope cannot be the"
-            " subject of a peer card."
-        ),
-    )
-
+    # The scope guard lives in crud.set_peer_card, in the same transaction as the
+    # JSONB write, so the Dreamer and agent-tool paths are covered too. Nothing
+    # expensive happens between here and there, so a duplicate early check would
+    # only cost an extra query.
     await crud.set_peer_card(
         db,
         workspace_id,

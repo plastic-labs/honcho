@@ -1048,13 +1048,27 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Soft delete specified session peers by setting left_at timestamp
+    # Soft delete every *ordinary* active membership. Scope memberships are
+    # deliberately preserved: this route replaces the peers the caller names, and a
+    # caller detaches a scope by simply *omitting* it from an otherwise valid
+    # replacement map — never naming it, so no request-level guard can see it.
+    # Without the exclusion a plain replacement silently bypasses the facade that
+    # owns scope membership and its removal reconciliation. Being part of the
+    # UPDATE, this holds regardless of the request body or concurrent scope
+    # creation.
     update_stmt = (
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only update active peers
+            ~exists(
+                select(models.Peer.id)
+                .where(models.Peer.workspace_name == workspace_name)
+                .where(models.Peer.name == models.SessionPeer.peer_name)
+                .where(scope_peer_clause())
+                .correlate(models.SessionPeer)
+            ),
         )
         .values(left_at=func.now())
     )

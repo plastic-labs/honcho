@@ -1,7 +1,7 @@
 """CRUD helpers for peer records and peer-scoped session queries."""
 
 import re
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from logging import getLogger
 from typing import Any, Literal
 
@@ -47,7 +47,7 @@ def peer_cache_key(workspace_name: str, peer_name: str) -> str:
     )
 
 
-def _reject_impossible_peer_names(names: Iterable[str]) -> None:
+def _reject_impossible_peer_names(names: Collection[str]) -> None:
     """Reject names that cannot correspond to any stored row, before querying.
 
     ``PeerSpec`` accepts anything so existing names can be looked up, and the
@@ -59,6 +59,10 @@ def _reject_impossible_peer_names(names: Iterable[str]) -> None:
       during the lookup itself, surfacing as a 500.
     - Over-length names: the ``peers.name`` CHECK caps them at
       ``PEER_NAME_MAX_LENGTH``, so no stored row can exceed it.
+
+    Takes a ``Collection`` rather than an ``Iterable`` on purpose: it inspects the
+    input twice, so a generator would be half-consumed and the second check would
+    silently see nothing.
 
     Raises:
         ValidationException: On a NUL byte or an over-length name.
@@ -113,6 +117,82 @@ def scope_peer_clause() -> ColumnElement[bool]:
     )
 
 
+async def _reserved_name_candidates(names: Iterable[str]) -> list[str]:
+    """Materialize ``names`` once and return the reserved-prefix ones, sorted.
+
+    Materializing up front matters: callers pass generators (the message-author
+    path does), and validating impossible names iterates the input separately from
+    the prefix filter — a generator would be silently half-consumed.
+
+    Impossible values are refused here, before any SQL, because a reserved-prefix
+    name containing a NUL byte would otherwise reach the text comparison below and
+    raise ``psycopg.DataError`` inside the query — a 500 instead of the 422 the
+    caller should get.
+
+    Raises:
+        ValidationException: On a NUL byte or an over-length name.
+    """
+    materialized = tuple(names)
+    _reject_impossible_peer_names(materialized)
+    return sorted({n for n in materialized if scopes_util.is_scope_peer_name(n)})
+
+
+async def reject_scope_observed(
+    db: AsyncSession,
+    workspace_name: str,
+    names: Iterable[str],
+    *,
+    action: str,
+) -> None:
+    """Reject any name that is — or could later become — an observed scope.
+
+    Stricter than ``reject_scope_peers`` in exactly one case: a **missing**
+    reserved name is refused. Use this for the *observed* position, where nothing
+    creates the peer and so nothing else would ever catch it. Without it a caller
+    can pre-seed state about ``scope.future`` while that peer does not exist, then
+    create the scope and have the state retroactively describe it.
+
+    Three-way on the reserved namespace:
+
+    ==============================  ======
+    State                           Result
+    ==============================  ======
+    Existing flagged scope          reject
+    Missing reserved name           reject
+    Existing unflagged squatter     allow
+    ==============================  ======
+
+    Non-reserved names are left entirely to the caller's own existence semantics.
+
+    Raises:
+        ValidationException: On a real scope or a missing reserved name.
+    """
+    candidates = await _reserved_name_candidates(names)
+    if not candidates:
+        return
+
+    rows = (
+        await db.execute(
+            select(models.Peer.name, scope_peer_clause())
+            .where(models.Peer.workspace_name == workspace_name)
+            .where(models.Peer.name.in_(candidates))
+        )
+    ).all()
+    flagged = {name for name, is_scope in rows if is_scope}
+    existing = {name for name, _ in rows}
+
+    scopes = sorted(flagged)
+    if scopes:
+        raise ValidationException(f"Peer name(s) {scopes} are scopes. {action}")
+
+    missing = sorted(set(candidates) - existing)
+    if missing:
+        raise ValidationException(
+            f"Peer name(s) {missing} are in the reserved scope namespace and do"
+            + f" not exist, so they may become scopes later. {action}"
+        )
+
+
 async def reject_scope_peers(
     db: AsyncSession,
     workspace_name: str,
@@ -127,13 +207,17 @@ async def reject_scope_peers(
     ``d429de0e5338``, so ``scope.production`` is a possible user name) keeps
     working normally instead of being locked out of its own data.
 
+    A *missing* reserved name passes here — the create paths this guards
+    (`get_or_create_peers`) refuse it themselves. Positions where nothing creates
+    the peer need ``reject_scope_observed`` instead.
+
     Costs nothing on the common path: with no reserved-prefix name in ``names``
     there is no query at all.
 
     Raises:
         ValidationException: If any name resolves to a real scope peer.
     """
-    candidates = sorted({n for n in names if scopes_util.is_scope_peer_name(n)})
+    candidates = await _reserved_name_candidates(names)
     if not candidates:
         return
 

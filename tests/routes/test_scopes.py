@@ -1071,3 +1071,264 @@ def test_degenerate_peer_names_are_422_not_500(
         json={"messages": [{"peer_id": bad_name, "content": "hello"}]},
     )
     assert response.status_code == 422, response.text
+
+
+# ---------------------------------------------------------------------------
+# Observed-position and pre-seeding guards. A scope may be an observer but must
+# never be observed — and "observed" includes a reserved name that does not yet
+# exist, since nothing on these paths creates the peer and the state would
+# retroactively describe the scope once created.
+# ---------------------------------------------------------------------------
+
+
+def test_generic_replacement_preserves_scope_membership(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """`PUT /sessions/{id}/peers` replaces ordinary peers, never scopes.
+
+    The guard cannot key off the request body: a caller detaches a scope by simply
+    *omitting* it from an otherwise valid replacement map, never naming it.
+    """
+    test_workspace, test_peer = sample_data
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    session_name = _create_session(client, test_workspace.name)
+    assert (
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
+            json={"session_ids": [session_name]},
+        ).status_code
+        == 200
+    )
+
+    # Replacement naming only an ordinary peer must succeed...
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+        json={test_peer.name: {}},
+    )
+    assert response.status_code == 200, response.text
+
+    # ...while leaving the scope's membership intact.
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions"
+    )
+    assert response.status_code == 200
+    assert response.json()["session_ids"] == [session_name]
+
+
+def test_empty_replacement_preserves_scope_membership(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """An empty replacement map clears ordinary peers but not scopes."""
+    test_workspace, test_peer = sample_data
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    session_name = _create_session(client, test_workspace.name)
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+        json={test_peer.name: {}},
+    )
+    client.post(
+        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
+        json={"session_ids": [session_name]},
+    )
+
+    assert (
+        client.put(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+            json={},
+        ).status_code
+        == 200
+    )
+
+    response = client.get(
+        f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions"
+    )
+    assert response.json()["session_ids"] == [session_name]
+
+
+async def test_replacement_still_removes_unflagged_squatter(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """The preservation is flag-based: a squatter keeps ordinary semantics."""
+    test_workspace, test_peer = sample_data
+    squatter = scope_peer_name(str(generate_nanoid()))
+    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
+    await db_session.commit()
+
+    session_name = _create_session(client, test_workspace.name)
+    assert (
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+            json={squatter: {}},
+        ).status_code
+        == 200
+    )
+
+    assert (
+        client.put(
+            f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+            json={test_peer.name: {}},
+        ).status_code
+        == 200
+    )
+    session_peer = await _get_session_peer(
+        db_session, test_workspace.name, session_name, squatter
+    )
+    assert session_peer is not None
+    assert session_peer.left_at is not None, "squatter should be replaced normally"
+
+
+def test_peer_card_cannot_be_preseeded_for_a_future_scope(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A card keyed on a not-yet-existing reserved name is refused.
+
+    Only the observer is resolved when writing a card, so without this the card
+    persists and starts describing a real scope the moment one is created.
+    """
+    test_workspace, test_peer = sample_data
+    future = str(generate_nanoid())
+
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}"
+        + f"/card?target={scope_peer_name(future)}",
+        json={"peer_card": ["pre-seeded"]},
+    )
+    assert response.status_code == 422, response.text
+
+    # And the scope name is still free to create
+    assert _create_scope(client, test_workspace.name, future).status_code == 201
+
+
+async def test_peer_card_target_squatter_still_allowed(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """An existing unflagged squatter remains a valid card subject."""
+    test_workspace, test_peer = sample_data
+    squatter = scope_peer_name(str(generate_nanoid()))
+    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
+    await db_session.commit()
+
+    response = client.put(
+        f"/v3/workspaces/{test_workspace.name}/peers/{test_peer.name}"
+        + f"/card?target={squatter}",
+        json={"peer_card": ["ordinary"]},
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_set_peer_card_guard_covers_internal_callers(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """The guard is in crud, so Dreamer and agent-tool paths are covered too."""
+    test_workspace, test_peer = sample_data
+    with pytest.raises(ValidationException):
+        await crud.set_peer_card(
+            db_session,
+            test_workspace.name,
+            peer_card=["x"],
+            observer=test_peer.name,
+            observed=scope_peer_name(str(generate_nanoid())),
+        )
+
+
+async def test_dream_cannot_be_queued_for_a_future_scope(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """A dream naming a not-yet-existing reserved observed peer is refused.
+
+    The route's own precheck cannot catch this — the peer is not flagged yet — so
+    the check has to sit in the transaction that inserts the queue item.
+    """
+    test_workspace, test_peer = sample_data
+    future = scope_peer_name(str(generate_nanoid()))
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/schedule_dream",
+        json={"observer": test_peer.name, "observed": future, "dream_type": "omni"},
+    )
+    assert response.status_code == 422, response.text
+
+    # No queue row was inserted for it
+    items = (
+        await db_session.execute(
+            select(QueueItem).where(QueueItem.work_unit_key.contains(future))
+        )
+    ).all()
+    assert not items
+
+
+async def test_enqueue_dream_guard_covers_internal_callers(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Direct enqueue_dream calls enforce the same invariant as the route."""
+    from src.deriver.enqueue import enqueue_dream
+    from src.schemas.configuration import DreamType
+
+    test_workspace, test_peer = sample_data
+    scope_name = str(generate_nanoid())
+    await db_session.commit()
+
+    with pytest.raises(ValidationException):
+        await enqueue_dream(
+            test_workspace.name,
+            observer=test_peer.name,
+            observed=scope_peer_name(scope_name),
+            dream_type=DreamType.OMNI,
+        )
+
+
+def test_prefixed_nul_name_is_422_not_500(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A reserved-prefix name containing NUL must not reach a text comparison.
+
+    It passes the request schemas and PeerSpec, so without pre-SQL rejection it
+    reaches psycopg inside the scope lookup and raises DataError — a 500.
+    """
+    test_workspace, _ = sample_data
+    session_name = _create_session(client, test_workspace.name)
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/messages",
+        json={"messages": [{"peer_id": "scope.future\x00name", "content": "hi"}]},
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_representation_rechecks_after_early_check(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """The representation read refuses a reserved name that could become a scope.
+
+    The early name check passes anything not yet flagged, and the read happens in
+    a later session — so a reserved name that does not exist yet must be refused
+    rather than left to become a scope before the read.
+    """
+    test_workspace, _ = sample_data
+    future = scope_peer_name(str(generate_nanoid()))
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{future}/representation", json={}
+    )
+    assert response.status_code == 422, response.text
+
+    # An existing unflagged squatter still reads normally.
+    squatter = scope_peer_name(str(generate_nanoid()))
+    db_session.add(models.Peer(workspace_name=test_workspace.name, name=squatter))
+    await db_session.commit()
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/peers/{squatter}/representation", json={}
+    )
+    assert response.status_code == 200, response.text
