@@ -177,6 +177,15 @@ class PeerRepresentationGet(BaseModel):
     session_id: str | None = Field(
         None, description="Optional session ID within which to scope the representation"
     )
+    filters: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional filters to scope the representation. This endpoint "
+            "supports only the 'session_id' key: a session id, a list of "
+            'session ids, or {"in": [...]}. When session_id is also set, it '
+            "must be included in the allowlist."
+        ),
+    )
     target: str | None = Field(
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
@@ -562,6 +571,16 @@ class DialecticOptions(BaseModel):
     session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"
     )
+    filters: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional filters to scope recall. This endpoint supports only the "
+            "'session_id' key: a session id, a list of session ids, or "
+            '{"in": [...]}. Recall (conclusions and messages) is restricted to '
+            "the allowlist; unsupported keys are rejected. When session_id is "
+            "also set, it must be included in the allowlist."
+        ),
+    )
     target: str | None = Field(
         None,
         description="Optional peer to get the representation for, from the perspective of this peer",
@@ -573,6 +592,16 @@ class DialecticOptions(BaseModel):
     reasoning_level: ReasoningLevel = Field(
         default="low",
         description="Level of reasoning to apply: minimal, low, medium, high, or max",
+    )
+    response_format: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Optional JSON Schema (root type 'object') the response must conform"
+            " to. When provided, `content` is a JSON string matching this schema."
+            " Only a conservative subset of JSON Schema is supported; unsupported"
+            "  schemas are rejected with 422. Constraint keywords (minItems, "
+            " maxLength, ...) are hints to the model, not enforced server-side."
+        ),
     )
 
     @field_validator("query", mode="after")
@@ -659,6 +688,14 @@ class ScheduleDreamRequest(BaseModel):
     dream_type: DreamType = Field(..., description="Type of dream to schedule")
     session_id: str | None = Field(
         None, description="Session ID to scope the dream to if specified"
+    )
+    rebuild: bool = Field(
+        False,
+        description=(
+            "card_refresh dreams only: rebuild the peer card solely from "
+            "observations currently in the collection, without injecting the "
+            "existing card (use after removals)"
+        ),
     )
 
 

@@ -67,6 +67,7 @@
                       "v3/documentation/features/advanced/queue-status",
                       "v3/documentation/features/advanced/search",
                       "v3/documentation/features/advanced/using-filters",
+                      "v3/documentation/features/advanced/structured-outputs",
                       "v3/documentation/features/advanced/streaming-response",
                       "v3/documentation/features/advanced/file-uploads"
                     ]
@@ -95,6 +96,7 @@
                 "pages": [
                   "v3/guides/integrations/claude-code",
                   "v3/guides/integrations/opencode",
+                  "v3/guides/integrations/codex",
                   "v3/guides/integrations/vercel-ai-sdk",
                   "v3/guides/integrations/crewai",
                   "v3/guides/integrations/langgraph",

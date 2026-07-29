@@ -359,7 +359,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create messages with token counts that exceed batch limit
-        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         token_counts = [limit // 2, limit // 2, limit // 2]
 
         # Create and save messages to the database first
@@ -479,7 +479,7 @@ class TestQueueProcessing:
 
         session, peers = sample_session_with_peers
         peer = peers[0]
-        cap = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        cap = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
 
         # M1 + M2 sum to exactly the cap; M3 pushes over it. After SQL,
         # messages_context = [M1, M2]; the cap is genuinely binding *on the
@@ -581,7 +581,7 @@ class TestQueueProcessing:
         session, peers = sample_session_with_peers
         peer_a = peers[0]
         peer_b = peers[1] if len(peers) > 1 else peers[0]
-        cap = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        cap = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
 
         # Layout: 4 messages, ordered.
         #   M1 (peer_a, queue, 200)
@@ -744,7 +744,9 @@ class TestQueueProcessing:
         qm = QueueManager()
 
         # Mock the token limit to 2000 for this test
-        with patch.object(settings.DERIVER, "REPRESENTATION_BATCH_MAX_TOKENS", 2000):
+        with patch.object(
+            settings.DERIVER, "REPRESENTATION_BATCH_TARGET_INPUT_TOKENS", 2000
+        ):
             # Test alice's work unit
             alice_work_unit_key = alice_queue_items[0].work_unit_key
             alice_aqs = models.ActiveQueueSession(work_unit_key=alice_work_unit_key)
@@ -919,7 +921,9 @@ class TestQueueProcessing:
         qm = QueueManager()
 
         # Mock the token limit to 1500 for this test
-        with patch.object(settings.DERIVER, "REPRESENTATION_BATCH_MAX_TOKENS", 1500):
+        with patch.object(
+            settings.DERIVER, "REPRESENTATION_BATCH_TARGET_INPUT_TOKENS", 1500
+        ):
             # Test alice's work unit
             # With per-work-unit anchoring + preceding context:
             # Alice starts at message 3, includes preceding message 2 (steve) for context
@@ -1133,7 +1137,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create messages where first message exceeds the batch limit
-        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         token_counts = [limit + 1000, 100, 200]  # First message way over limit
 
         # Create and save messages to the database first
@@ -1250,7 +1254,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create messages that test the exact boundary
-        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS
         token_counts = [
             limit // 2,
             limit // 2,
@@ -1381,7 +1385,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create messages with tokens BELOW the threshold
-        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
         token_counts = [100, 100, 100]  # Total 300, way below 4096
 
         messages: list[models.Message] = []
@@ -1652,7 +1656,7 @@ class TestQueueProcessing:
         session, peers = sample_session_with_peers
         peer = peers[0]
 
-        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
 
         # Create a single message that exceeds the threshold
         message = models.Message(
@@ -1758,7 +1762,7 @@ class TestQueueProcessing:
         session, peers = sample_session_with_peers
         peer = peers[0]
 
-        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        limit = settings.DERIVER.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS
 
         # Create messages that sum to exactly the threshold
         token_counts = [limit // 2, limit // 2]

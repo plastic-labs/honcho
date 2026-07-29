@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { ZodError } from 'zod'
+import { z, ZodError } from 'zod'
 import {
   ChatQuerySchema,
   ContextParamsSchema,
@@ -66,6 +66,24 @@ describe('ChatQuerySchema', () => {
       expect(result.reasoningLevel).toBe(level)
     }
   )
+
+  test('responseFormat as plain JSON schema object is valid', () => {
+    const schema = { type: 'object', properties: { a: { type: 'string' } } }
+    const result = ChatQuerySchema.parse({ query: 'hello', responseFormat: schema })
+    expect(result.responseFormat).toEqual(schema)
+  })
+
+  test('responseFormat as Zod schema instance is valid and passed through', () => {
+    const schema = z.object({ a: z.string() })
+    const result = ChatQuerySchema.parse({ query: 'hello', responseFormat: schema })
+    expect(result.responseFormat).toBe(schema)
+  })
+
+  test('responseFormat as a non-object throws', () => {
+    expect(() =>
+      ChatQuerySchema.parse({ query: 'hello', responseFormat: 'not-a-schema' })
+    ).toThrow(ZodError)
+  })
 
   // --- Missing required fields ---
 
