@@ -440,7 +440,17 @@ async def get_representation(
                 session_allowlist=[options.session_id]
                 if options.session_id is not None
                 else session_allowlist,
-                include_semantic_query=options.search_query,
+                # Only ask for the semantic branch when we actually have an
+                # embedding. The precompute above is suppressed, and both
+                # `RepresentationManager.get_working_representation` and
+                # `crud.query_documents` fall back to embedding internally when a
+                # query arrives without one — which would run an external call
+                # inside this session, and the innermost fallback is unsuppressed
+                # (a provider outage would surface as a 500). Degrading to
+                # derived+recent retrieval keeps the session DB-only.
+                include_semantic_query=options.search_query
+                if embedding is not None
+                else None,
                 embedding=embedding,
                 semantic_search_top_k=options.search_top_k,
                 semantic_search_max_distance=options.search_max_distance,

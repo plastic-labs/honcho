@@ -945,9 +945,10 @@ async def test_resolved_scope_peer_rejected_at_membership_upsert(
 ):
     """The last-line guard runs on resolved rows, closing the check-then-upsert race.
 
-    Simulates the race by flagging the peer *after* the route-level name check
-    would have passed: the peer exists and is unflagged when named, and is a real
-    scope by the time membership is upserted.
+    Calls crud directly, bypassing the route-level name check, so the only thing
+    standing between the caller and a scope membership is the guard on the
+    resolved peer row — the guard the racing caller would hit. The unflagged →
+    flagged transition itself is not simulated here.
     """
     test_workspace, _ = sample_data
     scope_name = str(generate_nanoid())
@@ -1116,8 +1117,10 @@ def test_generic_replacement_preserves_scope_membership(
     assert response.json()["session_ids"] == [session_name]
 
 
-def test_empty_replacement_preserves_scope_membership(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+async def test_empty_replacement_preserves_scope_membership(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
 ):
     """An empty replacement map clears ordinary peers but not scopes."""
     test_workspace, test_peer = sample_data
@@ -1145,6 +1148,14 @@ def test_empty_replacement_preserves_scope_membership(
         f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions"
     )
     assert response.json()["session_ids"] == [session_name]
+
+    # The other half of the docstring: without this the test passes even if the
+    # empty replacement became a no-op for ordinary peers too.
+    session_peer = await _get_session_peer(
+        db_session, test_workspace.name, session_name, test_peer.name
+    )
+    assert session_peer is not None
+    assert session_peer.left_at is not None
 
 
 async def test_replacement_still_removes_unflagged_squatter(
