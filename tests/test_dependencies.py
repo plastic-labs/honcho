@@ -612,10 +612,17 @@ async def test_tracked_db_no_idle_in_transaction_after_real_cancellation() -> No
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    state = await backend_state(pid)
-    for _ in range(20):  # allow shielded cleanup a moment to land
-        if state != "idle in transaction":
-            break
-        await asyncio.sleep(0.1)
+    try:
         state = await backend_state(pid)
-    assert state != "idle in transaction", f"backend left {state!r} after cancel"
+        for _ in range(20):  # allow shielded cleanup a moment to land
+            if state != "idle in transaction":
+                break
+            await asyncio.sleep(0.1)
+            state = await backend_state(pid)
+        assert state != "idle in transaction", f"backend left {state!r} after cancel"
+    finally:
+        # On failure the backend is parked exactly like the bug under test;
+        # terminate it so it can't poison the shared pool for later tests.
+        if await backend_state(pid) == "idle in transaction":
+            async with read_engine.connect() as obs:
+                await obs.execute(text("SELECT pg_terminate_backend(:p)"), {"p": pid})
