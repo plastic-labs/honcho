@@ -279,6 +279,61 @@ describe('Conclusions', () => {
   })
 
   // ===========================================================================
+  // Scope-reserved filter guard
+  // ===========================================================================
+
+  describe('reserved filter keys', () => {
+    test('list rejects observer/observed scope keys in filters', async () => {
+      const peer = await client.peer('reserved-list-peer', { metadata: {} })
+
+      for (const key of ['observer', 'observed', 'observer_id', 'observed_id']) {
+        await expect(
+          peer.conclusions.list({ filters: { [key]: 'someone-else' } })
+        ).rejects.toThrow(/managed by this conclusion scope/)
+      }
+    })
+
+    test('list rejects session keys in filters (use the session option)', async () => {
+      const peer = await client.peer('reserved-list-session-peer', { metadata: {} })
+
+      await expect(
+        peer.conclusions.list({ filters: { session_id: 'sess' } })
+      ).rejects.toThrow(/managed by this conclusion scope/)
+      await expect(
+        peer.conclusions.list({ filters: { session: 'sess' } })
+      ).rejects.toThrow(/managed by this conclusion scope/)
+    })
+
+    test('query rejects observer/observed scope keys in filters', async () => {
+      const peer = await client.peer('reserved-query-peer', { metadata: {} })
+
+      for (const key of ['observer', 'observed', 'observer_id', 'observed_id']) {
+        await expect(
+          peer.conclusions.query('q', 10, undefined, { [key]: 'someone-else' })
+        ).rejects.toThrow(/managed by this conclusion scope/)
+      }
+    })
+
+    test('query allows session_id in filters (no dedicated session param)', async () => {
+      const peer = await client.peer('reserved-query-session-peer', { metadata: {} })
+
+      // Should not throw the reserved-key guard; session_id is a normal filter
+      // for query. The call may return no matches, which is fine.
+      await expect(
+        peer.conclusions.query('q', 10, undefined, { session_id: 'sess' })
+      ).resolves.toBeDefined()
+    })
+
+    test('non-reserved filters (level) still work on list', async () => {
+      const peer = await client.peer('reserved-allowed-peer', { metadata: {} })
+
+      await expect(
+        peer.conclusions.list({ filters: { level: 'explicit' } })
+      ).resolves.toBeDefined()
+    })
+  })
+
+  // ===========================================================================
   // Conclusion Deletion (DELETE /conclusions/:id)
   // ===========================================================================
 

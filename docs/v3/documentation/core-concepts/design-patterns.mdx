@@ -63,7 +63,7 @@ Sessions define the temporal boundaries of an interaction. How you scope them af
 Create a **new** session when context resets (new conversation, new day, new topic); **reuse** one when context should keep accumulating (ongoing channel, persistent thread).
 
 <Warning>
-**Don't scope sessions too thin.** Honcho only reasons over a peer once it accumulates ~1,000 tokens *within a single session* ([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Many tiny sessions each stall below that threshold, so low-volume or trickle inputs should append to one ongoing session rather than fragment across many (nothing is lost — it just waits).
+**Don't scope sessions too thin.** Honcho batches reasoning until a peer accumulates ~1,000 tokens *within a single session*, with a default age-based flush for quiet tails ([token batching](/v3/documentation/core-concepts/reasoning#token-batching)). Low-volume or trickle inputs should still append to one ongoing session rather than fragment across many, so reasoning runs with useful context instead of many small delayed batches.
 </Warning>
 
 **How cross-session reasoning works**

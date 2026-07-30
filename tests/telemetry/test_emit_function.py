@@ -314,6 +314,11 @@ class TestInitializeTelemetryEvents:
             mock_settings.TELEMETRY.FLUSH_THRESHOLD = 50
             mock_settings.TELEMETRY.MAX_RETRIES = 3
             mock_settings.TELEMETRY.MAX_BUFFER_SIZE = 10000
+            # This test only covers the primary emitter. Pin trace payloads off
+            # so we don't fall into the trace branch and start a *real* trace
+            # emitter + register a real TraceExporter (a MagicMock here is
+            # truthy) — that global state would leak into other tests.
+            mock_settings.TELEMETRY.TRACE_PAYLOADS_ENABLED = False
             mock_init.return_value = AsyncMock()
 
             await initialize_telemetry_events()
@@ -378,8 +383,10 @@ class TestInitializeTelemetryAsync:
             mock_ce_init.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_skip_cloudevents_when_disabled(self):
-        """initialize_telemetry_async() skips CloudEvents when disabled."""
+    async def test_skip_when_telemetry_disabled(self):
+        """TELEMETRY.ENABLED is the master switch — no init when it's off, even
+        with the Langfuse exporter configured (no traces for open-source users
+        who leave telemetry off)."""
         from src.telemetry import initialize_telemetry_async
 
         with (
@@ -390,6 +397,7 @@ class TestInitializeTelemetryAsync:
             ) as mock_ce_init,
         ):
             mock_settings.TELEMETRY.ENABLED = False
+            mock_settings.langfuse_exporter_enabled = True
 
             await initialize_telemetry_async()
 

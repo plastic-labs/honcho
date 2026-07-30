@@ -6,20 +6,109 @@ import inspect
 import logging
 from collections.abc import Callable, Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 import sentry_sdk
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError
+from sqlalchemy.exc import OperationalError
 
 from src.config import settings
+from src.exceptions import HonchoException
 
 P = ParamSpec("P")
 T = TypeVar("T")
 
 if TYPE_CHECKING:
-    from sentry_sdk._types import EventProcessor
+    from sentry_sdk._types import Event, EventProcessor, Hint
     from sentry_sdk.integrations import Integration
 
 logger = logging.getLogger(__name__)
+
+
+def default_before_send(event: Event, hint: Hint | None) -> Event | None:
+    """Filter/regroup known non-actionable events before Sentry ingests them.
+
+    Shared by every entrypoint (API + deriver) so filtering is process-agnostic.
+    """
+    if not hint:
+        return event
+
+    exc_info = hint.get("exc_info")
+    if not exc_info:
+        return event
+
+    _, exc_value, _ = exc_info
+    if isinstance(exc_value, HonchoException):
+        return None
+
+    # Filters out ValidationErrors and RequestValidationErrors (typically from Pydantic)
+    if isinstance(exc_value, ValidationError | RequestValidationError):
+        logger.info(f"Filtering out validation error from Sentry: {exc_value}")
+        return None
+
+    # DB connection-pool checkout timeouts are a fleet-wide saturation symptom, not a
+    # per-transaction bug. Collapse every occurrence into one issue (Sentry would otherwise
+    # split by transaction/endpoint) and drop to warning so it stops tripping error alerts.
+    # Watch it via a rate/spike metric alert instead. Root cause tracked in DEV-1852.
+    if isinstance(exc_value, OperationalError) and "connection timeout expired" in str(
+        exc_value
+    ):
+        event["fingerprint"] = ["honcho-db-connection-timeout"]
+        event["level"] = "warning"
+        return event
+
+    return event
+
+
+# Paths whose transactions carry no debugging value but are hit constantly
+# (health checks, Prometheus scrapes, OpenAPI schema, docs). Tracing them at the
+# same rate as real traffic drowns the signal and burns tracing/profiling quota.
+# Note: /docs and /redoc are disabled in production but are listed for safety.
+_UNSAMPLED_PATHS = frozenset(
+    {"/metrics", "/health", "/openapi.json", "/docs", "/redoc"}
+)
+
+
+def _is_unsampled_transaction_name(name: str | None) -> bool:
+    """Match infra/scrape transactions by name.
+
+    Fallback for transactions that don't expose an ASGI scope path (e.g. the
+    deriver's metrics server) or whose endpoint-style name encodes the route.
+    """
+    if not name:
+        return False
+    return (
+        name.endswith("openapi")
+        or name.endswith("metrics_endpoint")
+        or "prometheus.metrics" in name
+    )
+
+
+def traces_sampler(sampling_context: dict[str, Any]) -> float:
+    """Drop infra/scrape transactions; sample everything else at the default rate.
+
+    Using a sampler (rather than ``before_send_transaction``) means dropped
+    transactions are never recorded or profiled, and the decision propagates to
+    child spans. ``SENTRY.TRACES_SAMPLE_RATE`` remains the rate for real traffic.
+    """
+    asgi_scope = cast("dict[str, Any] | None", sampling_context.get("asgi_scope"))
+    if asgi_scope is not None and asgi_scope.get("path") in _UNSAMPLED_PATHS:
+        return 0.0
+
+    transaction_context = cast(
+        "dict[str, Any] | None", sampling_context.get("transaction_context")
+    )
+    name = transaction_context.get("name") if transaction_context else None
+    if _is_unsampled_transaction_name(name if isinstance(name, str) else None):
+        return 0.0
+
+    # Respect an upstream sampling decision when continuing a distributed trace.
+    parent_sampled = sampling_context.get("parent_sampled")
+    if parent_sampled is not None:
+        return float(parent_sampled)
+
+    return settings.SENTRY.TRACES_SAMPLE_RATE
 
 
 # Sentry SDK's default behavior:
@@ -31,24 +120,32 @@ logger = logging.getLogger(__name__)
 def initialize_sentry(
     *,
     integrations: Sequence[Integration],
-    before_send: EventProcessor | None = None,
+    before_send: EventProcessor | None = default_before_send,
 ) -> None:
     """Initialize Sentry SDK with project settings.
 
     Args:
         integrations: Sentry SDK integrations to enable (e.g., Starlette, FastAPI).
-        before_send: Optional event filter callback to suppress specific exceptions.
+        before_send: Event filter override. Defaults to ``default_before_send`` so
+            every entrypoint gets the shared filters; pass ``None`` to opt out.
     """
     sentry_sdk.init(
         dsn=settings.SENTRY.DSN,
         enable_tracing=True,
         release=settings.SENTRY.RELEASE,
         environment=settings.SENTRY.ENVIRONMENT,
-        traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
+        # traces_sampler supersedes traces_sample_rate; it returns the configured
+        # rate for real traffic and 0.0 for infra/scrape endpoints (see above).
+        traces_sampler=traces_sampler,
         profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
         before_send=before_send,
         integrations=integrations,
     )
+
+    # Tag every event with the configured namespace so errors can be filtered by
+    # instance. Set on the global scope so it applies regardless of the current
+    # isolation/task scope.
+    sentry_sdk.get_global_scope().set_tag("namespace", settings.NAMESPACE)
 
 
 def with_sentry_transaction(

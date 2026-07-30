@@ -27,7 +27,34 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v3.0.10 (Current)">
+        <Update label="v3.0.11 (Current)">
+        ### Added
+
+        - `api_request_duration_seconds` Prometheus histogram tracking per-route request latency, labeled by method and endpoint (#837)
+        - LLM `provider_params` passthroughs (`extra_body` / `extra_headers` / `extra_query`) are now forwarded to the underlying provider transport across all backends, with shape validation that rejects non-mapping values (#821)
+        - `structured_output_mode` model-config option to use `json_object` mode for OpenAI-compatible providers that lack native Structured Outputs support (used by the deriver) (#820)
+        - OpenRouter app-attribution headers (`HTTP-Referer` / `X-Openrouter-Title`) are now sent on OpenAI-compatible clients when the configured base URL is OpenRouter, so requests are attributed to "Honcho" in OpenRouter's dashboard (#805)
+        - Langfuse traces are now tagged with user and session IDs for easier trace filtering (#814)
+        - `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` (default 1800s) lets sub-threshold representation work units flush once their oldest unprocessed queue item ages out. Set it to `0` to keep the legacy behavior where sub-threshold tails wait indefinitely unless `DERIVER_FLUSH_ENABLED=true` (#826)
+        - Conclusion responses now include a `level` field (`explicit`, `deductive`, `inductive`, `contradiction`); list/query endpoints support filtering by `level` via `filters`, with reserved filter keys protected from being overridden by user-supplied filters (#851)
+
+        ### Changed
+
+        - Peer-scoped JWTs now get read-only access to the sessions their peer is an active member of (session context, summaries, peers, their own per-session config, search, and message reads). Session-scoped JWTs remain confined to their session and cannot reach peer routes (#679)
+        - Compacted Honcho's log output, with guarded ms/s metric formatting that falls back to a plain string for non-numeric values (#836)
+        - Sentry now drops noisy infra/scrape transactions: the reconciler opens a transaction only once a batch has rows (idle cycles emit none), and a `traces_sampler` returns `0.0` for `/metrics`, `/health`, `/openapi.json`, `/docs`, `/redoc`, and the deriver metrics server. `SENTRY.TRACES_SAMPLE_RATE` still governs real traffic (#834)
+
+        ### Fixed
+
+        - Peer- and session-scoped JWTs were effectively workspace-scoped: authorization walked the route's declared scope and fell through to a workspace match, so a `{w, p: alice}` token could act on any peer in the workspace. JWTs are now authorized by their narrowest claim and never widen to workspace access (#679)
+        - The keys API now rejects creating a peer- or session-scoped key without a workspace. Such keys were minted successfully but failed verification on every request (#679)
+        - Agent-supplied observation IDs carrying the display-format `id:` prefix are now normalized (prefix and trailing whitespace stripped) before `source_ids` are stored and on `get_reasoning_chain` lookups, fixing corrupted provenance links and broken reasoning-chain traversal (#795)
+        - Fixed a `create_tree` keyword-argument mismatch in the Dreamer's surprisal tree construction (#749)
+        - Providers that omit output-token counts (observed with Gemini on tool-loop completions) returned `output_tokens=None`, which raised a Pydantic validation error that aborted the call and crashed the Dreamer's induction phase before inductive conclusions were persisted. `None` is now coerced to `0` so token accounting degrades gracefully (#809)
+        - Document creation now performs exact (case-insensitive, whitespace-trimmed) content deduplication before the existing semantic dedup step: exact duplicates within a batch collapse to a single insert, and an exact match against a live document reinforces it (atomic `times_derived` increment) instead of creating a new row (#861)
+        </Update>
+
+        <Update label="v3.0.10">
         ### Added
 
         - Messages are now embedded via a background task rather than blocking API request
@@ -671,7 +698,17 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v2.1.2 (Current)">
+        <Update label="v2.2.0">
+        ### Added
+
+        - `ConclusionLevel` type (`explicit`, `deductive`, `inductive`, `contradiction`) and a `level` field on `Conclusion`, exposing the reasoning level the server already tracked but previously stripped from responses.
+        - `filters` parameter on `ConclusionScope.list()` and `ConclusionScope.query()` (sync and async), passed through to the same dynamic server-side filter logic as `peers()`/`sessions()`/`messages()`. Filter explicit-only conclusions with `filters={"level": "explicit"}`, or by any other supported field/operator. Requires a Honcho server with the matching API support (Honcho v3.0.11+).
+
+        ### Fixed
+
+        - Scope-managed filter keys (`observer`, `observed`, `session`) are now rejected with a clear `ValueError` if passed in `filters`, instead of silently overriding the scope and returning conclusions from a different peer pair. Use `peer.conclusions` / `conclusions_of(target)` and the `session=` parameter instead. `session_id` remains a valid filter on `query()`.
+        </Update>
+        <Update label="v2.1.2">
         ### Added
 
         - `page`, `size`, and `reverse` pagination parameters on `Honcho.workspaces()` and `HonchoAio.workspaces()`, closing the gap from 2.1.0 which added these to other list methods but not to `workspaces()`. Honoring `reverse` on the workspace/peer/session list routes also requires a Honcho server with the matching API fix; older servers silently ignore the parameter.
@@ -823,7 +860,17 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v2.1.2 (Current)">
+        <Update label="v2.2.0">
+        ### Added
+
+        - `ConclusionLevel` type (`explicit`, `deductive`, `inductive`, `contradiction`) and a `level` field on `Conclusion`, exposing the reasoning level the server already tracked but previously stripped from responses.
+        - `filters` option on `conclusions.list()` and `conclusions.query()`, passed through to the same dynamic server-side filter logic as the other list endpoints. Filter explicit-only conclusions with `{ filters: { level: 'explicit' } }`, or by any other supported field/operator. Requires a Honcho server with the matching API support (Honcho v3.0.11+).
+
+        ### Fixed
+
+        - Scope-managed filter keys (`observer`, `observed`, `session`) are now rejected with a clear error if passed in `filters`, instead of silently overriding the scope and returning conclusions from a different peer pair. Use `peer.conclusions` / `peer.conclusionsOf(target)` and the dedicated `session` option instead. `session_id` remains a valid filter on `query()`.
+        </Update>
+        <Update label="v2.1.2">
         ### Added
 
         - `peers` option on `Honcho.session()` — attach peers to a session at creation time instead of needing a follow-up `session.addPeers()` call. Accepts the same `PeerAddition` shape as `session.addPeers()` (peer ID strings, `Peer` objects, arrays of either, or a record with per-peer `observe_me`/`observe_others` config).

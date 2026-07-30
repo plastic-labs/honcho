@@ -1,0 +1,19 @@
+# Code owners for Honcho.
+#
+# Beyond review routing, this file is the allowlist for manually triggering
+# the live-llm-tests and unified-tests workflows (via their PR labels and
+# workflow_dispatch). The gate jobs grep every @username in this file —
+# regardless of which path pattern it sits on — and read it from `main`,
+# never from the PR branch, so additions only take effect once merged.
+#
+# The workflow gates only understand individual @usernames (no @org/team
+# entries).
+
+# Reviewers auto-requested on changes under .github/ (workflows, this file,
+# templates).
+/.github/ @akattelu @eisene @Rajat-Ahuja1997 @VVoruganti
+
+# CI-trigger allowlist only: this path matches no real file, so these people
+# are never auto-requested for review, but the workflow gates still pick
+# them up.
+/ci-trigger-allowlist @3un01a @adavyas @ajspig @courtlandleer @erosika @lowyelling @matthewlanders @vintrocode

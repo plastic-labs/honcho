@@ -315,6 +315,119 @@ async def test_gemini_backend_strips_system_and_tools_when_using_cached_content(
     assert "tool_config" not in call["config"]
 
 
+@pytest.mark.asyncio
+async def test_gemini_backend_forwards_provider_params_extra_body() -> None:
+    """provider_params.extra_body merges into the GenerateContentConfig dict
+    (Gemini's body-shaped fields live there, not as an SDK kwarg).
+    """
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    finish_reason=SimpleNamespace(name="STOP"),
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="ok")]),
+                )
+            ],
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=12,
+                candidates_token_count=6,
+            ),
+            parsed=None,
+        )
+    )
+
+    backend = GeminiBackend(client)
+    await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"extra_body": {"candidate_count": 3, "seed": 42}},
+    )
+
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
+    assert call["config"]["candidate_count"] == 3
+    assert call["config"]["seed"] == 42
+
+
+@pytest.mark.asyncio
+async def test_gemini_backend_forwards_provider_params_extra_headers() -> None:
+    """provider_params.extra_headers folds into config.http_options.headers."""
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    finish_reason=SimpleNamespace(name="STOP"),
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="ok")]),
+                )
+            ],
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=12,
+                candidates_token_count=6,
+            ),
+            parsed=None,
+        )
+    )
+
+    backend = GeminiBackend(client)
+    await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"extra_headers": {"X-Trace-Id": "abc123"}},
+    )
+
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
+    assert call["config"]["http_options"]["headers"] == {"X-Trace-Id": "abc123"}
+
+
+@pytest.mark.asyncio
+async def test_gemini_backend_silently_ignores_extra_query() -> None:
+    """extra_query has no google-genai SDK equivalent. The backend drops it
+    rather than crashing or surfacing it somewhere unexpected.
+    """
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=SimpleNamespace(
+            candidates=[
+                SimpleNamespace(
+                    finish_reason=SimpleNamespace(name="STOP"),
+                    content=SimpleNamespace(parts=[SimpleNamespace(text="ok")]),
+                )
+            ],
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=12,
+                candidates_token_count=6,
+            ),
+            parsed=None,
+        )
+    )
+
+    backend = GeminiBackend(client)
+    await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        extra_params={"extra_query": {"trace_id": "abc123"}},
+    )
+
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
+    # extra_query is not surfaced anywhere in the request — neither at the top
+    # level of the SDK call nor inside config.
+    assert "extra_query" not in call
+    assert "extra_query" not in call["config"]
+
+
 def test_gemini_sanitize_schema_strips_unsupported_keywords() -> None:
     """Gemini's function-declarations validator rejects JSON-Schema keywords
     outside its narrow allowlist (additionalProperties, allOf, if/then, $ref,
@@ -389,3 +502,126 @@ def test_gemini_convert_tools_sanitizes_parameters_schema() -> None:
     params = converted[0]["function_declarations"][0]["parameters"]
     assert "additionalProperties" not in params
     assert "additionalProperties" not in params["properties"]["observations"]["items"]
+
+
+class _GeminiStructured(BaseModel):
+    answer: str
+
+
+GEMINI_AGENT_TOOL = {
+    "name": "search",
+    "description": "Search for information",
+    "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+    },
+}
+
+
+def _gemini_response(
+    parts: list[SimpleNamespace], parsed: object = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                finish_reason=SimpleNamespace(name="STOP"),
+                content=SimpleNamespace(parts=parts),
+            )
+        ],
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=12,
+            candidates_token_count=6,
+        ),
+        parsed=parsed,
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_backend_structured_with_tools_skips_native_schema() -> None:
+    """Native response_schema + function calling is Gemini-3-preview-only, so
+    with tools present the schema must be delivered as an instruction on the
+    final turn instead, and the answer parsed from raw text."""
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=_gemini_response([SimpleNamespace(text='{"answer":"ok"}')])
+    )
+
+    backend = GeminiBackend(client)
+    result = await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[GEMINI_AGENT_TOOL],
+        response_format=_GeminiStructured,
+    )
+
+    assert isinstance(result.content, _GeminiStructured)
+    assert result.content.answer == "ok"
+    await_args = client.aio.models.generate_content.await_args
+    if await_args is None:
+        raise AssertionError("Expected Gemini generate_content call")
+    call = await_args.kwargs
+    assert "response_schema" not in call["config"]
+    assert "response_mime_type" not in call["config"]
+    assert "tools" in call["config"]
+    last_part_text = call["contents"][-1]["parts"][-1]["text"]
+    assert "If not responding with a tool call" in last_part_text
+
+
+@pytest.mark.asyncio
+async def test_gemini_backend_structured_tool_call_turn_not_parsed() -> None:
+    """A tool-call turn under tools + response_format must not attempt JSON
+    parsing (its text is empty and the repair fallback raises on that)."""
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=_gemini_response(
+            [
+                SimpleNamespace(
+                    function_call=SimpleNamespace(
+                        name="search", args={"query": "honcho"}
+                    ),
+                    thought_signature=None,
+                )
+            ]
+        )
+    )
+
+    backend = GeminiBackend(client)
+    result = await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[GEMINI_AGENT_TOOL],
+        response_format=_GeminiStructured,
+    )
+
+    assert result.content == ""  # raw (empty) text, not a parsed model
+    assert result.tool_calls[0].name == "search"
+    assert result.tool_calls[0].input == {"query": "honcho"}
+
+
+@pytest.mark.asyncio
+async def test_gemini_backend_structured_without_tools_uses_native_schema() -> None:
+    """Tool-less structured calls keep native response_schema enforcement."""
+    client = Mock()
+    client.aio.models.generate_content = AsyncMock(
+        return_value=_gemini_response(
+            [SimpleNamespace(text='{"answer":"ok"}')],
+            parsed={"answer": "ok"},
+        )
+    )
+
+    backend = GeminiBackend(client)
+    result = await backend.complete(
+        model="gemini-2.5-flash",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_GeminiStructured,
+    )
+
+    assert isinstance(result.content, _GeminiStructured)
+    call = client.aio.models.generate_content.await_args.kwargs  # pyright: ignore
+    assert call["config"]["response_schema"] is _GeminiStructured
+    assert call["config"]["response_mime_type"] == "application/json"
+    # No instruction injected on the tool-less path.
+    assert call["contents"][-1]["parts"][-1]["text"] == "Hello"

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
-from .api_types import ConclusionResponse, RepresentationResponse
+from .api_types import ConclusionLevel, ConclusionResponse, RepresentationResponse
 from .base import SessionBase
 from .http import routes
 from .pagination import SyncPage
@@ -23,6 +23,34 @@ __all__ = [
     "ConclusionScope",
     "ConclusionCreateParams",
 ]
+
+# Filter keys that define a conclusion scope (the observer/observed peer pair).
+# They are set from the scope itself, so a caller must not pass them in `filters`.
+_SCOPE_RESERVED = ("observer", "observed", "observer_id", "observed_id")
+
+
+def _reject_reserved_filter_keys(
+    filters: dict[str, Any] | None, reserved: tuple[str, ...]
+) -> None:
+    """Raise if ``filters`` contains keys managed by the conclusion scope.
+
+    The observer/observed peer pair (and, on ``list``, the session) is fixed by
+    the scope, so letting a user filter override it would silently return data
+    from a different scope than requested. Fail loud instead.
+    """
+    if not filters:
+        return
+    clash = sorted(k for k in reserved if k in filters)
+    if clash:
+        guidance = (
+            "Choose the peer pair via peer.conclusions / peer.conclusions_of(target)"
+        )
+        if "session" in reserved or "session_id" in reserved:
+            guidance += "; use the session= parameter to filter by session"
+        raise ValueError(
+            f"Filter key(s) {clash} are managed by this conclusion scope and "
+            + f"cannot be passed in filters. {guidance}."
+        )
 
 
 class ConclusionCreateParams(BaseModel):
@@ -43,6 +71,9 @@ class Conclusion:
         observer_id: The peer ID who made this conclusion
         observed_id: The peer ID this conclusion is about
         session_id: The session this conclusion relates to
+        level: Reasoning level ("explicit", "deductive", "inductive",
+            "contradiction"). "explicit" conclusions are extracted directly
+            from messages; the others are derived during dreaming.
         created_at: Timestamp for when the conclusion was created
     """
 
@@ -51,6 +82,7 @@ class Conclusion:
     observer_id: str
     observed_id: str
     session_id: str | None = None
+    level: ConclusionLevel = "explicit"
     created_at: datetime.datetime
 
     def __init__(
@@ -61,12 +93,14 @@ class Conclusion:
         observed_id: str,
         session_id: str | None,
         created_at: datetime.datetime,
+        level: ConclusionLevel = "explicit",
     ) -> None:
         self.id = id
         self.content = content
         self.observer_id = observer_id
         self.observed_id = observed_id
         self.session_id = session_id
+        self.level = level
         self.created_at = created_at
 
     @classmethod
@@ -78,6 +112,7 @@ class Conclusion:
             observer_id=data.observer_id,
             observed_id=data.observed_id,
             session_id=data.session_id,
+            level=data.level,
             created_at=data.created_at,
         )
 
@@ -169,6 +204,7 @@ class ConclusionScope:
         size: int = 50,
         session: str | SessionBase | None = None,
         *,
+        filters: dict[str, Any] | None = None,
         reverse: bool = False,
     ) -> SyncPage[ConclusionResponse, Conclusion]:
         """
@@ -178,19 +214,28 @@ class ConclusionScope:
             page: Page number (1-indexed)
             size: Number of results per page
             session: Optional session (ID string or Session object) to filter by
+            filters: Optional dictionary of additional filter criteria, merged
+                with this scope's observer/observed (and session, if given).
+                Supports the same operators as other list endpoints — e.g.
+                ``{"level": "explicit"}`` to get only conclusions extracted
+                directly from messages (i.e. not derived during dreaming). See
+                https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
             reverse: If True, reverses the default ordering. Default: False.
 
         Returns:
             Paginated response containing Conclusion objects
         """
+        _reject_reserved_filter_keys(
+            filters, _SCOPE_RESERVED + ("session", "session_id")
+        )
         self._honcho._ensure_workspace()
         resolved_session_id = resolve_id(session)
-        filters: dict[str, Any] = {
+        filters = {
             "observer_id": self.observer,
             "observed_id": self.observed,
+            **({"session_id": resolved_session_id} if resolved_session_id else {}),
+            **(filters or {}),
         }
-        if resolved_session_id:
-            filters["session_id"] = resolved_session_id
 
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
@@ -224,6 +269,8 @@ class ConclusionScope:
         query: str,
         top_k: int = 10,
         distance: float | None = None,
+        *,
+        filters: dict[str, Any] | None = None,
     ) -> list[Conclusion]:
         """
         Semantic search for conclusions in this scope.
@@ -232,14 +279,21 @@ class ConclusionScope:
             query: The search query string
             top_k: Maximum number of results to return
             distance: Maximum cosine distance threshold (0.0-1.0)
+            filters: Optional dictionary of additional filter criteria, merged
+                with this scope's observer/observed. Supports the same operators
+                as the list endpoint — e.g. ``{"level": "deductive"}`` to search
+                only conclusions derived during dreaming. See
+                https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
 
         Returns:
             List of matching Conclusion objects
         """
+        _reject_reserved_filter_keys(filters, _SCOPE_RESERVED)
         self._honcho._ensure_workspace()
-        filters: dict[str, Any] = {
+        filters = {
             "observer_id": self.observer,
             "observed_id": self.observed,
+            **(filters or {}),
         }
 
         body: dict[str, Any] = {

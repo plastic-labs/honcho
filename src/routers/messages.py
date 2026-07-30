@@ -21,7 +21,7 @@ from src.config import settings
 from src.dependencies import db, read_db
 from src.deriver import enqueue
 from src.exceptions import FileTooLargeError, ResourceNotFoundException
-from src.reconciler.embed_now import embed_messages_now
+from src.reconciler.embed_now import embed_task_gate
 from src.security import require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import FileUploadedEvent, MessageCreatedEvent, emit
@@ -32,9 +32,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/sessions/{session_id}/messages",
     tags=["messages"],
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
-    ],
+)
+
+# Read routes additionally allow a peer-scoped key whose peer is a member of the
+# session; write routes stay session-scoped only. Applied per-route rather than
+# on the router so the two policies can differ.
+require_session_read = require_auth(
+    workspace_name="workspace_id",
+    session_name="session_id",
+    allow_member_read=True,
+)
+require_session_write = require_auth(
+    workspace_name="workspace_id",
+    session_name="session_id",
 )
 
 
@@ -82,9 +92,18 @@ async def parse_upload_form(
     )
 
 
-@router.post("", response_model=list[schemas.Message], status_code=201)
 @router.post(
-    "/", response_model=list[schemas.Message], status_code=201, include_in_schema=False
+    "",
+    response_model=list[schemas.Message],
+    status_code=201,
+    dependencies=[Depends(require_session_write)],
+)
+@router.post(
+    "/",
+    response_model=list[schemas.Message],
+    status_code=201,
+    include_in_schema=False,
+    dependencies=[Depends(require_session_write)],
 )  # backwards compatibility with pre-2.6.0 faulty route endpoint
 async def create_messages_for_session(
     background_tasks: BackgroundTasks,
@@ -142,11 +161,17 @@ async def create_messages_for_session(
         background_tasks.add_task(enqueue, payloads)
 
         # Embed immediately so messages are searchable within seconds; the
-        # reconciler is the fallback for anything left pending.
+        # reconciler is the fallback for anything left pending. Scheduling is
+        # capped per process — when saturated, the reconciler picks them up.
         if settings.EMBED_MESSAGES and created_messages:
-            background_tasks.add_task(
-                embed_messages_now, [m.public_id for m in created_messages]
+            scheduled = embed_task_gate.try_schedule(
+                background_tasks, [m.public_id for m in created_messages]
             )
+            if not scheduled:
+                logger.debug(
+                    "Immediate-embed tasks saturated; deferring %s message(s) to reconciler",
+                    len(created_messages),
+                )
 
         return created_messages
     except ValueError as e:
@@ -154,7 +179,12 @@ async def create_messages_for_session(
         raise
 
 
-@router.post("/upload", response_model=list[schemas.Message], status_code=201)
+@router.post(
+    "/upload",
+    response_model=list[schemas.Message],
+    status_code=201,
+    dependencies=[Depends(require_session_write)],
+)
 async def create_messages_with_file(
     background_tasks: BackgroundTasks,
     workspace_id: str = Path(...),
@@ -216,11 +246,17 @@ async def create_messages_with_file(
     background_tasks.add_task(enqueue, payloads)
 
     # Embed immediately so messages are searchable within seconds; the
-    # reconciler is the fallback for anything left pending.
+    # reconciler is the fallback for anything left pending. Scheduling is
+    # capped per process — when saturated, the reconciler picks them up.
     if settings.EMBED_MESSAGES and created_messages:
-        background_tasks.add_task(
-            embed_messages_now, [m.public_id for m in created_messages]
+        scheduled = embed_task_gate.try_schedule(
+            background_tasks, [m.public_id for m in created_messages]
         )
+        if not scheduled:
+            logger.debug(
+                "Immediate-embed tasks saturated; deferring %s message(s) to reconciler",
+                len(created_messages),
+            )
 
     logger.debug(
         "Batch of %s messages created from file uploads and queued for processing",
@@ -266,7 +302,11 @@ async def create_messages_with_file(
     return created_messages
 
 
-@router.post("/list", response_model=Page[schemas.Message])
+@router.post(
+    "/list",
+    response_model=Page[schemas.Message],
+    dependencies=[Depends(require_session_read)],
+)
 async def get_messages(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
@@ -299,7 +339,11 @@ async def get_messages(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.get("/{message_id}", response_model=schemas.Message)
+@router.get(
+    "/{message_id}",
+    response_model=schemas.Message,
+    dependencies=[Depends(require_session_read)],
+)
 async def get_message(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
@@ -316,7 +360,11 @@ async def get_message(
     return honcho_message
 
 
-@router.put("/{message_id}", response_model=schemas.Message)
+@router.put(
+    "/{message_id}",
+    response_model=schemas.Message,
+    dependencies=[Depends(require_session_write)],
+)
 async def update_message(
     workspace_id: str = Path(...),
     session_id: str = Path(...),

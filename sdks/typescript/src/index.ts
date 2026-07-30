@@ -40,6 +40,7 @@ export {
 
 // API types (snake_case, for advanced usage)
 export type {
+  ConclusionLevel,
   ConclusionQueryParams,
   ConclusionResponse,
   MessageResponse,

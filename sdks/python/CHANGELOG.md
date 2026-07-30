@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.2.0] - 2026-07-02
+
+### Added
+
+- `ConclusionLevel` type (`explicit`, `deductive`, `inductive`, `contradiction`) and a `level` field on `Conclusion`, exposing the reasoning level the server already tracked but previously stripped from responses.
+- `filters` parameter on `ConclusionScope.list()` and `ConclusionScope.query()` (sync and async), passed through to the same dynamic server-side filter logic as `peers()`/`sessions()`/`messages()`. Filter explicit-only conclusions with `filters={"level": "explicit"}`, or by any other supported field/operator. Requires a Honcho server with the matching API support (Honcho v3.0.11+).
+
+### Fixed
+
+- Scope-managed filter keys (`observer`, `observed`, `session`) are now rejected with a clear `ValueError` if passed in `filters`, instead of silently overriding the scope and returning conclusions from a different peer pair. Use `peer.conclusions` / `conclusions_of(target)` and the `session=` parameter instead. `session_id` remains a valid filter on `query()`.
+
 ## [2.1.2] - 2026-05-21
 
 ### Added

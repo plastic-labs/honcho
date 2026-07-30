@@ -6,6 +6,7 @@ message embeddings to the vector store, handling failures and retries.
 """
 
 import datetime
+from contextlib import asynccontextmanager
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,6 +21,7 @@ from src.reconciler.sync_vectors import (
     ReconciliationMetrics,
     _get_documents_needing_sync,  # pyright: ignore[reportPrivateUsage]
     _get_message_embeddings_needing_sync,  # pyright: ignore[reportPrivateUsage]
+    _reconcile_documents_batch,  # pyright: ignore[reportPrivateUsage]
     _reconcile_message_embeddings_batch,  # pyright: ignore[reportPrivateUsage]
     _sync_documents,  # pyright: ignore[reportPrivateUsage]
     _sync_message_embeddings,  # pyright: ignore[reportPrivateUsage]
@@ -991,6 +993,92 @@ class TestEndToEndReconciliation:
         mock_reconcile_docs.assert_awaited_once()
         mock_reconcile_embs.assert_awaited_once()
         mock_cleanup_docs.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+class TestReconcilerTracing:
+    """A Sentry transaction is started only when a sync batch finds real work.
+
+    Reconciler tasks poll on a fixed interval and usually find nothing; an idle
+    cycle must create zero transactions so it doesn't drain Sentry quota.
+    """
+
+    @staticmethod
+    def _fake_tracked_db(db: AsyncMock):
+        @asynccontextmanager
+        async def _cm(*_args: object, **_kwargs: object):
+            yield db
+
+        return _cm
+
+    async def test_no_transaction_when_no_embeddings_to_sync(self) -> None:
+        """The no-work path returns before starting a transaction."""
+        metrics = ReconciliationMetrics()
+        with (
+            patch(
+                "src.reconciler.sync_vectors.tracked_db",
+                self._fake_tracked_db(AsyncMock()),
+            ),
+            patch(
+                "src.reconciler.sync_vectors._get_message_embeddings_needing_sync",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("src.reconciler.sync_vectors.sentry_sdk.start_transaction") as txn,
+        ):
+            worked = await _reconcile_message_embeddings_batch(None, metrics)
+
+        assert worked is False
+        txn.assert_not_called()
+
+    async def test_transaction_started_when_embeddings_present(self) -> None:
+        """A batch with real work starts its own named transaction."""
+        metrics = ReconciliationMetrics()
+        with (
+            patch(
+                "src.reconciler.sync_vectors.tracked_db",
+                self._fake_tracked_db(AsyncMock()),
+            ),
+            patch(
+                "src.reconciler.sync_vectors._get_message_embeddings_needing_sync",
+                new_callable=AsyncMock,
+                return_value=[MagicMock()],
+            ),
+            patch(
+                "src.reconciler.sync_vectors._sync_message_embeddings",
+                new_callable=AsyncMock,
+                return_value=(1, 0),
+            ),
+            patch("src.reconciler.sync_vectors.sentry_sdk.start_transaction") as txn,
+        ):
+            worked = await _reconcile_message_embeddings_batch(None, metrics)
+
+        assert worked is True
+        assert metrics.message_embeddings_synced == 1
+        txn.assert_called_once()
+        assert txn.call_args.kwargs.get("name") == "reconcile_message_embeddings_batch"
+
+    async def test_no_transaction_when_no_documents_to_sync(self) -> None:
+        """The document batch also skips tracing when there is nothing to sync."""
+        metrics = ReconciliationMetrics()
+        with (
+            patch(
+                "src.reconciler.sync_vectors.tracked_db",
+                self._fake_tracked_db(AsyncMock()),
+            ),
+            patch(
+                "src.reconciler.sync_vectors._get_documents_needing_sync",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch("src.reconciler.sync_vectors.sentry_sdk.start_transaction") as txn,
+        ):
+            worked = await _reconcile_documents_batch(
+                MagicMock(spec=VectorStore), metrics
+            )
+
+        assert worked is False
+        txn.assert_not_called()
 
 
 def test_build_message_vector_record() -> None:

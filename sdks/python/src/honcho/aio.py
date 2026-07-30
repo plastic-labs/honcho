@@ -26,9 +26,9 @@ import logging
 import warnings
 from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
-from pydantic import ConfigDict, Field, validate_call
+from pydantic import BaseModel, ConfigDict, Field, validate_call
 
 from .api_types import (
     ConclusionResponse,
@@ -47,7 +47,11 @@ from .api_types import (
     WorkspaceResponse,
 )
 from .base import PeerBase, SessionBase
-from .conclusions import Conclusion
+from .conclusions import (
+    _SCOPE_RESERVED,
+    Conclusion,
+    _reject_reserved_filter_keys,
+)
 from .http import routes
 from .message import Message
 from .mixins import AsyncMetadataConfigMixin
@@ -67,7 +71,7 @@ if TYPE_CHECKING:
     from .conclusions import ConclusionScope
 
 from .conclusions import ConclusionCreateParams
-from .peer import Peer
+from .peer import Peer, TResponseFormat, serialize_response_format
 from .session import Session
 
 logger = logging.getLogger(__name__)
@@ -573,6 +577,30 @@ class PeerAio(AsyncMetadataConfigMixin):
         )
         self._peer._configuration = configuration
 
+    @overload
+    async def chat(
+        self,
+        query: str,
+        *,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: type[TResponseFormat],
+    ) -> TResponseFormat | None: ...
+
+    @overload
+    async def chat(
+        self,
+        query: str,
+        *,
+        target: str | PeerBase | None = None,
+        session: str | SessionBase | None = None,
+        reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
+        | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> str | None: ...
+
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def chat(
         self,
@@ -582,8 +610,14 @@ class PeerAio(AsyncMetadataConfigMixin):
         session: str | SessionBase | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
-    ) -> str | None:
-        """Query the peer's representation asynchronously."""
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
+    ) -> BaseModel | str | None:
+        """Query the peer's representation asynchronously.
+
+        See Peer.chat for parameter details. When response_format is a Pydantic
+        model class, the answer is parsed into an instance of it; when it is a
+        JSON Schema dict, the answer is a JSON string.
+        """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
@@ -595,6 +629,9 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
 
         data = await self._peer._honcho._async_http_client.post(
             routes.peer_chat(self._peer.workspace_id, self._peer.id),
@@ -603,6 +640,8 @@ class PeerAio(AsyncMetadataConfigMixin):
         content = data.get("content")
         if not content:
             return None
+        if isinstance(response_format, type):
+            return response_format.model_validate_json(content)
         return content
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -614,8 +653,14 @@ class PeerAio(AsyncMetadataConfigMixin):
         session: str | SessionBase | None = None,
         reasoning_level: Literal["minimal", "low", "medium", "high", "max"]
         | None = None,
+        response_format: type[BaseModel] | dict[str, Any] | None = None,
     ) -> AsyncDialecticStreamResponse:
-        """Query the peer's representation with streaming asynchronously."""
+        """Query the peer's representation with streaming asynchronously.
+
+        See Peer.chat_stream for parameter details. With response_format set,
+        chunks stay raw text that accumulates to a JSON string; parse it after
+        the stream completes.
+        """
         await self._peer._honcho._ensure_workspace_async()
         target_id = resolve_id(target)
         resolved_session_id = resolve_id(session)
@@ -627,6 +672,9 @@ class PeerAio(AsyncMetadataConfigMixin):
             body["session_id"] = resolved_session_id
         if reasoning_level:
             body["reasoning_level"] = reasoning_level
+        response_format_schema = serialize_response_format(response_format)
+        if response_format_schema is not None:
+            body["response_format"] = response_format_schema
 
         async def stream_response() -> AsyncGenerator[str, None]:
             async for content in parse_sse_astream(
@@ -1460,17 +1508,28 @@ class ConclusionScopeAio:
         size: int = 50,
         session: str | SessionBase | None = None,
         *,
+        filters: dict[str, Any] | None = None,
         reverse: bool = False,
     ) -> AsyncPage[ConclusionResponse, Conclusion]:
-        """List conclusions in this scope asynchronously."""
+        """List conclusions in this scope asynchronously.
+
+        Pass ``filters`` to add criteria merged with this scope's
+        observer/observed (and session, if given) — e.g.
+        ``{"level": "explicit"}`` to get only conclusions extracted directly
+        from messages (i.e. not derived during dreaming). See
+        https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
+        """
+        _reject_reserved_filter_keys(
+            filters, _SCOPE_RESERVED + ("session", "session_id")
+        )
         await self._scope._honcho._ensure_workspace_async()
         resolved_session_id = resolve_id(session)
-        filters: dict[str, Any] = {
+        filters = {
             "observer_id": self._scope.observer,
             "observed_id": self._scope.observed,
+            **({"session_id": resolved_session_id} if resolved_session_id else {}),
+            **(filters or {}),
         }
-        if resolved_session_id:
-            filters["session_id"] = resolved_session_id
 
         query: dict[str, Any] = {"page": page, "size": size}
         if reverse:
@@ -1504,12 +1563,24 @@ class ConclusionScopeAio:
         query: str,
         top_k: int = 10,
         distance: float | None = None,
+        *,
+        filters: dict[str, Any] | None = None,
     ) -> list[Conclusion]:
-        """Semantic search for conclusions asynchronously."""
+        """Semantic search for conclusions asynchronously.
+
+        Args:
+            query: The search query string
+            top_k: Maximum number of results to return
+            distance: Maximum cosine distance threshold (0.0-1.0)
+            filters: Optional dictionary of additional filter criteria, merged
+                with this scope's observer/observed (e.g. ``{"level": "deductive"}``).
+        """
+        _reject_reserved_filter_keys(filters, _SCOPE_RESERVED)
         await self._scope._honcho._ensure_workspace_async()
-        filters: dict[str, Any] = {
+        filters = {
             "observer_id": self._scope.observer,
             "observed_id": self._scope.observed,
+            **(filters or {}),
         }
 
         body: dict[str, Any] = {

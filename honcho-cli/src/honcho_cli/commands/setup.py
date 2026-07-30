@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import json
+import time
+import webbrowser
 
 import typer
 from honcho import (
@@ -19,13 +21,14 @@ from honcho import (
 from rich.console import Console
 from rich.panel import Panel
 
-from honcho_cli import __version__
+from honcho_cli import __version__, oauth
 from honcho_cli.branding import BANNER, BRAND, ICON_FAIL, ICON_OK, ICON_RUN
-from honcho_cli.common import get_resolved_config
+from honcho_cli.common import get_resolved_config, maybe_refresh_token
 from honcho_cli.config import (
     CONFIG_FILE,
     DEFAULT_BASE_URL,
     CLIConfig,
+    OAuthTokens,
 )
 from honcho_cli.output import print_error, print_result, set_json_mode, use_json
 
@@ -117,19 +120,140 @@ def init(
         _console.print()
         _console.print()
 
+    # Non-interactive (JSON/piped) or an explicit --api-key: manual-key path.
+    # Device login needs a human at a browser, so it's TTY-only.
+    if use_json() or api_key:
+        _init_manual_key(key_val, url_val, file_key, file_url)
+    else:
+        _init_interactive(key_val, url_val, file_url)
+
+
+def _init_manual_key(key_val: str, url_val: str, file_key: str, file_url: str) -> None:
+    """Non-interactive path: confirm/save apiKey + URL, no device login."""
     final_key = _prompt_api_key(key_val)
     final_url = _prompt_url(url_val)
-
-    # Persist if anything changed or if the value came from env/flag.
     if final_key != file_key or final_url != file_url:
         CLIConfig(base_url=final_url, api_key=final_key).save()
         if not use_json():
             _console.print(f"  {ICON_OK} [dim]Saved to {CONFIG_FILE}[/dim]")
-
     _check_connection(final_url, final_key)
-
     if use_json():
         print_result({"apiKey": _redact(final_key), "baseUrl": final_url})
+
+
+def _init_interactive(key_val: str, url_val: str, file_url: str) -> None:
+    """Interactive path: URL first (device flow needs the host), then auth method."""
+    final_url = _prompt_url(url_val)
+    existing = CLIConfig.load()
+    has_creds = bool(key_val) or bool(existing.oauth and existing.oauth.access_token)
+    # only offer browser login if the host advertises the device grant (managed)
+    device_available = oauth.supports_device_login(final_url)
+    method = _prompt_auth_method(has_creds, device_available)
+
+    if method == "keep":
+        if final_url != file_url:
+            existing.base_url = final_url
+            existing.save()
+            _console.print(f"  {ICON_OK} [dim]Saved to {CONFIG_FILE}[/dim]")
+        # refresh an expired token so "keep" behaves like every live command;
+        # a failed refresh surfaces as the connectivity check below, not an abort
+        try:
+            maybe_refresh_token(existing)
+        except typer.Exit:
+            pass
+        _check_connection(final_url, existing.resolved_api_key())
+        return
+
+    if method == "device":
+        tokens = _device_login(final_url)
+        CLIConfig(base_url=final_url, oauth=tokens).save()
+        _console.print(f"  {ICON_OK} [dim]Saved to {CONFIG_FILE}[/dim]")
+        _check_connection(final_url, tokens.access_token)
+        return
+
+    # paste a key
+    final_key = _prompt_api_key("")
+    CLIConfig(base_url=final_url, api_key=final_key).save()
+    _console.print(f"  {ICON_OK} [dim]Saved to {CONFIG_FILE}[/dim]")
+    _check_connection(final_url, final_key)
+
+
+def _prompt_auth_method(has_creds: bool, device_available: bool) -> str:
+    """Ask how to authenticate. Returns ``device`` / ``key`` / ``keep``.
+
+    ``device`` is only offered when the host advertises the device grant; when
+    it doesn't, pasting a key is the only login path.
+    """
+    _console.print("  [dim]How do you want to authenticate?[/dim]")
+    options: list[str] = []
+    if device_available:
+        options.append("device")
+        _console.print(f"  [dim]({len(options)})[/dim] Log in with your browser (device code)")
+    options.append("key")
+    _console.print(f"  [dim]({len(options)})[/dim] Paste an API key")
+    if has_creds:
+        options.append("keep")
+        _console.print(f"  [dim]({len(options)})[/dim] Keep current credentials")
+    # default to keeping existing creds so a returning user pressing Enter doesn't
+    # get dropped into an unwanted browser login that overwrites them
+    default = str(options.index("keep") + 1) if "keep" in options else "1"
+    choice = typer.prompt("  Choice", default=default, show_default=True, prompt_suffix=": ").strip()
+    try:
+        idx = int(choice)
+    except ValueError:
+        return options[0]
+    # explicit 1..len bounds — bare `options[idx - 1]` would let "0"/negatives
+    # wrap to the tail of the list via Python's negative indexing
+    if 1 <= idx <= len(options):
+        return options[idx - 1]
+    return options[0]
+
+
+def _device_login(base_url: str) -> OAuthTokens:
+    """Run the device-authorization flow and return the minted tokens.
+
+    Prints the user code + verification URL, opens the browser best-effort, and
+    blocks on the poll loop until the user approves. Exits non-zero on denial,
+    expiry, or interrupt.
+    """
+    endpoints = oauth.resolve_endpoints(base_url)
+    try:
+        device = oauth.request_device_code(endpoints)
+    except oauth.OAuthFlowError as e:
+        _console.print(f"  {ICON_FAIL} [red]Could not start device login[/red]: {e}")
+        raise typer.Exit(1)
+
+    _console.print()
+    _console.print(f"  Enter this code to authorize: [bold {BRAND}]{device.user_code}[/bold {BRAND}]")
+    _console.print(f"  [dim]at[/dim] {device.verification_uri}")
+    _console.print()
+    try:
+        webbrowser.open(device.verification_uri_complete)
+    except Exception:
+        pass  # headless is expected — the URL is printed above
+
+    try:
+        with _console.status("Waiting for approval…", spinner="dots"):
+            tokens = oauth.poll_for_token(endpoints, device)
+    except oauth.AccessDenied:
+        _console.print(f"  {ICON_FAIL} [red]Authorization denied[/red]")
+        raise typer.Exit(1)
+    except (oauth.DeviceCodeExpired, oauth.AuthorizationTimeout):
+        _console.print(f"  {ICON_FAIL} [red]Code expired[/red] — run `honcho init` to try again")
+        raise typer.Exit(1)
+    except oauth.OAuthFlowError as e:
+        _console.print(f"  {ICON_FAIL} [red]Login failed[/red]: {e}")
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        _console.print(f"  {ICON_FAIL} [red]Cancelled[/red]")
+        raise typer.Exit(1)
+
+    return OAuthTokens.from_response(
+        tokens,
+        client_id=endpoints.client_id,
+        scope_fallback=endpoints.scope,
+        host=base_url,
+    )
 
 
 def _prompt_api_key(value: str) -> str:
@@ -206,6 +330,21 @@ def _check_connection(base_url: str, api_key: str) -> None:
 # --------------------------------------------------------------------------- #
 # honcho doctor
 
+def _auth_mode_detail(config: CLIConfig) -> str:
+    """Human summary of which credential the CLI will use."""
+    tokens = config.usable_oauth()
+    if tokens is not None:
+        if tokens.access_valid():
+            secs = max(int(tokens.access_expires_at - time.time()), 0)
+            return f"OAuth device token (expires in {secs // 60}m)"
+        if config.api_key:
+            return "API key (OAuth token expired)"
+        return "OAuth device token (expired — will refresh)"
+    if config.api_key:
+        return "API key"
+    return "missing — run `honcho init`"
+
+
 def doctor(
     json_output: bool = typer.Option(False, "--json", help="Force JSON output"),
 ) -> None:
@@ -230,23 +369,30 @@ def doctor(
         _console.print(f"\n[bold {BRAND}]Honcho Doctor[/bold {BRAND}]\n")
 
     config = get_resolved_config()
+    # Refresh an expired OAuth token if we can; a failure surfaces as a failed
+    # connectivity check below rather than aborting the diagnostic.
+    try:
+        maybe_refresh_token(config)
+    except typer.Exit:
+        pass
+    key = config.resolved_api_key()
+
     _add("Config file", CONFIG_FILE.exists(),
          str(CONFIG_FILE) if CONFIG_FILE.exists() else f"{CONFIG_FILE} not found")
-    _add("API key configured", bool(config.api_key),
-         "set" if config.api_key else "missing — run `honcho init`")
+    _add("Credentials configured", bool(key), _auth_mode_detail(config))
 
-    if config.base_url and config.api_key:
-        _add("API connectivity", *_test_connection(config.base_url, config.api_key))
+    if config.base_url and key:
+        _add("API connectivity", *_test_connection(config.base_url, key))
     else:
-        _add("API connectivity", False, "skipped — no base_url or api_key")
+        _add("API connectivity", False, "skipped — no base_url or credentials")
 
     # Workspace / peer / queue run only when scoped via -w / -p.
     ws_ok, client = False, None
-    if config.workspace_id and config.api_key:
+    if config.workspace_id and key:
         try:
 
 
-            client = Honcho(base_url=config.base_url, api_key=config.api_key, workspace_id=config.workspace_id)
+            client = Honcho(base_url=config.base_url, api_key=key, workspace_id=config.workspace_id)
             client.get_configuration()
             ws_ok = True
             _add("Workspace reachable", True, config.workspace_id)
@@ -280,7 +426,7 @@ def doctor(
         _console.print(f"\n  [{color}]{passed}/{total}[/{color}] checks passed{hint}\n")
 
     # Config file + API connectivity are hard requirements.
-    critical = {"Config file", "API key configured", "API connectivity"}
+    critical = {"Config file", "Credentials configured", "API connectivity"}
     if config.workspace_id:
         critical.add("Workspace reachable")
     if any(not c["ok"] for c in checks if c["check"] in critical):

@@ -149,6 +149,9 @@ class QueryAction(TestStep):
     # for chat - reasoning level
     reasoning_level: ReasoningLevel | None = None
 
+    # for chat - optional JSON Schema the response must conform to
+    response_format: dict[str, Any] | None = None
+
     assertions: list[
         LLMJudgeAssertion
         | ContainsAssertion
