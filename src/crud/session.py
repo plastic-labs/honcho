@@ -50,6 +50,7 @@ from .peer import (
     get_peer,
     reject_scope_peers,
     scope_peer_clause,
+    scope_peer_names,
 )
 from .scope import SCOPE_MEMBERSHIP_CONFIG, get_or_create_scopes
 from .workspace import get_or_create_workspace
@@ -1161,8 +1162,17 @@ async def _get_or_add_peers_to_session(
         result = await db.execute(select_stmt)
         return list(result.scalars().all())
 
-    # Only validate observer limit if we're adding peers with observe_others=True
-    new_observer_count = count_observers_in_config(peer_names)
+    # Scope memberships carry observe_others=True but do not count against the
+    # limit. The limit bounds per-observer deriver fan-out for real peers; a scope
+    # costs document rows, not LLM calls (Scopes RFC §5.2), and counting them would
+    # cap scopes-per-session at SESSION_OBSERVERS_LIMIT and surface as an
+    # observer-shaped 400 through a facade that hides observers entirely.
+    scopes_being_added = await scope_peer_names(db, workspace_name, peer_names.keys())
+
+    # Only validate observer limit if we're adding non-scope peers with observe_others=True
+    new_observer_count = count_observers_in_config(
+        {n: c for n, c in peer_names.items() if n not in scopes_being_added}
+    )
 
     if new_observer_count > 0:
         # Use a single efficient query to count existing observers not being updated
@@ -1177,6 +1187,14 @@ async def _get_or_add_peers_to_session(
             models.SessionPeer.configuration["observe_others"].astext.cast(
                 Boolean
             ),  # Only observers
+            # Existing scope memberships are excluded for the same reason as above.
+            ~exists(
+                select(models.Peer.id)
+                .where(models.Peer.workspace_name == workspace_name)
+                .where(models.Peer.name == models.SessionPeer.peer_name)
+                .where(scope_peer_clause())
+                .correlate(models.SessionPeer)
+            ),
         )
         result = await db.execute(existing_observers_stmt)
         existing_observer_count = result.scalar() or 0

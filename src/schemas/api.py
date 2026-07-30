@@ -398,6 +398,7 @@ class SessionCreate(SessionBase):
     configuration: SessionConfiguration | None = None
     scopes: list[str] | None = Field(
         default=None,
+        max_length=100,
         description=(
             "Optional list of (unprefixed) scope names to add this session to. "
             "Each scope is created if it does not exist yet. Note: scope "

@@ -1332,3 +1332,93 @@ async def test_representation_rechecks_after_early_check(
         f"/v3/workspaces/{test_workspace.name}/peers/{squatter}/representation", json={}
     )
     assert response.status_code == 200, response.text
+
+
+# ---------------------------------------------------------------------------
+# Observer limit. Scope memberships carry observe_others=True but must not
+# consume SESSION_OBSERVERS_LIMIT: that would cap scopes-per-session at the
+# limit and report it as an observer-shaped 400 through a facade whose whole
+# job is hiding observers.
+# ---------------------------------------------------------------------------
+
+
+def test_scopes_do_not_count_toward_observer_limit(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """A session can join more scopes than SESSION_OBSERVERS_LIMIT allows observers."""
+    test_workspace, _ = sample_data
+    session_name = _create_session(client, test_workspace.name)
+    scope_names = [
+        str(generate_nanoid()) for _ in range(settings.SESSION_OBSERVERS_LIMIT + 2)
+    ]
+
+    for scope_name in scope_names:
+        assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
+            json={"session_ids": [session_name]},
+        )
+        assert response.status_code == 200, response.text
+
+    # Every membership is live, and the session-create path agrees.
+    for scope_name in scope_names:
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions"
+        )
+        assert response.json()["session_ids"] == [session_name]
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={"id": str(generate_nanoid()), "scopes": scope_names},
+    )
+    assert response.status_code == 201, response.text
+
+
+def test_observer_limit_still_applies_to_real_peers(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """The exclusion is scope-only: real observers are still capped.
+
+    Without this the scope carve-out could quietly disable the limit entirely.
+    """
+    test_workspace, _ = sample_data
+    session_name = _create_session(client, test_workspace.name)
+    scope_name = str(generate_nanoid())
+    assert _create_scope(client, test_workspace.name, scope_name).status_code == 201
+    assert (
+        client.post(
+            f"/v3/workspaces/{test_workspace.name}/scopes/{scope_name}/sessions",
+            json={"session_ids": [session_name]},
+        ).status_code
+        == 200
+    )
+
+    observers = {
+        str(generate_nanoid()): {"observe_others": True}
+        for _ in range(settings.SESSION_OBSERVERS_LIMIT + 1)
+    }
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions/{session_name}/peers",
+        json=observers,
+    )
+    assert response.status_code == 400, response.text
+
+
+def test_session_create_scopes_list_is_capped(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """`scopes` is bounded like `session_ids` on the add-sessions route.
+
+    Nothing downstream bounds it now that scopes are outside the observer limit,
+    so an unbounded list would mint a scope peer per element in one request.
+    """
+    test_workspace, _ = sample_data
+
+    response = client.post(
+        f"/v3/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": str(generate_nanoid()),
+            "scopes": [str(generate_nanoid()) for _ in range(101)],
+        },
+    )
+    assert response.status_code == 422, response.text

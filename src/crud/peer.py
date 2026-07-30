@@ -193,6 +193,38 @@ async def reject_scope_observed(
         )
 
 
+async def scope_peer_names(
+    db: AsyncSession,
+    workspace_name: str,
+    names: Iterable[str],
+) -> set[str]:
+    """Return the subset of ``names`` that are really scope peers (name AND flag).
+
+    Unlike a pure name check, a legacy peer that merely occupies the reserved
+    namespace (names were length-only validated before migration
+    ``d429de0e5338``, so ``scope.production`` is a possible user name) is not
+    reported, so it keeps its ordinary semantics instead of being locked out of
+    its own data. A *missing* reserved name is likewise not reported.
+
+    Costs nothing on the common path: with no reserved-prefix name in ``names``
+    there is no query at all.
+
+    Raises:
+        ValidationException: On a NUL byte or an over-length name.
+    """
+    candidates = await _reserved_name_candidates(names)
+    if not candidates:
+        return set()
+
+    result = await db.execute(
+        select(models.Peer.name)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name.in_(candidates))
+        .where(scope_peer_clause())
+    )
+    return {row[0] for row in result.all()}
+
+
 async def reject_scope_peers(
     db: AsyncSession,
     workspace_name: str,
@@ -202,32 +234,15 @@ async def reject_scope_peers(
 ) -> None:
     """Reject peers that really are scopes, keyed off name AND flag.
 
-    Unlike a pure name check, a legacy peer that merely occupies the reserved
-    namespace (names were length-only validated before migration
-    ``d429de0e5338``, so ``scope.production`` is a possible user name) keeps
-    working normally instead of being locked out of its own data.
-
     A *missing* reserved name passes here — the create paths this guards
     (`get_or_create_peers`) refuse it themselves. Positions where nothing creates
-    the peer need ``reject_scope_observed`` instead.
-
-    Costs nothing on the common path: with no reserved-prefix name in ``names``
-    there is no query at all.
+    the peer need ``reject_scope_observed`` instead. See ``scope_peer_names`` for
+    the name-vs-flag semantics.
 
     Raises:
         ValidationException: If any name resolves to a real scope peer.
     """
-    candidates = await _reserved_name_candidates(names)
-    if not candidates:
-        return
-
-    result = await db.execute(
-        select(models.Peer.name)
-        .where(models.Peer.workspace_name == workspace_name)
-        .where(models.Peer.name.in_(candidates))
-        .where(scope_peer_clause())
-    )
-    offenders = sorted(row[0] for row in result.all())
+    offenders = sorted(await scope_peer_names(db, workspace_name, names))
     if offenders:
         raise ValidationException(f"Peer name(s) {offenders} are scopes. {action}")
 

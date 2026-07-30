@@ -296,8 +296,6 @@ async def add_sessions_to_scope(
     Raises:
         ResourceNotFoundException: If the scope or any named session does not
             exist
-        ObserverException: If a membership would exceed a session's observer
-            limit
     """
     # Imported lazily: crud.session imports this module for the session-create
     # `scopes` path, so a module-level import would be circular.
