@@ -430,7 +430,6 @@ async def test_anthropic_backend_stream_no_prefill_when_tools_present() -> None:
     client = Mock()
     client.messages.stream = Mock(return_value=_FakeStream())
 
-
     backend = AnthropicBackend(client)
     chunks = [
         chunk
