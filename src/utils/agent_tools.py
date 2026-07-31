@@ -923,22 +923,32 @@ async def create_observations(
     # Compute embeddings (no DB needed)
     contents = [obs.content for obs in normalized_observations]
     embeddings_by_index: dict[int, list[float]] | None = None
-    try:
-        with embedding_call_purpose(
-            EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
-            workspace_name=workspace_name,
-            run_id=run_id,
-            parent_category=parent_category,
-        ):
-            embeddings = await embedding_client.simple_batch_embed(contents)
-        embeddings_by_index = dict(
-            zip(range(len(normalized_observations)), embeddings, strict=True)
-        )
-    except Exception as e:
-        logger.warning(
-            "Batch embedding failed for create_observations; falling back to per-observation embedding: %s",
-            e,
-        )
+    if not settings.EMBED_OBSERVATIONS:
+        # Embedding disabled for the observation write path: skip the provider
+        # entirely and store zero-vectors of the configured dimension so writes
+        # succeed without an embedding provider (vector search is degraded).
+        zero_vector = [0.0] * settings.EMBEDDING.VECTOR_DIMENSIONS
+        embeddings_by_index = {
+            i: list(zero_vector) for i in range(len(normalized_observations))
+        }
+    else:
+        try:
+            with embedding_call_purpose(
+                EmbeddingCallPurpose.CREATE_OBSERVATIONS.value,
+                workspace_name=workspace_name,
+                run_id=run_id,
+                parent_category=parent_category,
+            ):
+                embeddings = await embedding_client.simple_batch_embed(contents)
+            embeddings_by_index = dict(
+                zip(range(len(normalized_observations)), embeddings, strict=True)
+            )
+        except Exception as e:
+            logger.warning(
+                "Batch embedding failed for create_observations; falling back"
+                + " to per-observation embedding: %s",
+                e,
+            )
 
     # Build document objects with pre-computed embeddings
     documents: list[schemas.DocumentCreate] = []
@@ -1010,7 +1020,12 @@ async def create_observations(
                     workspace_name=workspace_name,
                     observer=observer,
                     observed=observed,
-                    deduplicate=True,
+                    # Only run embedding-based semantic dedup when observations
+                    # are actually embedded. With EMBED_OBSERVATIONS disabled the
+                    # documents share an identical zero-vector, so semantic dedup
+                    # is meaningless and could reject distinct content as a false
+                    # duplicate. Exact-content dedup runs regardless of this flag.
+                    deduplicate=settings.EMBED_OBSERVATIONS,
                 )
             ).created_documents
         logger.info(

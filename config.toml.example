@@ -12,6 +12,11 @@ GET_CONTEXT_MAX_TOKENS = 100000
 MAX_FILE_SIZE = 5242880  # 5MB
 MAX_MESSAGE_SIZE = 25000 # Characters
 EMBED_MESSAGES = true
+# Gate embedding on the observation (conclusion) write path. Set to false on a
+# self-hosted deployment without an embedding provider so conclusion writes
+# succeed with zero-vectors instead of calling (and 401-ing on) the embedder.
+# Vector search over observations is degraded while this is off.
+EMBED_OBSERVATIONS = true
 # LANGFUSE_HOST = "https://api.langfuse.com"
 # LANGFUSE_PUBLIC_KEY = "your-public-key-here"
 # COLLECT_METRICS_LOCAL = false
@@ -72,6 +77,10 @@ MAX_INPUT_TOKENS = 8192
 MAX_TOKENS_PER_REQUEST = 300000
 
 [embedding.model_config]
+# transport: "openai", "gemini", or "none".
+# "none" is a no-op embedder — it makes no network call and stores zero-vectors
+# of VECTOR_DIMENSIONS. Use it (or EMBED_OBSERVATIONS = false above) when running
+# a non-OpenAI LLM without an embedding provider, to avoid 401s on writes.
 transport = "openai"
 model = "text-embedding-3-small"
 

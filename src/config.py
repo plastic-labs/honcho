@@ -23,8 +23,16 @@ if not os.getenv("PYTHON_DOTENV_DISABLED"):
 logger = logging.getLogger(__name__)
 
 ModelTransport = Literal["anthropic", "openai", "gemini"]
-EmbeddingTransport = Literal["openai", "gemini"]
+# "none" is a no-op embedder: it makes no network call and returns zero-vectors
+# of the configured dimension. Intended for self-hosted deployments with a
+# non-OpenAI LLM and no embedding provider — it lets observation/message writes
+# complete (at the cost of degraded vector search) instead of 401-ing on the
+# default OpenAI embedder.
+EmbeddingTransport = Literal["openai", "gemini", "none"]
 EmbeddingDimensionsMode = Literal["auto", "always", "never"]
+
+# Sentinel model name used when the embedding transport is "none".
+_EMBEDDING_NONE_MODEL = "none"
 
 # OpenAI-compatible models that reject the `dimensions=` request parameter.
 _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
@@ -35,6 +43,8 @@ _EMBEDDING_KNOWN_REJECTING_MODELS: frozenset[str] = frozenset(
 def _default_embedding_model_for_transport(transport: EmbeddingTransport) -> str:
     if transport == "gemini":
         return "gemini-embedding-001"
+    if transport == "none":
+        return _EMBEDDING_NONE_MODEL
     return "text-embedding-3-small"
 
 
@@ -482,11 +492,15 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
 
 
 def _default_embedding_api_key(transport: EmbeddingTransport) -> str | None:
-    """Fall back to the global LLM API key for the matching transport."""
+    """Fall back to the global LLM API key for the matching transport.
+
+    The "none" transport makes no network call, so it needs no key.
+    """
     if transport == "openai":
         return settings.LLM.OPENAI_API_KEY
     if transport == "gemini":
         return settings.LLM.GEMINI_API_KEY
+    return None
 
 
 def resolve_embedding_model_config(
@@ -1413,6 +1427,11 @@ class AppSettings(HonchoSettings):
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
     EMBED_MESSAGES: bool = True
+    # Gates embedding on the observation (conclusion) write path. When False,
+    # `create_observations` skips the embedding provider entirely and stores
+    # zero-vectors, so writes succeed without an embedding provider configured
+    # (vector search over observations is degraded until re-embedded).
+    EMBED_OBSERVATIONS: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
     # How Langfuse traces are produced:

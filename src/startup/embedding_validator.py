@@ -58,6 +58,78 @@ class StartupValidationError(HonchoException):
     """
 
 
+def _embedding_transport_is_openai_by_default(s: AppSettings) -> bool:
+    """Detect an unconfigured, OpenAI-by-default embedding transport.
+
+    Args:
+        s: Application settings to inspect.
+
+    Returns:
+        True when the embedding transport is OpenAI purely because nothing was
+        configured (i.e. the operator did not set ``EMBEDDING_MODEL_CONFIG__*``).
+    """
+    mc = s.EMBEDDING.MODEL_CONFIG
+    explicitly_set = (
+        "MODEL_CONFIG" in s.EMBEDDING.model_fields_set
+        and "transport" in mc.model_fields_set
+    )
+    return mc.transport == "openai" and not explicitly_set
+
+
+def _primary_llm_is_non_openai(s: AppSettings) -> bool:
+    """Detect whether the deriver's primary LLM is not plain OpenAI.
+
+    Args:
+        s: Application settings to inspect.
+
+    Returns:
+        True when the deriver's primary LLM is not plain OpenAI — either a
+        non-OpenAI transport, or the OpenAI transport pointed at a custom
+        base_url (an OpenAI-compatible proxy such as OpenRouter/vLLM/Ollama),
+        set either on the deriver model config or globally via
+        ``LLM_OPENAI_BASE_URL``.
+    """
+    deriver_mc = s.DERIVER.MODEL_CONFIG
+    if deriver_mc.transport != "openai":
+        return True
+    # OpenAI-compatible proxy: a base_url override on the deriver model config
+    # or a global OpenAI base_url both signal a non-OpenAI endpoint.
+    return bool(deriver_mc.overrides.base_url or s.LLM.OPENAI_BASE_URL)
+
+
+def warn_if_embedder_defaults_mismatch_llm(
+    s: AppSettings | None = None,
+) -> bool:
+    """Warn once when the embedder is silently defaulting to OpenAI while the
+    primary LLM is not plain OpenAI.
+
+    This is the common self-hosted footgun (issue #915): with a non-OpenAI LLM
+    and ``EMBEDDING_*`` unset, every ``create_observations`` write would 401 on
+    the default OpenAI embedder. Non-fatal — silent on an all-OpenAI setup.
+
+    Args:
+        s: Application settings to inspect. Defaults to the process-global
+            ``settings`` when ``None``.
+
+    Returns:
+        True if the mismatch warning was emitted, False otherwise. The return
+        value lets callers/tests assert on whether the warning fired.
+    """
+    s = s if s is not None else settings
+    if _embedding_transport_is_openai_by_default(s) and _primary_llm_is_non_openai(s):
+        logger.warning(
+            "Embedding transport is defaulting to OpenAI (EMBEDDING_MODEL_CONFIG"
+            + " is unset) while the primary LLM transport is not plain OpenAI."
+            + " Observation writes will call the OpenAI embedding API and fail if"
+            + " LLM_OPENAI_API_KEY is not set. Configure the embedder via"
+            + " EMBEDDING_MODEL_CONFIG__* (e.g. TRANSPORT/MODEL/OVERRIDES__BASE_URL),"
+            + " or disable embedding on the observation path with"
+            + " EMBED_OBSERVATIONS=false / EMBEDDING_MODEL_CONFIG__TRANSPORT=none."
+        )
+        return True
+    return False
+
+
 async def validate_embedding_schema(
     engine: AsyncEngine,
     *,

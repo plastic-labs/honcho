@@ -7,7 +7,10 @@ from prometheus_client import start_http_server
 
 from src.config import settings
 from src.db import engine, register_db_query_instrumentation
-from src.startup import validate_embedding_schema
+from src.startup import (
+    validate_embedding_schema,
+    warn_if_embedder_defaults_mismatch_llm,
+)
 from src.telemetry import (
     initialize_telemetry_async,
     register_db_pool_collector,
@@ -71,6 +74,9 @@ async def run_deriver():
         # gate the API runs in its lifespan. Inside the try block so the
         # telemetry buffer is still flushed if validation raises.
         await validate_embedding_schema(engine)
+        # Non-fatal: warn if the embedder is silently defaulting to OpenAI while
+        # the primary LLM is not plain OpenAI (issue #915).
+        warn_if_embedder_defaults_mismatch_llm()
         await main()
     finally:
         # Shutdown telemetry (flush CloudEvents buffer)

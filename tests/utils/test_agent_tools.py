@@ -541,6 +541,78 @@ class TestCreateObservations:
         batch_embed.assert_not_awaited()
         create_documents.assert_not_awaited()
 
+    async def test_embed_observations_false_skips_embedding_uses_zero_vectors(
+        self,
+        tool_test_data: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """With EMBED_OBSERVATIONS=False, no embedding call is made and every
+        document gets a zero-vector of the configured dimension."""
+        workspace, peer1, peer2, session, _, _ = tool_test_data
+
+        async def boom_batch_embed(_texts: list[str]) -> list[list[float]]:
+            """Fail the test if batch embedding is invoked (it must be skipped)."""
+            raise AssertionError("simple_batch_embed must not be called")
+
+        async def boom_embed(_content: str) -> list[float]:
+            """Fail the test if single embedding is invoked (it must be skipped)."""
+            raise AssertionError("embed must not be called")
+
+        created_documents: list[Any] = []
+        dedup_flags: list[bool] = []
+
+        async def fake_create_documents(
+            _db: AsyncSession,
+            documents: list[Any],
+            workspace_name: str,
+            *,
+            observer: str,
+            observed: str,
+            deduplicate: bool = False,
+        ) -> crud.CreateDocumentsResult:
+            """Capture the documents (and dedup flag) passed to create_documents."""
+            _ = (workspace_name, observer, observed)
+            dedup_flags.append(deduplicate)
+            created_documents.extend(documents)
+            return crud.CreateDocumentsResult(created_documents=documents)
+
+        monkeypatch.setattr(settings, "EMBED_OBSERVATIONS", False)
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.simple_batch_embed",
+            boom_batch_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.embedding_client.embed",
+            boom_embed,
+        )
+        monkeypatch.setattr(
+            "src.utils.agent_tools.crud.create_documents", fake_create_documents
+        )
+
+        result = await create_observations(
+            observations=[
+                schemas.ObservationInput(content="First obs", level="explicit"),
+                schemas.ObservationInput(content="Second obs", level="explicit"),
+            ],
+            observer=peer1.name,
+            observed=peer2.name,
+            session_name=session.name,
+            workspace_name=workspace.name,
+            message_ids=[],
+            message_created_at=str(datetime.now(timezone.utc)),
+        )
+
+        assert isinstance(result, ObservationsCreatedResult)
+        assert result.created_count == 2
+        assert len(result.failed) == 0
+        assert len(created_documents) == 2
+        expected_dim = settings.EMBEDDING.VECTOR_DIMENSIONS
+        for doc in created_documents:
+            assert doc.embedding == [0.0] * expected_dim
+        # Semantic dedup must be disabled when observations aren't embedded, so
+        # distinct zero-vector observations aren't collapsed as false duplicates.
+        assert dedup_flags == [False]
+
 
 class TestNormalizeObservationId:
     """Unit tests for _normalize_observation_id."""

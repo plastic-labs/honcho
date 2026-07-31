@@ -7,6 +7,8 @@ import subprocess
 import sys
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,6 +21,7 @@ from src.startup.embedding_validator import (
     StartupValidationError,
     _assert_pgvector_dims_match,  # pyright: ignore[reportPrivateUsage]
     validate_embedding_schema,
+    warn_if_embedder_defaults_mismatch_llm,
 )
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -182,6 +185,133 @@ def test_vector_store_dimensions_explicit_set_warns(
     assert any(
         "VECTOR_STORE_DIMENSIONS is deprecated" in m for m in messages
     ), f"expected deprecation warning, got {messages!r}"
+
+
+# ---------------------------------------------------------------------------
+# Startup warning: embedder defaulting to OpenAI while LLM is non-OpenAI (#915)
+# ---------------------------------------------------------------------------
+
+
+_EMBEDDING_ENV_KEYS = (
+    "EMBEDDING_MODEL_CONFIG__TRANSPORT",
+    "EMBEDDING_MODEL_CONFIG__MODEL",
+    "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL",
+    "EMBEDDING_MODEL_CONFIG",
+)
+_DERIVER_ENV_KEYS = (
+    "DERIVER_MODEL_CONFIG__TRANSPORT",
+    "DERIVER_MODEL_CONFIG__MODEL",
+    "DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL",
+    "DERIVER_MODEL_CONFIG",
+)
+_LLM_ENV_KEYS = ("LLM_OPENAI_BASE_URL",)
+
+
+def _build_app_settings_stub(
+    embedding_env: dict[str, str],
+    deriver_env: dict[str, str],
+    llm_env: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Any:
+    """Assemble a settings-shaped stub from freshly-constructed nested settings.
+
+    Real EmbeddingSettings/DeriverSettings/LLMSettings are built so that
+    ``model_fields_set`` reflects only the env we set here (isolated from the
+    ambient environment), then bundled into a SimpleNamespace the helper reads
+    like an AppSettings.
+    """
+    from src.config import DeriverSettings, EmbeddingSettings, LLMSettings
+
+    monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
+    for key in (*_EMBEDDING_ENV_KEYS, *_DERIVER_ENV_KEYS, *_LLM_ENV_KEYS):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in {**embedding_env, **deriver_env, **llm_env}.items():
+        monkeypatch.setenv(key, value)
+
+    return SimpleNamespace(
+        EMBEDDING=EmbeddingSettings(),
+        DERIVER=DeriverSettings(),
+        LLM=LLMSettings(),
+    )
+
+
+def test_warn_fires_when_embedder_defaults_and_llm_is_gemini(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A defaulted (OpenAI) embedder alongside a Gemini LLM triggers the warning."""
+    s = _build_app_settings_stub(
+        embedding_env={},  # unset -> defaults to openai
+        deriver_env={
+            "DERIVER_MODEL_CONFIG__TRANSPORT": "gemini",
+            "DERIVER_MODEL_CONFIG__MODEL": "gemini-2.5-flash",
+        },
+        llm_env={},
+        monkeypatch=monkeypatch,
+    )
+    assert warn_if_embedder_defaults_mismatch_llm(s) is True
+
+
+def test_warn_fires_when_embedder_defaults_and_llm_uses_openai_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI transport pointed at a custom base_url (proxy) still counts as
+    a non-plain-OpenAI LLM and triggers the warning."""
+    s = _build_app_settings_stub(
+        embedding_env={},
+        deriver_env={
+            "DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL": "http://vllm.local/v1",
+        },
+        llm_env={},
+        monkeypatch=monkeypatch,
+    )
+    assert warn_if_embedder_defaults_mismatch_llm(s) is True
+
+
+def test_warn_fires_when_embedder_defaults_and_llm_uses_global_openai_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A global LLM_OPENAI_BASE_URL override (proxy) with default embedding and
+    default deriver settings still counts as a non-plain-OpenAI LLM and triggers
+    the warning (the global-proxy branch of _primary_llm_is_non_openai)."""
+    s = _build_app_settings_stub(
+        embedding_env={},  # unset -> defaults to openai
+        deriver_env={},  # default openai deriver, no per-model base_url
+        llm_env={"LLM_OPENAI_BASE_URL": "http://vllm.local/v1"},
+        monkeypatch=monkeypatch,
+    )
+    assert warn_if_embedder_defaults_mismatch_llm(s) is True
+
+
+def test_warn_silent_on_all_openai_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An all-OpenAI setup (defaulted embedder, default OpenAI LLM) stays silent."""
+    s = _build_app_settings_stub(
+        embedding_env={},
+        deriver_env={},  # default openai, no base_url
+        llm_env={},
+        monkeypatch=monkeypatch,
+    )
+    assert warn_if_embedder_defaults_mismatch_llm(s) is False
+
+
+def test_warn_silent_when_embedder_explicitly_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even with a non-OpenAI LLM, an explicitly-set embedding transport means
+    the operator made a choice — no warning."""
+    s = _build_app_settings_stub(
+        embedding_env={
+            "EMBEDDING_MODEL_CONFIG__TRANSPORT": "none",
+        },
+        deriver_env={
+            "DERIVER_MODEL_CONFIG__TRANSPORT": "gemini",
+            "DERIVER_MODEL_CONFIG__MODEL": "gemini-2.5-flash",
+        },
+        llm_env={},
+        monkeypatch=monkeypatch,
+    )
+    assert warn_if_embedder_defaults_mismatch_llm(s) is False
 
 
 def test_non_1536_pgvector_without_migrated_no_longer_raises_at_config_time() -> None:
