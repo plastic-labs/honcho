@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [3.0.11] - 2026-06-24
+
+### Added
+
+- `api_request_duration_seconds` Prometheus histogram tracking per-route request latency, labeled by method and endpoint (#837)
+- LLM `provider_params` passthroughs (`extra_body` / `extra_headers` / `extra_query`) are now forwarded to the underlying provider transport across all backends, with shape validation that rejects non-mapping values (#821)
+- `structured_output_mode` model-config option to use `json_object` mode for OpenAI-compatible providers that lack native Structured Outputs support (used by the deriver) (#820)
+- OpenRouter app-attribution headers (`HTTP-Referer` / `X-Openrouter-Title`) are now sent on OpenAI-compatible clients when the configured base URL is OpenRouter, so requests are attributed to "Honcho" in OpenRouter's dashboard (#805)
+- Langfuse traces are now tagged with user and session IDs for easier trace filtering (#814)
+- `DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS` (default 1800s) lets sub-threshold representation work units flush once their oldest unprocessed queue item ages out. Set it to `0` to keep the legacy behavior where sub-threshold tails wait indefinitely unless `DERIVER_FLUSH_ENABLED=true` (#826)
+- Conclusion responses now include a `level` field (`explicit`, `deductive`, `inductive`, `contradiction`); list/query endpoints support filtering by `level` via `filters`, with reserved filter keys protected from being overridden by user-supplied filters (#851)
+
+### Changed
+
+- Peer-scoped JWTs now get read-only access to the sessions their peer is an active member of (session context, summaries, peers, their own per-session config, search, and message reads). Session-scoped JWTs remain confined to their session and cannot reach peer routes (#679)
+- Compacted Honcho's log output, with guarded ms/s metric formatting that falls back to a plain string for non-numeric values (#836)
+- Sentry now drops noisy infra/scrape transactions: the reconciler opens a transaction only once a batch has rows (idle cycles emit none), and a `traces_sampler` returns `0.0` for `/metrics`, `/health`, `/openapi.json`, `/docs`, `/redoc`, and the deriver metrics server. `SENTRY.TRACES_SAMPLE_RATE` still governs real traffic (#834)
+
+### Fixed
+
+- Peer- and session-scoped JWTs were effectively workspace-scoped: authorization walked the route's declared scope and fell through to a workspace match, so a `{w, p: alice}` token could act on any peer in the workspace. JWTs are now authorized by their narrowest claim and never widen to workspace access (#679)
+- The keys API now rejects creating a peer- or session-scoped key without a workspace. Such keys were minted successfully but failed verification on every request (#679)
+- Agent-supplied observation IDs carrying the display-format `id:` prefix are now normalized (prefix and trailing whitespace stripped) before `source_ids` are stored and on `get_reasoning_chain` lookups, fixing corrupted provenance links and broken reasoning-chain traversal (#795)
+- Fixed a `create_tree` keyword-argument mismatch in the Dreamer's surprisal tree construction (#749)
+- Providers that omit output-token counts (observed with Gemini on tool-loop completions) returned `output_tokens=None`, which raised a Pydantic validation error that aborted the call and crashed the Dreamer's induction phase before inductive conclusions were persisted. `None` is now coerced to `0` so token accounting degrades gracefully (#809)
+- Document creation now performs exact (case-insensitive, whitespace-trimmed) content deduplication before the existing semantic dedup step: exact duplicates within a batch collapse to a single insert, and an exact match against a live document reinforces it (atomic `times_derived` increment) instead of creating a new row (#861)
+
+## [3.0.10] - 2026-06-15
+
+### Added
+
+- Messages are now embedded via a background task rather than blocking API request
+- Read-only DB session mode (`get_read_db` / `tracked_db(..., read_only=True)`) so reads don't hold a transaction open across the work
+- `CORS_ORIGINS` env var to configure CORS allowed origins without editing source; defaults match the prior hardcoded list, so self-hosted deployments behind custom domains can whitelist their frontend (#697)
+- `scripts/generate_jwt.py` — utility for minting scoped or admin Honcho JWTs (`--admin`, `--workspace`/`--peer`/`--session`, `--expires` with human-friendly durations, `--print-only`) without calling the keys API (#757)
+- `STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS` (default 60s) — minimum jittered spacing between deriver stale-work-unit cleanup runs, so cleanup no longer runs on every seconds-scale poll (`0.0` keeps the legacy every-poll behavior) (#773)
+
+### Changed
+
+- Optimized the deriver and dreamer prompt cache prefixes to improve prompt-cache hit rates (#806)
+
+### Fixed
+
+- `times_derived` is now properly reinforced when a duplicate conclusion is detected. It had been pinned at 1 for nearly every conclusion (the reject-new branch dropped the increment and the new-wins branch reset the count to 1), so `ORDER BY times_derived DESC` fell back to arbitrary heap order and froze stale conclusions to the front of injected context. Reinforcement is now an atomic increment and both most-derived queries gained a `created_at DESC` recency tiebreaker (#768)
+- Webhook creation now correctly rejects private/internal IP addresses (#793)
+
+## [3.0.9] - 2026-06-02
+
+### Changed
+
+- Connection acquisition is now a single attempt with no server-side retry, on a vanilla `AsyncSession`. A new `DB_CONNECT_TIMEOUT_SECONDS` (default 2s) bounds the attempt so a saturated or unreachable pooler fails fast instead of holding a client connection open to re-knock. A saturated DB now surfaces to the caller — the API returns an error and the deriver backs off and retries on a later poll — which lets the pooler drain rather than amplifying saturation.
+
+### Added
+
+- Deriver poll jitter so instances that start together don't poll in lockstep: `DERIVER_POLLING_STARTUP_JITTER_SECONDS` (random delay before the first poll, default 30s) and `DERIVER_POLLING_JITTER_RATIO` (±fraction applied to every poll sleep, default 0.5). Both disable at `0.0`; the underlying backoff schedule is unchanged.
+
+### Removed
+
+- Reverted the connection-checkout retry and `HonchoAsyncSession` custom session introduced in 3.0.8. Removed the `DB_CONNECTION_RETRY_ENABLED` / `DB_CONNECTION_RETRY_MAX_DELAY_SECONDS` / `DB_CONNECTION_RETRY_BACKOFF_INITIAL_SECONDS` / `DB_CONNECTION_RETRY_BACKOFF_MAX_SECONDS` settings, the `db_connection_acquisitions{outcome=...}` Prometheus counter, and the `db.pool.acquire` Sentry span. Alerting built on `db_connection_acquisitions` should migrate to `db_pool_connections` / `db_queries_in_flight`.
+
+## [3.0.8] - 2026-06-01
+
+### Added
+
+- Connection-checkout retry with bounded exponential backoff (tenacity) on `get_db`/`tracked_db`: transient transaction-pooler (Supavisor) rejections — SQLAlchemy `TimeoutError` and `OperationalError` — now retry with backoff instead of surfacing as 500s under client-connection saturation. Gated by
+  `DB_CONNECTION_RETRY_ENABLED` with configurable delay/backoff knobs; ~10s default budget (#758)
+- `HonchoAsyncSession` — a lazy `AsyncSession` that checks out its pooled connection (with retry) on the first DB-touching call rather than at construction. Request handlers doing non-DB work (embedding, file, LLM) before their first query no longer pin a pooler connection across it. Only the checkout is retried;
+  the statement still runs exactly once, so writes are never duplicated (#758)
+- Adaptive deriver queue polling: the poll interval backs off when the queue is idle or erroring (base → max, doubling each cycle) and snaps back to base the moment work is claimed, cutting steady-state query load against the DB. Gated by `DERIVER_POLLING_BACKOFF_ENABLED` with configurable max/multiplier (#758)
+- New Prometheus `db_pool_connections` gauge (checked_out / checked_in / size / overflow), labeled `api`|`deriver`, registered in both the API lifespan and the deriver metrics server (#758)
+- New Prometheus `db_connection_acquisitions{outcome=ok|retried|exhausted}` counter — the alertable early-warning signal that connection checkouts are retrying through pooler rejection, before requests start failing (#758)
+- New Prometheus `db_queries_in_flight` gauge — statements actually executing on the wire (via SQLAlchemy cursor-execute events). Paired with `checked_out`, the gap reveals connections held but parked (the "idle in transaction during an external call" antipattern). Gated on `METRICS.ENABLED` for zero overhead when
+  off (#758)
+- Explicit `SqlalchemyIntegration` in both the API and deriver Sentry inits; connection acquisition wrapped in a `db.pool.acquire` span with live pool stats captured on retry exhaustion (#758)
+
+### Changed
+
+- Default `POOL_TIMEOUT` lowered to 5s, with validation that it stays under the connection-retry budget when a pooled (non-null) `POOL_CLASS` is configured; `config.toml.example` and the v2/v3 configuration docs updated to match (#758)
+- `HonchoAsyncSession` wraps every DB-touching session method (execute / scalar / scalars / flush / merge / refresh / commit / get / get_one / stream / stream_scalars / delete) so the lazy-checkout-with-retry guarantee has no holes; the acquired flag resets on `close()`/`reset()` so a reused session re-acquires on
+  next use (#758)
+
+### Fixed
+
+- Roll the session back on a retryable checkout failure before retrying — a failed autobegin could otherwise leave it pending-rollback, making the next connection attempt raise instead of cleanly re-checking-out (#758)
+- Guard `DBPoolCollector.collect()` so a pool-read/import hiccup can't raise and abort the entire `/metrics` scrape (Prometheus drops all metrics if any collector raises) (#758)
+- Clamp the pool overflow gauge to ≥ 0 (it could report negative before the pool fills) (#758)
+- Removed a double-sleep in the deriver idle poll so the backoff cap is a true cap rather than 2× (#758)
+
 ## [3.0.7] - 2026-05-21
 
 ### Added

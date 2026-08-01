@@ -264,5 +264,5 @@ class ReconcilerScheduler:
                 )
                 return False
 
-            logger.info("Enqueued reconciler task: %s", task.name)
+            logger.debug("Enqueued reconciler task: %s", task.name)
             return True

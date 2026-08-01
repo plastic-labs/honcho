@@ -1,6 +1,8 @@
 import logging
 import time
 
+from nanoid import generate as generate_nanoid
+
 from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
@@ -56,7 +58,7 @@ async def process_representation_tasks_batch(
         queue_item_message_ids: Message IDs from queue items being processed
         hit_batch_token_cap: queue batcher clamped this batch to fit
         was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
-        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
     """
     if not messages:
         return
@@ -142,12 +144,12 @@ async def process_representation_tasks_batch(
     model_config = base_model_config
 
     # Single LLM call
+    trace_id = generate_nanoid()
     llm_start = time.perf_counter()
     response = await honcho_llm_call(
         model_config=model_config,
         prompt=prompt,
         max_tokens=max_tokens,
-        track_name="Minimal Deriver",
         response_model=PromptRepresentation,
         json_mode=True,
         max_input_tokens=settings.DERIVER.MAX_INPUT_TOKENS,
@@ -159,6 +161,9 @@ async def process_representation_tasks_batch(
             call_purpose=CallPurpose.DERIVER_REPRESENTATION.value,
             parent_category="representation",
             observed=observed,
+            track_name="Minimal Deriver",
+            trace_id=trace_id,
+            span_id=trace_id,
         ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000
@@ -189,6 +194,7 @@ async def process_representation_tasks_batch(
         latest_message.created_at,
     )
 
+    agg_representation_result = crud.CreateDocumentsResult()
     successful_observer_count = 0
     if observations.is_empty() or not message_ids:
         logger.warning(
@@ -208,12 +214,26 @@ async def process_representation_tasks_batch(
             )
 
             try:
-                await representation_manager.save_representation(
-                    observations,
-                    message_ids,
-                    latest_message.session_name,
-                    latest_message.created_at,
-                    message_level_configuration,
+                representation_result = (
+                    await representation_manager.save_representation(
+                        observations,
+                        message_ids,
+                        latest_message.session_name,
+                        latest_message.created_at,
+                        message_level_configuration,
+                    )
+                )
+                agg_representation_result.exact_dup_existing_count += (
+                    representation_result.exact_dup_existing_count
+                )
+                agg_representation_result.exact_dup_in_batch_count += (
+                    representation_result.exact_dup_in_batch_count
+                )
+                agg_representation_result.semantic_dup_rejected_count += (
+                    representation_result.semantic_dup_rejected_count
+                )
+                agg_representation_result.semantic_dup_replaced_count += (
+                    representation_result.semantic_dup_replaced_count
                 )
                 successful_observer_count += 1
             except Exception as e:
@@ -313,5 +333,9 @@ async def process_representation_tasks_batch(
             hit_batch_token_cap=hit_batch_token_cap,
             hit_input_token_cap=response.hit_input_token_cap,
             observer_count=successful_observer_count,
+            exact_dup_existing_count=agg_representation_result.exact_dup_existing_count,
+            exact_dup_in_batch_count=agg_representation_result.exact_dup_in_batch_count,
+            semantic_dup_rejected_count=agg_representation_result.semantic_dup_rejected_count,
+            semantic_dup_replaced_count=agg_representation_result.semantic_dup_replaced_count,
         )
     )

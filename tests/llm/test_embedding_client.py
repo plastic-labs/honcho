@@ -339,3 +339,108 @@ def test_resolve_send_dimensions_never_returns_false_regardless(
         monkeypatch,
     )
     assert s.resolve_send_dimensions() is False
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_respects_token_budget_per_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """simple_batch_embed must split inputs across requests so per-request token cap holds."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.5] * 4)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    # max_input_tokens=100 per single input; max_tokens_per_request=120 total,
+    # so two ~80-token inputs must end up in *separate* requests.
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            base_url=None,
+        ),
+        vector_dimensions=4,
+        max_input_tokens=100,
+        max_tokens_per_request=120,
+        send_dimensions=False,
+    )
+
+    # "word " * 80 produces ~80 tokens with cl100k_base/the model encoding.
+    long_a = ("alpha " * 80).strip()
+    long_b = ("beta " * 80).strip()
+
+    out = await client.simple_batch_embed([long_a, long_b])
+    assert len(out) == 2
+    # Per-request token cap forces two separate requests.
+    assert len(fake_embeddings.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_simple_batch_embed_rejects_oversized_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inputs that exceed max_embedding_tokens must raise ValueError immediately."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            base_url=None,
+        ),
+        vector_dimensions=4,
+        max_input_tokens=10,
+        max_tokens_per_request=1000,
+        send_dimensions=False,
+    )
+
+    too_long = ("word " * 50).strip()
+    with pytest.raises(ValueError, match="maximum token limit"):
+        await client.simple_batch_embed([too_long])
+
+
+def test_prepare_chunks_returns_ordered_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """prepare_chunks must split oversized inputs using the same rules as batch_embed."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 4)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-3-small",
+            api_key="test-key",
+            base_url=None,
+        ),
+        vector_dimensions=4,
+        max_input_tokens=10,
+        max_tokens_per_request=1000,
+        send_dimensions=False,
+    )
+
+    short_text = "hello"
+    long_text = ("word " * 50).strip()
+
+    out = client.prepare_chunks({"short": short_text, "long": long_text})
+
+    assert out["short"] == [short_text]
+    assert len(out["long"]) > 1
+    # Order preserved
+    assert isinstance(out["long"][0], str)

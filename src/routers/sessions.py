@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import config, crud, schemas
 from src.cache.client import safe_cache_delete
 from src.crud.session import session_cache_key
-from src.dependencies import db
+from src.dependencies import db, read_db
 from src.deriver.enqueue import enqueue_deletion
 from src.embedding_client import embedding_client
 from src.exceptions import (
@@ -43,7 +43,7 @@ async def _get_working_representation_task(
     *,
     observer: str,
     observed: str,
-    session_name: str | None,
+    session_allowlist: list[str] | None,
     search_top_k: int | None,
     search_max_distance: float | None,
     include_most_derived: bool,
@@ -59,7 +59,7 @@ async def _get_working_representation_task(
         last_message: Optional last message for semantic query
         observer: Name of the observer peer
         observed: Name of the observed peer
-        session_name: Optional session to filter by
+        session_allowlist: Optional session allowlist to filter by
         search_top_k: Number of semantic-search-retrieved observations to include in the representation
         search_max_distance: Maximum distance to search for semantically relevant observations
         include_most_derived: Whether to include the most derived observations in the representation
@@ -74,7 +74,7 @@ async def _get_working_representation_task(
         db=db,
         observer=observer,
         observed=observed,
-        session_name=session_name,
+        session_allowlist=session_allowlist,
         include_semantic_query=last_message,
         semantic_search_top_k=search_top_k,
         semantic_search_max_distance=search_max_distance,
@@ -251,7 +251,7 @@ async def get_sessions(
         None, description="Filtering and pagination options for the sessions list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Sessions for a Workspace, paginated with optional filters."""
     filter_param = None
@@ -536,17 +536,28 @@ async def remove_peers_from_session(
 @router.get(
     "/{session_id}/peers/{peer_id}/config",
     response_model=schemas.SessionPeerConfig,
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
-    ],
 )
 async def get_peer_config(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
     peer_id: str = Path(...),
-    db: AsyncSession = db,
+    jwt_params: JWTParams = Depends(
+        require_auth(
+            workspace_name="workspace_id",
+            session_name="session_id",
+            allow_member_read=True,
+        )
+    ),
+    db: AsyncSession = read_db,
 ):
-    """Get the configuration for a Peer in a Session."""
+    """Get the configuration for a Peer in a Session.
+
+    Member-read lets a peer-scoped key reach this route, but a peer may only
+    read its own per-session config — not a co-member's. Workspace/admin and
+    session-scoped tokens (which already span the whole session) are unaffected.
+    """
+    if jwt_params.p is not None and jwt_params.p != peer_id:
+        raise AuthenticationException("JWT not permissioned for this resource")
     return await crud.get_peer_config(
         db,
         workspace_name=workspace_id,
@@ -593,13 +604,19 @@ async def set_peer_config(
     "/{session_id}/peers",
     response_model=Page[schemas.Peer],
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_peers(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ):
     """Get all Peers in a Session. Results are paginated."""
     try:
@@ -616,13 +633,19 @@ async def get_session_peers(
     "/{session_id}/context",
     response_model=schemas.SessionContext,
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_context(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
     tokens: int | None = Query(
         None,
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
@@ -742,7 +765,7 @@ async def get_session_context(
         search_query,
         observer=observer,
         observed=observed,
-        session_name=session_id if limit_to_session else None,
+        session_allowlist=[session_id] if limit_to_session else None,
         search_top_k=search_top_k,
         search_max_distance=search_max_distance,
         include_most_derived=include_most_frequent,
@@ -808,13 +831,19 @@ async def get_session_context(
     "/{session_id}/summaries",
     response_model=schemas.SessionSummaries,
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def get_session_summaries(
     workspace_id: str = Path(...),
     session_id: str = Path(...),
-    db: AsyncSession = db,
+    db: AsyncSession = read_db,
 ) -> schemas.SessionSummaries:
     """
     Get available summaries for a Session.
@@ -849,7 +878,13 @@ async def get_session_summaries(
     "/{session_id}/search",
     response_model=list[schemas.Message],
     dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+        Depends(
+            require_auth(
+                workspace_name="workspace_id",
+                session_name="session_id",
+                allow_member_read=True,
+            )
+        )
     ],
 )
 async def search_session(

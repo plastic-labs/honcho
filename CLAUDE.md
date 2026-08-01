@@ -116,6 +116,12 @@ cd sdks/typescript && bun run tsc --noEmit
 - Explicit error handling with appropriate exception types
 - Docstrings: Use Google style docstrings
 - **Never hold a DB session during external calls** (LLM, embedding, HTTP). If a function needs both a DB session and an external call result, compute the external result first and pass it as a parameter. This avoids tying up DB connections during slow network I/O. Use `tracked_db` for short-lived, DB-only operations; pass a shared session when multiple DB-only calls can reuse one connection.
+- **Never write through a read-only session** (`tracked_db(..., read_only=True)`, `get_read_db`, `ReadSessionLocal`). These run in AUTOCOMMIT mode with no transaction: writes are NOT blocked by the database — they silently commit immediately, and `begin_nested()` savepoints break. There is no runtime guard; this is enforced by convention only. Use `read_only=True` strictly for SELECT-only windows; anything that mutates (including get-or-create paths) must use a regular write session.
+
+#### Auth scoping
+
+- **`allow_member_read=True` (in `require_auth(...)`) is read-only — NEVER set it on a route that mutates state.** It lets a peer-scoped key reach a session route when its peer is an active member of the session, so on a mutating route it would hand any session member write access (message injection, config mutation, deletion). HTTP method is not a reliable read/write signal here (some read routes use POST for a richer body), so this is enforced by an explicit allowlist in `tests/routes/test_auth_route_policy.py` — adding the flag to a new route fails that test until you consciously add the route to `EXPECTED_MEMBER_READ_ROUTES`, and you must never add a mutating method there.
+- **When a member-read route is keyed by another sub-resource** (e.g. `peers/{peer_id}/config`), the handler must additionally confirm a peer-scoped caller only reads its OWN resource (`jwt_params.p == peer_id`, else raise `AuthenticationException`). Membership grants session access, not access to a co-member's data. See `get_peer_config` in `src/routers/sessions.py`.
 
 ### Runtime Architecture
 

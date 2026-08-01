@@ -72,6 +72,7 @@ def session_cache_key(workspace_name: str, session_name: str) -> str:
     key=SESSION_CACHE_KEY_TEMPLATE,
     ttl=f"{settings.CACHE.DEFAULT_LOCK_TTL_SECONDS}s",
     prefix=SESSION_LOCK_PREFIX,
+    check_interval=settings.CACHE.LOCK_WAIT_CHECK_INTERVAL_SECONDS,
 )
 async def _fetch_session(
     db: AsyncSession,
@@ -832,6 +833,38 @@ async def get_peers_from_session(
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.left_at.is_(None))  # Only active peers
     )
+
+
+async def is_peer_in_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+) -> bool:
+    """Return whether a peer is an active member of a session.
+
+    Active membership means a `SessionPeer` row exists with `left_at IS NULL`.
+    Used by the auth layer to grant a peer-scoped key read access to the
+    sessions that peer belongs to.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        peer_name: Name of the peer
+
+    Returns:
+        True if the peer is currently a member of the session.
+    """
+    result = await db.scalar(
+        select(models.SessionPeer.peer_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.session_name == session_name)
+        .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.SessionPeer.left_at.is_(None))
+        .limit(1)
+    )
+    return result is not None
 
 
 async def get_session_peer_configuration(

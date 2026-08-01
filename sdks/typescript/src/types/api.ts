@@ -74,6 +74,7 @@ export interface PeerChatParams {
   session_id?: string
   target?: string
   reasoning_level?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
+  response_format?: Record<string, unknown>
 }
 
 export interface PeerChatResponse {
@@ -242,12 +243,23 @@ export interface MessageSearchParams {
 // Conclusion Types
 // =============================================================================
 
+/**
+ * Reasoning level of a conclusion. "explicit" conclusions are extracted
+ * directly from messages; the others are derived during dreaming.
+ */
+export type ConclusionLevel =
+  | 'explicit'
+  | 'deductive'
+  | 'inductive'
+  | 'contradiction'
+
 export interface ConclusionResponse {
   id: string
   content: string
   observer_id: string
   observed_id: string
   session_id: string | null
+  level: ConclusionLevel
   created_at: string
 }
 

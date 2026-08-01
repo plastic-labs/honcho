@@ -36,6 +36,42 @@ from src.telemetry.events.reconciliation import (
 from src.telemetry.events.representation import RepresentationCompletedEvent
 
 # =============================================================================
+# Global trace-state isolation
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _isolate_trace_globals():  # pyright: ignore[reportUnusedFunction]
+    """Snapshot/restore process-global trace state around every telemetry test.
+
+    `initialize_telemetry_events()` (exercised in test_emit_function) registers a
+    real ``TraceExporter`` into ``capture._EXPORTERS`` and starts a real trace
+    emitter (``emitter._trace_emitter``). Without cleanup that state bleeds into
+    the trace-exporter tests, which then fail — and because xdist schedules tests
+    across workers nondeterministically, the failure looks flaky (a different
+    trace test fails each run depending on who shared its worker).
+
+    Snapshotting these globals (and resetting the per-run dedup) before/after
+    each test makes the trace tests hermetic regardless of neighbor ordering.
+    """
+    from src.llm import capture
+    from src.telemetry import emitter as emitter_mod
+    from src.telemetry import langfuse_session, trace_session
+
+    saved_exporters = list(capture._EXPORTERS)  # pyright: ignore[reportPrivateUsage]
+    saved_trace_emitter = emitter_mod._trace_emitter  # pyright: ignore[reportPrivateUsage]
+    trace_session.reset()
+    langfuse_session.reset()
+    try:
+        yield
+    finally:
+        capture._EXPORTERS[:] = saved_exporters  # pyright: ignore[reportPrivateUsage]
+        emitter_mod._trace_emitter = saved_trace_emitter  # pyright: ignore[reportPrivateUsage]
+        trace_session.reset()
+        langfuse_session.reset()
+
+
+# =============================================================================
 # Fixed timestamp for deterministic tests
 # =============================================================================
 

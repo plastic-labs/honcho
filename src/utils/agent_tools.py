@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
@@ -24,8 +24,17 @@ from src.telemetry.events import (
     emit,
 )
 from src.utils import summarizer
-from src.utils.formatting import format_new_turn_with_timestamp, utc_now_iso
-from src.utils.representation import Representation
+from src.utils.formatting import (
+    format_datetime_utc,
+    format_new_turn_with_timestamp,
+    parse_datetime_iso,
+    utc_now_iso,
+)
+from src.utils.representation import (
+    ALLOWLIST_SAFE_LEVELS,
+    Representation,
+    allowlist_safe_levels,
+)
 from src.utils.types import ToolResult, embedding_call_purpose, get_current_iteration
 
 logger = logging.getLogger(__name__)
@@ -845,6 +854,18 @@ INDUCTION_SPECIALIST_TOOLS: list[dict[str, Any]] = [
     TOOLS["create_observations_inductive"],
 ]
 
+# Tools for the card-refresh specialist (card_refresh dream type).
+# Card-only maintenance: discovery plus update_peer_card. Deliberately
+# excludes every observation-mutating tool (create_observations*,
+# delete_observations) — a card refresh must never touch observations.
+CARD_REFRESH_SPECIALIST_TOOLS: list[dict[str, Any]] = [
+    # Discovery tools
+    TOOLS["get_recent_observations"],
+    TOOLS["search_memory"],
+    # Action tool
+    TOOLS["update_peer_card"],
+]
+
 
 async def create_observations(
     observations: list[schemas.ObservationInput],
@@ -982,14 +1003,16 @@ async def create_observations(
     accepted: list[schemas.DocumentCreate] = []
     if documents:
         async with tracked_db("create_observations.save") as db:
-            accepted = await crud.create_documents(
-                db,
-                documents=documents,
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-                deduplicate=True,
-            )
+            accepted = (
+                await crud.create_documents(
+                    db,
+                    documents=documents,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    deduplicate=True,
+                )
+            ).created_documents
         logger.info(
             "Created %d observations in %s/%s/%s",
             len(accepted),
@@ -1011,6 +1034,7 @@ async def get_recent_history(
     session_name: str | None,
     observed: str | None = None,
     token_limit: int = 8192,
+    session_allowlist: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Retrieve recent conversation history.
@@ -1023,6 +1047,10 @@ async def get_recent_history(
         db: Database session
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         observed: Peer name to filter by when no session specified (optional)
         token_limit: Maximum tokens to retrieve (default: 8192)
 
@@ -1030,6 +1058,9 @@ async def get_recent_history(
         List of messages in chronological order
     """
     if session_name:
+        # Fail closed: a specific session outside the allowlist is not readable.
+        if session_allowlist is not None and session_name not in session_allowlist:
+            return []
         # Get messages from a specific session
         messages_stmt = await crud.get_messages(
             workspace_name=workspace_name,
@@ -1042,7 +1073,11 @@ async def get_recent_history(
         # Return in chronological order
         return list(reversed(messages))
     elif observed:
+        # Fail closed on an empty allowlist
+        if session_allowlist is not None and not session_allowlist:
+            return []
         # Get recent messages from the observed peer across all sessions
+        # (restricted to the session allowlist when one is provided)
         stmt = (
             select(models.Message)
             .where(models.Message.workspace_name == workspace_name)
@@ -1050,6 +1085,8 @@ async def get_recent_history(
             .order_by(models.Message.created_at.desc())
             .limit(50)  # Limit to recent messages
         )
+        if session_allowlist is not None:
+            stmt = stmt.where(models.Message.session_name.in_(session_allowlist))
         result = await db.execute(stmt)
         messages = list(result.scalars().all())
         # Return in chronological order
@@ -1067,6 +1104,7 @@ async def search_memory(
     limit: int,
     levels: list[str] | None = None,
     embedding: list[float] | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> Representation:
     """
     Search for observations in memory using semantic similarity.
@@ -1087,10 +1125,22 @@ async def search_memory(
     Returns:
         Representation object containing relevant observations
     """
-    # Build filter for levels if specified
-    filters: dict[str, Any] | None = None
+    # Fail closed on an empty allowlist — downstream stores drop empty IN
+    # clauses, which would silently widen scope.
+    if session_allowlist is not None and not session_allowlist:
+        return Representation()
+
+    if session_allowlist is not None:
+        levels = allowlist_safe_levels(levels)
+        if not levels:
+            return Representation()
+
+    # Build filters for levels / session allowlist if specified
+    filters: dict[str, Any] = {}
     if levels:
-        filters = {"level": {"in": levels}}
+        filters["level"] = {"in": levels}
+    if session_allowlist is not None:
+        filters["session_name"] = {"in": session_allowlist}
 
     documents = await crud.query_documents(
         db=None,
@@ -1099,7 +1149,7 @@ async def search_memory(
         observed=observed,
         query=query,
         top_k=limit,
-        filters=filters,
+        filters=filters or None,
         embedding=embedding,
     )
 
@@ -1112,6 +1162,7 @@ async def get_observation_context(
     session_name: str | None,
     message_ids: list[str],
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Retrieve messages for given message IDs along with surrounding context.
@@ -1124,9 +1175,16 @@ async def get_observation_context(
         db: Database session
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         message_ids: List of message IDs to retrieve
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of messages in chronological order, including the requested messages and surrounding context
@@ -1134,16 +1192,13 @@ async def get_observation_context(
     if not message_ids:
         return []
 
-    # Pre-fetch peer session scope if needed
-    allowed_session_names: list[str] | None = None
-    if observer and not session_name:
-        from src.crud.message import get_peer_session_names
+    from src.crud.message import resolve_session_scope
 
-        allowed_session_names = await get_peer_session_names(
-            db, workspace_name, observer
-        )
-        if not allowed_session_names:
-            return []
+    allowed_session_names, deny = await resolve_session_scope(
+        db, workspace_name, session_name, session_allowlist, observer
+    )
+    if deny:
+        return []
 
     # Use a CTE to get seq_in_session values for target messages
     stmt = (
@@ -1202,9 +1257,16 @@ async def extract_preferences(
     Args:
         workspace_name: Workspace identifier
         session_name: Session identifier (optional)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         observed: The peer whose preferences to extract
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         Dict with 'messages' list containing potentially relevant messages
@@ -1284,10 +1346,76 @@ class ToolContext:
     db_lock: asyncio.Lock
     # Optional resolved configuration for checking feature flags
     configuration: ResolvedConfiguration | None = None
+    # Optional session allowlist (dialectic filters). When set, message and
+    # conclusion recall is restricted to these sessions (intersected with
+    # observer membership); empty list fails closed.
+    session_allowlist: list[str] | None = None
     # Telemetry context fields
     run_id: str | None = None
     agent_type: str | None = None  # "dialectic", "deriver", "dreamer"
     parent_category: str | None = None  # Parent category for CloudEvents
+
+
+def _normalize_observation_id(obs_id: str) -> str:
+    """Strip the display-format ``id:`` prefix from a model-supplied observation ID.
+
+    Observations are presented to agents as ``[id:xxx]`` (see
+    ``Representation.str_with_ids``), and despite tool-schema instructions to
+    pass the bare ID, models sometimes copy the prefix verbatim. Since document
+    IDs are nanoids whose alphabet includes ``-`` and ``_``, only the ``id:``
+    prefix and surrounding whitespace are stripped — anything more aggressive
+    could mangle legitimate IDs.
+    """
+    obs_id = obs_id.strip()
+    if obs_id.lower().startswith("id:"):
+        obs_id = obs_id[3:]
+    return obs_id.strip()
+
+
+async def _latest_source_timestamp(
+    ctx: ToolContext,
+    observations: list[schemas.ObservationInput],
+) -> str | None:
+    """Latest ``message_created_at`` across all source observations in the batch.
+
+    Dreamer conclusions (deductive/inductive) are derived from existing
+    observations referenced by ``source_ids`` rather than from live messages.
+    Their logical timestamp is the point when the conclusion became possible
+    from its evidence, not when the dreamer happened to run, so we date
+    ``internal_metadata["message_created_at"]`` to the most recent source
+    observation. The physical ``Document.created_at`` column remains the insert
+    time. Returns None if no source_ids resolve to a usable timestamp (caller
+    falls back to now).
+    """
+    source_ids: list[str] = []
+    for obs in observations:
+        if obs.source_ids:
+            source_ids.extend(obs.source_ids)
+    if not source_ids:
+        return None
+
+    latest: datetime | None = None
+    async with tracked_db("create_observations.source_ts", read_only=True) as db:
+        docs = await crud.fetch_documents_by_ids(
+            db,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            document_ids=list(set(source_ids)),
+        )
+        for doc in docs:
+            raw = doc.internal_metadata.get("message_created_at")
+            if not isinstance(raw, str):
+                continue
+            try:
+                # always tz-aware, so the comparison below can't crash on mixed formats
+                parsed = parse_datetime_iso(raw)
+            except ValueError:
+                continue
+            if latest is None or parsed > latest:
+                latest = parsed
+
+    return format_datetime_utc(latest) if latest is not None else None
 
 
 async def _handle_create_observations_impl(
@@ -1309,7 +1437,15 @@ async def _handle_create_observations_impl(
             obs["level"] = forced_level
         else:
             obs.setdefault("level", default_level)
-
+        # Models sometimes copy the display-format "id:" prefix into source_ids;
+        # normalize so provenance links reference real document IDs.
+        source_ids = obs.get("source_ids")
+        if isinstance(source_ids, list):
+            normalized_source_ids: list[str] = []
+            for source_id in cast(list[Any], source_ids):
+                if isinstance(source_id, str):
+                    normalized_source_ids.append(_normalize_observation_id(source_id))
+            obs["source_ids"] = normalized_source_ids
     # Validate observations individually so valid ones are still processed
     observations: list[schemas.ObservationInput] = []
     validation_failures: list[ObservationFailure] = []
@@ -1333,6 +1469,21 @@ async def _handle_create_observations_impl(
                 )
             )
             continue
+        # Session-purity invariant: explicit observations record what was
+        # directly derived from a session's messages. Agents that are not
+        # processing messages (dreamer specialists, dialectic) must not mint
+        # them — consolidation output belongs at a derived level.
+        if not ctx.current_messages and validated.level == "explicit":
+            validation_failures.append(
+                ObservationFailure(
+                    content_preview=validated.content[:50],
+                    error=(
+                        "Only message ingestion can create 'explicit' observations; "
+                        "use a derived level (deductive/inductive/contradiction)"
+                    ),
+                )
+            )
+            continue
         observations.append(validated)
 
     if not observations:
@@ -1344,10 +1495,16 @@ async def _handle_create_observations_impl(
     # Determine message context
     if ctx.current_messages:
         message_ids = [msg.id for msg in ctx.current_messages]
-        message_created_at = str(ctx.current_messages[-1].created_at)
+        # same ISO-8601 Z format as the dreamer path below
+        message_created_at = format_datetime_utc(ctx.current_messages[-1].created_at)
     else:
+        # Dreamer path: no current messages. Backdate the conclusion to the
+        # latest source observation, which is when the inference became possible.
+
         message_ids = []
-        message_created_at = utc_now_iso()
+        message_created_at = (
+            await _latest_source_timestamp(ctx, observations)
+        ) or utc_now_iso()
 
     # Use lock to serialize database writes (prevents concurrent commit issues)
     async with ctx.db_lock:
@@ -1607,13 +1764,14 @@ async def _handle_get_recent_history(
 ) -> "str | ToolResult":
     """Handle get_recent_history tool."""
     _ = tool_input
-    async with tracked_db("tool.get_recent_history") as db:
+    async with tracked_db("tool.get_recent_history", read_only=True) as db:
         history: list[models.Message] = await get_recent_history(
             db,
             workspace_name=ctx.workspace_name,
             session_name=ctx.session_name,
             observed=ctx.observed,
             token_limit=ctx.history_token_limit,
+            session_allowlist=ctx.session_allowlist,
         )
         if not history:
             return "No conversation history available"
@@ -1659,15 +1817,28 @@ async def _handle_search_memory(
         "query_tokens": _estimate_tokens_safe(query),
     }
 
-    documents = await crud.query_documents(
-        db=None,
-        workspace_name=ctx.workspace_name,
-        observer=ctx.observer,
-        observed=ctx.observed,
-        query=query,
-        top_k=top_k,
-        embedding=query_embedding,
-    )
+    # Restrict conclusion recall to the session allowlist when one is set.
+    # Empty allowlist fails closed (downstream stores drop empty IN clauses),
+    # and only levels with a trustworthy session stamp are served.
+    documents: Sequence[models.Document]
+    if ctx.session_allowlist is not None and not ctx.session_allowlist:
+        documents = []
+    else:
+        documents = await crud.query_documents(
+            db=None,
+            workspace_name=ctx.workspace_name,
+            observer=ctx.observer,
+            observed=ctx.observed,
+            query=query,
+            top_k=top_k,
+            embedding=query_embedding,
+            filters={
+                "session_name": {"in": ctx.session_allowlist},
+                "level": {"in": list(ALLOWLIST_SAFE_LEVELS)},
+            }
+            if ctx.session_allowlist is not None
+            else None,
+        )
     mem = Representation.from_documents(documents)
     total_count = mem.len()
     if total_count == 0:
@@ -1689,6 +1860,7 @@ async def _handle_search_memory(
                 context_window=0,
                 embedding=query_embedding,
                 observer=ctx.observer,
+                session_allowlist=ctx.session_allowlist,
             )
             if snippets:
                 message_output = _format_message_snippets(
@@ -1723,13 +1895,14 @@ async def _handle_get_observation_context(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> "str | ToolResult":
     """Handle get_observation_context tool."""
-    async with tracked_db("tool.get_observation_context") as db:
+    async with tracked_db("tool.get_observation_context", read_only=True) as db:
         messages = await get_observation_context(
             db,
             workspace_name=ctx.workspace_name,
             session_name=ctx.session_name,
             message_ids=tool_input["message_ids"],
             observer=ctx.observer,
+            session_allowlist=ctx.session_allowlist,
         )
         if not messages:
             return f"No messages found for IDs {tool_input['message_ids']}"
@@ -1772,6 +1945,7 @@ async def _handle_search_messages(
         context_window=2,
         embedding=query_embedding,
         observer=ctx.observer,
+        session_allowlist=ctx.session_allowlist,
     )
     search_meta: dict[str, Any] = {
         "top_k": limit,
@@ -1808,6 +1982,7 @@ async def _handle_grep_messages(
         limit=limit,
         context_window=context_window,
         observer=ctx.observer,
+        session_allowlist=ctx.session_allowlist,
     )
     if not snippets:
         return f"No messages found containing '{text}'"
@@ -1862,7 +2037,7 @@ async def _handle_get_messages_by_date_range(
     if isinstance(before_date, str):
         return before_date  # Error message
 
-    async with tracked_db("tool.get_messages_by_date_range") as db:
+    async with tracked_db("tool.get_messages_by_date_range", read_only=True) as db:
         messages = await crud.get_messages_by_date_range(
             db,
             workspace_name=ctx.workspace_name,
@@ -1872,6 +2047,7 @@ async def _handle_get_messages_by_date_range(
             limit=limit,
             order=order,
             observer=ctx.observer,
+            session_allowlist=ctx.session_allowlist,
         )
         msg_count = len(messages)
         messages_text = (
@@ -1944,6 +2120,7 @@ async def _handle_search_messages_temporal(
         before_date=before_date,
         limit=limit,
         context_window=context_window,
+        session_allowlist=ctx.session_allowlist,
         embedding=query_embedding,
         observer=ctx.observer,
     )
@@ -1980,7 +2157,7 @@ async def _handle_get_recent_observations(
 ) -> str:
     """Handle get_recent_observations tool."""
     session_only = tool_input.get("session_only", False)
-    async with tracked_db("tool.get_recent_observations") as db:
+    async with tracked_db("tool.get_recent_observations", read_only=True) as db:
         documents = await crud.query_documents_recent(
             db=db,
             workspace_name=ctx.workspace_name,
@@ -2006,7 +2183,7 @@ async def _handle_get_most_derived_observations(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_most_derived_observations tool."""
-    async with tracked_db("tool.get_most_derived_observations") as db:
+    async with tracked_db("tool.get_most_derived_observations", read_only=True) as db:
         documents = await crud.query_documents_most_derived(
             db=db,
             workspace_name=ctx.workspace_name,
@@ -2038,7 +2215,7 @@ async def _handle_get_session_summary(
         if summary_type == "long"
         else summarizer.SummaryType.SHORT
     )
-    async with tracked_db("tool.get_session_summary") as db:
+    async with tracked_db("tool.get_session_summary", read_only=True) as db:
         summary = await summarizer.get_summary(
             db, ctx.workspace_name, ctx.session_name, st
         )
@@ -2050,7 +2227,7 @@ async def _handle_get_session_summary(
 async def _handle_get_peer_card(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
     """Handle get_peer_card tool."""
     _ = tool_input
-    async with tracked_db("tool.get_peer_card") as db:
+    async with tracked_db("tool.get_peer_card", read_only=True) as db:
         peer_card = await crud.get_peer_card(
             db,
             workspace_name=ctx.workspace_name,
@@ -2200,16 +2377,25 @@ async def _handle_get_reasoning_chain(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
     """Handle get_reasoning_chain tool."""
+    # Reasoning chains traverse provenance across sessions by design, so a
+    # session allowlist cannot be enforced on the traversal without exposing
+    # out-of-scope premises/conclusions. Fail closed rather than leak.
+    if ctx.session_allowlist is not None:
+        return (
+            "Reasoning-chain traversal is unavailable for session-scoped "
+            "queries. Use search_memory and message tools instead."
+        )
     observation_id = tool_input.get("observation_id")
     if not observation_id:
         return "ERROR: 'observation_id' is required"
+    observation_id = _normalize_observation_id(observation_id)
 
     direction = tool_input.get("direction", "both")
     if direction not in ("premises", "conclusions", "both"):
         return f"ERROR: Invalid direction '{direction}'. Must be 'premises', 'conclusions', or 'both'"
 
     # Get the observation itself
-    async with tracked_db("tool.get_reasoning_chain") as db:
+    async with tracked_db("tool.get_reasoning_chain", read_only=True) as db:
         docs = await crud.get_documents_by_ids(db, ctx.workspace_name, [observation_id])
         if not docs or not docs[0]:
             return f"ERROR: Observation '{observation_id}' not found"
@@ -2324,6 +2510,7 @@ async def create_tool_executor(
     run_id: str | None = None,
     agent_type: str | None = None,
     parent_category: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> Callable[[str, dict[str, Any]], Any]:
     """
     Create a unified tool executor function for all agent operations.
@@ -2364,6 +2551,7 @@ async def create_tool_executor(
         history_token_limit=history_token_limit,
         db_lock=shared_lock,
         configuration=configuration,
+        session_allowlist=session_allowlist,
         run_id=run_id,
         agent_type=agent_type,
         parent_category=parent_category,
@@ -2402,6 +2590,10 @@ async def create_tool_executor(
         result_str: str = ""
         metadata: dict[str, Any] = {}
         is_error: bool = False
+
+        # Langfuse tool observation; auto-parents under the active step span.
+        # Closed in the finally below with output + level.
+        tool_obs = _begin_tool_observation(tool_name, tool_input)
 
         try:
             handler = _TOOL_HANDLERS.get(tool_name)
@@ -2481,9 +2673,47 @@ async def create_tool_executor(
                 provider_tool_call_id=get_current_provider_tool_call_id(),
             )
 
+            _finish_tool_observation(tool_obs, result_str, is_error)
+
         return result_str
 
     return execute_tool
+
+
+def _begin_tool_observation(tool_name: str, tool_input: dict[str, Any]) -> Any:
+    """Open a non-current Langfuse "tool" observation for one tool execution.
+
+    Auto-parents under the active step span (else standalone). Returns a handle
+    (closed by `_finish_tool_observation`) or None when disabled/setup fails.
+    All tools are ``as_type="tool"`` — they share one generic dispatcher.
+
+    Only fires in legacy *inline* mode. In exporter mode there's no live span
+    context to parent under, so this would emit a rootless tool trace per call;
+    the LangfuseExporter already projects tool spans (from ``output_tool_calls``)
+    nested under the step span, so a live observation here just double-emits.
+    """
+    if not settings.langfuse_inline_enabled:
+        return None
+    try:
+        from langfuse import get_client
+
+        return get_client().start_observation(
+            as_type="tool", name=tool_name, input=tool_input
+        )
+    except Exception:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to open Langfuse tool observation", exc_info=True)
+        return None
+
+
+def _finish_tool_observation(tool_obs: Any, result_str: str, is_error: bool) -> None:
+    """Close a Langfuse tool observation opened by `_begin_tool_observation`."""
+    if tool_obs is None:
+        return
+    try:
+        tool_obs.update(output=result_str, level="ERROR" if is_error else None)
+        tool_obs.end()
+    except Exception:  # pragma: no cover - best-effort telemetry
+        logger.debug("Failed to close Langfuse tool observation", exc_info=True)
 
 
 def _emit_agent_tool_call_completed(

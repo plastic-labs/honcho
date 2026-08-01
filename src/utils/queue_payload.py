@@ -66,6 +66,11 @@ class DreamPayload(BasePayload):
     delay_reason: str | None = None
     documents_since_last_dream_at_schedule: int | None = None
     document_threshold: int | None = None
+    # card_refresh only: when True the existing peer card is NOT injected into
+    # the specialist prompt and the card is rebuilt solely from observations
+    # currently in the collection (used after removals, where the old card may
+    # contain facts whose support was deleted).
+    rebuild: bool = False
 
 
 class DeletionPayload(BasePayload):
@@ -103,6 +108,7 @@ def create_dream_payload(
     delay_reason: str | None = None,
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
+    rebuild: bool = False,
 ) -> dict[str, Any]:
     """Create a dream payload."""
     return DreamPayload(
@@ -114,6 +120,7 @@ def create_dream_payload(
         delay_reason=delay_reason,
         documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
         document_threshold=document_threshold,
+        rebuild=rebuild,
     ).model_dump(mode="json", exclude_none=True)
 
 

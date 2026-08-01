@@ -14,6 +14,7 @@ from src.telemetry.prometheus.metrics import (
     TokenTypes,
     metrics_endpoint,
     prometheus_metrics,
+    register_db_pool_collector,
 )
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "TokenTypes",
     "metrics_endpoint",
     "prometheus_metrics",
+    "register_db_pool_collector",
 ]

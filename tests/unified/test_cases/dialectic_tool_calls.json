@@ -1,0 +1,103 @@
+{
+  "description": "Force the dialectic agent to actually invoke tools (grep/search) by asking an enumeration+aggregation question that the prefetched first turn cannot answer in one shot. Used to verify Langfuse tool-call observations nest under the step span.",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "tool_calls_test",
+      "config": {
+        "reasoning": {
+          "enabled": false
+        }
+      },
+      "peer_configs": {
+        "user": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "assistant": {
+          "observe_me": false,
+          "observe_others": true
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "tool_calls_test",
+      "messages": [
+        {
+          "peer_id": "user",
+          "content": "Monday I grabbed a $5 latte at Starbucks before my standup.",
+          "created_at": "2024-03-04T08:30:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Nice, a classic way to start the week.",
+          "created_at": "2024-03-04T08:31:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "Tuesday I tried a $4 cold brew from Blue Bottle, really smooth.",
+          "created_at": "2024-03-05T09:15:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Blue Bottle makes a solid cold brew.",
+          "created_at": "2024-03-05T09:16:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "Wednesday was a $6 oat-milk mocha at a little place downtown.",
+          "created_at": "2024-03-06T08:45:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Oat milk mochas are underrated.",
+          "created_at": "2024-03-06T08:46:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "Thursday I skipped coffee and just had tea at home.",
+          "created_at": "2024-03-07T08:20:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "A calm morning, sounds good.",
+          "created_at": "2024-03-07T08:21:00"
+        },
+        {
+          "peer_id": "user",
+          "content": "Friday I splurged on a $7 pour-over at the roastery near the office.",
+          "created_at": "2024-03-08T08:50:00"
+        },
+        {
+          "peer_id": "assistant",
+          "content": "Ending the week strong!",
+          "created_at": "2024-03-08T08:51:00"
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "timeout": 180,
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "description": "Global query (no session history) + empty prefetch (reasoning off) forces grep/search tool calls",
+      "target": "chat",
+      "observer_peer_id": "assistant",
+      "observed_peer_id": "user",
+      "reasoning_level": "max",
+      "input": "How many separate coffees did I buy this week, and exactly how much did I spend in total across all of them?",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response state that the user bought 4 coffees totaling $22 (or correctly enumerate the $5, $4, $6, and $7 purchases)?",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}

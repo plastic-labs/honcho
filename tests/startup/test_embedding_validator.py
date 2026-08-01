@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from src.config import settings
 from src.startup.embedding_validator import (
     StartupValidationError,
     _assert_pgvector_dims_match,  # pyright: ignore[reportPrivateUsage]
@@ -120,18 +121,24 @@ async def test_validator_fails_closed_when_introspection_keeps_failing(
 @pytest.mark.asyncio
 async def test_validator_passes_against_test_database(
     db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The test DB is provisioned at the default dim (1536); the validator
     should accept it without raising."""
+    # conftest provisions the test tables in `public`; pin the validator to it
+    # so a developer's local .env DB_SCHEMA can't point it at another schema.
+    monkeypatch.setattr(settings.DB, "SCHEMA", "public")
     await validate_embedding_schema(db_engine)
 
 
 @pytest.mark.asyncio
 async def test_validator_raises_when_schema_dim_diverges_from_settings(
     db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ALTER one of the embedding columns to a non-1536 dim and confirm the
     validator raises with an actionable message."""
+    monkeypatch.setattr(settings.DB, "SCHEMA", "public")  # see test above
     async with db_engine.begin() as conn:
         await conn.execute(
             text(
@@ -181,8 +188,13 @@ def test_non_1536_pgvector_without_migrated_no_longer_raises_at_config_time() ->
     """The dim-vs-MIGRATED guard has been removed. Constructing AppSettings
     with non-1536 + default pgvector + MIGRATED=false should now succeed
     (the runtime schema validator at startup is the safety net)."""
+    # Minimal env, NOT a copy of os.environ: load_dotenv() in the app mutates
+    # the parent pytest process's environ, so inheriting it would leak a
+    # developer's local .env (DB_SCHEMA, VECTOR_STORE_MIGRATED, ...) into the
+    # child despite PYTHON_DOTENV_DISABLED. The child must see pure defaults
+    # plus exactly the overrides below.
     env = {
-        **os.environ,
+        "PATH": os.environ.get("PATH", ""),
         "PYTHON_DOTENV_DISABLED": "1",
         "EMBEDDING_VECTOR_DIMENSIONS": "768",
     }

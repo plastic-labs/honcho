@@ -29,6 +29,15 @@ def create_tree(tree_type: str, **kwargs: Any) -> SurprisalTree:
     Raises:
         ValueError: If tree_type is not recognized
     """
+    # `surprisal.py` calls this factory with a uniform `k=settings.DREAM.SURPRISAL.TREE_K` kwarg for every tree type,
+    # but `k` is only meaningful for the kNN-based trees (kdtree, balltree, graph).
+    # The other 4 use different tunables and raise TypeError if `k` is passed.
+    # Drop it here so the factory accepts a uniform kwargs dict.
+
+    trees_without_k = {"rptree", "covertree", "lsh", "prototype"}
+    if tree_type in trees_without_k:
+        kwargs.pop("k", None)
+
     if tree_type == "rptree":
         return RPTree(**kwargs)
     elif tree_type == "kdtree":
