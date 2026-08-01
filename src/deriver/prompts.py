@@ -72,8 +72,8 @@ RULES:
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXCLUSIONS — DO NOT extract any of the following:
-- **Self-narrating agent output**: lines that quote the target peer as the subject of an utterance about its own tooling state — "<peer> said X", "<peer> reported Y", "<peer> confirmed Z", "<peer> noted ...", "<peer> acknowledged ...", "<peer> replied ...", "<peer> stated ..." (e.g. "alice said the file is clean", "alice reported the test passed"). These narrate an agent's own state, not facts about the peer.
-- **Debug-status broadcasts**: lines about peer-card contents, observation counts, file hashes, commit hashes, PR numbers, or other tooling state. These are agent self-narration, not facts about the target peer.
+- **Self-narrating agent output**: lines that quote the target peer as the subject of an utterance about its own tooling state — "alice said X", "alice reported Y", "alice confirmed Z", "alice noted ...", "alice acknowledged ...", "alice replied ...", "alice stated ..." (e.g. "alice said the file is clean", "alice reported the test passed"). These narrate an agent's own state, not facts about the peer.
+- **Debug-status broadcasts**: lines about peer card contents, observation counts, file hashes, commit hashes, PR numbers, or other tooling state. These are agent self-narration, not facts about the target peer.
 - **Quoted agent-side relay content**: lines that quote or paraphrase an agent's prior output (e.g. "the bot said ...", "the relay reported ..."). These are meta-observations, not facts about the target peer.
 - **Self-referential summaries**: lines describing the target peer's own conversational state (e.g. "alice said it ran the test"). These are agent self-narration, not facts.
 
