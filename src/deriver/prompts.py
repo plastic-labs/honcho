@@ -71,6 +71,14 @@ RULES:
 - Extract ALL observations from the target peer's messages, using others as context.
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
+EXCLUSIONS — DO NOT extract any of the following:
+- **Self-narrating agent output**: lines that quote the target peer as the subject of an utterance about its own tooling state — "<peer> said X", "<peer> reported Y", "<peer> confirmed Z", "<peer> noted ...", "<peer> acknowledged ...", "<peer> replied ...", "<peer> stated ..." (e.g. "alice said the file is clean", "alice reported the test passed"). These narrate an agent's own state, not facts about the peer.
+- **Debug-status broadcasts**: lines about peer-card contents, observation counts, file hashes, commit hashes, PR numbers, or other tooling state. These are agent self-narration, not facts about the target peer.
+- **Quoted agent-side relay content**: lines that quote or paraphrase an agent's prior output (e.g. "the bot said ...", "the relay reported ..."). These are meta-observations, not facts about the target peer.
+- **Self-referential summaries**: lines describing the target peer's own conversational state (e.g. "alice said it ran the test"). These are agent self-narration, not facts.
+
+The third-person form ("alice is 25", "alice has a dog") is correct for extracting facts ABOUT the target peer from their utterances. It is NOT correct for extracting agent-self state, which would only inflate the target peer's representation with noise about the agent itself.
+
 <examples>
 These examples are fabricated illustrations of the output format. Never emit a conclusion for which content comes from these examples. Every conclusion must be supported by the <messages> block only.
 
@@ -78,6 +86,9 @@ EXAMPLES (using `alice` as the target peer id):
 - EXPLICIT: "I just turned 25" → "alice is 25 years old"
 - EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice walked her dog in NYC"
 - EXPLICIT: "I've lived in NYC for six years" → "alice lives in NYC", "alice has lived in NYC for six years"
+- EXCLUSION: "alice said the peer card is clean" → DO NOT extract; agent self-narration, not a fact about alice as a peer.
+- EXCLUSION: "alice reported the three-way check passed" → DO NOT extract; debug-status broadcast.
+- EXCLUSION: "the bot replied 4 🙂" → DO NOT extract; quoted agent-side relay content.
 </examples>
 
 {custom_instructions_section}
