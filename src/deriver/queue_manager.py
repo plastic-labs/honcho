@@ -625,6 +625,7 @@ class QueueManager:
         """
         ownership = self.worker_ownership.get(worker_id)
         error_msg = f"Invalid work unit key: {error.__class__.__name__}: {error}"
+        quarantined = False
         try:
             async with tracked_db("quarantine_invalid_work_unit") as db:
                 await db.execute(
@@ -642,6 +643,7 @@ class QueueManager:
                         )
                     )
                 await db.commit()
+                quarantined = True
         except Exception as quarantine_error:
             logger.error(
                 "Failed to quarantine invalid work unit %s: %s",
@@ -654,7 +656,21 @@ class QueueManager:
         finally:
             self.untrack_worker_work_unit(worker_id, work_unit_key)
 
-        logger.error("Quarantined invalid work unit %s: %s", work_unit_key, error)
+        # Only claim quarantine when the transaction actually committed —
+        # otherwise the item is still unprocessed (and may still hold an
+        # ActiveQueueSession row), and an unconditional success log would
+        # misdirect anyone reading these during an outage.
+        if quarantined:
+            logger.error("Quarantined invalid work unit %s: %s", work_unit_key, error)
+        else:
+            logger.error(
+                "Invalid work unit %s NOT quarantined (quarantine write failed); "
+                "it remains unprocessed: %s",
+                work_unit_key,
+                error,
+            )
+        # The parse failure itself is worth reporting either way; the quarantine
+        # failure, if any, is captured separately in the except branch above.
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
 

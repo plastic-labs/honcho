@@ -27,9 +27,18 @@ def main() -> int:
         cursor.execute(
             """
             SELECT
+                -- Mirrors parse_work_unit_key(): a representation key must be
+                -- prefixed 'representation:' AND have either 4 segments
+                -- (workspace:session:observed) or 5 (legacy, with observer).
+                -- Any other shape raises in the parser and would be quarantined,
+                -- so counting only the prefix mismatch would under-report.
                 COUNT(*) FILTER (
                     WHERE task_type = 'representation'
-                      AND work_unit_key NOT LIKE 'representation:%'
+                      AND (
+                        work_unit_key NOT LIKE 'representation:%'
+                        OR array_length(string_to_array(work_unit_key, ':'), 1)
+                             NOT IN (4, 5)
+                      )
                 ),
                 COALESCE(
                     EXTRACT(EPOCH FROM (NOW() - MIN(created_at)))::bigint,
