@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import threading
 import time
 from collections import defaultdict
@@ -173,11 +174,13 @@ class _EmbeddingClient:
         max_input_tokens: int,
         max_tokens_per_request: int,
         send_dimensions: bool,
+        truncate_to_dimensions: bool = False,
     ):
         self.transport: str = config.transport
         self.model: str = config.model
         self.vector_dimensions: int = vector_dimensions
         self.send_dimensions: bool = send_dimensions
+        self.truncate_to_dimensions: bool = truncate_to_dimensions
 
         if self.transport == "gemini":
             if not config.api_key:
@@ -223,6 +226,20 @@ class _EmbeddingClient:
             )
         return embedding
 
+    def _fit_embedding_dimensions(self, embedding: list[float]) -> list[float]:
+        """Coerce a provider embedding to ``vector_dimensions``, then validate.
+
+        When ``truncate_to_dimensions`` is enabled and the provider returned a
+        larger vector than configured (common with MRL-trained models served
+        behind OpenAI-compatible endpoints that ignore ``dimensions=``), keep
+        the leading ``vector_dimensions`` components and L2-renormalize so
+        cosine similarity stays well-defined. Otherwise, fall through to the
+        strict validator, which raises on any mismatch.
+        """
+        if self.truncate_to_dimensions and len(embedding) > self.vector_dimensions:
+            embedding = _l2_truncate(embedding, self.vector_dimensions)
+        return self._validate_embedding_dimensions(embedding)
+
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
 
@@ -264,7 +281,7 @@ class _EmbeddingClient:
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
             response = await openai_client.embeddings.create(**openai_kwargs)
-            return self._validate_embedding_dimensions(response.data[0].embedding)
+            return self._fit_embedding_dimensions(response.data[0].embedding)
 
         return await _emit_embedding_call(
             provider=self.transport,
@@ -469,7 +486,7 @@ class _EmbeddingClient:
                 response = await self.client.embeddings.create(**openai_kwargs)
                 for item, embedding_data in zip(batch, response.data, strict=True):
                     result[item.text_id][item.chunk_index] = (
-                        self._validate_embedding_dimensions(embedding_data.embedding)
+                        self._fit_embedding_dimensions(embedding_data.embedding)
                     )
             return result
 
@@ -529,6 +546,21 @@ class _EmbeddingClient:
             text_id: [chunk_dict[i] for i in sorted(chunk_dict.keys())]
             for text_id, chunk_dict in all_embeddings.items()
         }
+
+
+def _l2_truncate(embedding: list[float], target_dimensions: int) -> list[float]:
+    """Keep the leading ``target_dimensions`` components and L2-renormalize.
+
+    Valid for Matryoshka (MRL) embeddings, where the leading subvector is a
+    trained lower-dimensional representation. Renormalizing restores unit norm
+    so cosine/inner-product similarity is preserved. A zero-norm slice is
+    returned unchanged (degenerate input; nothing to normalize).
+    """
+    sliced = embedding[:target_dimensions]
+    norm = math.sqrt(sum(value * value for value in sliced))
+    if norm == 0.0:
+        return sliced
+    return [value / norm for value in sliced]
 
 
 def _chunk_text_with_tokens(
@@ -603,6 +635,7 @@ class EmbeddingClient:
                         max_input_tokens=settings.EMBEDDING.MAX_INPUT_TOKENS,
                         max_tokens_per_request=settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
                         send_dimensions=settings.EMBEDDING.resolve_send_dimensions(),
+                        truncate_to_dimensions=settings.EMBEDDING.TRUNCATE_TO_DIMENSIONS,
                     )
                     self._instance_signature = signature
                     logger.debug(
@@ -627,6 +660,7 @@ class EmbeddingClient:
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
             settings.EMBEDDING.resolve_send_dimensions(),
+            settings.EMBEDDING.TRUNCATE_TO_DIMENSIONS,
         )
 
     async def embed(self, query: str) -> list[float]:

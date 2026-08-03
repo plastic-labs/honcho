@@ -758,6 +758,14 @@ class EmbeddingSettings(HonchoSettings):
     # saturated, message creation skips the fast path entirely and the
     # reconciler embeds on its next cycle. 0 disables the fast path.
     MAX_PENDING_EMBED_TASKS: Annotated[int, Field(default=50, ge=0)] = 50
+    # When the embedding provider returns a vector larger than
+    # VECTOR_DIMENSIONS, truncate it to VECTOR_DIMENSIONS and L2-renormalize
+    # instead of raising a dimension-mismatch error. Intended for MRL-trained
+    # models (e.g. Qwen3-Embedding) served behind OpenAI-compatible endpoints
+    # (llama.cpp, some vLLM builds) that ignore the `dimensions=` request
+    # parameter and always emit their native dimension. Off by default so a
+    # genuinely misconfigured model still fails loudly.
+    TRUNCATE_TO_DIMENSIONS: bool = False
 
     @model_validator(mode="before")
     @classmethod
