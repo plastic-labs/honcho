@@ -273,7 +273,7 @@ DEFAULT_LOCK_TTL_SECONDS = 5
 
 # Vector store settings
 [vector_store]
-# Vector store type: "pgvector", "turbopuffer", or "lancedb"
+# Vector store type: "pgvector", "turbopuffer", "lancedb", or "qdrant"
 TYPE = "pgvector"
 # Migration flag: set to true when migration from pgvector is complete
 MIGRATED = false
@@ -282,4 +282,11 @@ NAMESPACE = "honcho"
 # TURBOPUFFER_API_KEY = "your-turbopuffer-api-key"
 # TURBOPUFFER_REGION = "us-east-1"
 LANCEDB_PATH = "./lancedb_data"
+# QDRANT_URL = "http://localhost:6333"
+# QDRANT_API_KEY = "your-qdrant-api-key"
+# QDRANT_PREFER_GRPC = false
+# QDRANT_GRPC_PORT = 6334
+# QDRANT_HTTPS = false
+# QDRANT_PREFIX = ""
+# QDRANT_TIMEOUT = 30
 RECONCILIATION_INTERVAL_SECONDS = 300

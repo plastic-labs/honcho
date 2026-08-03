@@ -1341,12 +1341,12 @@ class DreamSettings(HonchoSettings):
 
 
 class VectorStoreSettings(HonchoSettings):
-    """Settings for vector store (pgvector, Turbopuffer, or LanceDB)."""
+    """Settings for vector store (pgvector, Turbopuffer, LanceDB or Qdrant)."""
 
     model_config = SettingsConfigDict(env_prefix="VECTOR_STORE_", extra="ignore")  # pyright: ignore
 
     # Vector store type to use
-    TYPE: Literal["pgvector", "turbopuffer", "lancedb"] = "pgvector"
+    TYPE: Literal["pgvector", "turbopuffer", "lancedb", "qdrant"] = "pgvector"
 
     MIGRATED: bool = False
 
@@ -1371,6 +1371,15 @@ class VectorStoreSettings(HonchoSettings):
 
     # LanceDB-specific settings (local embedded mode)
     LANCEDB_PATH: str = "./lancedb_data"
+
+    # Qdrant-specific settings
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str | None = None
+    QDRANT_PREFER_GRPC: bool = False
+    QDRANT_GRPC_PORT: int = 6334
+    QDRANT_HTTPS: bool | None = None
+    QDRANT_PREFIX: str | None = None
+    QDRANT_TIMEOUT: int | None = None
 
     RECONCILIATION_INTERVAL_SECONDS: Annotated[int, Field(default=300, gt=0)] = (
         300  # 5 minutes
