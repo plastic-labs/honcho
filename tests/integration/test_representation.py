@@ -32,12 +32,10 @@ def fixed_embedding_vector() -> list[float]:
     """
     Fixture providing a deterministic embedding vector for hermetic tests.
 
-    Returns a 1536-dimensional vector with predictable values to avoid
+    Returns a 1024-dimensional vector with predictable values to avoid
     network calls to external embedding services during testing.
     """
-    # Create a deterministic 1536-dimensional embedding vector
-    # Using a simple pattern that's easy to verify in tests
-    return [0.1 * (i % 10) for i in range(1536)]
+    return [0.1 * (i % 10) for i in range(1024)]
 
 
 @pytest.mark.asyncio

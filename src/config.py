@@ -748,7 +748,7 @@ class EmbeddingSettings(HonchoSettings):
     MODEL_CONFIG: ConfiguredEmbeddingModelSettings = Field(
         default_factory=_MODEL_CONFIG_DEFAULT
     )
-    VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
+    VECTOR_DIMENSIONS: Annotated[int, Field(default=1024, gt=0)] = 1024
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
     # Caps concurrent message-embedding fan-out on the API request path (the
@@ -1360,10 +1360,10 @@ class VectorStoreSettings(HonchoSettings):
     DIMENSIONS: Annotated[
         int,
         Field(
-            default=1536,
+            default=1024,
             gt=0,
         ),
-    ] = 1536
+    ] = 1024
 
     # Turbopuffer-specific settings
     TURBOPUFFER_API_KEY: str | None = None

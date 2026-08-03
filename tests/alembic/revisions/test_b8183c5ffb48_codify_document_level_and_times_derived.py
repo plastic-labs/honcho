@@ -7,6 +7,7 @@ import json
 from nanoid import generate as generate_nanoid
 from sqlalchemy import text
 
+from src.config import settings
 from tests.alembic.registry import register_after_upgrade, register_before_upgrade
 from tests.alembic.verifier import MigrationVerifier
 
@@ -95,7 +96,7 @@ def prepare_codify_document_level_and_times_derived(
             "id": generate_nanoid(),
             "content": "Document with explicit level and times_derived=3",
             "metadata": json.dumps({"level": "explicit", "times_derived": 3}),
-            "embedding": [0.1] * 1536,
+            "embedding": [0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             "observer": OBSERVER_NAME,
             "observed": OBSERVED_NAME,
             "ws_name": WORKSPACE_NAME,
@@ -114,7 +115,7 @@ def prepare_codify_document_level_and_times_derived(
             "id": generate_nanoid(),
             "content": "Document with deductive level and times_derived=5",
             "metadata": json.dumps({"level": "deductive", "times_derived": 5}),
-            "embedding": [0.2] * 1536,
+            "embedding": [0.2] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             "observer": OBSERVER_NAME,
             "observed": OBSERVED_NAME,
             "ws_name": WORKSPACE_NAME,
@@ -133,7 +134,7 @@ def prepare_codify_document_level_and_times_derived(
             "id": generate_nanoid(),
             "content": "Document without level or times_derived fields",
             "metadata": json.dumps({"other_field": "value"}),
-            "embedding": [0.3] * 1536,
+            "embedding": [0.3] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             "observer": OBSERVER_NAME,
             "observed": OBSERVED_NAME,
             "ws_name": WORKSPACE_NAME,
@@ -152,7 +153,7 @@ def prepare_codify_document_level_and_times_derived(
             "id": generate_nanoid(),
             "content": "Document with only level field",
             "metadata": json.dumps({"level": "explicit"}),
-            "embedding": [0.4] * 1536,
+            "embedding": [0.4] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             "observer": OBSERVER_NAME,
             "observed": OBSERVED_NAME,
             "ws_name": WORKSPACE_NAME,
@@ -171,7 +172,7 @@ def prepare_codify_document_level_and_times_derived(
             "id": generate_nanoid(),
             "content": "Document with only times_derived field",
             "metadata": json.dumps({"times_derived": 7}),
-            "embedding": [0.5] * 1536,
+            "embedding": [0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             "observer": OBSERVER_NAME,
             "observed": OBSERVED_NAME,
             "ws_name": WORKSPACE_NAME,
@@ -292,7 +293,7 @@ def verify_codify_document_level_and_times_derived(verifier: MigrationVerifier) 
             "id": new_doc_id,
             "content": "New document after migration",
             "metadata": json.dumps({}),
-            "embedding": [0.6] * 1536,
+            "embedding": [0.6] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             "observer": OBSERVER_NAME,
             "observed": OBSERVED_NAME,
             "ws_name": WORKSPACE_NAME,

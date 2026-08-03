@@ -80,9 +80,9 @@ async def _hnsw_indexes(db_engine: AsyncEngine) -> set[str]:
 async def test_plan_no_alter_needed_when_dims_already_match(
     db_engine: AsyncEngine,
 ) -> None:
-    plan = await _build_pgvector_plan(db_engine, target_dim=1536, schema="public")
+    plan = await _build_pgvector_plan(db_engine, target_dim=1024, schema="public")
     assert plan.needs_alter is False
-    assert plan.current_dims == {"documents": 1536, "message_embeddings": 1536}
+    assert plan.current_dims == {"documents": 1024, "message_embeddings": 1024}
 
 
 @pytest.mark.asyncio
@@ -94,7 +94,7 @@ async def test_plan_needs_alter_when_target_differs(db_engine: AsyncEngine) -> N
 @pytest.mark.asyncio
 async def test_plan_raises_on_missing_column(db_engine: AsyncEngine) -> None:
     with pytest.raises(SystemExit, match="required vector columns missing"):
-        await _build_pgvector_plan(db_engine, target_dim=1536, schema="no_such_schema")
+        await _build_pgvector_plan(db_engine, target_dim=1024, schema="no_such_schema")
 
 
 # ---------------------------------------------------------------------------
@@ -106,10 +106,9 @@ async def test_plan_raises_on_missing_column(db_engine: AsyncEngine) -> None:
 async def test_apply_alters_dims_and_recreates_hnsw_indexes(
     db_engine: AsyncEngine,
 ) -> None:
-    # 768 is the canonical "small" dim used in non-1536 deployments and is
-    # well below pgvector's 2000-dim HNSW limit.
+    # 768 is well below pgvector's 2000-dim HNSW limit.
     target = 768
-    async with _restore_schema_to(db_engine, dim=1536):
+    async with _restore_schema_to(db_engine, dim=1024):
         before_indexes = await _hnsw_indexes(db_engine)
         assert before_indexes, "test fixture should have HNSW indexes pre-alter"
 
@@ -147,7 +146,7 @@ async def test_apply_refuses_when_embeddings_populated(
         fake_count,
     )
 
-    async with _restore_schema_to(db_engine, dim=1536):
+    async with _restore_schema_to(db_engine, dim=1024):
         plan = await _build_pgvector_plan(db_engine, target_dim=768, schema="public")
         with pytest.raises(
             SystemExit, match="refusing to ALTER populated embedding tables"
@@ -157,8 +156,8 @@ async def test_apply_refuses_when_embeddings_populated(
         # The SystemExit aborts the transaction; nothing should have changed.
         dims_after_refuse = await _current_dims(db_engine)
         assert dims_after_refuse == {
-            "documents": 1536,
-            "message_embeddings": 1536,
+            "documents": 1024,
+            "message_embeddings": 1024,
         }
 
 
@@ -171,8 +170,8 @@ async def test_apply_refuses_when_embeddings_populated(
 async def test_idempotent_apply_is_a_noop(db_engine: AsyncEngine) -> None:
     """Build plan twice with the matching dim — second call should still
     return needs_alter=False without raising or making any changes."""
-    plan_a = await _build_pgvector_plan(db_engine, target_dim=1536, schema="public")
-    plan_b = await _build_pgvector_plan(db_engine, target_dim=1536, schema="public")
+    plan_a = await _build_pgvector_plan(db_engine, target_dim=1024, schema="public")
+    plan_b = await _build_pgvector_plan(db_engine, target_dim=1024, schema="public")
     assert plan_a.needs_alter is False
     assert plan_b.needs_alter is False
     assert plan_a.current_dims == plan_b.current_dims

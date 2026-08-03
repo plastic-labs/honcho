@@ -123,7 +123,7 @@ async def test_validator_passes_against_test_database(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The test DB is provisioned at the default dim (1536); the validator
+    """The test DB is provisioned at the default dim (1024); the validator
     should accept it without raising."""
     # conftest provisions the test tables in `public`; pin the validator to it
     # so a developer's local .env DB_SCHEMA can't point it at another schema.
@@ -136,7 +136,7 @@ async def test_validator_raises_when_schema_dim_diverges_from_settings(
     db_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ALTER one of the embedding columns to a non-1536 dim and confirm the
+    """ALTER one of the embedding columns to a non-1024 dim and confirm the
     validator raises with an actionable message."""
     monkeypatch.setattr(settings.DB, "SCHEMA", "public")  # see test above
     async with db_engine.begin() as conn:
@@ -154,7 +154,7 @@ async def test_validator_raises_when_schema_dim_diverges_from_settings(
             await conn.execute(
                 text(
                     "ALTER TABLE documents"
-                    + " ALTER COLUMN embedding TYPE vector(1536) USING NULL"
+                    + " ALTER COLUMN embedding TYPE vector(1024) USING NULL"
                 )
             )
 
@@ -184,9 +184,9 @@ def test_vector_store_dimensions_explicit_set_warns(
     ), f"expected deprecation warning, got {messages!r}"
 
 
-def test_non_1536_pgvector_without_migrated_no_longer_raises_at_config_time() -> None:
+def test_non_default_pgvector_without_migrated_no_longer_raises_at_config_time() -> None:
     """The dim-vs-MIGRATED guard has been removed. Constructing AppSettings
-    with non-1536 + default pgvector + MIGRATED=false should now succeed
+    with non-default + default pgvector + MIGRATED=false should now succeed
     (the runtime schema validator at startup is the safety net)."""
     # Minimal env, NOT a copy of os.environ: load_dotenv() in the app mutates
     # the parent pytest process's environ, so inheriting it would leak a

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.config import settings
 from src.crud.document import SemanticRejectionResult, is_rejected_duplicate
 from src.exceptions import ResourceNotFoundException
 
@@ -106,7 +107,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="User likes pizza",
-                embedding=[0.9] * 1536,
+                embedding=[0.9] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[1],
@@ -115,7 +116,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="User dislikes vegetables",
-                embedding=[0.1] * 1536,
+                embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[2],
@@ -159,7 +160,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="User likes pizza",
-                embedding=[0.9] * 1536,
+                embedding=[0.9] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[1],
@@ -168,7 +169,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="User dislikes vegetables",
-                embedding=[0.1] * 1536,
+                embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[2],
@@ -225,7 +226,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="Observation one",
-                embedding=[0.5] * 1536,
+                embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 times_derived=1,
                 metadata=schemas.DocumentMetadata(
@@ -235,7 +236,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="Observation two",
-                embedding=[0.5] * 1536,
+                embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 times_derived=2,
                 metadata=schemas.DocumentMetadata(
@@ -270,7 +271,7 @@ class TestDocumentCRUD:
             observed=test_peer2.name,
             top_k=10,
             filters={"times_derived": 2},
-            embedding=[0.5] * 1536,
+            embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
         )
 
         assert len(results) == 1
@@ -349,7 +350,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="eri loves cats and dogs and birds and snakes",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -366,7 +367,7 @@ class TestDocumentCRUD:
         # Fewer unique tokens -> existing wins -> new doc is rejected.
         new_doc = schemas.DocumentCreate(
             content="eri loves cats",
-            embedding=[0.5] * 1536,
+            embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
             times_derived=1,
             metadata=schemas.DocumentMetadata(
@@ -413,7 +414,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="eri loves cats",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=3,
                     metadata=schemas.DocumentMetadata(
@@ -430,7 +431,7 @@ class TestDocumentCRUD:
         # More information -> new wins -> existing is soft-deleted.
         new_doc = schemas.DocumentCreate(
             content="eri loves cats and dogs",
-            embedding=[0.5] * 1536,
+            embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=test_session.name,
             times_derived=1,
             metadata=schemas.DocumentMetadata(
@@ -483,7 +484,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="User likes coffee",
-                embedding=[0.1] * 1536,
+                embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[1],
@@ -492,7 +493,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="user likes coffee",
-                embedding=[0.2] * 1536,
+                embedding=[0.2] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[2],
@@ -501,7 +502,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="  User likes coffee\n",
-                embedding=[0.3] * 1536,
+                embedding=[0.3] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 metadata=schemas.DocumentMetadata(
                     message_ids=[3],
@@ -561,7 +562,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="User likes coffee",
-                    embedding=[0.1] * 1536,
+                    embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -582,7 +583,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="user likes coffee ",
-                    embedding=[0.9] * 1536,
+                    embedding=[0.9] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -657,7 +658,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="User likes coffee",
-                    embedding=[0.1] * 1536,
+                    embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=2,
                     metadata=schemas.DocumentMetadata(
@@ -680,7 +681,7 @@ class TestDocumentCRUD:
                 [
                     schemas.DocumentCreate(
                         content="user likes coffee ",
-                        embedding=[0.9] * 1536,
+                        embedding=[0.9] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                         session_name=test_session.name,
                         times_derived=5,
                         metadata=schemas.DocumentMetadata(
@@ -708,7 +709,7 @@ class TestDocumentCRUD:
                 [
                     schemas.DocumentCreate(
                         content="USER LIKES COFFEE",
-                        embedding=[0.4] * 1536,
+                        embedding=[0.4] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                         session_name=test_session.name,
                         metadata=schemas.DocumentMetadata(
                             message_ids=[3],
@@ -745,7 +746,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="User likes coffee",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -766,7 +767,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content=" user likes coffee ",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -776,7 +777,7 @@ class TestDocumentCRUD:
                 ),
                 schemas.DocumentCreate(
                     content="User likes coffee and tea",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -835,7 +836,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="eri loves cats and dogs and birds and snakes",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -855,7 +856,7 @@ class TestDocumentCRUD:
             [
                 schemas.DocumentCreate(
                     content="eri loves cats",
-                    embedding=[0.5] * 1536,
+                    embedding=[0.5] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                     session_name=test_session.name,
                     times_derived=1,
                     metadata=schemas.DocumentMetadata(
@@ -959,7 +960,7 @@ class TestDocumentCRUD:
         doc_schemas = [
             schemas.DocumentCreate(
                 content="Observation 1",
-                embedding=[0.1] * 1536,
+                embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 level="explicit",
                 metadata=schemas.DocumentMetadata(
@@ -969,7 +970,7 @@ class TestDocumentCRUD:
             ),
             schemas.DocumentCreate(
                 content="Observation 2",
-                embedding=[0.2] * 1536,
+                embedding=[0.2] * settings.EMBEDDING.VECTOR_DIMENSIONS,
                 session_name=test_session.name,
                 level="deductive",
                 metadata=schemas.DocumentMetadata(
@@ -1057,7 +1058,7 @@ class TestSessionPurityInvariant:
     ) -> schemas.DocumentCreate:
         return schemas.DocumentCreate(
             content=content,
-            embedding=[0.1] * 1536,
+            embedding=[0.1] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             session_name=session_name,
             level=level,  # pyright: ignore[reportArgumentType]
             metadata=schemas.DocumentMetadata(

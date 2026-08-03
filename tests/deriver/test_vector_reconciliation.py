@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.reconciler.sync_vectors import (
     MAX_SYNC_ATTEMPTS,
     ReconciliationMetrics,
@@ -74,7 +75,7 @@ class TestStateTransitions:
                 session_name=session.name,
                 sync_state="pending",
                 sync_attempts=0,
-                embedding=[float(i)] * 1536,  # Mock embedding
+                embedding=[float(i)] * settings.EMBEDDING.VECTOR_DIMENSIONS,  # Mock embedding
             )
             for i in range(3)
         ]
@@ -137,7 +138,7 @@ class TestStateTransitions:
             session_name=session.name,
             sync_state="pending",
             sync_attempts=2,  # Already failed twice
-            embedding=[1.0] * 1536,
+            embedding=[1.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
         )
         db_session.add(doc)
         await db_session.commit()
@@ -198,7 +199,7 @@ class TestStateTransitions:
             session_name=session.name,
             sync_state="pending",
             sync_attempts=MAX_SYNC_ATTEMPTS - 1,  # One more attempt will hit limit
-            embedding=[1.0] * 1536,
+            embedding=[1.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
         )
         db_session.add(doc)
         await db_session.commit()
@@ -276,7 +277,7 @@ class TestBatchProcessing:
                 observed=peer1.name,
                 session_name=session.name,
                 sync_state="pending",
-                embedding=[1.0] * 1536,
+                embedding=[1.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             ),
             # Namespace 2: peer1 → peer2
             models.Document(
@@ -286,7 +287,7 @@ class TestBatchProcessing:
                 observed=peer2.name,
                 session_name=session.name,
                 sync_state="pending",
-                embedding=[2.0] * 1536,
+                embedding=[2.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             ),
             # Namespace 1 again: peer1 → peer1
             models.Document(
@@ -296,7 +297,7 @@ class TestBatchProcessing:
                 observed=peer1.name,
                 session_name=session.name,
                 sync_state="pending",
-                embedding=[3.0] * 1536,
+                embedding=[3.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             ),
         ]
         db_session.add_all(docs)
@@ -369,7 +370,7 @@ class TestBatchProcessing:
                 observed=peer1.name,
                 session_name=session.name,
                 sync_state="pending",
-                embedding=[float(i)] * 1536,
+                embedding=[float(i)] * settings.EMBEDDING.VECTOR_DIMENSIONS,
             )
             for i in range(150)  # More than RECONCILIATION_BATCH_SIZE (100)
         ]
@@ -414,7 +415,7 @@ class TestBatchProcessing:
             sync_state="pending",
             sync_attempts=1,
             last_sync_at=now - datetime.timedelta(minutes=9, seconds=59),
-            embedding=[1.0] * 1536,
+            embedding=[1.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
         )
         eligible_doc = models.Document(
             content="ready",
@@ -425,7 +426,7 @@ class TestBatchProcessing:
             sync_state="pending",
             sync_attempts=1,
             last_sync_at=now - datetime.timedelta(minutes=10, seconds=1),
-            embedding=[2.0] * 1536,
+            embedding=[2.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
         )
         db_session.add_all([ineligible_doc, eligible_doc])
         await db_session.commit()
@@ -486,7 +487,7 @@ class TestReEmbedding:
         # Mock embedding client
         with patch("src.reconciler.sync_vectors.embedding_client") as mock_embed_client:
             mock_embed_client.simple_batch_embed = AsyncMock(
-                return_value=[[float(i)] * 1536 for i in range(3)]
+                return_value=[[float(i)] * settings.EMBEDDING.VECTOR_DIMENSIONS for i in range(3)]
             )
 
             # Mock vector store
@@ -554,7 +555,7 @@ class TestReEmbedding:
         async def track_batch_embed(contents: list[str]) -> list[list[float]]:
             nonlocal batch_call_count
             batch_call_count += 1
-            return [[1.0] * 1536 for _ in contents]
+            return [[1.0] * settings.EMBEDDING.VECTOR_DIMENSIONS for _ in contents]
 
         with patch("src.reconciler.sync_vectors.embedding_client") as mock_embed_client:
             mock_embed_client.simple_batch_embed = track_batch_embed
@@ -680,7 +681,7 @@ class TestMetricsTracking:
             observed=peer1.name,
             session_name=session.name,
             sync_state="pending",
-            embedding=[1.0] * 1536,
+            embedding=[1.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
         )
         fail_doc = models.Document(
             content="fail",
@@ -690,7 +691,7 @@ class TestMetricsTracking:
             session_name=session.name,
             sync_state="pending",
             sync_attempts=MAX_SYNC_ATTEMPTS - 1,  # Will fail on next attempt
-            embedding=[2.0] * 1536,
+            embedding=[2.0] * settings.EMBEDDING.VECTOR_DIMENSIONS,
         )
         db_session.add_all([success_doc, fail_doc])
         await db_session.commit()

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-echo "Running database migrations..."
+echo "Running database migrations and embedding configuration..."
 /app/.venv/bin/python scripts/provision_db.py
 
 echo "Starting API server..."
