@@ -318,11 +318,14 @@ class RepresentationManager:
 
         total = max_observations
 
-        # Calculate how many observations to get from each source
+        # Calculate how many observations to get from each source.
+        # Floor of 1 when a semantic query was explicitly requested: `total // 3`
+        # rounds to 0 for total < 3, which would allocate no budget to the source
+        # the caller actually asked to curate around.
         semantic_observations = (
             min(
                 max(
-                    0,
+                    1,
                     semantic_search_top_k
                     if semantic_search_top_k is not None
                     else total // 3,

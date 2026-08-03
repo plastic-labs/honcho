@@ -355,6 +355,13 @@ async def query_documents(
     Returns:
         Sequence of matching documents
     """
+    # A non-positive top_k means "no results wanted" -- return before embedding
+    # or querying. Turbopuffer rejects top_k=0 with a 400 (pgvector would
+    # silently do LIMIT 0), and callers derive top_k from budget arithmetic or
+    # LLM tool input, so neither is guaranteed positive.
+    if top_k <= 0:
+        return []
+
     # Use provided embedding or generate one
     if embedding is None:
         try:
