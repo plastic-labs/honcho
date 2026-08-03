@@ -42,6 +42,7 @@ from src.reconciler import (
 )
 from src.schemas import ResolvedConfiguration
 from src.telemetry import prometheus_metrics
+from src.telemetry.otel import get_tracer
 from src.telemetry.sentry import initialize_sentry
 from src.utils.work_unit import parse_work_unit_key
 from src.webhooks.events import (
@@ -50,6 +51,12 @@ from src.webhooks.events import (
 )
 
 logger = getLogger(__name__)
+
+# Deriver-side tracer. Each queue item/batch opens a root span so the downstream
+# memory.add / derive / summary spans nest into ONE trace per unit of work
+# instead of being exported as separate single-span traces. No-op when OTel is
+# disabled (default no-op TracerProvider).
+_deriver_tracer = get_tracer("honcho.deriver")
 
 load_dotenv(override=True)
 
@@ -659,16 +666,23 @@ class QueueManager:
                                     for item in items_to_process
                                     if item.message_id is not None
                                 ]
-                                await process_representation_batch(
-                                    messages_context,
-                                    message_level_configuration,
-                                    observers=observers,
-                                    observed=work_unit.observed,
-                                    queue_item_message_ids=queue_item_message_ids,
-                                    hit_batch_token_cap=batch_result.hit_batch_token_cap,
-                                    was_flush_enabled=batch_result.was_flush_enabled,
-                                    batch_max_tokens=batch_result.batch_max_tokens,
-                                )
+                                with _deriver_tracer.start_as_current_span(
+                                    "deriver.process_batch",
+                                    attributes={
+                                        "deriver.task_type": work_unit.task_type,
+                                        "deriver.item_count": len(items_to_process),
+                                    },
+                                ):
+                                    await process_representation_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observers=observers,
+                                        observed=work_unit.observed,
+                                        queue_item_message_ids=queue_item_message_ids,
+                                        hit_batch_token_cap=batch_result.hit_batch_token_cap,
+                                        was_flush_enabled=batch_result.was_flush_enabled,
+                                        batch_max_tokens=batch_result.batch_max_tokens,
+                                    )
                                 await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )
@@ -692,7 +706,13 @@ class QueueManager:
                                 break
 
                             try:
-                                await process_item(queue_item)
+                                with _deriver_tracer.start_as_current_span(
+                                    "deriver.process_item",
+                                    attributes={
+                                        "deriver.task_type": queue_item.task_type,
+                                    },
+                                ):
+                                    await process_item(queue_item)
                                 await self.mark_queue_items_as_processed(
                                     [queue_item], work_unit_key
                                 )

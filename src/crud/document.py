@@ -24,6 +24,19 @@ from src.exceptions import (
     ValidationException,
     VectorStoreError,
 )
+from src.telemetry.otel import (
+    MEMORY_ITEM_COUNT,
+    MEMORY_OBSERVED,
+    MEMORY_OBSERVER,
+    MEMORY_OPERATION,
+    MEMORY_QUERY,
+    MEMORY_RESULT_COUNT,
+    MEMORY_SYSTEM,
+    MEMORY_WORKSPACE,
+    get_meter,
+    get_otel_logger,
+    get_tracer,
+)
 from src.utils.filter import apply_filter
 from src.vector_store import (
     VectorRecord,
@@ -32,6 +45,25 @@ from src.vector_store import (
 )
 
 logger = getLogger(__name__)
+
+_tracer = get_tracer("honcho.memory.document")
+_meter = get_meter("honcho.memory.document")
+_otel_log = get_otel_logger("honcho.memory.document")
+
+_search_duration = _meter.create_histogram(
+    "memory.search.duration",
+    unit="ms",
+    description="Vector search latency in milliseconds",
+)
+_search_results = _meter.create_histogram(
+    "memory.search.results",
+    description="Number of results returned per search",
+)
+_operation_duration = _meter.create_histogram(
+    "memory.operation.duration",
+    unit="ms",
+    description="Memory add/delete operation latency in milliseconds",
+)
 
 
 def get_all_documents(
@@ -355,78 +387,118 @@ async def query_documents(
     Returns:
         Sequence of matching documents
     """
-    # Use provided embedding or generate one
-    if embedding is None:
-        try:
-            embedding = await embedding_client.embed(query)
-        except ValueError as e:
-            raise ValidationException(
-                "Query exceeds maximum token limit of "
-                + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
-            ) from e
+    import time
 
-    if _uses_pgvector():
-        # pgvector path — pure DB, open a short session if none provided
-        if db is not None:
-            return await _query_documents_pgvector(
-                db,
-                workspace_name,
-                observer,
-                observed,
-                embedding,
-                filters,
-                max_distance,
-                top_k,
+    _t0 = time.monotonic()
+    with _tracer.start_as_current_span(
+        "memory.search",
+        attributes={
+            MEMORY_SYSTEM: "honcho",
+            MEMORY_OPERATION: "search",
+            MEMORY_WORKSPACE: workspace_name,
+            MEMORY_OBSERVER: observer,
+            MEMORY_OBSERVED: observed,
+            # Truncate query to avoid high-cardinality spans; omit if PII concern
+            MEMORY_QUERY: query[:200] if query else "",
+        },
+    ) as span:
+        # Use provided embedding or generate one
+        if embedding is None:
+            try:
+                embedding = await embedding_client.embed(query)
+            except ValueError as e:
+                raise ValidationException(
+                    "Query exceeds maximum token limit of "
+                    + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
+                ) from e
+
+        if _uses_pgvector():
+            # pgvector path — pure DB, open a short session if none provided
+            if db is not None:
+                docs = await _query_documents_pgvector(
+                    db,
+                    workspace_name,
+                    observer,
+                    observed,
+                    embedding,
+                    filters,
+                    max_distance,
+                    top_k,
+                )
+            else:
+                async with tracked_db(
+                    "query_documents.pgvector", read_only=True
+                ) as managed_db:
+                    docs = await _query_documents_pgvector(
+                        managed_db,
+                        workspace_name,
+                        observer,
+                        observed,
+                        embedding,
+                        filters,
+                        max_distance,
+                        top_k,
+                    )
+                    for doc in docs:
+                        managed_db.expunge(doc)
+        else:
+            # External vector store — network call first, DB only for the ID fetch
+            document_ids = await query_external_vector_document_ids(
+                workspace_name=workspace_name,
+                observer=observer,
+                observed=observed,
+                embedding=embedding,
+                top_k=top_k,
+                max_distance=max_distance,
+                filters=filters,
             )
-        async with tracked_db("query_documents.pgvector", read_only=True) as managed_db:
-            docs = await _query_documents_pgvector(
-                managed_db,
-                workspace_name,
-                observer,
-                observed,
-                embedding,
-                filters,
-                max_distance,
-                top_k,
-            )
-            for doc in docs:
-                managed_db.expunge(doc)
-            return docs
 
-    # External vector store — network call first, DB only for the ID fetch
-    document_ids = await query_external_vector_document_ids(
-        workspace_name=workspace_name,
-        observer=observer,
-        observed=observed,
-        embedding=embedding,
-        top_k=top_k,
-        max_distance=max_distance,
-        filters=filters,
-    )
+            if not document_ids:
+                span.set_attribute(MEMORY_RESULT_COUNT, 0)
+                elapsed_ms = (time.monotonic() - _t0) * 1000
+                _search_duration.record(elapsed_ms, {MEMORY_SYSTEM: "honcho"})
+                _search_results.record(0, {MEMORY_SYSTEM: "honcho"})
+                return []
 
-    if not document_ids:
-        return []
+            if db is not None:
+                docs = await fetch_documents_by_ids(
+                    db=db,
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    document_ids=document_ids,
+                    filters=filters,
+                )
+            else:
+                async with tracked_db(
+                    "query_documents.fetch", read_only=True
+                ) as managed_db:
+                    docs = await fetch_documents_by_ids(
+                        db=managed_db,
+                        workspace_name=workspace_name,
+                        observer=observer,
+                        observed=observed,
+                        document_ids=document_ids,
+                        filters=filters,
+                    )
+                    for doc in docs:
+                        managed_db.expunge(doc)
 
-    if db is not None:
-        return await fetch_documents_by_ids(
-            db=db,
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            document_ids=document_ids,
-            filters=filters,
+        result_count = len(docs)
+        span.set_attribute(MEMORY_RESULT_COUNT, result_count)
+        elapsed_ms = (time.monotonic() - _t0) * 1000
+        _search_duration.record(elapsed_ms, {MEMORY_SYSTEM: "honcho"})
+        _search_results.record(result_count, {MEMORY_SYSTEM: "honcho"})
+        _otel_log.emit(
+            body=f"memory.search: {result_count} results in {elapsed_ms:.1f}ms",
+            severity_text="INFO",
+            attributes={
+                MEMORY_SYSTEM: "honcho",
+                MEMORY_OPERATION: "search",
+                MEMORY_WORKSPACE: workspace_name,
+                MEMORY_RESULT_COUNT: result_count,
+            },
         )
-    async with tracked_db("query_documents.fetch", read_only=True) as managed_db:
-        docs = await fetch_documents_by_ids(
-            db=managed_db,
-            workspace_name=workspace_name,
-            observer=observer,
-            observed=observed,
-            document_ids=document_ids,
-            filters=filters,
-        )
-        for doc in docs:
-            managed_db.expunge(doc)
         return docs
 
 
@@ -504,6 +576,20 @@ async def create_documents(
         List of DocumentCreate schemas that were actually inserted (excludes
         duplicates and failures).
     """
+    import time
+
+    _t0 = time.monotonic()
+    _span = _tracer.start_span(
+        "memory.add",
+        attributes={
+            MEMORY_SYSTEM: "honcho",
+            MEMORY_OPERATION: "add",
+            MEMORY_WORKSPACE: workspace_name,
+            MEMORY_OBSERVER: observer,
+            MEMORY_OBSERVED: observed,
+            MEMORY_ITEM_COUNT: len(documents),
+        },
+    )
     honcho_documents: list[models.Document] = []
     accepted_documents: list[schemas.DocumentCreate] = []
     # Store (document_model, embedding) pairs - IDs aren't available until after commit
@@ -770,13 +856,29 @@ async def create_documents(
             "Failed to create documents due to integrity constraint violation"
         ) from e
 
-    return CreateDocumentsResult(
+    result = CreateDocumentsResult(
         created_documents=accepted_documents,
         exact_dup_existing_count=exact_dup_existing_count,
         exact_dup_in_batch_count=exact_dup_in_batch_count,
         semantic_dup_rejected_count=semantic_dup_rejected_count,
         semantic_dup_replaced_count=semantic_dup_replaced_count,
     )
+    created_count = len(result.created_documents)
+    _span.set_attribute(MEMORY_ITEM_COUNT, created_count)
+    _span.end()
+    elapsed_ms = (time.monotonic() - _t0) * 1000
+    _operation_duration.record(elapsed_ms, {MEMORY_SYSTEM: "honcho", MEMORY_OPERATION: "add"})
+    _otel_log.emit(
+        body=f"memory.add: {created_count} documents created in {elapsed_ms:.1f}ms",
+        severity_text="INFO",
+        attributes={
+            MEMORY_SYSTEM: "honcho",
+            MEMORY_OPERATION: "add",
+            MEMORY_WORKSPACE: workspace_name,
+            MEMORY_ITEM_COUNT: created_count,
+        },
+    )
+    return result
 
 
 async def delete_document(
@@ -845,29 +947,60 @@ async def delete_documents(
     soft-deleted. IDs that didn't match are silently skipped; callers can diff
     the returned ids against the input to detect misses.
     """
+    import time
+
     if not document_ids:
         return []
 
-    conditions = [
-        models.Document.id.in_(document_ids),
-        models.Document.workspace_name == workspace_name,
-        models.Document.observer == observer,
-        models.Document.observed == observed,
-        models.Document.deleted_at.is_(None),
-    ]
-    if session_name is not None:
-        conditions.append(models.Document.session_name == session_name)
+    _t0 = time.monotonic()
+    with _tracer.start_as_current_span(
+        "memory.delete",
+        attributes={
+            MEMORY_SYSTEM: "honcho",
+            MEMORY_OPERATION: "delete",
+            MEMORY_WORKSPACE: workspace_name,
+            MEMORY_OBSERVER: observer,
+            MEMORY_OBSERVED: observed,
+            MEMORY_ITEM_COUNT: len(document_ids),
+        },
+    ) as span:
+        conditions = [
+            models.Document.id.in_(document_ids),
+            models.Document.workspace_name == workspace_name,
+            models.Document.observer == observer,
+            models.Document.observed == observed,
+            models.Document.deleted_at.is_(None),
+        ]
+        if session_name is not None:
+            conditions.append(models.Document.session_name == session_name)
 
-    stmt = (
-        update(models.Document)
-        .where(*conditions)
-        .values(deleted_at=func.now())
-        .returning(models.Document.id, models.Document.level)
-    )
-    result = await db.execute(stmt)
-    rows = result.all()
-    await db.commit()
-    return [(row.id, row.level) for row in rows]
+        stmt = (
+            update(models.Document)
+            .where(*conditions)
+            .values(deleted_at=func.now())
+            .returning(models.Document.id, models.Document.level)
+        )
+        result = await db.execute(stmt)
+        rows = result.all()
+        await db.commit()
+        deleted = [(row.id, row.level) for row in rows]
+        deleted_count = len(deleted)
+        span.set_attribute(MEMORY_ITEM_COUNT, deleted_count)
+        elapsed_ms = (time.monotonic() - _t0) * 1000
+        _operation_duration.record(
+            elapsed_ms, {MEMORY_SYSTEM: "honcho", MEMORY_OPERATION: "delete"}
+        )
+        _otel_log.emit(
+            body=f"memory.delete: {deleted_count} documents deleted in {elapsed_ms:.1f}ms",
+            severity_text="INFO",
+            attributes={
+                MEMORY_SYSTEM: "honcho",
+                MEMORY_OPERATION: "delete",
+                MEMORY_WORKSPACE: workspace_name,
+                MEMORY_ITEM_COUNT: deleted_count,
+            },
+        )
+        return deleted
 
 
 async def delete_document_by_id(
@@ -933,6 +1066,19 @@ async def create_observations(
     """
     if not observations:
         return []
+
+    import time
+
+    _t0_obs = time.monotonic()
+    _span_obs = _tracer.start_span(
+        "memory.add",
+        attributes={
+            MEMORY_SYSTEM: "honcho",
+            MEMORY_OPERATION: "add",
+            MEMORY_WORKSPACE: workspace_name,
+            MEMORY_ITEM_COUNT: len(observations),
+        },
+    )
 
     # Collect unique sessions and peer pairs to validate
     sessions_to_validate: set[str] = set()
@@ -1118,10 +1264,23 @@ async def create_observations(
             "Failed to create observations due to integrity constraint violation"
         ) from e
 
-    logger.debug(
-        "Created %d observations in workspace %s",
-        len(honcho_documents),
-        workspace_name,
+    obs_count = len(honcho_documents)
+    logger.debug("Created %d observations in workspace %s", obs_count, workspace_name)
+    _span_obs.set_attribute(MEMORY_ITEM_COUNT, obs_count)
+    _span_obs.end()
+    elapsed_obs_ms = (time.monotonic() - _t0_obs) * 1000
+    _operation_duration.record(
+        elapsed_obs_ms, {MEMORY_SYSTEM: "honcho", MEMORY_OPERATION: "add"}
+    )
+    _otel_log.emit(
+        body=f"memory.add (observations): {obs_count} created in {elapsed_obs_ms:.1f}ms",
+        severity_text="INFO",
+        attributes={
+            MEMORY_SYSTEM: "honcho",
+            MEMORY_OPERATION: "add",
+            MEMORY_WORKSPACE: workspace_name,
+            MEMORY_ITEM_COUNT: obs_count,
+        },
     )
     return honcho_documents
 

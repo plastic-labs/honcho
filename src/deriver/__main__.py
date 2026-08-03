@@ -13,6 +13,7 @@ from src.telemetry import (
     register_db_pool_collector,
     shutdown_telemetry,
 )
+from src.telemetry.otel import setup_otel
 
 from .queue_manager import main
 
@@ -63,6 +64,17 @@ def setup_logging():
 
 async def run_deriver():
     """Run the deriver with proper telemetry lifecycle management."""
+    # Initialize OpenTelemetry in the worker process. Without this the deriver's
+    # memory.add / derive spans stay in the OTel no-op provider and are silently
+    # dropped — the API process would be the ONLY source of spans, which is why
+    # background derivation showed up as missing (or the traces looked
+    # single-span). Opt-in via OTEL_ENABLED; no-op when disabled.
+    setup_otel(
+        enabled=settings.OTEL.ENABLED,
+        service_name=settings.OTEL.SERVICE_NAME,
+        otlp_endpoint=settings.OTEL.EXPORTER_OTLP_ENDPOINT,
+    )
+
     # Initialize async telemetry (CloudEvents emitter)
     await initialize_telemetry_async()
 
