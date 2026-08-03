@@ -1,118 +1,82 @@
 ---
 name: honcho-memory
-description: Gives AI agents persistent memory across conversations using Honcho. Automatically saves and retrieves user context so the AI remembers preferences, history, and facts between sessions. Use when you need the AI to remember past conversations, recall what a user has told it, inject relevant context into prompts, or manage separate memory spaces for different topics.
+description: Long-term memory for AI agents via the official Honcho CLI. Save conversation turns, ask natural-language memory questions, and pull context for prompts.
 license: AGPL-3.0
-compatibility: Requires Python 3.9+, honcho-ai>=2.1.0, and a Honcho API key from honcho.dev. Set HONCHO_API_KEY and optionally HONCHO_WORKSPACE_ID in your environment.
+compatibility: Requires uv, honcho-cli, and HONCHO_API_KEY. The wrapper auto-installs honcho-cli with uv if missing.
 metadata:
   author: plastic-labs
-  version: "0.1.0"
-  honcho-sdk: "2.1.0"
+  version: "0.4.0"
+  honcho-cli: "0.1.0+"
 ---
+# Honcho Memory
 
-# Honcho Memory Skill
+Use this when an agent needs persistent memory across conversations.
 
-This skill provides three tools for storing and retrieving AI memory using [Honcho](https://honcho.dev).
+This skill is intentionally thin: `scripts/memory.py` is a small Zo-friendly wrapper around the official `honcho` CLI.
 
 ## Setup
 
-1. Get a Honcho API key at [honcho.dev](https://honcho.dev).
-2. Set environment variables:
+1. Get a Honcho API key from [app.honcho.dev](https://app.honcho.dev/api-keys).
+2. Add `HONCHO_API_KEY` in [Settings > Advanced](/?t=settings&s=advanced).
+3. Optional: add `HONCHO_WORKSPACE_ID`, `HONCHO_USER_ID`, `HONCHO_ASSISTANT_ID`, or `HONCHO_SESSION_ID`.
+4. Verify:
 
-   ```
-   HONCHO_API_KEY=your-api-key
-   HONCHO_WORKSPACE_ID=default   # optional, defaults to "default"
-   ```
-
-3. Install dependencies:
-
-   ```
-   pip install honcho-ai python-dotenv
-   ```
-
-## Tools
-
-### `save_memory`
-
-Saves a conversation turn (user or assistant message) to Honcho.
-
-**When to use:** After every message exchange to build up the user's memory.
-
-```python
-from tools.save_memory import save_memory
-
-save_memory(
-    user_id="alice",           # unique user identifier
-    content="I love hiking",   # message text
-    role="user",               # "user" or "assistant"
-    session_id="chat-1",       # conversation session ID
-    assistant_id="assistant"   # optional: assistant peer ID (default: "assistant")
-)
+```bash
+python3 Skills/honcho-memory/scripts/memory.py test
 ```
 
-### `query_memory`
+## Agent workflow
 
-Asks a natural language question against stored memory using Honcho's Dialectic API.
+Before responding, get context when memory would help:
 
-**When to use:** When the user asks "do you remember...?", or when you need to recall facts about the user before responding.
-
-```python
-from tools.query_memory import query_memory
-
-answer = query_memory(
-    user_id="alice",
-    query="What are Alice's hobbies?",
-    session_id="chat-1"   # optional: scope to a session
-)
-# Returns: "Alice enjoys hiking."
+```bash
+python3 Skills/honcho-memory/scripts/memory.py context --session chat-1
 ```
 
-### `get_context`
+After meaningful exchanges, save the turn:
 
-Retrieves recent conversation history formatted for direct use in an LLM API call.
-
-**When to use:** At the start of each LLM call to inject relevant context from past conversations.
-
-```python
-from tools.get_context import get_context
-
-messages = get_context(
-    user_id="alice",
-    session_id="chat-1",
-    assistant_id="assistant",
-    tokens=4000              # max tokens to include
-)
-# Returns: [{"role": "user", "content": "..."}, ...]
+```bash
+python3 Skills/honcho-memory/scripts/memory.py save "User prefers concise tools" --session chat-1
 ```
 
-## Concept Mapping
+Ask Honcho directly:
 
-| Zo Computer | Honcho |
-|---|---|
-| Account | Workspace |
-| User | Peer |
-| Conversation | Session |
-| Message | Message |
+```bash
+python3 Skills/honcho-memory/scripts/memory.py ask "What should I know about the user's preferences?"
+```
 
-## Example: Full Conversation Flow
+## Commands
 
-```python
-from tools.save_memory import save_memory
-from tools.query_memory import query_memory
-from tools.get_context import get_context
+```bash
+python3 Skills/honcho-memory/scripts/memory.py save "memory" --session chat-1
+python3 Skills/honcho-memory/scripts/memory.py ask "question"
+python3 Skills/honcho-memory/scripts/memory.py context --session chat-1 --tokens 2000
+python3 Skills/honcho-memory/scripts/memory.py search "topic"
+python3 Skills/honcho-memory/scripts/memory.py messages --session chat-1
+python3 Skills/honcho-memory/scripts/memory.py doctor
+python3 Skills/honcho-memory/scripts/memory.py test
+```
 
-user_id = "alice"
-session_id = "session-1"
+For a full exchange, pipe JSON:
 
-# 1. Save user message
-save_memory(user_id, "I'm learning Rust and love rock climbing", "user", session_id)
+```bash
+cat messages.json | python3 Skills/honcho-memory/scripts/memory.py save --session chat-1
+```
 
-# 2. Save assistant reply
-save_memory(user_id, "That's great! Both require patience.", "assistant", session_id)
+```json
+[
+  {"role": "user", "content": "I'm learning Rust"},
+  {"role": "assistant", "content": "Nice — Rust rewards careful thinking."}
+]
+```
 
-# 3. In a later session, recall what you know
-print(query_memory(user_id, "What does Alice do in her free time?"))
-# → "Alice is learning Rust and enjoys rock climbing."
+## Direct CLI
 
-# 4. Get context window for next LLM call
-messages = get_context(user_id, session_id, "assistant", tokens=4000)
+Use the official CLI directly when you need lower-level control:
+
+```bash
+honcho doctor --json
+honcho message create "memory" -p "$ZO_USER" -s chat-1 --json
+honcho session context chat-1 --json
+honcho peer chat "what does the user prefer?" -p "$ZO_USER" --json
 ```
