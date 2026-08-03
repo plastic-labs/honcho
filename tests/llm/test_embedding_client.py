@@ -444,3 +444,237 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert len(out["long"]) > 1
     # Order preserved
     assert isinstance(out["long"][0], str)
+
+
+class FakeGeminiModelsBatch:
+    """Fake Gemini `models` API allowing distinct behavior for batch vs.
+    single-item calls, so tests can exercise the batch->per-item fallback."""
+
+    def __init__(
+        self,
+        *,
+        batch_embeddings_fn: Any = None,
+        single_embeddings_fn: Any = None,
+    ) -> None:
+        # Deterministic function of the batch contents -> embeddings list,
+        # so retries (which re-invoke the whole batch call) are idempotent.
+        self.batch_embeddings_fn = batch_embeddings_fn
+        self.single_embeddings_fn = single_embeddings_fn
+        self.batch_calls: list[list[str]] = []
+        self.single_calls: list[str] = []
+
+    async def embed_content(
+        self,
+        *,
+        model: str,
+        contents: str | list[str],
+        config: dict[str, Any],
+    ) -> SimpleNamespace:
+        if isinstance(contents, list):
+            self.batch_calls.append(contents)
+            embeddings = self.batch_embeddings_fn(contents)
+            return SimpleNamespace(embeddings=embeddings)
+        else:
+            self.single_calls.append(contents)
+            embeddings = self.single_embeddings_fn(contents)
+            return SimpleNamespace(embeddings=embeddings)
+
+
+def _build_gemini_client(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_models: FakeGeminiModelsBatch,
+    *,
+    vector_dimensions: int = 4,
+) -> _EmbeddingClient:
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.aio: Any = SimpleNamespace(models=fake_models)
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    return _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+        ),
+        vector_dimensions=vector_dimensions,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_gemini_batch_embed_single_item_normal_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(a) A single-item batch where Gemini returns exactly one embedding."""
+    fake_models = FakeGeminiModelsBatch(
+        batch_embeddings_fn=lambda contents: [SimpleNamespace(values=[0.1] * 4)],
+    )
+    client = _build_gemini_client(monkeypatch, fake_models)
+
+    result = await client.batch_embed({"only": "hello world"})
+
+    assert result == {"only": [[0.1] * 4]}
+    assert fake_models.batch_calls == [["hello world"]]
+    assert fake_models.single_calls == []
+
+
+@pytest.mark.asyncio
+async def test_gemini_batch_embed_multi_item_preserves_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(b) A multi-item batch where Gemini returns one embedding per item,
+    in order -- verify each text_id maps to the correct embedding."""
+    fake_models = FakeGeminiModelsBatch(
+        batch_embeddings_fn=lambda contents: [
+            SimpleNamespace(values=[0.1] * 4),
+            SimpleNamespace(values=[0.2] * 4),
+            SimpleNamespace(values=[0.3] * 4),
+        ],
+    )
+    client = _build_gemini_client(monkeypatch, fake_models)
+
+    result = await client.batch_embed({"first": "aaa", "second": "bbb", "third": "ccc"})
+
+    assert result == {
+        "first": [[0.1] * 4],
+        "second": [[0.2] * 4],
+        "third": [[0.3] * 4],
+    }
+    assert fake_models.batch_calls == [["aaa", "bbb", "ccc"]]
+    assert fake_models.single_calls == []
+
+
+@pytest.mark.asyncio
+async def test_gemini_batch_embed_mismatched_response_falls_back_per_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(c) Gemini returns fewer embeddings than input items for a batch
+    call. Must NOT crash (previously: zip(strict=True) ValueError) and
+    must NOT silently misalign -- instead falls back to per-item calls
+    and correctly maps every item to its own embedding."""
+
+    def single_embeddings_fn(text: str) -> list[Any]:
+        mapping = {
+            "aaa": [0.1] * 4,
+            "bbb": [0.2] * 4,
+            "ccc": [0.3] * 4,
+        }
+        return [SimpleNamespace(values=mapping[text])]
+
+    fake_models = FakeGeminiModelsBatch(
+        # Batch call returns only 2 embeddings for 3 input items.
+        batch_embeddings_fn=lambda contents: [
+            SimpleNamespace(values=[0.9] * 4),
+            SimpleNamespace(values=[0.9] * 4),
+        ],
+        single_embeddings_fn=single_embeddings_fn,
+    )
+    client = _build_gemini_client(monkeypatch, fake_models)
+
+    result = await client.batch_embed({"first": "aaa", "second": "bbb", "third": "ccc"})
+
+    assert result == {
+        "first": [[0.1] * 4],
+        "second": [[0.2] * 4],
+        "third": [[0.3] * 4],
+    }
+    # One initial batch call, then one fallback call per item.
+    assert fake_models.batch_calls == [["aaa", "bbb", "ccc"]]
+    assert fake_models.single_calls == ["aaa", "bbb", "ccc"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_batch_embed_fallback_call_wrong_count_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(d) During the per-item fallback, if an individual call itself
+    returns zero or multiple embeddings, a controlled ValueError is
+    raised (not a crash / silent misalignment)."""
+
+    def single_embeddings_fn(text: str) -> list[Any]:
+        if text == "bbb":
+            return []  # zero embeddings for this item -- should raise
+        return [SimpleNamespace(values=[0.1] * 4)]
+
+    fake_models = FakeGeminiModelsBatch(
+        batch_embeddings_fn=lambda contents: [SimpleNamespace(values=[0.9] * 4)],
+        single_embeddings_fn=single_embeddings_fn,
+    )
+    client = _build_gemini_client(monkeypatch, fake_models)
+
+    with pytest.raises(ValueError, match="Gemini API returned"):
+        await client.batch_embed({"first": "aaa", "second": "bbb"})
+
+
+@pytest.mark.asyncio
+async def test_gemini_batch_embed_fallback_call_multiple_embeddings_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(e) During the per-item fallback, if an individual call returns
+    MULTIPLE embeddings for a single item, a controlled ValueError is
+    raised (not a silent pick-one / misalignment)."""
+
+    def single_embeddings_fn(text: str) -> list[Any]:
+        if text == "bbb":
+            return [
+                SimpleNamespace(values=[0.1] * 4),
+                SimpleNamespace(values=[0.2] * 4),
+            ]  # two embeddings for this item -- should raise
+        return [SimpleNamespace(values=[0.1] * 4)]
+
+    fake_models = FakeGeminiModelsBatch(
+        batch_embeddings_fn=lambda contents: [SimpleNamespace(values=[0.9] * 4)],
+        single_embeddings_fn=single_embeddings_fn,
+    )
+    client = _build_gemini_client(monkeypatch, fake_models)
+
+    with pytest.raises(ValueError, match="Gemini API returned"):
+        await client.batch_embed({"first": "aaa", "second": "bbb"})
+
+
+@pytest.mark.asyncio
+async def test_gemini_batch_embed_empty_values_in_matched_batch_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(f) In the cardinality-matched batch (zip) path, if one returned
+    embedding has falsy `values` (empty list), it must raise a
+    ValueError instead of silently omitting that item from the result."""
+    fake_models = FakeGeminiModelsBatch(
+        batch_embeddings_fn=lambda contents: [
+            SimpleNamespace(values=[0.1] * 4),
+            SimpleNamespace(values=[]),  # falsy values -- should raise
+            SimpleNamespace(values=[0.3] * 4),
+        ],
+    )
+    client = _build_gemini_client(monkeypatch, fake_models)
+
+    with pytest.raises(ValueError, match="no values"):
+        await client.batch_embed({"first": "aaa", "second": "bbb", "third": "ccc"})
+
+
+@pytest.mark.asyncio
+async def test_gemini_batch_embed_fallback_empty_values_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(g) In the per-item fallback path, if the single embedding
+    returned has falsy `values`, it must raise a ValueError instead of
+    silently omitting that item from the result."""
+
+    def single_embeddings_fn(text: str) -> list[Any]:
+        if text == "bbb":
+            return [SimpleNamespace(values=[])]  # falsy values -- should raise
+        return [SimpleNamespace(values=[0.1] * 4)]
+
+    fake_models = FakeGeminiModelsBatch(
+        # Force cardinality mismatch to enter the fallback path.
+        batch_embeddings_fn=lambda contents: [SimpleNamespace(values=[0.9] * 4)],
+        single_embeddings_fn=single_embeddings_fn,
+    )
+    client = _build_gemini_client(monkeypatch, fake_models)
+
+    with pytest.raises(ValueError, match="no values"):
+        await client.batch_embed({"first": "aaa", "second": "bbb"})
