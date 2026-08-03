@@ -21,6 +21,10 @@
     "nanoid": "^5.1.7",
     "zod": "^4.3.6"
   },
+  "browser": {
+    "cloudflare:email": false,
+    "core-js-pure/features/instance/trim": false
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241002.0",
     "typescript": "^5.3.3",
