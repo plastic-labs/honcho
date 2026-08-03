@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import math
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
+from src.config import coerce_provider_timeout
 from src.exceptions import ValidationException
 
 
@@ -51,34 +51,19 @@ class StreamChunk:
 def request_timeout_from_extra_params(
     extra_params: dict[str, Any] | None,
 ) -> float | None:
-    """Return a validated per-request provider timeout from extra params."""
+    """Return a validated per-request provider timeout from extra params.
+
+    Config-sourced timeouts are already validated and normalized at config
+    load (`coerce_provider_timeout` in src.config); this guards extra_params
+    passed programmatically at call time.
+    """
     if not extra_params or "timeout" not in extra_params:
         return None
 
-    value = extra_params["timeout"]
-    if isinstance(value, bool):
-        raise ValidationException(
-            "provider_params.timeout must be a positive number of seconds"
-        )
-    if isinstance(value, int | float):
-        timeout = float(value)
-    elif isinstance(value, str):
-        try:
-            timeout = float(value.strip())
-        except ValueError as exc:
-            raise ValidationException(
-                "provider_params.timeout must be a positive number of seconds"
-            ) from exc
-    else:
-        raise ValidationException(
-            "provider_params.timeout must be a positive number of seconds"
-        )
-
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ValidationException(
-            "provider_params.timeout must be a positive number of seconds"
-        )
-    return timeout
+    try:
+        return coerce_provider_timeout(extra_params["timeout"])
+    except ValueError as exc:
+        raise ValidationException(str(exc)) from exc
 
 
 @runtime_checkable
