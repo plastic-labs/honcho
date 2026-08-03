@@ -57,6 +57,6 @@ If you are using `text-embedding-3-large` but truncating to 1536 (the default), 
 
 For this case, either set `EMBEDDING_VECTOR_DIMENSIONS=1536` explicitly (so `auto` knows the operator opted in), or set `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE=always`.
 
-## Backend swap (turbopuffer ↔ lancedb ↔ pgvector) is a different operation
+## Backend swap (turbopuffer ↔ lancedb ↔ milvus ↔ pgvector) is a different operation
 
 Switching the *storage backend* at constant dim/model — for example moving from pgvector to Turbopuffer — is supported via `src/reconciler/sync_vectors.py` and `VECTOR_STORE_MIGRATED`. That flow is unchanged by the embedding-pipeline work and is documented separately. It is **not** the destroy + rebuild path described above.
