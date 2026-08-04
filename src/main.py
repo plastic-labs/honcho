@@ -28,7 +28,10 @@ from src.routers import (
     webhooks,
     workspaces,
 )
-from src.startup import validate_embedding_schema
+from src.startup import (
+    validate_embedding_schema,
+    warn_if_embedder_defaults_mismatch_llm,
+)
 from src.telemetry import (
     initialize_telemetry_async,
     metrics_endpoint,
@@ -114,6 +117,10 @@ async def lifespan(_: FastAPI):
     # pgvector columns, the process refuses to start rather than silently
     # writing wrong-dim vectors.
     await validate_embedding_schema(engine)
+
+    # Non-fatal: warn if the embedder is silently defaulting to OpenAI while the
+    # primary LLM is not plain OpenAI (issue #915).
+    warn_if_embedder_defaults_mismatch_llm()
 
     try:
         await init_cache()

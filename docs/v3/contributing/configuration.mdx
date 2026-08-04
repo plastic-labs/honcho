@@ -264,13 +264,22 @@ EMBEDDING_MAX_INPUT_TOKENS=8192
 EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 
 # Embedding transport/model selection
-EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
+EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini, none
 EMBEDDING_MODEL_CONFIG__MODEL=text-embedding-3-small
 
 # Optional endpoint overrides
 EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 ```
+
+#### Running without an embedding provider
+
+If you self-host with a non-OpenAI LLM and have no embedding endpoint, the embedder still defaults to OpenAI — so every conclusion write would call the OpenAI embedding API and fail with a 401 if `LLM_OPENAI_API_KEY` is unset. Honcho logs a startup warning when it detects this mismatch (embedder defaulting to OpenAI while the primary LLM is not plain OpenAI). Two ways to opt out:
+
+- **Disable embedding on the observation write path**: set `EMBED_OBSERVATIONS=false`. Conclusion writes then store zero-vectors of `EMBEDDING_VECTOR_DIMENSIONS` and succeed without any embedding call. (Parallel to `EMBED_MESSAGES`, which gates message embedding.)
+- **Use the no-op embedder globally**: set `EMBEDDING_MODEL_CONFIG__TRANSPORT=none`. This makes no network call anywhere and returns zero-vectors of the configured dimension.
+
+Both degrade vector search (results become effectively random over zero-vectors) but let writes complete. Point `EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL` at an OpenAI-compatible embedding endpoint if you want real embeddings.
 
 Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
 

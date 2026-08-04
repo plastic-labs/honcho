@@ -7,6 +7,22 @@ from src.config import EmbeddingModelConfig
 from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
 
 
+def _raise_no_provider(*_args: Any, **_kwargs: Any) -> None:
+    """Fail loudly if a provider client is constructed (the ``none`` transport must never build one)."""
+    raise AssertionError("no provider client may be constructed for the none transport")
+
+
+def _forbid_provider_construction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Patch both embedding backends so constructing either fails the test.
+
+    Args:
+        monkeypatch: pytest fixture used to replace ``AsyncOpenAI`` and
+            ``genai.Client`` with a raising stub.
+    """
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", _raise_no_provider)
+    monkeypatch.setattr("src.embedding_client.genai.Client", _raise_no_provider)
+
+
 class FakeOpenAIEmbeddingsAPI:
     def __init__(self, embedding: list[float]) -> None:
         self.embedding: list[float] = embedding
@@ -150,6 +166,86 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
     ]
 
 
+@pytest.mark.asyncio
+async def test_none_transport_returns_zero_vectors_without_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """transport="none" is a no-op: zero-vectors of the configured dimension
+    from both embed and simple_batch_embed, and no provider client is ever
+    constructed or invoked."""
+    _forbid_provider_construction(monkeypatch)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="none",
+            model="none",
+            api_key=None,
+            base_url=None,
+        ),
+        vector_dimensions=16,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    single = await client.embed("hello world")
+    assert single == [0.0] * 16
+
+    batch = await client.simple_batch_embed(["a", "b", "c"])
+    assert batch == [[0.0] * 16, [0.0] * 16, [0.0] * 16]
+
+
+@pytest.mark.asyncio
+async def test_none_transport_batch_embed_returns_one_zero_vector_per_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """batch_embed on the none transport must mirror the real path's structure:
+    a text long enough to split into multiple chunks yields one zero-vector per
+    prepared chunk (not a single vector), with no provider client constructed."""
+    _forbid_provider_construction(monkeypatch)
+
+    # Small per-input token cap so a moderately long text splits into >1 chunk.
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(transport="none", model="none"),
+        vector_dimensions=16,
+        max_input_tokens=10,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    short_text = "hello"
+    long_text = ("word " * 50).strip()
+
+    # Ground truth for the expected chunk count comes from the same chunking
+    # helper the real path uses, so the assertion tracks the client's behavior.
+    expected_chunks = client.prepare_chunks({"long": long_text})["long"]
+    assert len(expected_chunks) > 1, "test text must split into multiple chunks"
+
+    result = await client.batch_embed({"short": short_text, "long": long_text})
+
+    assert result["short"] == [[0.0] * 16]
+    assert len(result["long"]) == len(expected_chunks)
+    assert all(vec == [0.0] * 16 for vec in result["long"])
+
+
+@pytest.mark.asyncio
+async def test_none_transport_empty_batch_returns_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty batch on the none transport yields an empty list (no vectors)."""
+    _forbid_provider_construction(monkeypatch)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(transport="none", model="none"),
+        vector_dimensions=4,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    assert await client.simple_batch_embed([]) == []
+
+
 def _build_openai_client(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -276,6 +372,31 @@ def _build_embedding_settings(
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return EmbeddingSettings()
+
+
+def test_resolve_embedding_config_none_transport_needs_no_key() -> None:
+    """transport="none" resolves with a sentinel model, no api_key, no base_url."""
+    from src.config import (
+        ConfiguredEmbeddingModelSettings,
+        resolve_embedding_model_config,
+    )
+
+    resolved = resolve_embedding_model_config(
+        ConfiguredEmbeddingModelSettings(transport="none")
+    )
+    assert resolved.transport == "none"
+    assert resolved.model == "none"
+    assert resolved.api_key is None
+    assert resolved.base_url is None
+
+
+def test_default_embedding_model_for_none_transport() -> None:
+    """``_default_embedding_model_for_transport("none")`` returns the ``none`` sentinel model."""
+    from src.config import (
+        _default_embedding_model_for_transport,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    assert _default_embedding_model_for_transport("none") == "none"
 
 
 def test_resolve_send_dimensions_auto_default_dim_returns_false(

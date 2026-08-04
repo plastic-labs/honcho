@@ -179,6 +179,22 @@ class _EmbeddingClient:
         self.vector_dimensions: int = vector_dimensions
         self.send_dimensions: bool = send_dimensions
 
+        self.client: genai.Client | AsyncOpenAI | None
+        self.max_embedding_tokens: int
+        self.max_batch_size: int
+
+        if self.transport == "none":
+            # No-op embedder: no provider client, no network call. `embed` and
+            # `simple_batch_embed` return zero-vectors of `vector_dimensions`.
+            # No API key or base_url required. Chunking/token limits are
+            # irrelevant since nothing is sent to a provider.
+            self.client = None
+            self.max_embedding_tokens = max_input_tokens
+            self.max_batch_size = 1
+            self.encoding: tiktoken.Encoding = tiktoken.get_encoding("cl100k_base")
+            self.max_embedding_tokens_per_request: int = max_tokens_per_request
+            return
+
         if self.transport == "gemini":
             if not config.api_key:
                 raise ValueError("Gemini API key is required")
@@ -187,14 +203,14 @@ class _EmbeddingClient:
                 if config.base_url
                 else None
             )
-            self.client: genai.Client | AsyncOpenAI = genai.Client(
+            self.client = genai.Client(
                 api_key=config.api_key,
                 http_options=http_options,
             )
             # Gemini has a 2048 token limit
-            self.max_embedding_tokens: int = min(max_input_tokens, 2048)
+            self.max_embedding_tokens = min(max_input_tokens, 2048)
             # Gemini batch size is not documented, using conservative estimate
-            self.max_batch_size: int = 100
+            self.max_batch_size = 100
         else:  # openai
             if not config.api_key:
                 raise ValueError("OpenAI API key is required")
@@ -206,10 +222,10 @@ class _EmbeddingClient:
             self.max_batch_size = 2048  # OpenAI batch limit
 
         try:
-            self.encoding: tiktoken.Encoding = tiktoken.encoding_for_model(self.model)
+            self.encoding = tiktoken.encoding_for_model(self.model)
         except KeyError:
             self.encoding = tiktoken.get_encoding("cl100k_base")
-        self.max_embedding_tokens_per_request: int = max_tokens_per_request
+        self.max_embedding_tokens_per_request = max_tokens_per_request
 
     @property
     def provider(self) -> str:
@@ -223,7 +239,20 @@ class _EmbeddingClient:
             )
         return embedding
 
+    def _zero_vector(self) -> list[float]:
+        """Build a zero-vector for the no-op ("none") transport.
+
+        Returns:
+            A list of ``vector_dimensions`` zeros. The width matches the
+            pgvector column so writes succeed even though no real embedding
+            was computed.
+        """
+        return [0.0] * self.vector_dimensions
+
     async def embed(self, query: str) -> list[float]:
+        if self.client is None:  # transport == "none": no-op, no network call
+            return self._zero_vector()
+
         token_count = len(self.encoding.encode(query))
 
         if token_count > self.max_embedding_tokens:
@@ -294,6 +323,9 @@ class _EmbeddingClient:
         if not texts:
             return []
 
+        if self.client is None:  # transport == "none": no-op, no network call
+            return [self._zero_vector() for _ in texts]
+
         # Validate per-input token limit and collect token counts for batching
         token_counts: list[int] = []
         for idx, text in enumerate(texts):
@@ -346,6 +378,16 @@ class _EmbeddingClient:
         """
         if not id_resource_dict:
             return {}
+
+        if self.client is None:  # transport == "none": no-op, no network call
+            # Mirror the real path's structure: chunk long texts and return one
+            # zero-vector per prepared chunk, so a text that splits into N chunks
+            # yields N zero-vectors (not a single one).
+            no_op_chunks = self._prepare_chunks(id_resource_dict)
+            return {
+                text_id: [self._zero_vector() for _ in chunks]
+                for text_id, chunks in no_op_chunks.items()
+            }
 
         # 1. Prepare chunks for all texts if needed
         text_chunks = self._prepare_chunks(id_resource_dict)
@@ -459,7 +501,7 @@ class _EmbeddingClient:
                             result[item.text_id][item.chunk_index] = (
                                 self._validate_embedding_dimensions(embedding.values)
                             )
-            else:  # openai
+            elif isinstance(self.client, AsyncOpenAI):  # openai
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
                     "input": [item.text for item in batch],

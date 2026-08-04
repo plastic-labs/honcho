@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `none` embedding transport (`EMBEDDING_MODEL_CONFIG__TRANSPORT=none`): a no-op embedder that makes no network call and returns zero-vectors of `EMBEDDING_VECTOR_DIMENSIONS`. Lets self-hosted deployments without an embedding provider complete writes (degraded vector search) instead of 401-ing on the default OpenAI embedder (#915)
+- `EMBED_OBSERVATIONS` setting (default `true`, parallel to `EMBED_MESSAGES`): when `false`, `create_observations` skips the embedding provider entirely and stores zero-vectors, so conclusion writes succeed without an embedding provider configured (#915)
+- Startup warning when the embedder is silently defaulting to OpenAI (because `EMBEDDING_MODEL_CONFIG` is unset) while the primary LLM transport is not plain OpenAI — pointing operators at `EMBEDDING_MODEL_CONFIG__*`, `EMBED_OBSERVATIONS=false`, or `transport=none`. Silent on an all-OpenAI setup (#915)
+
 ## [3.0.11] - 2026-06-24
 
 ### Added
