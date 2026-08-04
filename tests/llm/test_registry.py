@@ -23,7 +23,7 @@ _ANTHROPIC_TIMEOUT_S = 600.0
 
 
 @pytest.fixture(autouse=True)
-def _patch_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def patch_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Default the LLM settings so the registry reads valid values."""
     monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
@@ -32,7 +32,7 @@ def _patch_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.fixture
-def _fresh_lru_caches() -> Iterator[None]:
+def fresh_lru_caches() -> Iterator[None]:
     """Drop lru_cache state so each test exercises a fresh client build."""
     registry_module.get_anthropic_client.cache_clear()
     registry_module.get_gemini_client.cache_clear()
@@ -45,9 +45,8 @@ def _fresh_lru_caches() -> Iterator[None]:
     registry_module.get_gemini_override_client.cache_clear()
 
 
-def test_get_gemini_client_sets_http_timeout(
-    _fresh_lru_caches: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
+@pytest.mark.usefixtures("fresh_lru_caches")
+def test_get_gemini_client_sets_http_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default Gemini client must carry an HttpOptions timeout, not None."""
     monkeypatch.setattr(app_config.settings.LLM, "GEMINI_BASE_URL", None)
 
@@ -60,8 +59,9 @@ def test_get_gemini_client_sets_http_timeout(
     assert http_options.timeout == _GEMINI_TIMEOUT_MS
 
 
+@pytest.mark.usefixtures("fresh_lru_caches")
 def test_get_gemini_client_preserves_custom_base_url(
-    _fresh_lru_caches: None, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Base URL and timeout must coexist on the default Gemini client."""
     monkeypatch.setattr(
@@ -77,9 +77,8 @@ def test_get_gemini_client_preserves_custom_base_url(
     assert http_options.timeout == _GEMINI_TIMEOUT_MS
 
 
-def test_get_gemini_override_client_sets_http_timeout(
-    _fresh_lru_caches: None,
-) -> None:
+@pytest.mark.usefixtures("fresh_lru_caches")
+def test_get_gemini_override_client_sets_http_timeout() -> None:
     """Override Gemini client must also carry a timeout."""
     with patch("src.llm.registry.genai.Client") as mock_client:
         registry_module.get_gemini_override_client(
@@ -92,9 +91,8 @@ def test_get_gemini_override_client_sets_http_timeout(
     assert http_options.timeout == _GEMINI_TIMEOUT_MS
 
 
-def test_get_gemini_override_client_handles_missing_base_url(
-    _fresh_lru_caches: None,
-) -> None:
+@pytest.mark.usefixtures("fresh_lru_caches")
+def test_get_gemini_override_client_handles_missing_base_url() -> None:
     """Override Gemini client with no base URL still carries a timeout."""
     with patch("src.llm.registry.genai.Client") as mock_client:
         registry_module.get_gemini_override_client(None, "sk-override")
@@ -104,8 +102,9 @@ def test_get_gemini_override_client_handles_missing_base_url(
     assert http_options.timeout == _GEMINI_TIMEOUT_MS
 
 
+@pytest.mark.usefixtures("fresh_lru_caches")
 def test_get_anthropic_client_keeps_600s_timeout(
-    _fresh_lru_caches: None, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Anthropic timeout is the established behavior — lock it."""
     monkeypatch.setattr(app_config.settings.LLM, "ANTHROPIC_BASE_URL", None)
@@ -116,9 +115,8 @@ def test_get_anthropic_client_keeps_600s_timeout(
     assert mock_anthropic.call_args.kwargs["timeout"] == _ANTHROPIC_TIMEOUT_S
 
 
-def test_get_anthropic_override_client_keeps_600s_timeout(
-    _fresh_lru_caches: None,
-) -> None:
+@pytest.mark.usefixtures("fresh_lru_caches")
+def test_get_anthropic_override_client_keeps_600s_timeout() -> None:
     """Override Anthropic client also keeps the 600s timeout."""
     with patch("src.llm.registry.AsyncAnthropic") as mock_anthropic:
         registry_module.get_anthropic_override_client(None, "sk-override")
@@ -128,12 +126,12 @@ def test_get_anthropic_override_client_keeps_600s_timeout(
 
 def test_gemini_http_options_builder_applies_timeout() -> None:
     """The shared helper must always set a timeout, even with no base_url."""
-    options = registry_module._build_gemini_http_options(None)
+    options = registry_module._build_gemini_http_options(None)  # pyright: ignore[reportPrivateUsage]
     assert isinstance(options, genai_types.HttpOptions)
     assert options.timeout == _GEMINI_TIMEOUT_MS
     assert options.base_url is None
 
-    options = registry_module._build_gemini_http_options("https://example.com")
+    options = registry_module._build_gemini_http_options("https://example.com")  # pyright: ignore[reportPrivateUsage]
     assert isinstance(options, genai_types.HttpOptions)
     assert options.timeout == _GEMINI_TIMEOUT_MS
     assert options.base_url == "https://example.com"

@@ -162,23 +162,11 @@ async def test_gemini_embedding_client_keeps_timeout_without_base_url(
 ) -> None:
     """No-base-url Gemini embedding client must still carry an HTTP timeout."""
 
-    class FakeGeminiModels:
-        async def embed_content(
-            self,
-            *,
-            model: str,
-            contents: str,
-            config: dict[str, Any],
-        ) -> SimpleNamespace:
-            return SimpleNamespace(
-                embeddings=[SimpleNamespace(values=[0.1] * 8)],
-            )
-
     class FakeGeminiClient:
         def __init__(self, *, api_key: str | None, http_options: Any) -> None:
-            self.api_key = api_key
-            self.http_options = http_options
-            self.aio = SimpleNamespace(models=FakeGeminiModels())
+            self.api_key: str | None = api_key
+            self.http_options: Any = http_options
+            self.aio: Any = SimpleNamespace(models=SimpleNamespace())
 
     monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
 
