@@ -253,10 +253,41 @@ class OpenAIBackend:
                     ),
                 )
             # parse() returned no model: repair raw content, surface a refusal,
-            # or raise so the retry/fallback chain engages on a junk response.
-            content = self._parse_or_repair_structured_content(
-                response, response_format, model, empty_on_missing=False
-            )
+            # or fall back to json_object mode for OpenAI-compatible providers
+            # that accept the request but fail to populate structured output.
+            try:
+                content = self._parse_or_repair_structured_content(
+                    response, response_format, model, empty_on_missing=False
+                )
+            except (ValidationException, StructuredOutputError, ValidationError) as structured_exc:
+                # Fallback to json_object mode. Some providers (e.g. Kimi, MiMo)
+                # accept parse() / json_schema but return empty or malformed
+                # content. json_object injects the schema into the prompt and
+                # lets the provider return loose JSON that we can repair.
+                logger.warning(
+                    "Structured output via json_schema produced no parseable content "
+                    "for model %s; retrying with json_object mode.",
+                    model,
+                )
+                json_object_params = dict(params)
+                self._apply_json_object_mode(json_object_params, response_format)
+                json_object_response = await self._client.chat.completions.create(
+                    **json_object_params
+                )
+                try:
+                    content = self._parse_or_repair_structured_content(
+                        json_object_response,
+                        response_format,
+                        model,
+                        empty_on_missing=False,
+                    )
+                except (ValidationException, StructuredOutputError, ValidationError):
+                    # json_object mode also failed; raise the original exception
+                    # so the retry/fallback chain can engage as before.
+                    raise structured_exc
+                return self._normalize_response(
+                    json_object_response, content_override=content
+                )
             return self._normalize_response(response, content_override=content)
         if response_format is not None:
             params["response_format"] = response_format
