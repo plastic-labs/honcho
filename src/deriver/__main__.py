@@ -13,7 +13,7 @@ from src.telemetry import (
     register_db_pool_collector,
     shutdown_telemetry,
 )
-from src.telemetry.otel import setup_otel
+from src.telemetry.otel import setup_otel, shutdown_otel
 
 from .queue_manager import main
 
@@ -87,6 +87,8 @@ async def run_deriver():
     finally:
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
+        # Flush + shut down OpenTelemetry providers (no-op when OTel disabled).
+        shutdown_otel()
 
 
 if __name__ == "__main__":

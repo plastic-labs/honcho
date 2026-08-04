@@ -37,7 +37,7 @@ from src.telemetry import (
     shutdown_telemetry,
 )
 from src.telemetry.logging import get_route_template
-from src.telemetry.otel import instrument_app, setup_otel
+from src.telemetry.otel import instrument_app, setup_otel, shutdown_otel
 from src.telemetry.sentry import initialize_sentry
 
 
@@ -142,6 +142,9 @@ async def lifespan(app: FastAPI):
         await engine.dispose()
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
+        # Flush + shut down OpenTelemetry providers so buffered spans/logs are
+        # not lost on exit (no-op when OTel disabled).
+        shutdown_otel()
 
 
 app = FastAPI(

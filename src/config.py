@@ -1160,6 +1160,12 @@ class OTelSettings(HonchoSettings):
     # OTLP gRPC endpoint, e.g. "http://localhost:4317". Falls back to the
     # OTEL_EXPORTER_OTLP_ENDPOINT standard env var when unset.
     EXPORTER_OTLP_ENDPOINT: str | None = None
+    # Capture the raw search query as the ``memory.query`` span attribute.
+    # OFF by default: queries can contain user PII and are high-cardinality.
+    # Enable only in trusted/debug environments; when on, the value is truncated.
+    CAPTURE_QUERY: bool = False
+    # Max characters of the query to record when CAPTURE_QUERY is enabled.
+    QUERY_MAX_LENGTH: int = 200
 
 
 class TelemetrySettings(HonchoSettings):

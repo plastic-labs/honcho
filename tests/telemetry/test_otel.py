@@ -71,15 +71,20 @@ def test_setup_otel_enabled_sets_sdk_provider():
         assert isinstance(trace_api.get_tracer_provider(), SdkTracerProvider)
         assert otel_mod._initialized
     finally:
-        # Forcibly restore to avoid polluting subsequent tests.
-        # OTel uses a module-level _TRACER_PROVIDER variable guarded by a Once lock;
-        # we reset both to allow this test to be re-run safely.
-        import opentelemetry.trace as _trace_mod
+        # Best-effort restore so this test does not pollute the global provider
+        # for others. This reaches into OTel-internal globals guarded by a
+        # set-once lock; those names are not public API, so guard every access
+        # and never let teardown raise if the internals change across versions.
+        try:
+            import opentelemetry.trace as _trace_mod
 
-        _trace_mod._TRACER_PROVIDER = original  # type: ignore[attr-defined]
-        # Reset the "set once" guard so the global can be replaced again
-        if hasattr(_trace_mod, "_TRACER_PROVIDER_SET_ONCE"):
-            _trace_mod._TRACER_PROVIDER_SET_ONCE._done = False  # type: ignore[attr-defined]
+            if hasattr(_trace_mod, "_TRACER_PROVIDER"):
+                _trace_mod._TRACER_PROVIDER = original  # type: ignore[attr-defined]
+            once = getattr(_trace_mod, "_TRACER_PROVIDER_SET_ONCE", None)
+            if once is not None and hasattr(once, "_done"):
+                once._done = False  # type: ignore[attr-defined]
+        except Exception:
+            pass
         otel_mod._initialized = False
 
 
@@ -158,6 +163,23 @@ def test_memory_delete_attributes(local_tracer_and_exporter):
     spans = exporter.get_finished_spans()
     assert len(spans) == 1
     assert (spans[0].attributes or {}).get(MEMORY_OPERATION) == "delete"
+
+
+def test_search_query_capture_is_opt_in(monkeypatch):
+    """memory.query must be omitted by default (PII / high cardinality) and only
+    recorded — truncated — when OTEL.CAPTURE_QUERY is explicitly enabled."""
+    from src.config import settings
+    from src.crud.document import _memory_search_attributes
+    from src.telemetry.otel import MEMORY_QUERY
+
+    monkeypatch.setattr(settings.OTEL, "CAPTURE_QUERY", False, raising=False)
+    attrs = _memory_search_attributes("ws1", "a", "b", "secret user query")
+    assert MEMORY_QUERY not in attrs
+
+    monkeypatch.setattr(settings.OTEL, "CAPTURE_QUERY", True, raising=False)
+    monkeypatch.setattr(settings.OTEL, "QUERY_MAX_LENGTH", 5, raising=False)
+    attrs = _memory_search_attributes("ws1", "a", "b", "secret user query")
+    assert attrs[MEMORY_QUERY] == "secre"
 
 
 def test_search_duration_metric_recorded(local_meter_and_reader):
@@ -354,7 +376,10 @@ def test_main_calls_instrument_app_at_module_scope_not_in_lifespan():
     import ast
     from pathlib import Path
 
-    main_src = Path("src/main.py").read_text(encoding="utf-8")
+    # Resolve relative to this test file (repo_root/tests/telemetry/test_otel.py)
+    # so the test passes regardless of pytest's working directory.
+    repo_root = Path(__file__).resolve().parents[2]
+    main_src = (repo_root / "src" / "main.py").read_text(encoding="utf-8")
     tree = ast.parse(main_src)
 
     def _calls_instrument_app(node: ast.AST) -> bool:

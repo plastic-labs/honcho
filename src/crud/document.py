@@ -1,4 +1,5 @@
 import datetime
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -64,6 +65,27 @@ _operation_duration = _meter.create_histogram(
     unit="ms",
     description="Memory add/delete operation latency in milliseconds",
 )
+
+
+def _memory_search_attributes(
+    workspace_name: str, observer: str, observed: str, query: str
+) -> dict[str, Any]:
+    """Build memory.search span attributes.
+
+    The raw ``query`` can contain user PII and is high-cardinality, so it is
+    recorded as ``memory.query`` ONLY when ``OTEL.CAPTURE_QUERY`` is explicitly
+    enabled, and even then it is truncated to ``OTEL.QUERY_MAX_LENGTH``.
+    """
+    attributes: dict[str, Any] = {
+        MEMORY_SYSTEM: "honcho",
+        MEMORY_OPERATION: "search",
+        MEMORY_WORKSPACE: workspace_name,
+        MEMORY_OBSERVER: observer,
+        MEMORY_OBSERVED: observed,
+    }
+    if settings.OTEL.CAPTURE_QUERY and query:
+        attributes[MEMORY_QUERY] = query[: settings.OTEL.QUERY_MAX_LENGTH]
+    return attributes
 
 
 def get_all_documents(
@@ -387,31 +409,25 @@ async def query_documents(
     Returns:
         Sequence of matching documents
     """
-    import time
+    if top_k <= 0:
+        return []
+
+    # Use provided embedding or generate one (outside the search span so the
+    # memory.search timing reflects retrieval, not the embedding API call).
+    if embedding is None:
+        try:
+            embedding = await embedding_client.embed(query)
+        except ValueError as e:
+            raise ValidationException(
+                "Query exceeds maximum token limit of "
+                + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
+            ) from e
 
     _t0 = time.monotonic()
     with _tracer.start_as_current_span(
         "memory.search",
-        attributes={
-            MEMORY_SYSTEM: "honcho",
-            MEMORY_OPERATION: "search",
-            MEMORY_WORKSPACE: workspace_name,
-            MEMORY_OBSERVER: observer,
-            MEMORY_OBSERVED: observed,
-            # Truncate query to avoid high-cardinality spans; omit if PII concern
-            MEMORY_QUERY: query[:200] if query else "",
-        },
+        attributes=_memory_search_attributes(workspace_name, observer, observed, query),
     ) as span:
-        # Use provided embedding or generate one
-        if embedding is None:
-            try:
-                embedding = await embedding_client.embed(query)
-            except ValueError as e:
-                raise ValidationException(
-                    "Query exceeds maximum token limit of "
-                    + f"{settings.EMBEDDING.MAX_INPUT_TOKENS}."
-                ) from e
-
         if _uses_pgvector():
             # pgvector path — pure DB, open a short session if none provided
             if db is not None:
@@ -576,10 +592,8 @@ async def create_documents(
         List of DocumentCreate schemas that were actually inserted (excludes
         duplicates and failures).
     """
-    import time
-
     _t0 = time.monotonic()
-    _span = _tracer.start_span(
+    with _tracer.start_as_current_span(
         "memory.add",
         attributes={
             MEMORY_SYSTEM: "honcho",
@@ -589,231 +603,191 @@ async def create_documents(
             MEMORY_OBSERVED: observed,
             MEMORY_ITEM_COUNT: len(documents),
         },
-    )
-    honcho_documents: list[models.Document] = []
-    accepted_documents: list[schemas.DocumentCreate] = []
-    # Store (document_model, embedding) pairs - IDs aren't available until after commit
-    docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
+    ) as _span:
+        honcho_documents: list[models.Document] = []
+        accepted_documents: list[schemas.DocumentCreate] = []
+        # Store (document_model, embedding) pairs - IDs aren't available until after commit
+        docs_with_embeddings: list[tuple[models.Document, list[float]]] = []
 
-    # exact-content dedup (independent of `deduplicate`): pre-fetch
-    # existing live documents whose normalized content matches anything in this
-    # batch, scoped to (workspace, observer, observed). The SQL normalization must
-    # mirror _normalize_content. Matching is further scoped per-document by
-    # level (always) and session (for explicit documents) via _dedup_key.
-    batch_normalized: set[str] = {_normalize_content(d.content) for d in documents}
-    existing_by_key: dict[tuple[str, str, str | None], models.Document] = {}
-    if batch_normalized:
-        # The `normalized_content_sql.in_(...)` filter below narrows to the
-        # (workspace, observer, observed) partition via the single-column indexes,
-        # then evaluates lower(regexp_replace(...)) per row.
-        # TODO: add a partial expression index matching
-        # this filter exactly
-        #     CREATE INDEX ix_documents_normalized_content
-        #     ON documents (
-        #         workspace_name,
-        #         observer,
-        #         observed,
-        #         (lower(regexp_replace(content, '^\s+|\s+$', '', 'g')))
-        #     )
-        #     WHERE deleted_at IS NULL;
-        normalized_content_sql = func.lower(
-            func.regexp_replace(models.Document.content, r"^\s+|\s+$", "", "g")
-        )
-        existing_result = await db.execute(
-            select(models.Document).where(
-                models.Document.workspace_name == workspace_name,
-                models.Document.observer == observer,
-                models.Document.observed == observed,
-                models.Document.deleted_at.is_(None),
-                normalized_content_sql.in_(batch_normalized),
+        # exact-content dedup (independent of `deduplicate`): pre-fetch
+        # existing live documents whose normalized content matches anything in this
+        # batch, scoped to (workspace, observer, observed). The SQL normalization must
+        # mirror _normalize_content. Matching is further scoped per-document by
+        # level (always) and session (for explicit documents) via _dedup_key.
+        batch_normalized: set[str] = {_normalize_content(d.content) for d in documents}
+        existing_by_key: dict[tuple[str, str, str | None], models.Document] = {}
+        if batch_normalized:
+            # The `normalized_content_sql.in_(...)` filter below narrows to the
+            # (workspace, observer, observed) partition via the single-column indexes,
+            # then evaluates lower(regexp_replace(...)) per row.
+            # TODO: add a partial expression index matching
+            # this filter exactly
+            #     CREATE INDEX ix_documents_normalized_content
+            #     ON documents (
+            #         workspace_name,
+            #         observer,
+            #         observed,
+            #         (lower(regexp_replace(content, '^\s+|\s+$', '', 'g')))
+            #     )
+            #     WHERE deleted_at IS NULL;
+            normalized_content_sql = func.lower(
+                func.regexp_replace(models.Document.content, r"^\s+|\s+$", "", "g")
             )
-        )
-        for existing_doc in existing_result.scalars():
-            # If multiple historical rows share a dedup key, reinforcing
-            # one is sufficient; keep the first.
-            existing_by_key.setdefault(
-                _dedup_key(
-                    existing_doc.content,
-                    existing_doc.level,
-                    existing_doc.session_name,
-                ),
-                existing_doc,
+            existing_result = await db.execute(
+                select(models.Document).where(
+                    models.Document.workspace_name == workspace_name,
+                    models.Document.observer == observer,
+                    models.Document.observed == observed,
+                    models.Document.deleted_at.is_(None),
+                    normalized_content_sql.in_(batch_normalized),
+                )
             )
-
-    # Tracks dedup keys already accepted from this batch so exact
-    # duplicates within a single inference call collapse to one document.
-    seen_in_batch: set[tuple[str, str, str | None]] = set()
-
-    exact_dup_existing_count = 0
-    exact_dup_in_batch_count = 0
-    semantic_dup_rejected_count = 0
-    semantic_dup_replaced_count = 0
-    for doc in documents:
-        try:
-            # Session-purity invariant: an explicit document must always carry
-            # the session it was derived from. Refuse to write session-less
-            # explicit documents rather than silently minting global explicit
-            # memory (the Scopes copy-by-session model depends on explicit
-            # documents staying session-pure).
-            if doc.level == "explicit" and doc.session_name is None:
-                logger.error(
-                    "Refusing to create explicit document without session_name in %s/%s/%s (session-purity invariant): %r",
-                    workspace_name,
-                    observer,
-                    observed,
-                    doc.content[:80],
+            for existing_doc in existing_result.scalars():
+                # If multiple historical rows share a dedup key, reinforcing
+                # one is sufficient; keep the first.
+                existing_by_key.setdefault(
+                    _dedup_key(
+                        existing_doc.content,
+                        existing_doc.level,
+                        existing_doc.session_name,
+                    ),
+                    existing_doc,
                 )
-                continue
 
-            dedup_key = _dedup_key(doc.content, doc.level, doc.session_name)
+        # Tracks dedup keys already accepted from this batch so exact
+        # duplicates within a single inference call collapse to one document.
+        seen_in_batch: set[tuple[str, str, str | None]] = set()
 
-            # Exact-match dedup, always on:
-            # 1) collapse exact duplicates within this batch (drop silently).
-            if dedup_key in seen_in_batch:
-                exact_dup_in_batch_count += 1
-                continue
-            seen_in_batch.add(dedup_key)
-
-            # 2) drop exact duplicates of an existing live document, recording
-            #    the re-derivation as reinforcement on the existing row.
-            existing_match = existing_by_key.get(dedup_key)
-            if existing_match is not None:
-                # Reinforce the existing row. greatest(...) keeps the bump atomic
-                # server-side (concurrent workers can't lose an increment) while
-                # still honoring an incoming doc that already carries accumulated
-                # reinforcement (times_derived > 1, e.g. a future re-ingestion or
-                # collection-merge path). Mirrors the superior-replacement branch
-                # in is_rejected_duplicate.
-                existing_match.times_derived = func.greatest(
-                    models.Document.times_derived + 1,
-                    doc.times_derived,
-                )
-                await db.flush()
-                exact_dup_existing_count += 1
-                continue
-
-            # for each document, if deduplicate is True, perform a process
-            # that checks against existing documents and either rejects this document
-            # as a duplicate OR deletes an existing document that is a duplicate.
-            if deduplicate:
-                duplicate_result = await is_rejected_duplicate(
-                    db, doc, workspace_name, observer=observer, observed=observed
-                )
-                if duplicate_result is SemanticRejectionResult.REPLACED_EXISTING:
-                    # Existing doc was soft-deleted in favor of this one; the
-                    # new doc still gets inserted below.
-                    semantic_dup_replaced_count += 1
-                elif duplicate_result is SemanticRejectionResult.REJECTED:
-                    semantic_dup_rejected_count += 1
+        exact_dup_existing_count = 0
+        exact_dup_in_batch_count = 0
+        semantic_dup_rejected_count = 0
+        semantic_dup_replaced_count = 0
+        for doc in documents:
+            try:
+                # Session-purity invariant: an explicit document must always carry
+                # the session it was derived from. Refuse to write session-less
+                # explicit documents rather than silently minting global explicit
+                # memory (the Scopes copy-by-session model depends on explicit
+                # documents staying session-pure).
+                if doc.level == "explicit" and doc.session_name is None:
+                    logger.error(
+                        "Refusing to create explicit document without session_name in %s/%s/%s (session-purity invariant): %r",
+                        workspace_name,
+                        observer,
+                        observed,
+                        doc.content[:80],
+                    )
                     continue
 
-            metadata_dict = doc.metadata.model_dump(exclude_none=True)
+                dedup_key = _dedup_key(doc.content, doc.level, doc.session_name)
 
-            # Determine if we need to persist embeddings to postgres
-            # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
-            store_embeddings_in_postgres = (
-                settings.VECTOR_STORE.TYPE == "pgvector"
-                or not settings.VECTOR_STORE.MIGRATED
-            )
+                # Exact-match dedup, always on:
+                # 1) collapse exact duplicates within this batch (drop silently).
+                if dedup_key in seen_in_batch:
+                    exact_dup_in_batch_count += 1
+                    continue
+                seen_in_batch.add(dedup_key)
 
-            if store_embeddings_in_postgres and doc.embedding:
-                new_doc = models.Document(
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    content=doc.content,
-                    level=doc.level,
-                    times_derived=doc.times_derived,
-                    internal_metadata=metadata_dict,
-                    session_name=doc.session_name,
-                    embedding=doc.embedding,
-                    # Tree linkage column
-                    source_ids=doc.source_ids,
-                )
-            else:
-                new_doc = models.Document(
-                    workspace_name=workspace_name,
-                    observer=observer,
-                    observed=observed,
-                    content=doc.content,
-                    level=doc.level,
-                    times_derived=doc.times_derived,
-                    internal_metadata=metadata_dict,
-                    session_name=doc.session_name,
-                    # Tree linkage column
-                    source_ids=doc.source_ids,
-                )
-
-            if doc.embedding:
-                new_doc.sync_state = "pending"
-            honcho_documents.append(new_doc)
-            accepted_documents.append(doc)
-
-            # Track embedding for vector store (ID will be available after commit)
-            if doc.embedding:
-                docs_with_embeddings.append((new_doc, doc.embedding))
-
-        except Exception as e:
-            logger.error(
-                f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
-            )
-            continue
-
-    try:
-        db.add_all(honcho_documents)
-        # NOTE
-        # If the process crashes after this commit but before vector upsert completes,
-        # documents will be left in sync_state='pending' with NULL embeddings.
-        # The reconciliation job will automatically re-embed and sync these documents,
-        await db.commit()
-
-        # Store embeddings in external vector store after documents are committed (IDs now available)
-        if docs_with_embeddings:
-            doc_ids = [doc.id for doc, _ in docs_with_embeddings]
-            external_vector_store = get_external_vector_store()
-
-            # If no external vector store (pgvector mode), mark as synced immediately
-            if external_vector_store is None:
-                await db.execute(
-                    update(models.Document)
-                    .where(models.Document.id.in_(doc_ids))
-                    .values(
-                        sync_state="synced",
-                        last_sync_at=func.now(),
-                        sync_attempts=0,
+                # 2) drop exact duplicates of an existing live document, recording
+                #    the re-derivation as reinforcement on the existing row.
+                existing_match = existing_by_key.get(dedup_key)
+                if existing_match is not None:
+                    # Reinforce the existing row. greatest(...) keeps the bump atomic
+                    # server-side (concurrent workers can't lose an increment) while
+                    # still honoring an incoming doc that already carries accumulated
+                    # reinforcement (times_derived > 1, e.g. a future re-ingestion or
+                    # collection-merge path). Mirrors the superior-replacement branch
+                    # in is_rejected_duplicate.
+                    existing_match.times_derived = func.greatest(
+                        models.Document.times_derived + 1,
+                        doc.times_derived,
                     )
-                )
-                await db.commit()
-            else:
-                # External vector store - upsert and track sync state
-                namespace = external_vector_store.get_vector_namespace(
-                    "document",
-                    workspace_name,
-                    observer,
-                    observed,
+                    await db.flush()
+                    exact_dup_existing_count += 1
+                    continue
+
+                # for each document, if deduplicate is True, perform a process
+                # that checks against existing documents and either rejects this document
+                # as a duplicate OR deletes an existing document that is a duplicate.
+                if deduplicate:
+                    duplicate_result = await is_rejected_duplicate(
+                        db, doc, workspace_name, observer=observer, observed=observed
+                    )
+                    if duplicate_result is SemanticRejectionResult.REPLACED_EXISTING:
+                        # Existing doc was soft-deleted in favor of this one; the
+                        # new doc still gets inserted below.
+                        semantic_dup_replaced_count += 1
+                    elif duplicate_result is SemanticRejectionResult.REJECTED:
+                        semantic_dup_rejected_count += 1
+                        continue
+
+                metadata_dict = doc.metadata.model_dump(exclude_none=True)
+
+                # Determine if we need to persist embeddings to postgres
+                # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
+                store_embeddings_in_postgres = (
+                    settings.VECTOR_STORE.TYPE == "pgvector"
+                    or not settings.VECTOR_STORE.MIGRATED
                 )
 
-                # Build vector records with metadata for filtering
-                vector_records: list[VectorRecord] = []
-                for doc, embedding in docs_with_embeddings:
-                    vector_records.append(
-                        VectorRecord(
-                            id=doc.id,
-                            embedding=embedding,
-                            metadata={
-                                "workspace_name": workspace_name,
-                                "observer": observer,
-                                "observed": observed,
-                                "session_name": doc.session_name,
-                                "level": doc.level,
-                            },
-                        )
+                if store_embeddings_in_postgres and doc.embedding:
+                    new_doc = models.Document(
+                        workspace_name=workspace_name,
+                        observer=observer,
+                        observed=observed,
+                        content=doc.content,
+                        level=doc.level,
+                        times_derived=doc.times_derived,
+                        internal_metadata=metadata_dict,
+                        session_name=doc.session_name,
+                        embedding=doc.embedding,
+                        # Tree linkage column
+                        source_ids=doc.source_ids,
+                    )
+                else:
+                    new_doc = models.Document(
+                        workspace_name=workspace_name,
+                        observer=observer,
+                        observed=observed,
+                        content=doc.content,
+                        level=doc.level,
+                        times_derived=doc.times_derived,
+                        internal_metadata=metadata_dict,
+                        session_name=doc.session_name,
+                        # Tree linkage column
+                        source_ids=doc.source_ids,
                     )
 
-                # Upsert to external vector store and update sync state
-                try:
-                    await external_vector_store.upsert_many(namespace, vector_records)
-                    # Success: mark as synced
+                if doc.embedding:
+                    new_doc.sync_state = "pending"
+                honcho_documents.append(new_doc)
+                accepted_documents.append(doc)
+
+                # Track embedding for vector store (ID will be available after commit)
+                if doc.embedding:
+                    docs_with_embeddings.append((new_doc, doc.embedding))
+
+            except Exception as e:
+                logger.error(
+                    f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
+                )
+                continue
+
+        try:
+            db.add_all(honcho_documents)
+            # NOTE
+            # If the process crashes after this commit but before vector upsert completes,
+            # documents will be left in sync_state='pending' with NULL embeddings.
+            # The reconciliation job will automatically re-embed and sync these documents,
+            await db.commit()
+
+            # Store embeddings in external vector store after documents are committed (IDs now available)
+            if docs_with_embeddings:
+                doc_ids = [doc.id for doc, _ in docs_with_embeddings]
+                external_vector_store = get_external_vector_store()
+
+                # If no external vector store (pgvector mode), mark as synced immediately
+                if external_vector_store is None:
                     await db.execute(
                         update(models.Document)
                         .where(models.Document.id.in_(doc_ids))
@@ -824,50 +798,95 @@ async def create_documents(
                         )
                     )
                     await db.commit()
-
-                except VectorStoreError:
-                    # Vector store unavailable - increment sync_attempts for reconciliation
-                    logger.warning("Vector store unavailable; leaving docs unsynced")
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id.in_(doc_ids))
-                        .values(
-                            sync_attempts=models.Document.sync_attempts + 1,
-                            last_sync_at=func.now(),
-                        )
+                else:
+                    # External vector store - upsert and track sync state
+                    namespace = external_vector_store.get_vector_namespace(
+                        "document",
+                        workspace_name,
+                        observer,
+                        observed,
                     )
-                    await db.commit()
 
-                except Exception:
-                    logger.exception("Unexpected error upserting vectors")
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id.in_(doc_ids))
-                        .values(
-                            sync_attempts=models.Document.sync_attempts + 1,
-                            last_sync_at=func.now(),
+                    # Build vector records with metadata for filtering
+                    vector_records: list[VectorRecord] = []
+                    for doc, embedding in docs_with_embeddings:
+                        vector_records.append(
+                            VectorRecord(
+                                id=doc.id,
+                                embedding=embedding,
+                                metadata={
+                                    "workspace_name": workspace_name,
+                                    "observer": observer,
+                                    "observed": observed,
+                                    "session_name": doc.session_name,
+                                    "level": doc.level,
+                                },
+                            )
                         )
-                    )
-                    await db.commit()
 
-    except IntegrityError as e:
-        await db.rollback()
-        raise ValidationException(
-            "Failed to create documents due to integrity constraint violation"
-        ) from e
+                    # Upsert to external vector store and update sync state
+                    try:
+                        await external_vector_store.upsert_many(
+                            namespace, vector_records
+                        )
+                        # Success: mark as synced
+                        await db.execute(
+                            update(models.Document)
+                            .where(models.Document.id.in_(doc_ids))
+                            .values(
+                                sync_state="synced",
+                                last_sync_at=func.now(),
+                                sync_attempts=0,
+                            )
+                        )
+                        await db.commit()
 
-    result = CreateDocumentsResult(
-        created_documents=accepted_documents,
-        exact_dup_existing_count=exact_dup_existing_count,
-        exact_dup_in_batch_count=exact_dup_in_batch_count,
-        semantic_dup_rejected_count=semantic_dup_rejected_count,
-        semantic_dup_replaced_count=semantic_dup_replaced_count,
-    )
-    created_count = len(result.created_documents)
-    _span.set_attribute(MEMORY_ITEM_COUNT, created_count)
-    _span.end()
+                    except VectorStoreError:
+                        # Vector store unavailable - increment sync_attempts for reconciliation
+                        logger.warning(
+                            "Vector store unavailable; leaving docs unsynced"
+                        )
+                        await db.execute(
+                            update(models.Document)
+                            .where(models.Document.id.in_(doc_ids))
+                            .values(
+                                sync_attempts=models.Document.sync_attempts + 1,
+                                last_sync_at=func.now(),
+                            )
+                        )
+                        await db.commit()
+
+                    except Exception:
+                        logger.exception("Unexpected error upserting vectors")
+                        await db.execute(
+                            update(models.Document)
+                            .where(models.Document.id.in_(doc_ids))
+                            .values(
+                                sync_attempts=models.Document.sync_attempts + 1,
+                                last_sync_at=func.now(),
+                            )
+                        )
+                        await db.commit()
+
+        except IntegrityError as e:
+            await db.rollback()
+            raise ValidationException(
+                "Failed to create documents due to integrity constraint violation"
+            ) from e
+
+        result = CreateDocumentsResult(
+            created_documents=accepted_documents,
+            exact_dup_existing_count=exact_dup_existing_count,
+            exact_dup_in_batch_count=exact_dup_in_batch_count,
+            semantic_dup_rejected_count=semantic_dup_rejected_count,
+            semantic_dup_replaced_count=semantic_dup_replaced_count,
+        )
+        created_count = len(result.created_documents)
+        _span.set_attribute(MEMORY_ITEM_COUNT, created_count)
     elapsed_ms = (time.monotonic() - _t0) * 1000
-    _operation_duration.record(elapsed_ms, {MEMORY_SYSTEM: "honcho", MEMORY_OPERATION: "add"})
+    _operation_duration.record(
+        elapsed_ms, {MEMORY_SYSTEM: "honcho", MEMORY_OPERATION: "add"}
+    )
     _otel_log.emit(
         body=f"memory.add: {created_count} documents created in {elapsed_ms:.1f}ms",
         severity_text="INFO",
@@ -947,8 +966,6 @@ async def delete_documents(
     soft-deleted. IDs that didn't match are silently skipped; callers can diff
     the returned ids against the input to detect misses.
     """
-    import time
-
     if not document_ids:
         return []
 
@@ -1067,10 +1084,8 @@ async def create_observations(
     if not observations:
         return []
 
-    import time
-
     _t0_obs = time.monotonic()
-    _span_obs = _tracer.start_span(
+    with _tracer.start_as_current_span(
         "memory.add",
         attributes={
             MEMORY_SYSTEM: "honcho",
@@ -1078,196 +1093,199 @@ async def create_observations(
             MEMORY_WORKSPACE: workspace_name,
             MEMORY_ITEM_COUNT: len(observations),
         },
-    )
+    ) as _span_obs:
+        # Collect unique sessions and peer pairs to validate
+        sessions_to_validate: set[str] = set()
+        peers_to_validate: set[str] = set()
+        collection_pairs: set[tuple[str, str]] = set()
 
-    # Collect unique sessions and peer pairs to validate
-    sessions_to_validate: set[str] = set()
-    peers_to_validate: set[str] = set()
-    collection_pairs: set[tuple[str, str]] = set()
+        for obs in observations:
+            if obs.session_id is not None:
+                sessions_to_validate.add(obs.session_id)
+            peers_to_validate.add(obs.observer_id)
+            peers_to_validate.add(obs.observed_id)
+            collection_pairs.add((obs.observer_id, obs.observed_id))
 
-    for obs in observations:
-        if obs.session_id is not None:
-            sessions_to_validate.add(obs.session_id)
-        peers_to_validate.add(obs.observer_id)
-        peers_to_validate.add(obs.observed_id)
-        collection_pairs.add((obs.observer_id, obs.observed_id))
+        # Validate all sessions exist
+        for session_name in sessions_to_validate:
+            await get_session(db, session_name, workspace_name)
 
-    # Validate all sessions exist
-    for session_name in sessions_to_validate:
-        await get_session(db, session_name, workspace_name)
+        # Validate all peers exist
+        for peer_name in peers_to_validate:
+            await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
 
-    # Validate all peers exist
-    for peer_name in peers_to_validate:
-        await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+        # Get or create all collections
+        for observer, observed in collection_pairs:
+            await get_or_create_collection(
+                db, workspace_name, observer=observer, observed=observed
+            )
 
-    # Get or create all collections
-    for observer, observed in collection_pairs:
-        await get_or_create_collection(
-            db, workspace_name, observer=observer, observed=observed
+        # Generate embeddings in batch
+        contents = [obs.content for obs in observations]
+        try:
+            embeddings = await embedding_client.simple_batch_embed(contents)
+        except ValueError as e:
+            raise ValidationException(str(e)) from e
+
+        # Create document objects and track embeddings for vector store
+        honcho_documents: list[models.Document] = []
+        # Group observations by collection (observer, observed) for vector store upserts
+        collection_embeddings: dict[
+            tuple[str, str], list[tuple[models.Document, list[float]]]
+        ] = {}
+
+        # Determine if we need to persist embeddings to postgres
+        # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
+        store_embeddings_in_postgres = (
+            settings.VECTOR_STORE.TYPE == "pgvector"
+            or not settings.VECTOR_STORE.MIGRATED
         )
 
-    # Generate embeddings in batch
-    contents = [obs.content for obs in observations]
-    try:
-        embeddings = await embedding_client.simple_batch_embed(contents)
-    except ValueError as e:
-        raise ValidationException(str(e)) from e
-
-    # Create document objects and track embeddings for vector store
-    honcho_documents: list[models.Document] = []
-    # Group observations by collection (observer, observed) for vector store upserts
-    collection_embeddings: dict[
-        tuple[str, str], list[tuple[models.Document, list[float]]]
-    ] = {}
-
-    # Determine if we need to persist embeddings to postgres
-    # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
-    store_embeddings_in_postgres = (
-        settings.VECTOR_STORE.TYPE == "pgvector" or not settings.VECTOR_STORE.MIGRATED
-    )
-
-    for obs, embedding in zip(observations, embeddings, strict=True):
-        if store_embeddings_in_postgres:
-            doc = models.Document(
-                workspace_name=workspace_name,
-                observer=obs.observer_id,
-                observed=obs.observed_id,
-                content=obs.content,
-                level="explicit",  # Manually created observations are always explicit
-                times_derived=1,
-                internal_metadata={},  # No message_ids since not derived from messages
-                session_name=obs.session_id,
-                embedding=embedding,
-            )
-        else:
-            doc = models.Document(
-                workspace_name=workspace_name,
-                observer=obs.observer_id,
-                observed=obs.observed_id,
-                content=obs.content,
-                level="explicit",  # Manually created observations are always explicit
-                times_derived=1,
-                internal_metadata={},  # No message_ids since not derived from messages
-                session_name=obs.session_id,
-            )
-        doc.sync_state = "pending"
-        honcho_documents.append(doc)
-
-        # Track embedding for vector store (grouped by collection)
-        collection_key = (obs.observer_id, obs.observed_id)
-        if collection_key not in collection_embeddings:
-            collection_embeddings[collection_key] = []
-        collection_embeddings[collection_key].append((doc, embedding))
-
-    try:
-        db.add_all(honcho_documents)
-        await db.commit()
-        # Refresh all documents to get generated IDs and timestamps
-        for doc in honcho_documents:
-            await db.refresh(doc)
-
-        # Store embeddings in external vector store after documents are committed (IDs now available)
-        external_vector_store = get_external_vector_store()
-        all_doc_ids = [doc.id for doc in honcho_documents]
-
-        # If no external vector store (pgvector mode), mark as synced immediately
-        if external_vector_store is None:
-            await db.execute(
-                update(models.Document)
-                .where(models.Document.id.in_(all_doc_ids))
-                .values(
-                    sync_state="synced",
-                    last_sync_at=func.now(),
-                    sync_attempts=0,
+        for obs, embedding in zip(observations, embeddings, strict=True):
+            if store_embeddings_in_postgres:
+                doc = models.Document(
+                    workspace_name=workspace_name,
+                    observer=obs.observer_id,
+                    observed=obs.observed_id,
+                    content=obs.content,
+                    level="explicit",  # Manually created observations are always explicit
+                    times_derived=1,
+                    internal_metadata={},  # No message_ids since not derived from messages
+                    session_name=obs.session_id,
+                    embedding=embedding,
                 )
-            )
+            else:
+                doc = models.Document(
+                    workspace_name=workspace_name,
+                    observer=obs.observer_id,
+                    observed=obs.observed_id,
+                    content=obs.content,
+                    level="explicit",  # Manually created observations are always explicit
+                    times_derived=1,
+                    internal_metadata={},  # No message_ids since not derived from messages
+                    session_name=obs.session_id,
+                )
+            doc.sync_state = "pending"
+            honcho_documents.append(doc)
+
+            # Track embedding for vector store (grouped by collection)
+            collection_key = (obs.observer_id, obs.observed_id)
+            if collection_key not in collection_embeddings:
+                collection_embeddings[collection_key] = []
+            collection_embeddings[collection_key].append((doc, embedding))
+
+        try:
+            db.add_all(honcho_documents)
             await db.commit()
-        else:
-            # External vector store - upsert each collection's embeddings
-            for (
-                observer,
-                observed,
-            ), docs_with_embeddings in collection_embeddings.items():
-                namespace = external_vector_store.get_vector_namespace(
-                    "document",
-                    workspace_name,
+            # Refresh all documents to get generated IDs and timestamps
+            for doc in honcho_documents:
+                await db.refresh(doc)
+
+            # Store embeddings in external vector store after documents are committed (IDs now available)
+            external_vector_store = get_external_vector_store()
+            all_doc_ids = [doc.id for doc in honcho_documents]
+
+            # If no external vector store (pgvector mode), mark as synced immediately
+            if external_vector_store is None:
+                await db.execute(
+                    update(models.Document)
+                    .where(models.Document.id.in_(all_doc_ids))
+                    .values(
+                        sync_state="synced",
+                        last_sync_at=func.now(),
+                        sync_attempts=0,
+                    )
+                )
+                await db.commit()
+            else:
+                # External vector store - upsert each collection's embeddings
+                for (
                     observer,
                     observed,
-                )
+                ), docs_with_embeddings in collection_embeddings.items():
+                    namespace = external_vector_store.get_vector_namespace(
+                        "document",
+                        workspace_name,
+                        observer,
+                        observed,
+                    )
 
-                # Build vector records with metadata for filtering
-                vector_records: list[VectorRecord] = []
-                doc_ids: list[str] = []
-                for doc, embedding in docs_with_embeddings:
-                    doc_ids.append(doc.id)
-                    vector_records.append(
-                        VectorRecord(
-                            id=doc.id,
-                            embedding=embedding,
-                            metadata={
-                                "workspace_name": workspace_name,
-                                "observer": observer,
-                                "observed": observed,
-                                "session_name": doc.session_name,
-                                "level": doc.level,
-                            },
+                    # Build vector records with metadata for filtering
+                    vector_records: list[VectorRecord] = []
+                    doc_ids: list[str] = []
+                    for doc, embedding in docs_with_embeddings:
+                        doc_ids.append(doc.id)
+                        vector_records.append(
+                            VectorRecord(
+                                id=doc.id,
+                                embedding=embedding,
+                                metadata={
+                                    "workspace_name": workspace_name,
+                                    "observer": observer,
+                                    "observed": observed,
+                                    "session_name": doc.session_name,
+                                    "level": doc.level,
+                                },
+                            )
                         )
-                    )
 
-                # Upsert to external vector store and update sync state
-                try:
-                    await external_vector_store.upsert_many(namespace, vector_records)
-                    # Success: mark as synced
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id.in_(doc_ids))
-                        .values(
-                            sync_state="synced",
-                            last_sync_at=func.now(),
-                            sync_attempts=0,
+                    # Upsert to external vector store and update sync state
+                    try:
+                        await external_vector_store.upsert_many(
+                            namespace, vector_records
                         )
-                    )
-                    await db.commit()
-
-                except VectorStoreError:
-                    logger.warning(
-                        "Vector store unavailable for namespace %s; leaving observations unsynced",
-                        namespace,
-                    )
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id.in_(doc_ids))
-                        .values(
-                            sync_attempts=models.Document.sync_attempts + 1,
-                            last_sync_at=func.now(),
+                        # Success: mark as synced
+                        await db.execute(
+                            update(models.Document)
+                            .where(models.Document.id.in_(doc_ids))
+                            .values(
+                                sync_state="synced",
+                                last_sync_at=func.now(),
+                                sync_attempts=0,
+                            )
                         )
-                    )
-                    await db.commit()
+                        await db.commit()
 
-                except Exception:
-                    logger.exception(
-                        "Unexpected error upserting vectors for %s", namespace
-                    )
-                    await db.execute(
-                        update(models.Document)
-                        .where(models.Document.id.in_(doc_ids))
-                        .values(
-                            sync_attempts=models.Document.sync_attempts + 1,
-                            last_sync_at=func.now(),
+                    except VectorStoreError:
+                        logger.warning(
+                            "Vector store unavailable for namespace %s; leaving observations unsynced",
+                            namespace,
                         )
-                    )
-                    await db.commit()
+                        await db.execute(
+                            update(models.Document)
+                            .where(models.Document.id.in_(doc_ids))
+                            .values(
+                                sync_attempts=models.Document.sync_attempts + 1,
+                                last_sync_at=func.now(),
+                            )
+                        )
+                        await db.commit()
 
-    except IntegrityError as e:
-        await db.rollback()
-        raise ValidationException(
-            "Failed to create observations due to integrity constraint violation"
-        ) from e
+                    except Exception:
+                        logger.exception(
+                            "Unexpected error upserting vectors for %s", namespace
+                        )
+                        await db.execute(
+                            update(models.Document)
+                            .where(models.Document.id.in_(doc_ids))
+                            .values(
+                                sync_attempts=models.Document.sync_attempts + 1,
+                                last_sync_at=func.now(),
+                            )
+                        )
+                        await db.commit()
 
-    obs_count = len(honcho_documents)
-    logger.debug("Created %d observations in workspace %s", obs_count, workspace_name)
-    _span_obs.set_attribute(MEMORY_ITEM_COUNT, obs_count)
-    _span_obs.end()
+        except IntegrityError as e:
+            await db.rollback()
+            raise ValidationException(
+                "Failed to create observations due to integrity constraint violation"
+            ) from e
+
+        obs_count = len(honcho_documents)
+        logger.debug(
+            "Created %d observations in workspace %s", obs_count, workspace_name
+        )
+        _span_obs.set_attribute(MEMORY_ITEM_COUNT, obs_count)
     elapsed_obs_ms = (time.monotonic() - _t0_obs) * 1000
     _operation_duration.record(
         elapsed_obs_ms, {MEMORY_SYSTEM: "honcho", MEMORY_OPERATION: "add"}

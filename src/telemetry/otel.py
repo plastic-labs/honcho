@@ -41,6 +41,12 @@ MEMORY_OBSERVED = "memory.observed"
 
 _initialized = False
 
+# Providers created by setup_otel, retained so shutdown_otel() can flush and
+# close them on process exit (BatchSpan/BatchLogRecord processors buffer).
+_tracer_provider: TracerProvider | None = None
+_meter_provider: MeterProvider | None = None
+_logger_provider: LoggerProvider | None = None
+
 
 def setup_otel(
     *,
@@ -60,7 +66,7 @@ def setup_otel(
             When None, falls back to the ``OTEL_EXPORTER_OTLP_ENDPOINT`` env var.
             If neither is set and enabled is True, console exporters are used.
     """
-    global _initialized
+    global _initialized, _tracer_provider, _meter_provider, _logger_provider
     if not enabled or _initialized:
         return
 
@@ -88,6 +94,7 @@ def setup_otel(
         logger.info("OTel traces → console (no OTLP endpoint configured)")
 
     trace.set_tracer_provider(tracer_provider)
+    _tracer_provider = tracer_provider
 
     # --- Meter ---
     if otlp_endpoint:
@@ -109,6 +116,7 @@ def setup_otel(
 
     meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
     metrics.set_meter_provider(meter_provider)
+    _meter_provider = meter_provider
 
     # --- Logger ---
     log_provider = LoggerProvider(resource=resource)
@@ -134,6 +142,7 @@ def setup_otel(
         logger.info("OTel logs → console (no OTLP endpoint configured)")
 
     otel_logs.set_logger_provider(log_provider)
+    _logger_provider = log_provider
 
     # --- Auto-instrumentation for outbound HTTP ---
     # httpx underpins the Anthropic/OpenAI/embedding SDKs, so instrumenting it
@@ -151,6 +160,26 @@ def setup_otel(
 
     _initialized = True
     logger.info("OpenTelemetry initialized (service=%s)", service_name)
+
+
+def shutdown_otel() -> None:
+    """Flush and shut down the OTel providers created by ``setup_otel``.
+
+    The tracer/logger providers use ``Batch*`` processors that buffer telemetry;
+    without an explicit shutdown, records still in the buffer are lost when the
+    process exits. Call this from the app/worker shutdown path. Safe to call when
+    OTel was never initialized (no-op) and never raises.
+    """
+    global _initialized, _tracer_provider, _meter_provider, _logger_provider
+    for provider in (_tracer_provider, _meter_provider, _logger_provider):
+        if provider is None:
+            continue
+        try:
+            provider.shutdown()  # flushes then shuts down
+        except Exception:
+            logger.warning("Error shutting down OTel provider", exc_info=True)
+    _tracer_provider = _meter_provider = _logger_provider = None
+    _initialized = False
 
 
 def instrument_app(app: object) -> None:
