@@ -153,6 +153,40 @@ async def get_conclusion(
     return schemas.Conclusion.model_validate(documents[0])
 
 
+@router.get(
+    "/{conclusion_id}/derived",
+    response_model=Page[schemas.Conclusion],
+)
+async def get_derived_conclusions(
+    workspace_id: str = Path(...),
+    conclusion_id: str = Path(...),
+    reverse: bool | None = Query(
+        False,
+        description="Whether to reverse the order of results",
+    ),
+    db: AsyncSession = read_db,
+):
+    """
+    Get the Conclusions derived from the given Conclusion — i.e. those that list it
+    in their `source_ids`. Traverses the reasoning tree upward (source -> derived).
+    Results are ordered by recency unless `reverse` is true, and paginated.
+    """
+    documents = await crud.get_documents_by_ids(
+        db,
+        workspace_name=workspace_id,
+        document_ids=[conclusion_id],
+    )
+    if not documents:
+        raise ResourceNotFoundException("Conclusion not found")
+
+    stmt = crud.get_child_observations(
+        workspace_name=workspace_id,
+        parent_id=conclusion_id,
+        reverse=reverse or False,
+    )
+    return await apaginate(db, stmt)
+
+
 @router.delete(
     "/{conclusion_id}",
     status_code=204,

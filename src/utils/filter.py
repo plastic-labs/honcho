@@ -1,10 +1,12 @@
 import datetime
+import json
 from collections.abc import Callable, Sequence
 from logging import getLogger
 from typing import Any, TypeVar
 from typing import cast as typing_cast
 
 from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
 
 from ..exceptions import FilterError
@@ -31,7 +33,7 @@ NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
 
 # JSONB columns keep containment semantics: bare lists are not membership
 # sugar, and dict values map to nested-metadata conditions rather than IN/Eq.
-JSONB_COLUMNS = ("h_metadata", "configuration", "internal_metadata")
+JSONB_COLUMNS = ("h_metadata", "configuration", "internal_metadata", "source_ids")
 
 ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING = {
     "id": "name",
@@ -53,15 +55,32 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES = {
 }
 
 ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
+    "id": "id",
     "session_id": "session_name",
     "workspace_id": "workspace_name",
     "observer_id": "observer",
     "observed_id": "observed",
+    "level": "level",
+    "source_ids": "source_ids",
+    "times_derived": "times_derived",
     "metadata": "internal_metadata",
 }
 
 
 MAX_SESSION_ALLOWLIST_ENTRIES = 1000
+
+
+def _jsonb_bind(value: Any) -> Any:
+    """Bind a scalar as a JSONB literal for containment comparisons.
+
+    SQLAlchemy coerces plain scalars compared against JSONB columns to their
+    native SQL types (e.g. VARCHAR), which the @> operator rejects; an
+    explicit JSONB cast keeps containment semantics. Dicts and lists already
+    bind as JSONB and pass through unchanged.
+    """
+    if isinstance(value, str | int | float | bool):
+        return cast(literal(json.dumps(value)), JSONB)
+    return value
 
 
 def extract_session_allowlist(
@@ -349,7 +368,7 @@ def _build_field_condition(
                 return column == value
     else:
         if column_name in JSONB_COLUMNS:
-            return column.contains(value)
+            return column.contains(_jsonb_bind(value))
         else:
             return column == value
 
@@ -628,9 +647,10 @@ def _build_comparison_conditions(
                     f"Invalid value for 'in' operator: {op_value}. Expected an iterable (list, tuple, set), got {type(op_value).__name__}"
                 )
         elif operator == "contains":
-            if column_name == "h_metadata":
-                # For JSONB columns, use JSONB contains
-                condition = column.contains(op_value)
+            if column_name in JSONB_COLUMNS:
+                # For JSONB columns, use JSONB containment (@>). For a JSONB
+                # array like source_ids, a scalar value matches membership.
+                condition = column.contains(_jsonb_bind(op_value))
             else:
                 # For text columns, use ILIKE with escaped pattern
                 escaped_value = escape_ilike_pattern(str(op_value))

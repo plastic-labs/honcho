@@ -2452,13 +2452,14 @@ async def _handle_get_reasoning_chain(
 
         # Get conclusions if requested
         if direction in ("conclusions", "both"):
-            children = await crud.get_child_observations(
-                db,
+            stmt = crud.get_child_observations(
                 ctx.workspace_name,
                 observation_id,
                 observer=ctx.observer,
                 observed=ctx.observed,
             )
+            result = await db.execute(stmt)
+            children = result.scalars().all()
             if children:
                 child_lines: list[Any] = []
                 for c in children:

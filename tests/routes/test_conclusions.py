@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
@@ -1608,3 +1610,255 @@ class TestConclusionRoutes:
         # Verify the conclusion has null session_id
         conclusion = next(c for c in data["items"] if c["id"] == created_id)
         assert conclusion["session_id"] is None
+
+    async def _create_reasoning_tree(
+        self,
+        db_session: AsyncSession,
+        workspace_name: str,
+        observer: str,
+        observed: str,
+    ) -> tuple[models.Document, models.Document, models.Document]:
+        """Helper to create a premise with two derived conclusions referencing it.
+
+        Returns (premise, derived1, derived2), where derived2 is newer.
+        """
+        # Explicit created_at values: rows created in one transaction all get
+        # the same now(), which would make recency ordering unstable.
+        base = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+        premise = models.Document(
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            content="User works late at night",
+            embedding=[0.1] * 1536,
+            created_at=base,
+        )
+        db_session.add(premise)
+        await db_session.flush()
+
+        derived1 = models.Document(
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            content="User is likely a night owl",
+            embedding=[0.1] * 1536,
+            level="deductive",
+            source_ids=[premise.id],
+            created_at=base + datetime.timedelta(minutes=1),
+        )
+        db_session.add(derived1)
+        await db_session.flush()
+
+        derived2 = models.Document(
+            workspace_name=workspace_name,
+            observer=observer,
+            observed=observed,
+            content="User tends to respond slowly in the mornings",
+            embedding=[0.1] * 1536,
+            level="inductive",
+            source_ids=[premise.id, derived1.id],
+            times_derived=2,
+            created_at=base + datetime.timedelta(minutes=2),
+        )
+        db_session.add(derived2)
+        await db_session.commit()
+        return premise, derived1, derived2
+
+    @pytest.mark.asyncio
+    async def test_get_derived_conclusions_success(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test traversing the reasoning tree upward via /derived"""
+        test_workspace, test_peer = sample_data
+
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        premise, derived1, derived2 = await self._create_reasoning_tree(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{premise.id}/derived"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 2
+        ids = [item["id"] for item in data["items"]]
+        # Newest first by default
+        assert ids == [derived2.id, derived1.id]
+
+        # Attribution fields are present on the children
+        child = next(item for item in data["items"] if item["id"] == derived2.id)
+        assert child["level"] == "inductive"
+        assert child["source_ids"] == [premise.id, derived1.id]
+        assert child["times_derived"] == 2
+
+        # derived1 is itself a source of derived2
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{derived1.id}/derived"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert [item["id"] for item in data["items"]] == [derived2.id]
+
+    @pytest.mark.asyncio
+    async def test_get_derived_conclusions_reverse(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that reverse=true returns oldest first"""
+        test_workspace, test_peer = sample_data
+
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        premise, derived1, derived2 = await self._create_reasoning_tree(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{premise.id}/derived",
+            params={"reverse": "true"},
+        )
+
+        assert response.status_code == 200
+        ids = [item["id"] for item in response.json()["items"]]
+        assert ids == [derived1.id, derived2.id]
+
+    @pytest.mark.asyncio
+    async def test_get_derived_conclusions_leaf_is_empty(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test that a conclusion nothing was derived from returns an empty page"""
+        test_workspace, test_peer = sample_data
+
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        _premise, _derived1, derived2 = await self._create_reasoning_tree(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{derived2.id}/derived"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total"] == 0
+        assert data["items"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_derived_conclusions_not_found(
+        self,
+        client: TestClient,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test 404 when the source conclusion doesn't exist"""
+        test_workspace, _test_peer = sample_data
+
+        response = client.get(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/{generate_nanoid()}/derived"
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_list_conclusions_filter_by_source_ids_contains(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test filtering the list endpoint by source_ids membership"""
+        test_workspace, test_peer = sample_data
+
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        premise, derived1, derived2 = await self._create_reasoning_tree(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"source_ids": {"contains": premise.id}}},
+        )
+
+        assert response.status_code == 200
+        ids = {item["id"] for item in response.json()["items"]}
+        assert ids == {derived1.id, derived2.id}
+
+    @pytest.mark.asyncio
+    async def test_list_conclusions_filter_by_ids(
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+    ):
+        """Test batch-fetching conclusions by ID through the list endpoint"""
+        test_workspace, test_peer = sample_data
+
+        test_peer2 = models.Peer(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add(test_peer2)
+        await db_session.flush()
+
+        await self._create_collection(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        premise, derived1, derived2 = await self._create_reasoning_tree(
+            db_session, test_workspace.name, test_peer.name, test_peer2.name
+        )
+
+        # Fetch derived2's premises the way an SDK tree walk would
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"id": {"in": [premise.id, derived1.id]}}},
+        )
+
+        assert response.status_code == 200
+        ids = {item["id"] for item in response.json()["items"]}
+        assert ids == {premise.id, derived1.id}
+        assert derived2.id not in ids

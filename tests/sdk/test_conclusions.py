@@ -474,6 +474,121 @@ async def test_observation_get_by_id(
 
 
 @pytest.mark.asyncio
+async def test_observation_get_many(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests batch-fetching conclusions by ID (the tree-walk helper for source_ids).
+    """
+    honcho_client, client_type = client_fixture
+
+    contents = [
+        {"content": "First batch conclusion"},
+        {"content": "Second batch conclusion"},
+        {"content": "Third batch conclusion"},
+    ]
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-get-many-observer")
+        target = await honcho_client.aio.peer(id="test-obs-get-many-target")
+        session = await honcho_client.aio.session(id="test-obs-get-many-session")
+
+        # Ensure session and both peers exist
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = await obs_scope.aio.create(
+            [{**c, "session_id": session.id} for c in contents]
+        )
+
+        assert await obs_scope.aio.get_many([]) == []
+
+        fetched = await obs_scope.aio.get_many([c.id for c in created])
+    else:
+        observer = honcho_client.peer(id="test-obs-get-many-observer")
+        target = honcho_client.peer(id="test-obs-get-many-target")
+        session = honcho_client.session(id="test-obs-get-many-session")
+
+        # Ensure session and both peers exist
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = obs_scope.create([{**c, "session_id": session.id} for c in contents])
+
+        assert obs_scope.get_many([]) == []
+
+        fetched = obs_scope.get_many([c.id for c in created])
+
+    assert all(isinstance(c, Conclusion) for c in fetched)
+    assert {c.id for c in fetched} == {c.id for c in created}
+    assert {c.content for c in fetched} == {c["content"] for c in contents}
+
+
+@pytest.mark.asyncio
+async def test_observation_derived_empty_for_leaf(
+    client_fixture: tuple[Honcho, str],
+):
+    """
+    Tests the derived() traversal: a user-created (explicit) conclusion has
+    nothing derived from it, so the endpoint returns an empty page.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        observer = await honcho_client.aio.peer(id="test-obs-derived-observer")
+        target = await honcho_client.aio.peer(id="test-obs-derived-target")
+        session = await honcho_client.aio.session(id="test-obs-derived-session")
+
+        # Ensure session and both peers exist
+        await session.aio.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = await obs_scope.aio.create(
+            [{"content": "Leaf conclusion", "session_id": session.id}]
+        )
+
+        page = await obs_scope.aio.derived(created[0].id)
+        items = page.items
+    else:
+        observer = honcho_client.peer(id="test-obs-derived-observer")
+        target = honcho_client.peer(id="test-obs-derived-target")
+        session = honcho_client.session(id="test-obs-derived-session")
+
+        # Ensure session and both peers exist
+        session.add_messages(
+            [
+                observer.message("Hello from observer"),
+                target.message("Hello from target"),
+            ]
+        )
+
+        obs_scope = observer.conclusions_of(target)
+        created = obs_scope.create(
+            [{"content": "Leaf conclusion", "session_id": session.id}]
+        )
+
+        page = obs_scope.derived(created[0].id)
+        items = page.items
+
+    assert items == []
+
+
+@pytest.mark.asyncio
 async def test_self_observation_create(
     client_fixture: tuple[Honcho, str],
 ):
