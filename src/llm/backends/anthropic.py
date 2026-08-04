@@ -8,13 +8,11 @@ from typing import Any
 from anthropic.types import TextBlock, ThinkingBlock, ToolUseBlock
 from pydantic import BaseModel, ValidationError
 
-from src.llm.backend import (
-    CompletionResult,
-    StreamChunk,
-    ToolCallResult,
+from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
+from src.llm.request_builder import (
+    apply_sdk_passthroughs,
     request_timeout_from_extra_params,
 )
-from src.llm.request_builder import apply_sdk_passthroughs
 from src.llm.structured_output import repair_response_model_json, schema_instruction
 
 

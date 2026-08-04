@@ -10,13 +10,11 @@ from openai import BadRequestError, LengthFinishReasonError
 from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
-from src.llm.backend import (
-    CompletionResult,
-    StreamChunk,
-    ToolCallResult,
+from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
+from src.llm.request_builder import (
+    apply_sdk_passthroughs,
     request_timeout_from_extra_params,
 )
-from src.llm.request_builder import apply_sdk_passthroughs
 from src.llm.structured_output import (
     StructuredOutputError,
     empty_structured_output,

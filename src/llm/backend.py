@@ -6,9 +6,6 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from src.config import coerce_provider_timeout
-from src.exceptions import ValidationException
-
 
 @dataclass(slots=True)
 class ToolCallResult:
@@ -46,24 +43,6 @@ class StreamChunk:
     is_done: bool = False
     finish_reason: str | None = None
     output_tokens: int | None = None
-
-
-def request_timeout_from_extra_params(
-    extra_params: dict[str, Any] | None,
-) -> float | None:
-    """Return a validated per-request provider timeout from extra params.
-
-    Config-sourced timeouts are already validated and normalized at config
-    load (`coerce_provider_timeout` in src.config); this guards extra_params
-    passed programmatically at call time.
-    """
-    if not extra_params or "timeout" not in extra_params:
-        return None
-
-    try:
-        return coerce_provider_timeout(extra_params["timeout"])
-    except ValueError as exc:
-        raise ValidationException(str(exc)) from exc
 
 
 @runtime_checkable

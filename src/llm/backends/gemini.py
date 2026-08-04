@@ -8,19 +8,17 @@ from google.genai import types as genai_types
 from pydantic import BaseModel
 
 from src.exceptions import LLMError, ValidationException
-from src.llm.backend import (
-    CompletionResult,
-    StreamChunk,
-    ToolCallResult,
-    request_timeout_from_extra_params,
-)
+from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
 from src.llm.caching import (
     GeminiCacheHandle,
     PromptCachePolicy,
     build_cache_key,
     gemini_cache_store,
 )
-from src.llm.request_builder import coerce_passthrough_mapping
+from src.llm.request_builder import (
+    coerce_passthrough_mapping,
+    request_timeout_from_extra_params,
+)
 from src.llm.structured_output import repair_response_model_json, schema_instruction
 
 GEMINI_BLOCKED_FINISH_REASONS = {
@@ -323,6 +321,7 @@ class GeminiBackend:
         if timeout is not None:
             if http_options is None:
                 http_options = genai_types.HttpOptions()
+            # Gemini has no native timeout kwarg; set the httpx-level value in ms.
             http_options.timeout = int(timeout * 1000)
         if http_options is not None:
             config["http_options"] = http_options
