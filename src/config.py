@@ -386,6 +386,7 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     transport: EmbeddingTransport = "openai"
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
     dimensions_mode: EmbeddingDimensionsMode = "auto"
+    tokenizer: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -422,6 +423,7 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    tokenizer: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -546,6 +548,7 @@ def resolve_embedding_model_config(
         transport=configured.transport,
         api_key=api_key,
         base_url=configured.overrides.base_url,
+        tokenizer=configured.tokenizer,
     )
 
 
