@@ -1394,9 +1394,13 @@ def get_child_observations(
     if observed:
         stmt = stmt.where(models.Document.observed == observed)
 
+    # created_at is the transaction timestamp, so documents created in the
+    # same batch share it -- id keeps pagination deterministic.
     if reverse:
-        stmt = stmt.order_by(models.Document.created_at.asc())
+        stmt = stmt.order_by(models.Document.created_at.asc(), models.Document.id.asc())
     else:
-        stmt = stmt.order_by(models.Document.created_at.desc())
+        stmt = stmt.order_by(
+            models.Document.created_at.desc(), models.Document.id.desc()
+        )
 
     return stmt
