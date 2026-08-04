@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, cast
@@ -66,6 +67,37 @@ ThinkingEffortLevel = Literal[
 StructuredOutputMode = Literal["json_schema", "json_object"]
 
 
+PROVIDER_TIMEOUT_ERROR_TEXT = (
+    "provider_params.timeout must be a positive number of seconds"
+)
+
+
+def coerce_provider_timeout(value: Any) -> float:
+    """Coerce a `provider_params.timeout` value to positive, finite seconds.
+
+    Canonical implementation shared by config-load validation (here) and
+    per-request validation (`src.llm.request_builder.request_timeout_from_extra_params`,
+    which translates the ValueError into a ValidationException). Lives in
+    config.py because src.exceptions imports src.config, so config validators
+    cannot raise Honcho exception types.
+    """
+    if isinstance(value, bool):
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+    if isinstance(value, int | float):
+        timeout = float(value)
+    elif isinstance(value, str):
+        try:
+            timeout = float(value.strip())
+        except ValueError as exc:
+            raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT) from exc
+    else:
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+    return timeout
+
+
 class ModelOverrideSettings(BaseModel):
     """Advanced module-level transport overrides."""
 
@@ -90,6 +122,14 @@ class ModelOverrideSettings(BaseModel):
             "supplying an `extra_body.thinking` for Anthropic-via-proxy)."
         ),
     )
+
+    @field_validator("provider_params")
+    @classmethod
+    def _validate_provider_timeout(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Reject bad `timeout` values at config load; normalize good ones to float."""
+        if "timeout" not in v:
+            return v
+        return {**v, "timeout": coerce_provider_timeout(v["timeout"])}
 
 
 class PromptCachePolicy(BaseModel):
