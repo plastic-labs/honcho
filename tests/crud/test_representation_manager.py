@@ -629,3 +629,72 @@ class TestRepresentationManagerSave:
         assert len(saved.created_documents) == 0
         mock_embed.assert_not_awaited()
         mock_save.assert_not_awaited()
+
+
+class TestVectorQueryTopKFloor:
+    """Regression for HONCHO-19Q / HONCHO-4Q4.
+
+    A top_k of 0 reached Turbopuffer, which rejects it with a 400
+    ('top_k must be between 1 and 10000'). Two independent paths produced it:
+    the working-representation budget split (``total // 3`` rounds to 0 for
+    max_conclusions < 3) and the dialectic ``search_memory`` tool, whose
+    LLM-supplied top_k has an upper clamp but no floor.
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_documents_returns_empty_without_querying_on_zero_top_k(self):
+        """The choke point every semantic document query routes through."""
+        from src.crud.document import query_documents
+
+        with (
+            patch(
+                "src.crud.document.embedding_client.embed", new=AsyncMock()
+            ) as mock_embed,
+            patch(
+                "src.crud.document.query_external_vector_document_ids",
+                new=AsyncMock(),
+            ) as mock_vector,
+        ):
+            for top_k in (0, -1):
+                assert (
+                    await query_documents(
+                        None,
+                        "workspace",
+                        "query",
+                        observer="observer",
+                        observed="observed",
+                        top_k=top_k,
+                    )
+                    == []
+                )
+
+        mock_embed.assert_not_awaited()
+        mock_vector.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_requested_semantic_search_always_gets_budget(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """max_conclusions < 3 must not allocate 0 to an explicitly requested search."""
+        test_workspace, test_peer = sample_data
+        manager = RepresentationManager(
+            test_workspace.name, observer=test_peer.name, observed=test_peer.name
+        )
+
+        for max_observations in (1, 2, 100):
+            with patch(
+                "src.crud.query_documents", new=AsyncMock(return_value=[])
+            ) as mock_query:
+                await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                    db_session,
+                    include_semantic_query="what do they like?",
+                    embedding=[0.1],
+                    max_observations=max_observations,
+                )
+
+            assert mock_query.await_args is not None
+            top_k = mock_query.await_args.kwargs["top_k"]
+            assert top_k >= 1, f"max_observations={max_observations} gave top_k={top_k}"
+            assert top_k <= max_observations

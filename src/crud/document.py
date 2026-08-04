@@ -355,6 +355,9 @@ async def query_documents(
     Returns:
         Sequence of matching documents
     """
+    if top_k <= 0:
+        return []
+
     # Use provided embedding or generate one
     if embedding is None:
         try:

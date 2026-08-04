@@ -189,7 +189,28 @@ Each model config supports an `overrides.provider_params` dict for passing arbit
 [deriver.model_config.overrides.provider_params]
 # These are passed directly to the provider SDK
 verbosity = "low"
+# Per-request timeout in seconds; useful for queued workers that can wait longer
+timeout = 3600.0
 ```
+
+Because provider params live on each model config, background workers such as
+the Deriver and Dreamer can use longer request timeouts while synchronous
+chat paths keep tighter defaults.
+
+`timeout` gotchas:
+
+- The value is validated **at config load**: it must coerce to a positive,
+  finite number of seconds (numbers or numeric strings like `"3600"`), or the
+  process refuses to start with an error naming the offending config path.
+  This applies to both the primary model config and its `fallback.overrides`.
+- The unit is always **seconds**, regardless of transport. OpenAI and
+  Anthropic receive it as the SDK's `timeout` kwarg; Gemini has no such
+  kwarg, so Honcho converts it to milliseconds on `http_options.timeout`.
+- When unset, nothing is forwarded and each SDK's default applies — adding
+  this key is opt-in and changes no existing behavior.
+- A too-tight timeout doesn't fail once: the aborted request goes through the
+  normal retry/fallback chain before the caller sees an error, so the
+  observed latency is several multiples of the timeout.
 
 #### Transport passthrough keys
 
