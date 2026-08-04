@@ -955,7 +955,9 @@ async def create_observations(
                     run_id=run_id,
                     parent_category=parent_category,
                 ):
-                    embedding = await embedding_client.embed(obs.content)
+                    embedding = await embedding_client.embed(
+                        obs.content, input_type="document"
+                    )
             except Exception as e:
                 logger.warning(
                     "Error embedding observation content for level '%s': %s",
@@ -1287,7 +1289,9 @@ async def extract_preferences(
     # If batching fails, each search call will generate its own embedding.
     query_embeddings_by_query: dict[str, list[float]] | None = None
     try:
-        query_embeddings = await embedding_client.simple_batch_embed(semantic_queries)
+        query_embeddings = await embedding_client.simple_batch_embed(
+            semantic_queries, input_type="query"
+        )
         query_embeddings_by_query = dict(
             zip(semantic_queries, query_embeddings, strict=True)
         )

@@ -18,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
+# Which side of a retrieval pair a text belongs to. Asymmetric embedding models
+# want a different instruction prefix for each; symmetric ones ignore the
+# distinction entirely (both prefixes default to empty).
+InputType = Literal["query", "document"]
+
 
 async def _emit_embedding_call(
     *,
@@ -152,7 +157,13 @@ def _publish_embedding_event(
 
 
 class BatchItem(NamedTuple):
-    """A single item in a batch with its metadata."""
+    """A single item in a batch with its metadata.
+
+    `text` is the raw text, never the prefixed form: chunking, token accounting
+    and `prepare_chunks` all deal in raw text, and the task prefix is applied
+    once at the provider-call boundary. Persisted chunks therefore stay free of
+    prefix text even when the prefix later changes.
+    """
 
     text: str
     text_id: str
@@ -214,6 +225,26 @@ class _EmbeddingClient:
             self.encoding = tiktoken.get_encoding("cl100k_base")
         self.max_embedding_tokens_per_request: int = max_tokens_per_request
 
+        self._prefixes: dict[InputType, str] = {
+            "query": config.query_prefix,
+            "document": config.document_prefix,
+        }
+        # The prefix is sent to the provider but is not part of the text being
+        # chunked, so it has to be reserved out of the per-input budget or a
+        # text that only just fits will overflow the model once prefixed.
+        self._prefix_tokens: dict[InputType, int] = {
+            input_type: len(self.encoding.encode(prefix)) if prefix else 0
+            for input_type, prefix in self._prefixes.items()
+        }
+
+    def _budget(self, input_type: InputType) -> int:
+        """Per-input token budget with room reserved for the task prefix."""
+        return self.max_embedding_tokens - self._prefix_tokens[input_type]
+
+    def _apply_prefix(self, texts: list[str], input_type: InputType) -> list[str]:
+        prefix = self._prefixes[input_type]
+        return [prefix + text for text in texts] if prefix else texts
+
     @property
     def provider(self) -> str:
         return self.transport
@@ -226,13 +257,25 @@ class _EmbeddingClient:
             )
         return embedding
 
-    async def embed(self, query: str) -> list[float]:
-        token_count = len(self.encoding.encode(query))
+    async def embed(
+        self, query: str, *, input_type: InputType = "query"
+    ) -> list[float]:
+        """Embed a single text.
 
-        if token_count > self.max_embedding_tokens:
+        Defaults to `input_type="query"` because that is what nearly every
+        caller wants; pass `"document"` when embedding stored content through
+        this path (for example a single-item fallback around
+        `simple_batch_embed`), so both paths land in the same vector space.
+        """
+        token_count = len(self.encoding.encode(query))
+        budget = self._budget(input_type)
+
+        if token_count > budget:
             raise ValueError(
-                f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
+                f"Query exceeds maximum token limit of {budget} tokens (got {token_count} tokens)"
             )
+
+        prefixed = self._apply_prefix([query], input_type)[0]
 
         # Bind the typed client at the dispatch site so pyright can narrow it
         # for the closures without needing `assert isinstance(...)` (bandit
@@ -243,7 +286,7 @@ class _EmbeddingClient:
             async def _call_gemini() -> list[float]:
                 response = await gemini_client.aio.models.embed_content(
                     model=self.model,
-                    contents=query,
+                    contents=prefixed,
                     config={"output_dimensionality": self.vector_dimensions},
                 )
                 if not response.embeddings or not response.embeddings[0].values:
@@ -263,7 +306,7 @@ class _EmbeddingClient:
         openai_client = self.client
 
         async def _call_openai() -> list[float]:
-            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [prefixed]}
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
             response = await openai_client.embeddings.create(**openai_kwargs)
@@ -277,16 +320,22 @@ class _EmbeddingClient:
             fn=_call_openai,
         )
 
-    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+    async def simple_batch_embed(
+        self, texts: list[str], *, input_type: InputType = "document"
+    ) -> list[list[float]]:
         """
         Batch-embed a list of text strings. Each input must already fit within
-        `max_embedding_tokens`; this method does not sub-chunk oversized inputs.
+        the per-input token budget; this method does not sub-chunk oversized
+        inputs.
 
         Internally goes through the same token-aware batching pipeline as
         `batch_embed()` so the per-request token cap is respected.
 
         Args:
             texts: List of text strings to embed
+            input_type: Which side of a retrieval pair these texts are. Defaults
+                to "document"; pass "query" when batching search queries, so
+                they get the same treatment as a single `embed()` call.
 
         Returns:
             List of embedding vectors, one per input text (in order)
@@ -297,13 +346,15 @@ class _EmbeddingClient:
         if not texts:
             return []
 
+        budget = self._budget(input_type)
+
         # Validate per-input token limit and collect token counts for batching
         token_counts: list[int] = []
         for idx, text in enumerate(texts):
             tokens = len(self.encoding.encode(text))
-            if tokens > self.max_embedding_tokens:
+            if tokens > budget:
                 raise ValueError(
-                    f"Text at index {idx} exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {tokens} tokens)"
+                    f"Text at index {idx} exceeds maximum token limit of {budget} tokens (got {tokens} tokens)"
                 )
             token_counts.append(tokens)
 
@@ -314,7 +365,7 @@ class _EmbeddingClient:
 
         batches = self._create_batches(text_chunks)
         batch_results = await asyncio.gather(
-            *[self._process_batch(batch) for batch in batches],
+            *[self._process_batch(batch, input_type=input_type) for batch in batches],
         )
 
         combined: dict[str, list[list[float]]] = self._accumulate_embeddings(
@@ -322,27 +373,34 @@ class _EmbeddingClient:
         )
         return [combined[str(i)][0] for i in range(len(texts))]
 
-    def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
+    def prepare_chunks(
+        self, id_resource_dict: dict[str, str], *, input_type: InputType = "document"
+    ) -> dict[str, list[str]]:
         """
         Public helper: tokenize and chunk texts using the same rules as
         `batch_embed()`. Returns ordered chunk texts per input id.
 
         Intended for callers that want to persist embeddable chunks
-        before later embedding them off the request path.
+        before later embedding them off the request path. Chunks are returned
+        unprefixed; the task prefix is applied when they are embedded.
         """
         return {
             text_id: [chunk_text for chunk_text, _ in chunks]
-            for text_id, chunks in self._prepare_chunks(id_resource_dict).items()
+            for text_id, chunks in self._prepare_chunks(
+                id_resource_dict, input_type=input_type
+            ).items()
         }
 
     async def batch_embed(
-        self, id_resource_dict: dict[str, str]
+        self, id_resource_dict: dict[str, str], *, input_type: InputType = "document"
     ) -> dict[str, list[list[float]]]:
         """
         Embed multiple texts, chunking long ones and batching API calls.
 
         Args:
             id_resource_dict: Maps text IDs to text content
+            input_type: Which side of a retrieval pair these texts are.
+                Defaults to "document", which is what this path is for.
 
         Returns:
             Maps text IDs to lists of embedding vectors (one per chunk)
@@ -351,39 +409,46 @@ class _EmbeddingClient:
             return {}
 
         # 1. Prepare chunks for all texts if needed
-        text_chunks = self._prepare_chunks(id_resource_dict)
+        text_chunks = self._prepare_chunks(id_resource_dict, input_type=input_type)
 
         # 2. Create batches that fit API limits (max 2048 embeddings per request, max 300,000 tokens per request)
         batches = self._create_batches(text_chunks)
 
         # 3. Process all batches concurrently
         batch_results = await asyncio.gather(
-            *[self._process_batch(batch) for batch in batches],
+            *[self._process_batch(batch, input_type=input_type) for batch in batches],
         )
 
         # 4. Accumulate results preserving chunk order
         return self._accumulate_embeddings(batch_results)
 
     def _prepare_chunks(
-        self, id_resource_dict: dict[str, str]
+        self, id_resource_dict: dict[str, str], *, input_type: InputType = "document"
     ) -> dict[str, list[tuple[str, int]]]:
         """
         Chunk texts that exceed token limits.
+
+        Chunk sizes are computed against the budget net of the task prefix, so
+        every chunk still fits once the prefix is prepended at call time. The
+        chunk text itself stays unprefixed.
 
         Args:
             id_resource_dict: Maps text IDs to text content. We tokenize with
                 the embedding client's own encoding so token IDs match the
                 decoder vocabulary used by the target embedding API.
+            input_type: Which side of a retrieval pair these texts are; selects
+                which prefix to reserve budget for.
 
         Returns:
             Maps text IDs to lists of (chunk_text, token_count) tuples
         """
+        budget = self._budget(input_type)
         out: dict[str, list[tuple[str, int]]] = {}
         for text_id, text in id_resource_dict.items():
             tokens = self.encoding.encode(text)
-            if len(tokens) > self.max_embedding_tokens:
+            if len(tokens) > budget:
                 out[text_id] = _chunk_text_with_tokens(
-                    text, tokens, self.max_embedding_tokens, self.encoding
+                    text, tokens, budget, self.encoding
                 )
             else:
                 out[text_id] = [(text, len(tokens))]
@@ -430,7 +495,11 @@ class _EmbeddingClient:
         return batches
 
     async def _process_batch(
-        self, batch: list[BatchItem], max_retries: int = 3
+        self,
+        batch: list[BatchItem],
+        max_retries: int = 3,
+        *,
+        input_type: InputType = "document",
     ) -> dict[str, dict[int, list[float]]]:
         """
         Process a single batch through the embeddings API with retry logic.
@@ -438,6 +507,7 @@ class _EmbeddingClient:
         Args:
             batch: List of BatchItem objects to embed
             max_retries: Maximum number of retry attempts (default: 3)
+            input_type: Which task prefix to apply to this batch
 
         Returns:
             Maps text IDs to {chunk_index: embedding_vector} dictionaries
@@ -450,10 +520,15 @@ class _EmbeddingClient:
             attempt is a distinct provider hit and shows up as its own line
             item in analytics."""
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
+            prefixed = self._apply_prefix([item.text for item in batch], input_type)
             if isinstance(self.client, genai.Client):
                 response = await self.client.aio.models.embed_content(
                     model=self.model,
-                    contents=[item.text for item in batch],
+                    # Spread rather than passing `prefixed` directly: the
+                    # parameter's list type is invariant, so a declared
+                    # list[str] is rejected while a list literal infers
+                    # bidirectionally into the wider element union.
+                    contents=[*prefixed],
                     config={"output_dimensionality": self.vector_dimensions},
                 )
                 if response.embeddings:
@@ -465,7 +540,7 @@ class _EmbeddingClient:
             else:  # openai
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
-                    "input": [item.text for item in batch],
+                    "input": prefixed,
                 }
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
@@ -626,29 +701,41 @@ class EmbeddingClient:
             runtime_config.model,
             runtime_config.api_key,
             runtime_config.base_url,
+            runtime_config.query_prefix,
+            runtime_config.document_prefix,
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
             settings.EMBEDDING.resolve_send_dimensions(),
         )
 
-    async def embed(self, query: str) -> list[float]:
-        """Embed a single query string."""
-        return await self._get_client().embed(query)
+    async def embed(
+        self, query: str, *, input_type: InputType = "query"
+    ) -> list[float]:
+        """Embed a single string. Defaults to the query side."""
+        return await self._get_client().embed(query, input_type=input_type)
 
-    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+    async def simple_batch_embed(
+        self, texts: list[str], *, input_type: InputType = "document"
+    ) -> list[list[float]]:
         """Batch embed a list of text strings (each must fit token limit)."""
-        return await self._get_client().simple_batch_embed(texts)
+        return await self._get_client().simple_batch_embed(texts, input_type=input_type)
 
-    def prepare_chunks(self, id_resource_dict: dict[str, str]) -> dict[str, list[str]]:
+    def prepare_chunks(
+        self, id_resource_dict: dict[str, str], *, input_type: InputType = "document"
+    ) -> dict[str, list[str]]:
         """Chunk texts using the same rules as `batch_embed` (no network)."""
-        return self._get_client().prepare_chunks(id_resource_dict)
+        return self._get_client().prepare_chunks(
+            id_resource_dict, input_type=input_type
+        )
 
     async def batch_embed(
-        self, id_resource_dict: dict[str, str]
+        self, id_resource_dict: dict[str, str], *, input_type: InputType = "document"
     ) -> dict[str, list[list[float]]]:
         """Embed multiple texts, chunking long ones and batching API calls."""
-        return await self._get_client().batch_embed(id_resource_dict)
+        return await self._get_client().batch_embed(
+            id_resource_dict, input_type=input_type
+        )
 
     @property
     def provider(self) -> str:

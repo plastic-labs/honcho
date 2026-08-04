@@ -422,6 +422,18 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    # Task prefixes for asymmetric embedding models. Many open-weight retrieval
+    # models (E5, BGE, GTE, Nomic, EmbeddingGemma, Qwen3-Embedding) are trained
+    # to receive a short instruction prefix that differs for the text being
+    # searched *for* and the text being searched *through*; embedding both sides
+    # identically measurably degrades retrieval. Empty by default, so models
+    # that do not want prefixes (OpenAI's, for instance) are unaffected.
+    #
+    # Example for EmbeddingGemma:
+    #   query_prefix = "task: search result | query: "
+    #   document_prefix = "title: none | text: "
+    query_prefix: str = ""
+    document_prefix: str = ""
 
     @model_validator(mode="before")
     @classmethod
