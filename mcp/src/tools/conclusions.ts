@@ -149,6 +149,7 @@ export function register(server: McpServer, ctx: ToolContext) {
     {
       description: [
         "Delete a specific conclusion by ID.",
+        "Use query_conclusions or list_conclusions to find the ID first.",
         "Use this to remove incorrect or outdated knowledge.",
       ].join("\n"),
       inputSchema: {

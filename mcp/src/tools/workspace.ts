@@ -74,11 +74,13 @@ export function register(server: McpServer, ctx: ToolContext) {
     "search",
     {
       description: [
-        "Semantic search across messages. Scope is determined by which optional params are provided:",
+        "Semantic search across messages and, when peer_id is given, that peer's saved conclusions.",
+        "Message scope is determined by which optional params are provided:",
         "- No scope params: search all messages in the workspace.",
         "- peer_id only: search messages authored by that peer across all sessions.",
         "- session_id only: search messages within that session.",
-        "Returns an array of matching messages with their content, peer, and session info.",
+        "Conclusions require peer_id (self-conclusions are searched; conclusion IDs are usable with delete_conclusion).",
+        "Returns {messages, conclusions}.",
       ].join("\n"),
       inputSchema: {
         query: z.string().describe("Search query."),
@@ -94,17 +96,28 @@ export function register(server: McpServer, ctx: ToolContext) {
     },
     async ({ query, peer_id, session_id }) => {
       try {
-        let messages;
-        if (session_id) {
-          const session = await ctx.honcho.session(session_id);
-          messages = await session.search(query);
-        } else if (peer_id) {
-          const peer = await ctx.honcho.peer(peer_id);
-          messages = await peer.search(query);
-        } else {
-          messages = await ctx.honcho.search(query);
-        }
-        return textResult(formatMessages(messages));
+        const peer = peer_id ? await ctx.honcho.peer(peer_id) : null;
+        const [messages, conclusions] = await Promise.all([
+          session_id
+            ? ctx.honcho
+                .session(session_id)
+                .then((session) => session.search(query))
+            : peer
+              ? peer.search(query)
+              : ctx.honcho.search(query),
+          // Conclusion search requires an (observer, observed) pair, so it
+          // only runs when peer_id is given; degrades to [] on error so
+          // search never gets worse than message-only search.
+          peer ? peer.conclusions.query(query).catch(() => []) : [],
+        ]);
+        return textResult({
+          messages: formatMessages(messages),
+          conclusions: conclusions.map((c) => ({
+            id: c.id,
+            content: c.content,
+            created_at: c.createdAt,
+          })),
+        });
       } catch (e) {
         return errorResult(
           `Search failed: ${e instanceof Error ? e.message : String(e)}`,
