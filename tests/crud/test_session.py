@@ -21,13 +21,24 @@ class TestSessionCRUD:
         """Test preserving active membership start time while resetting rejoined peers."""
         test_workspace, test_peer = sample_data
         session_name = str(generate_nanoid())
-        session_create = schemas.SessionCreate(
+        original_config = schemas.SessionPeerConfig(
+            observe_others=True, observe_me=False
+        )
+        updated_config = schemas.SessionPeerConfig(
+            observe_others=False, observe_me=True
+        )
+        session_create_original = schemas.SessionCreate(
             name=session_name,
-            peers={test_peer.name: schemas.SessionPeerConfig()},
+            peers={test_peer.name: original_config},
+        )
+        session_create_updated = schemas.SessionCreate(
+            name=session_name,
+            peers={test_peer.name: updated_config},
         )
         session_peer_stmt = select(
             models.SessionPeer.joined_at,
             models.SessionPeer.left_at,
+            models.SessionPeer.configuration,
         ).where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.peer_name == test_peer.name,
@@ -35,19 +46,22 @@ class TestSessionCRUD:
         )
 
         await crud.get_or_create_session(
-            db_session, session_create, test_workspace.name
+            db_session, session_create_original, test_workspace.name
         )
         first_result = await db_session.execute(session_peer_stmt)
-        first_joined_at, first_left_at = first_result.one()
+        first_joined_at, first_left_at, first_config = first_result.one()
         assert first_left_at is None
+        assert first_config == original_config.model_dump()
 
+        # Re-adding an ACTIVE peer must preserve joined_at AND the stored config
         await crud.get_or_create_session(
-            db_session, session_create, test_workspace.name
+            db_session, session_create_updated, test_workspace.name
         )
         second_result = await db_session.execute(session_peer_stmt)
-        second_joined_at, second_left_at = second_result.one()
-        assert abs((second_joined_at - first_joined_at).total_seconds()) < 1
+        second_joined_at, second_left_at, second_config = second_result.one()
+        assert second_joined_at == first_joined_at
         assert second_left_at is None
+        assert second_config == original_config.model_dump()
 
         session_peer_result = await db_session.execute(
             select(models.SessionPeer).where(
@@ -60,13 +74,15 @@ class TestSessionCRUD:
         session_peer.left_at = datetime.now(timezone.utc)
         await db_session.commit()
 
+        # A peer that LEFT and rejoins gets a fresh window AND the new config
         await crud.get_or_create_session(
-            db_session, session_create, test_workspace.name
+            db_session, session_create_updated, test_workspace.name
         )
         rejoined_result = await db_session.execute(session_peer_stmt)
-        rejoined_joined_at, rejoined_left_at = rejoined_result.one()
-        assert rejoined_joined_at >= first_joined_at
+        rejoined_joined_at, rejoined_left_at, rejoined_config = rejoined_result.one()
+        assert rejoined_joined_at > second_joined_at
         assert rejoined_left_at is None
+        assert rejoined_config == updated_config.model_dump()
 
     @pytest.mark.asyncio
     async def test_get_session_peer_configuration(
