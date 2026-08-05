@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import pytest
 
-from src.config import EmbeddingModelConfig
+from src.config import EmbeddingModelConfig, resolve_embedding_model_config
 from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
 
 
@@ -194,6 +194,7 @@ def _build_openai_client(
     model: str,
     send_dimensions: bool,
     vector_dimensions: int,
+    max_batch_size: int | None = None,
 ) -> tuple[_EmbeddingClient, FakeOpenAIEmbeddingsAPI]:
     fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding)
 
@@ -210,6 +211,7 @@ def _build_openai_client(
             transport="openai",
             model=model,
             api_key="test-key",
+            max_batch_size=max_batch_size,
         ),
         vector_dimensions=vector_dimensions,
         max_input_tokens=8192,
@@ -279,6 +281,133 @@ async def test_openai_simple_batch_embed_forwards_dimensions(
 
 
 @pytest.mark.asyncio
+async def test_openai_simple_batch_embed_respects_configured_max_batch_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 1536,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=1536,
+        max_batch_size=2,
+    )
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["input"] for call in fake.calls] == [["a", "b"], ["c"]]
+
+
+@pytest.mark.asyncio
+async def test_openai_simple_batch_embed_defaults_to_2048_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset max_batch_size must keep the OpenAI default: one request."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 1536,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=1536,
+    )
+    assert client.max_batch_size == 2048
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["input"] for call in fake.calls] == [["a", "b", "c"]]
+
+
+@pytest.mark.asyncio
+async def test_gemini_simple_batch_embed_respects_configured_max_batch_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini transport must split batches at the configured limit too."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: str | list[str],
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            calls.append({"model": model, "contents": contents, "config": config})
+            n = len(contents) if isinstance(contents, list) else 1
+            return SimpleNamespace(
+                embeddings=[SimpleNamespace(values=[0.2] * 12) for _ in range(n)]
+            )
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+            max_batch_size=2,
+        ),
+        vector_dimensions=12,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["contents"] for call in calls] == [["a", "b"], ["c"]]
+
+
+@pytest.mark.asyncio
+async def test_gemini_simple_batch_embed_defaults_to_100_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset max_batch_size must keep the Gemini conservative default."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: str | list[str],
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            calls.append({"model": model, "contents": contents, "config": config})
+            n = len(contents) if isinstance(contents, list) else 1
+            return SimpleNamespace(
+                embeddings=[SimpleNamespace(values=[0.2] * 12) for _ in range(n)]
+            )
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+        ),
+        vector_dimensions=12,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+    assert client.max_batch_size == 100
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["contents"] for call in calls] == [["a", "b", "c"]]
+
+
+@pytest.mark.asyncio
 async def test_openai_batch_embed_forwards_dimensions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -308,6 +437,7 @@ def _build_embedding_settings(
         "EMBEDDING_MODEL_CONFIG__MODEL",
         "EMBEDDING_MODEL_CONFIG__TRANSPORT",
         "EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE",
+        "EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE",
     ):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
@@ -481,3 +611,17 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert len(out["long"]) > 1
     # Order preserved
     assert isinstance(out["long"][0], str)
+
+
+def test_embedding_model_config_parses_max_batch_size_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _build_embedding_settings(
+        {"EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE": "10"},
+        monkeypatch,
+    )
+
+    assert s.MODEL_CONFIG.max_batch_size == 10
+
+    resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
+    assert resolved.max_batch_size == 10
