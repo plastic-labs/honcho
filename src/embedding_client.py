@@ -674,15 +674,7 @@ class EmbeddingClient:
 
     @property
     def encoding(self) -> tiktoken.Encoding:
-        """Get the tiktoken encoding.
-
-        Resolved without constructing the underlying client: tiktoken needs no
-        API key, and token-counting callers (e.g. the document dedup tie-break)
-        must work in environments with no embedding credentials, such as CI for
-        pull requests from forks.
-        """
-        if self._instance is not None:
-            return self._instance.encoding
+        """Get the tiktoken encoding."""
         try:
             return tiktoken.encoding_for_model(self._resolve_runtime_config().model)
         except KeyError:
