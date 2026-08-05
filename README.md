@@ -472,8 +472,9 @@ cp config.toml.example config.toml
 
 Then modify the values as needed. The TOML file is organized into sections:
 
-- `[app]` - Application-level settings (log level, session limits, embedding settings, namespace)
+- `[app]` - Application-level settings (log level, session limits, namespace)
 - `[db]` - Database connection and pool settings
+- `[embedding]` - Embedding model and vector dimension settings. `VECTOR_DIMENSIONS` must be at or below 2000 (pgvector's HNSW index hard limit) — some models (e.g. Gemini's `gemini-embedding-001`) default to higher dimensions than that and need this set explicitly
 - `[auth]` - Authentication configuration
 - `[cache]` - Redis cache configuration
 - `[llm]` - LLM provider API keys and general settings
