@@ -92,29 +92,70 @@ export function register(server: McpServer, ctx: ToolContext) {
           .string()
           .optional()
           .describe("Optional: scope search to messages in this session."),
+        message_limit: z
+          .number()
+          .optional()
+          .describe("Optional: max message results (1-100, default 10)."),
+        message_filters: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'Optional: filters for the message search, e.g. {"created_at": {"gte": "2026-01-01"}}. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
+          ),
+        conclusion_top_k: z
+          .number()
+          .optional()
+          .describe("Optional: max conclusion results (default 10)."),
+        conclusion_filters: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'Optional: filters for the conclusion search, e.g. {"level": ["deductive", "inductive"]} to only return conclusions derived during dreaming. Levels: explicit (extracted directly from messages), deductive, inductive, contradiction. The session_id param does not scope conclusions; use {"session_id": ...} here for that.',
+          ),
       },
     },
-    async ({ query, peer_id, session_id }) => {
+    async ({
+      query,
+      peer_id,
+      session_id,
+      message_limit,
+      message_filters,
+      conclusion_top_k,
+      conclusion_filters,
+    }) => {
       try {
         const peer = peer_id ? await ctx.honcho.peer(peer_id) : null;
+        const messageOptions = {
+          filters: message_filters,
+          limit: message_limit,
+        };
         const [messages, conclusions] = await Promise.all([
           session_id
             ? ctx.honcho
                 .session(session_id)
-                .then((session) => session.search(query))
+                .then((session) => session.search(query, messageOptions))
             : peer
-              ? peer.search(query)
-              : ctx.honcho.search(query),
-          // Conclusion search requires an (observer, observed) pair, so it
-          // only runs when peer_id is given; degrades to [] on error so
-          // search never gets worse than message-only search.
-          peer ? peer.conclusions.query(query).catch(() => []) : [],
+              ? peer.search(query, messageOptions)
+              : ctx.honcho.search(query, messageOptions),
+          // Conclusion search needs an (observer, observed) pair, so it only
+          // runs when peer_id is given. Errors degrade to [] so message search
+          // still works, except when the caller passed filters: a bad filter
+          // must fail loudly, not look like zero matches.
+          peer
+            ? peer.conclusions
+                .query(query, conclusion_top_k, undefined, conclusion_filters)
+                .catch((e) => {
+                  if (conclusion_filters) throw e;
+                  return [];
+                })
+            : [],
         ]);
         return textResult({
           messages: formatMessages(messages),
           conclusions: conclusions.map((c) => ({
             id: c.id,
             content: c.content,
+            level: c.level,
             created_at: c.createdAt,
           })),
         });
