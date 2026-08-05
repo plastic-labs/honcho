@@ -1,5 +1,8 @@
+from datetime import datetime, timezone
+
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -8,6 +11,62 @@ from src.exceptions import ResourceNotFoundException
 
 class TestSessionCRUD:
     """Test suite for session CRUD operations"""
+
+    @pytest.mark.asyncio
+    async def test_session_peer_joined_at_readd_semantics(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Test preserving active membership start time while resetting rejoined peers."""
+        test_workspace, test_peer = sample_data
+        session_name = str(generate_nanoid())
+        session_create = schemas.SessionCreate(
+            name=session_name,
+            peers={test_peer.name: schemas.SessionPeerConfig()},
+        )
+        session_peer_stmt = select(
+            models.SessionPeer.joined_at,
+            models.SessionPeer.left_at,
+        ).where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.peer_name == test_peer.name,
+            models.SessionPeer.workspace_name == test_workspace.name,
+        )
+
+        await crud.get_or_create_session(
+            db_session, session_create, test_workspace.name
+        )
+        first_result = await db_session.execute(session_peer_stmt)
+        first_joined_at, first_left_at = first_result.one()
+        assert first_left_at is None
+
+        await crud.get_or_create_session(
+            db_session, session_create, test_workspace.name
+        )
+        second_result = await db_session.execute(session_peer_stmt)
+        second_joined_at, second_left_at = second_result.one()
+        assert abs((second_joined_at - first_joined_at).total_seconds()) < 1
+        assert second_left_at is None
+
+        session_peer_result = await db_session.execute(
+            select(models.SessionPeer).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.peer_name == test_peer.name,
+                models.SessionPeer.workspace_name == test_workspace.name,
+            )
+        )
+        session_peer = session_peer_result.scalar_one()
+        session_peer.left_at = datetime.now(timezone.utc)
+        await db_session.commit()
+
+        await crud.get_or_create_session(
+            db_session, session_create, test_workspace.name
+        )
+        rejoined_result = await db_session.execute(session_peer_stmt)
+        rejoined_joined_at, rejoined_left_at = rejoined_result.one()
+        assert rejoined_joined_at >= first_joined_at
+        assert rejoined_left_at is None
 
     @pytest.mark.asyncio
     async def test_get_session_peer_configuration(
