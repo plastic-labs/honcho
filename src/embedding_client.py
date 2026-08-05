@@ -263,7 +263,14 @@ class _EmbeddingClient:
         openai_client = self.client
 
         async def _call_openai() -> list[float]:
-            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            # Request float embeddings explicitly: the openai SDK defaults to
+            # base64, which OpenAI-compatible providers (e.g. OpenRouter) may
+            # answer with empty embedding data for models that don't support it.
+            openai_kwargs: dict[str, Any] = {
+                "model": self.model,
+                "input": [query],
+                "encoding_format": "float",
+            }
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
             response = await openai_client.embeddings.create(**openai_kwargs)
@@ -463,9 +470,11 @@ class _EmbeddingClient:
                                 self._validate_embedding_dimensions(embedding.values)
                             )
             else:  # openai
+                # Explicit float format for the same reason as in embed().
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
                     "input": [item.text for item in batch],
+                    "encoding_format": "float",
                 }
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
