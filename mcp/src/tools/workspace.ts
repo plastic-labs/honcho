@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BadRequestError, UnprocessableEntityError } from "@honcho-ai/sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
 import { textResult, errorResult, formatMessages } from "../types.js";
@@ -155,7 +156,13 @@ export function register(server: McpServer, ctx: ToolContext) {
               conclusion_filters,
             );
           } catch (e) {
-            if (conclusion_filters) throw e;
+            if (
+              conclusion_filters &&
+              (e instanceof BadRequestError ||
+                e instanceof UnprocessableEntityError)
+            ) {
+              throw e;
+            }
             return [];
           }
         };
