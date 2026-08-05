@@ -814,30 +814,10 @@ TOOLS: dict[str, dict[str, Any]] = {
     },
     "get_workspace_stats": {
         "name": "get_workspace_stats",
-        "description": "Get workspace-level statistics: peer count, session count, message count, and date range of messages. Use this to understand the scale of the workspace before deciding how to explore it.",
+        "description": "Get workspace-level statistics — peer count, session count, message count, date range of messages — plus the most recently active peers with their message counts and last-active timestamps. Use this to orient yourself and discover which peers are most relevant.",
         "input_schema": {
             "type": "object",
             "properties": {},
-        },
-    },
-    "get_active_peers": {
-        "name": "get_active_peers",
-        "description": "Get the most active peers in the workspace, ranked by recent activity or message count. Returns peer names with their message counts and last-active timestamps. Use this to discover which peers are most relevant.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of peers to return (default: 20, max: 50)",
-                    "default": 20,
-                },
-                "sort_by": {
-                    "type": "string",
-                    "enum": ["recent_activity", "message_count"],
-                    "description": "Sort order: 'recent_activity' for most recently active, 'message_count' for most messages (default: recent_activity)",
-                    "default": "recent_activity",
-                },
-            },
         },
     },
     "get_peer_card_by_name": {
@@ -886,7 +866,6 @@ DIALECTIC_TOOLS_MINIMAL: list[dict[str, Any]] = [
 # workspace-flat and double as the routing signal (results carry peer_name).
 WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
     TOOLS["get_workspace_stats"],
-    TOOLS["get_active_peers"],
     TOOLS["search_memory_workspace"],
     TOOLS["search_messages"],
     TOOLS["get_observation_context"],
@@ -900,7 +879,7 @@ WORKSPACE_DIALECTIC_TOOLS: list[dict[str, Any]] = [
 # Reduced workspace loadout for reasoning_level="minimal" (token cost of the
 # tool definitions themselves), mirroring DIALECTIC_TOOLS_MINIMAL.
 WORKSPACE_TOOLS_MINIMAL: list[dict[str, Any]] = [
-    TOOLS["get_active_peers"],
+    TOOLS["get_workspace_stats"],
     TOOLS["search_memory_workspace"],
     TOOLS["search_messages"],
 ]
@@ -2633,6 +2612,11 @@ async def create_tool_executor(
         run_id: Optional run ID for telemetry correlation
         agent_type: Optional agent type for telemetry (dialectic, deriver, dreamer)
         parent_category: Optional parent category for CloudEvents
+        session_allowlist: Optional list of session names message tools are
+            restricted to (None means no restriction)
+        handler_resolver: Optional callback that replaces the default
+            handler-table lookup for resolving tool names to handlers.
+            Returning None takes the "Unknown tool" path.
 
     Returns:
         An async callable that executes tools with the captured context
@@ -2897,7 +2881,7 @@ def _estimate_tokens_safe(text: str | None) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Workspace-level tool handlers (workspace chat, DEV-1326)
+# Workspace-level tool handlers (workspace chat)
 #
 # The workspace agent is not bound to an (observer, observed) pair. Handlers
 # that need a pair take it from tool_input (the agent routes first, then
@@ -2942,13 +2926,22 @@ async def _handle_get_peer_card_by_name(
     return await _handle_get_peer_card(pair_ctx, tool_input)
 
 
+# Peers listed by get_workspace_stats. Fixed rather than a tool argument:
+# folding active peers into stats keeps the tool zero-arg (one discovery
+# round instead of two); deeper discovery goes through search_messages.
+_STATS_ACTIVE_PEERS = 10
+
+
 async def _handle_get_workspace_stats(
     ctx: ToolContext, tool_input: dict[str, Any]
 ) -> str:
-    """Workspace-level counts and message date range."""
+    """Workspace-level counts, message date range, and most active peers."""
     _ = tool_input
     async with tracked_db("workspace_tool.get_workspace_stats", read_only=True) as db:
         stats = await crud.get_workspace_stats(db, ctx.workspace_name)
+        peers = await crud.get_active_peers(
+            db, ctx.workspace_name, limit=_STATS_ACTIVE_PEERS
+        )
     lines = [
         f"Peers: {stats.peer_count}",
         f"Sessions: {stats.session_count}",
@@ -2958,32 +2951,17 @@ async def _handle_get_workspace_stats(
         lines.append(
             f"Date range: {stats.oldest_message_at:%Y-%m-%d} to {stats.newest_message_at:%Y-%m-%d}"
         )
+    if peers:
+        lines.append("")
+        lines.append(f"Most active peers (top {len(peers)}):")
+        for peer in peers:
+            last_active = (
+                f", last active {peer.last_message_at:%Y-%m-%d}"
+                if peer.last_message_at
+                else ""
+            )
+            lines.append(f"- {peer.name} ({peer.message_count} messages{last_active})")
     return "Workspace stats:\n" + "\n".join(lines)
-
-
-async def _handle_get_active_peers(ctx: ToolContext, tool_input: dict[str, Any]) -> str:
-    """Most active peers, ranked by recency or message count."""
-    limit = min(_safe_int(tool_input.get("limit"), 20), 50)
-    sort_by = tool_input.get("sort_by", "recent_activity")
-    if sort_by not in ("recent_activity", "message_count"):
-        sort_by = "recent_activity"
-    async with tracked_db("workspace_tool.get_active_peers", read_only=True) as db:
-        peers = await crud.get_active_peers(
-            db, ctx.workspace_name, limit=limit, sort_by=sort_by
-        )
-    if not peers:
-        return "No peers found in this workspace."
-    lines: list[str] = []
-    for peer in peers:
-        last_active = (
-            f", last active {peer.last_message_at:%Y-%m-%d}"
-            if peer.last_message_at
-            else ""
-        )
-        lines.append(f"- {peer.name} ({peer.message_count} messages{last_active})")
-    return f"Found {len(peers)} active peers (sorted by {sort_by}):\n" + "\n".join(
-        lines
-    )
 
 
 async def _handle_get_observation_context_workspace(
@@ -2997,7 +2975,6 @@ async def _handle_get_observation_context_workspace(
 _WORKSPACE_TOOL_HANDLERS: dict[str, Callable[[ToolContext, dict[str, Any]], Any]] = {
     "search_memory": _handle_search_memory_workspace,
     "get_workspace_stats": _handle_get_workspace_stats,
-    "get_active_peers": _handle_get_active_peers,
     "get_peer_card": _handle_get_peer_card_by_name,
     "get_observation_context": _handle_get_observation_context_workspace,
     "get_reasoning_chain": _handle_get_reasoning_chain,  # already workspace-scoped

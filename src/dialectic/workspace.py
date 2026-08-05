@@ -1,4 +1,4 @@
-"""Workspace-level dialectic agent (DEV-1326).
+"""Workspace-level dialectic agent.
 
 Answers queries across ALL peers in a workspace. Where DialecticAgent is
 bound to a single (observer, observed) pair, this agent routes first —
@@ -49,7 +49,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
         session_id: str | None = None,
-    ):
+    ) -> None:
         super().__init__(
             workspace_name=workspace_name,
             session_name=session_name,
@@ -82,9 +82,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
         # block rather than failing the whole request (the caller in
         # _prepare_query does not guard this).
         try:
-            async with tracked_db(
-                "dialectic.workspace_prefetch", read_only=True
-            ) as db:
+            async with tracked_db("dialectic.workspace_prefetch", read_only=True) as db:
                 stats = await crud.get_workspace_stats(db, self.workspace_name)
                 if stats.peer_count == 0:
                     return None
@@ -101,8 +99,12 @@ class WorkspaceDialecticAgent(DialecticAgent):
                     )
                     if card:
                         cards[peer.name] = card
-        except Exception as e:
-            logger.warning(f"Failed to prefetch workspace overview: {e}")
+        except Exception:
+            logger.warning(
+                "Failed to prefetch workspace overview for workspace=%s",
+                self.workspace_name,
+                exc_info=True,
+            )
             return None
 
         lines: list[str] = [
@@ -134,7 +136,7 @@ class WorkspaceDialecticAgent(DialecticAgent):
             "Workspace overview and most-active peers with their known "
             "biographical facts. Use this to route: query a specific peer's "
             "memory with search_memory (observer and observed set to that "
-            "peer's name), or use search_messages / get_active_peers to "
+            "peer's name), or use search_messages / get_workspace_stats to "
             "discover peers this overview does not cover."
         )
 
@@ -161,8 +163,8 @@ class WorkspaceDialecticAgent(DialecticAgent):
             parent_category="dialectic",
         )
 
-    def _trace_name(self) -> str:
-        return "workspace_chat"
+    # _trace_name is inherited: workspace chat shares the "dialectic_chat"
+    # trace name; scope is distinguished by agent_type/track_name below.
 
     def _telemetry_context(self, track_name: str | None = None) -> LLMTelemetryContext:
         return LLMTelemetryContext(

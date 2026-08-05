@@ -23,7 +23,6 @@ from src.dialectic.chat import workspace_chat, workspace_chat_stream
 from src.models import Peer, Workspace
 from src.utils.agent_tools import (
     ToolContext,
-    _handle_get_active_peers,  # pyright: ignore[reportPrivateUsage]
     _handle_get_observation_context_workspace,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card_by_name,  # pyright: ignore[reportPrivateUsage]
     _handle_get_reasoning_chain,  # pyright: ignore[reportPrivateUsage]
@@ -670,6 +669,23 @@ class TestGetWorkspaceStats:
         assert "Messages: 6" in result
         assert "Date range" in result
 
+    async def test_lists_most_active_peers(
+        self,
+        make_workspace_ctx: Callable[..., ToolContext],
+        workspace_test_data: Any,
+    ):
+        """Includes the most active peers with message counts."""
+        _, peer1, peer2, peer3, *_ = workspace_test_data
+        ctx = make_workspace_ctx()
+
+        result = await _handle_get_workspace_stats(ctx, {})
+
+        assert "Most active peers" in result
+        assert peer1.name in result
+        assert peer2.name in result
+        assert peer3.name in result
+        assert "messages" in result
+
     async def test_empty_workspace(
         self,
         db_session: AsyncSession,
@@ -694,80 +710,6 @@ class TestGetWorkspaceStats:
 
         assert "Peers: 0" in result
         assert "Messages: 0" in result
-
-
-@pytest.mark.asyncio
-class TestGetActivePeers:
-    """Tests for _handle_get_active_peers."""
-
-    async def test_returns_active_peers(
-        self,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        """Returns active peers with message counts."""
-        _, peer1, peer2, peer3, *_ = workspace_test_data
-        ctx = make_workspace_ctx()
-
-        result = await _handle_get_active_peers(ctx, {})
-
-        assert "Found" in result
-        assert "active peers" in result
-        assert peer1.name in result
-        assert peer2.name in result
-        assert peer3.name in result
-        assert "messages" in result
-
-    async def test_empty_workspace_returns_no_peers(
-        self,
-        db_session: AsyncSession,
-    ):
-        """Returns appropriate message for workspace with no peers."""
-        workspace = models.Workspace(name=str(generate_nanoid()))
-        db_session.add(workspace)
-        await db_session.flush()
-
-        ctx = ToolContext(
-            observer="",
-            observed="",
-            current_messages=None,
-            workspace_name=workspace.name,
-            session_name=None,
-            include_observation_ids=False,
-            history_token_limit=8192,
-            db_lock=asyncio.Lock(),
-        )
-
-        result = await _handle_get_active_peers(ctx, {})
-
-        assert "No peers found" in result
-
-    async def test_respects_limit(
-        self,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        """Respects the limit parameter."""
-        _ = workspace_test_data
-        ctx = make_workspace_ctx()
-
-        result = await _handle_get_active_peers(ctx, {"limit": 1})
-
-        # Should only return 1 peer
-        assert "Found 1 active peers" in result
-
-    async def test_sort_by_message_count(
-        self,
-        make_workspace_ctx: Callable[..., ToolContext],
-        workspace_test_data: Any,
-    ):
-        """Supports sorting by message count."""
-        _ = workspace_test_data
-        ctx = make_workspace_ctx()
-
-        result = await _handle_get_active_peers(ctx, {"sort_by": "message_count"})
-
-        assert "sorted by message_count" in result
 
 
 @pytest.mark.asyncio
@@ -1035,15 +977,10 @@ class TestWorkspaceToolExecutor:
             workspace_name=workspace.name,
         )
 
-        # Test get_workspace_stats
         stats_result = await executor("get_workspace_stats", {})
         assert isinstance(stats_result, str)
         assert "Workspace stats" in stats_result
-
-        # Test get_active_peers
-        peers_result = await executor("get_active_peers", {})
-        assert isinstance(peers_result, str)
-        assert "peers" in peers_result.lower()
+        assert "Most active peers" in stats_result
 
     async def test_falls_through_to_standard_handlers(
         self,

@@ -1,7 +1,7 @@
 """CRUD helpers for workspace records and workspace deletion checks."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from typing import Any
 
@@ -609,6 +609,13 @@ async def get_workspace_stats(
     )
 
 
+# Activity window for get_active_peers. Bounds the per-peer aggregation
+# (which runs on the workspace-chat request path) so it never scans a large
+# workspace's full message history; peers idle longer than this still appear
+# via the Peer outer join, with zero count and no last-active date.
+ACTIVE_PEER_WINDOW_DAYS = 90
+
+
 async def get_active_peers(
     db: AsyncSession,
     workspace_name: str,
@@ -616,6 +623,8 @@ async def get_active_peers(
     sort_by: str = "recent_activity",
 ) -> list[ActivePeer]:
     """Get the most active peers in a workspace.
+
+    Activity is measured over the trailing ACTIVE_PEER_WINDOW_DAYS days.
 
     Args:
         db: Database session
@@ -630,14 +639,19 @@ async def get_active_peers(
         return []
     limit = min(limit, 50)
 
-    # Subquery: aggregate messages per peer
+    window_start = datetime.now(timezone.utc) - timedelta(days=ACTIVE_PEER_WINDOW_DAYS)
+
+    # Subquery: aggregate messages per peer within the activity window
     subq = (
         select(
             models.Message.peer_name,
             func.count(models.Message.id).label("msg_count"),
             func.max(models.Message.created_at).label("last_msg_at"),
         )
-        .where(models.Message.workspace_name == workspace_name)
+        .where(
+            models.Message.workspace_name == workspace_name,
+            models.Message.created_at >= window_start,
+        )
         .group_by(models.Message.peer_name)
         .subquery()
     )
