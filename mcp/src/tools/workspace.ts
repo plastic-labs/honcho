@@ -129,26 +129,40 @@ export function register(server: McpServer, ctx: ToolContext) {
           filters: message_filters,
           limit: message_limit,
         };
+
+        const searchMessages = async () => {
+          if (session_id) {
+            const session = await ctx.honcho.session(session_id);
+            return session.search(query, messageOptions);
+          }
+          if (peer) {
+            return peer.search(query, messageOptions);
+          }
+          return ctx.honcho.search(query, messageOptions);
+        };
+
+        // Conclusion search needs an (observer, observed) pair, so it only
+        // runs when peer_id is given.
+        const searchConclusions = async () => {
+          if (!peer) {
+            return [];
+          }
+          try {
+            return await peer.conclusions.query(
+              query,
+              conclusion_top_k,
+              undefined,
+              conclusion_filters,
+            );
+          } catch (e) {
+            if (conclusion_filters) throw e;
+            return [];
+          }
+        };
+
         const [messages, conclusions] = await Promise.all([
-          session_id
-            ? ctx.honcho
-                .session(session_id)
-                .then((session) => session.search(query, messageOptions))
-            : peer
-              ? peer.search(query, messageOptions)
-              : ctx.honcho.search(query, messageOptions),
-          // Conclusion search needs an (observer, observed) pair, so it only
-          // runs when peer_id is given. Errors degrade to [] so message search
-          // still works, except when the caller passed filters: a bad filter
-          // must fail loudly, not look like zero matches.
-          peer
-            ? peer.conclusions
-                .query(query, conclusion_top_k, undefined, conclusion_filters)
-                .catch((e) => {
-                  if (conclusion_filters) throw e;
-                  return [];
-                })
-            : [],
+          searchMessages(),
+          searchConclusions(),
         ]);
         return textResult({
           messages: formatMessages(messages),
