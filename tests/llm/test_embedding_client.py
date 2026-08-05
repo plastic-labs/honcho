@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from src.config import EmbeddingModelConfig
+from src.config import EmbeddingModelConfig, resolve_embedding_model_config
 from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
 
 
@@ -262,6 +262,113 @@ async def test_openai_simple_batch_embed_respects_configured_max_batch_size(
 
 
 @pytest.mark.asyncio
+async def test_openai_simple_batch_embed_defaults_to_2048_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset max_batch_size must keep the OpenAI default: one request."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 1536,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=1536,
+    )
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["input"] for call in fake.calls] == [["a", "b", "c"]]
+
+
+@pytest.mark.asyncio
+async def test_gemini_simple_batch_embed_respects_configured_max_batch_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini transport must split batches at the configured limit too."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: str | list[str],
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            calls.append({"model": model, "contents": contents, "config": config})
+            n = len(contents) if isinstance(contents, list) else 1
+            return SimpleNamespace(
+                embeddings=[SimpleNamespace(values=[0.2] * 12) for _ in range(n)]
+            )
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+            max_batch_size=2,
+        ),
+        vector_dimensions=12,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["contents"] for call in calls] == [["a", "b"], ["c"]]
+
+
+@pytest.mark.asyncio
+async def test_gemini_simple_batch_embed_defaults_to_100_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset max_batch_size must keep the Gemini conservative default."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: str | list[str],
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            calls.append({"model": model, "contents": contents, "config": config})
+            n = len(contents) if isinstance(contents, list) else 1
+            return SimpleNamespace(
+                embeddings=[SimpleNamespace(values=[0.2] * 12) for _ in range(n)]
+            )
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+        ),
+        vector_dimensions=12,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["contents"] for call in calls] == [["a", "b", "c"]]
+
+
+@pytest.mark.asyncio
 async def test_openai_batch_embed_forwards_dimensions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -476,3 +583,6 @@ def test_embedding_model_config_parses_max_batch_size_from_env(
     )
 
     assert s.MODEL_CONFIG.max_batch_size == 10
+
+    resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
+    assert resolved.max_batch_size == 10

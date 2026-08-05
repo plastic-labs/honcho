@@ -252,10 +252,11 @@ EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 ```
 
-`EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE` defaults to the native provider limit
-(2048 for OpenAI, 100 for Gemini). Set it when an OpenAI-compatible embedding
-provider accepts fewer inputs per request, such as DashScope `text-embedding-v4`
-with a limit of 10.
+`EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE` defaults to 2048 for OpenAI. For
+Gemini the client applies a conservative default of 100 — Gemini does not
+document a per-request limit. Set it when an OpenAI-compatible embedding
+provider accepts fewer inputs per request, such as DashScope
+`text-embedding-v4` with a limit of 10.
 
 Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
 
