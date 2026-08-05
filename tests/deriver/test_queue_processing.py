@@ -122,6 +122,61 @@ class TestQueueProcessing:
         ).scalars()
         assert set(tracked_keys) == set(work_units.keys())
 
+    async def test_workspace_deletion_preempts_older_queue_work(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        session, _peers = sample_session_with_peers
+        workspace = session.workspace_name
+        now = datetime.now(timezone.utc)
+        summary_key = f"summary:{workspace}:old-session:observer:observed"
+        session_deletion_key = f"deletion:{workspace}:session:old-session"
+        workspace_deletion_key = f"deletion:{workspace}:workspace:{workspace}"
+        db_session.add_all(
+            [
+                models.QueueItem(
+                    task_type="summary",
+                    work_unit_key=summary_key,
+                    payload={"task_type": "summary"},
+                    processed=False,
+                    workspace_name=workspace,
+                    created_at=now - timedelta(minutes=2),
+                ),
+                models.QueueItem(
+                    task_type="deletion",
+                    work_unit_key=session_deletion_key,
+                    payload={
+                        "task_type": "deletion",
+                        "deletion_type": "session",
+                        "resource_id": "old-session",
+                    },
+                    processed=False,
+                    workspace_name=workspace,
+                    created_at=now - timedelta(minutes=1),
+                ),
+                models.QueueItem(
+                    task_type="deletion",
+                    work_unit_key=workspace_deletion_key,
+                    payload={
+                        "task_type": "deletion",
+                        "deletion_type": "workspace",
+                        "resource_id": workspace,
+                    },
+                    processed=False,
+                    workspace_name=workspace,
+                    created_at=now,
+                ),
+            ]
+        )
+        await db_session.commit()
+        monkeypatch.setattr(settings.DERIVER, "WORKERS", 1)
+
+        claimed = await QueueManager().get_and_claim_work_units()
+
+        assert list(claimed) == [workspace_deletion_key]
+
     async def test_work_unit_claiming(
         self,
         db_session: AsyncSession,
