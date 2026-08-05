@@ -71,8 +71,9 @@ This has a few different implications.
 
 - tasks within the same work_unit are processed sequentially, but multiple
 work_units will be processed in parallel
-- If local representations are turned in a Session then a message will
-  generate an additional work unit for every peer that has `observe_others=True`
+- In a two-peer session, a message can generate a second representation work
+  unit when its author has `observe_others=True` and supplies facts about the
+  other participant
 
 ### Tracked task types
 
@@ -96,6 +97,9 @@ not the total number of items ever processed.
 
 The `queue_status` method can take additional
 parameters to scope the status to a specific work unit:
+
+`sender_id` matches the author of the source message, including work that targets
+the other participant's representation.
 
 <CodeGroup>
 ```python Python
