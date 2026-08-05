@@ -216,7 +216,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 The `IF NOT EXISTS` calls then short-circuit and the application role needs no extension privileges. This is the supported path for deployments where the platform, not the application, owns extension management.
 
-You won't hit this with `docker compose` — the bundled database service runs `database/init.sql` as an initdb script, which creates the extension before Honcho ever connects. It comes up on managed Postgres, Kubernetes operators, and other setups where you bring your own database and its role is deliberately not a superuser.
+You won't hit this with `docker compose` — the bundled stack connects as `postgres`, a superuser, and its database service also creates the extension from `database/init.sql` on first boot. It comes up on managed Postgres, Kubernetes operators, and other setups where you bring your own database and its role is deliberately not a superuser.
 
 ## Cache & Redis
 
