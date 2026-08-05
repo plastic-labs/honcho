@@ -209,8 +209,20 @@ async def workspace_chat_stream(
     query: str,
     reasoning_level: ReasoningLevel = "low",
     response_model: type[BaseModel] | None = None,
-):
-    """Streaming variant of :func:`workspace_chat`."""
+) -> AsyncIterator[str]:
+    """
+    Streaming variant of :func:`workspace_chat`.
+
+    Args:
+        workspace_name: Workspace identifier
+        session_name: Optional session scope for message tools
+        query: The question to answer about the workspace
+        reasoning_level: Level of reasoning to apply
+        response_model: Optional Pydantic model the answer must conform to.
+
+    Yields:
+        Chunks of the synthesized answer as they are generated
+    """
     async with tracked_db("dialectic.workspace_preflight", read_only=True) as db:
         await crud.get_workspace(db, workspace_name=workspace_name)
         session = None

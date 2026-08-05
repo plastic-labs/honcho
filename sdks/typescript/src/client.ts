@@ -16,6 +16,7 @@ import type {
   QueueStatusParams,
   QueueStatusResponse,
   SessionResponse,
+  WorkspaceChatParams,
   WorkspaceChatResponse,
   WorkspaceResponse,
 } from './types/api'
@@ -369,12 +370,7 @@ export class Honcho {
 
   private async _workspaceChat(
     workspaceId: string,
-    params: {
-      query: string
-      stream?: boolean
-      session_id?: string
-      reasoning_level?: ReasoningLevel
-    }
+    params: WorkspaceChatParams
   ): Promise<WorkspaceChatResponse> {
     await this._ensureWorkspace()
     return this._http.post<WorkspaceChatResponse>(
@@ -385,11 +381,7 @@ export class Honcho {
 
   private async _workspaceChatStream(
     workspaceId: string,
-    params: {
-      query: string
-      session_id?: string
-      reasoning_level?: ReasoningLevel
-    }
+    params: Omit<WorkspaceChatParams, 'stream'>
   ): Promise<Response> {
     await this._ensureWorkspace()
     return this._http.stream(
@@ -858,6 +850,9 @@ export class Honcho {
    *                          ID string or a Session object.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low",
    *                                 "medium", "high", or "max". Defaults to "low" if not provided.
+   * @param options.responseFormat - Optional JSON Schema (root type "object") the response
+   *                                 must conform to. When provided, the response content is a
+   *                                 JSON string matching this schema.
    * @returns Promise resolving to the response string, or null if no relevant information
    *
    * @example
@@ -870,6 +865,7 @@ export class Honcho {
     options?: {
       session?: string | Session
       reasoningLevel?: ReasoningLevel
+      responseFormat?: Record<string, unknown>
     }
   ): Promise<string | null> {
     const validatedQuery = SearchQuerySchema.parse(query)
@@ -882,6 +878,7 @@ export class Honcho {
       stream: false,
       session_id: resolvedSessionId,
       reasoning_level: options?.reasoningLevel,
+      response_format: options?.responseFormat,
     })
     if (!response.content) {
       return null
@@ -901,6 +898,9 @@ export class Honcho {
    *                          ID string or a Session object.
    * @param options.reasoningLevel - Optional reasoning level for the query: "minimal", "low",
    *                                 "medium", "high", or "max". Defaults to "low" if not provided.
+   * @param options.responseFormat - Optional JSON Schema (root type "object") the response
+   *                                 must conform to. When provided, the response content is a
+   *                                 JSON string matching this schema.
    * @returns Promise resolving to a DialecticStreamResponse that can be iterated over
    *
    * @example
@@ -916,6 +916,7 @@ export class Honcho {
     options?: {
       session?: string | Session
       reasoningLevel?: ReasoningLevel
+      responseFormat?: Record<string, unknown>
     }
   ): Promise<DialecticStreamResponse> {
     const validatedQuery = SearchQuerySchema.parse(query)
@@ -927,6 +928,7 @@ export class Honcho {
       query: validatedQuery,
       session_id: resolvedSessionId,
       reasoning_level: options?.reasoningLevel,
+      response_format: options?.responseFormat,
     })
 
     return createDialecticStream(response)

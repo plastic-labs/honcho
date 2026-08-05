@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 
 import tiktoken
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     BaseModel,
     BeforeValidator,
@@ -52,6 +53,15 @@ def _sanitize_value(v: Any) -> Any:
         lst = cast(list[Any], v)
         return [_sanitize_value(item) for item in lst]
     return v
+
+
+def _strip_nul(v: str) -> str:
+    """Strip NUL bytes from a string field (Postgres TEXT rejects \\x00)."""
+    return v.replace("\x00", "")
+
+
+# Reusable annotation for query fields; composes with a per-field Field(...).
+NulStripped = AfterValidator(_strip_nul)
 
 
 def _check_metadata_limits(
@@ -545,7 +555,7 @@ class ConclusionBatchCreate(BaseModel):
 
 
 class MessageSearchOptions(BaseModel):
-    query: Annotated[str, Field(..., description="Search query")]
+    query: Annotated[str, Field(..., description="Search query"), NulStripped]
     filters: dict[str, Any] | None = Field(
         default=None, description="Filters to scope the search"
     )
@@ -555,11 +565,6 @@ class MessageSearchOptions(BaseModel):
         le=100,
         description="Number of results to return",
     )
-
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +591,9 @@ class DialecticOptions(BaseModel):
         description="Optional peer to get the representation for, from the perspective of this peer",
     )
     query: Annotated[
-        str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
+        str,
+        Field(min_length=1, max_length=10000, description="Dialectic API Prompt"),
+        NulStripped,
     ]
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
@@ -604,11 +611,6 @@ class DialecticOptions(BaseModel):
         ),
     )
 
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
-
 
 class WorkspaceChatOptions(BaseModel):
     """Options for workspace-level chat (no anchor peer; see DialecticOptions)."""
@@ -617,7 +619,9 @@ class WorkspaceChatOptions(BaseModel):
         None, description="Optional session to scope message tools to"
     )
     query: Annotated[
-        str, Field(min_length=1, max_length=10000, description="Workspace chat prompt")
+        str,
+        Field(min_length=1, max_length=10000, description="Workspace chat prompt"),
+        NulStripped,
     ]
     stream: bool = False
     reasoning_level: ReasoningLevel = Field(
@@ -634,11 +638,6 @@ class WorkspaceChatOptions(BaseModel):
     # scopes(#897): the observer-swap `scope` read option lands here once the
     # scopes facade merges; workspace chat is the peer-unanchored read and
     # scope becomes its narrowing parameter.
-
-    @field_validator("query", mode="after")
-    @classmethod
-    def sanitize_query(cls, v: str) -> str:
-        return v.replace("\x00", "")
 
 
 class DialecticResponse(BaseModel):
