@@ -6,6 +6,7 @@
 # Application-level settings
 [app]
 LOG_LEVEL = "INFO"
+PERFORMANCE_LOG_FORMAT = "compact" # "compact" for single-line logs, "rich" for local panels
 SESSION_OBSERVERS_LIMIT = 10
 GET_CONTEXT_MAX_TOKENS = 100000
 MAX_FILE_SIZE = 5242880  # 5MB
@@ -73,6 +74,9 @@ MAX_TOKENS_PER_REQUEST = 300000
 [embedding.model_config]
 transport = "openai"
 model = "text-embedding-3-small"
+# Optional provider request input cap. Useful for OpenAI-compatible embedding
+# APIs with smaller limits, such as DashScope text-embedding-v4.
+# max_batch_size = 10
 
 # Optional module-level endpoint overrides
 # [embedding.model_config.overrides]
@@ -98,13 +102,19 @@ POLLING_BACKOFF_MULTIPLIER = 2.0
 POLLING_STARTUP_JITTER_SECONDS = 30.0
 POLLING_JITTER_RATIO = 0.5
 STALE_SESSION_TIMEOUT_MINUTES = 5
+# Minimum (jittered) spacing between stale-work-unit cleanup runs per instance.
+# Staleness is a minutes-timescale condition, so cleanup doesn't need to run on
+# every seconds-scale poll (0.0 = run every poll, legacy behavior).
+STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS = 60.0
 # QUEUE_ERROR_RETENTION_SECONDS = 2592000  # 30 days
 DEDUPLICATE = true
 LOG_OBSERVATIONS = false
 MAX_INPUT_TOKENS = 25000
 MAX_CUSTOM_INSTRUCTIONS_TOKENS = 2000
 WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
-REPRESENTATION_BATCH_MAX_TOKENS = 1024
+REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS = 512  # Min tokens a work unit accumulates before the deriver claims it; 0 disables the gate
+REPRESENTATION_BATCH_TARGET_INPUT_TOKENS = 1024  # Max context-window tokens per deriver LLM call
+REPRESENTATION_BATCH_MAX_AGE_SECONDS = 1800
 FLUSH_ENABLED = false  # Bypass batch token threshold, process work immediately
 
 [deriver.model_config]
@@ -131,6 +141,7 @@ model = "gpt-5.4-mini"
 # api_key_env = "DERIVER_CUSTOM_BACKUP_API_KEY"
 # [deriver.model_config.overrides.provider_params]
 # verbosity = "low"
+# timeout = 3600.0
 
 # Peer card settings
 [peer_card]

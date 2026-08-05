@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal, cast
@@ -61,6 +62,41 @@ ThinkingEffortLevel = Literal[
     "none", "minimal", "low", "medium", "high", "xhigh", "max"
 ]
 
+# "json_object" injects the schema into the prompt for OpenAI-compatible
+# providers that don't support json_schema (Structured Outputs).
+StructuredOutputMode = Literal["json_schema", "json_object"]
+
+
+PROVIDER_TIMEOUT_ERROR_TEXT = (
+    "provider_params.timeout must be a positive number of seconds"
+)
+
+
+def coerce_provider_timeout(value: Any) -> float:
+    """Coerce a `provider_params.timeout` value to positive, finite seconds.
+
+    Canonical implementation shared by config-load validation (here) and
+    per-request validation (`src.llm.request_builder.request_timeout_from_extra_params`,
+    which translates the ValueError into a ValidationException). Lives in
+    config.py because src.exceptions imports src.config, so config validators
+    cannot raise Honcho exception types.
+    """
+    if isinstance(value, bool):
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+    if isinstance(value, int | float):
+        timeout = float(value)
+    elif isinstance(value, str):
+        try:
+            timeout = float(value.strip())
+        except ValueError as exc:
+            raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT) from exc
+    else:
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(PROVIDER_TIMEOUT_ERROR_TEXT)
+    return timeout
+
 
 class ModelOverrideSettings(BaseModel):
     """Advanced module-level transport overrides."""
@@ -69,7 +105,31 @@ class ModelOverrideSettings(BaseModel):
     api_key_env: str | None = None
     base_url: str | None = None
 
-    provider_params: dict[str, Any] = Field(default_factory=dict)
+    provider_params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Operator escape hatch for provider-specific request fields. "
+            "Three recognized keys: `extra_body` (merged into the request body), "
+            "`extra_headers` (HTTP headers), `extra_query` (URL query params). "
+            "OpenAI and Anthropic transports forward these as identically-named "
+            "SDK kwargs. The Gemini transport merges `extra_body` into the "
+            "GenerateContentConfig dict and folds `extra_headers` into "
+            "`http_options.headers`; `extra_query` is unsupported. Shallow merge "
+            "with operator-wins — if Honcho and the operator both set the same "
+            "key inside `extra_body`, the operator's value replaces Honcho's. "
+            "Operators are responsible for picking a coherent combination of "
+            "this and other config (e.g. unset `thinking_budget_tokens` when "
+            "supplying an `extra_body.thinking` for Anthropic-via-proxy)."
+        ),
+    )
+
+    @field_validator("provider_params")
+    @classmethod
+    def _validate_provider_timeout(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """Reject bad `timeout` values at config load; normalize good ones to float."""
+        if "timeout" not in v:
+            return v
+        return {**v, "timeout": coerce_provider_timeout(v["timeout"])}
 
 
 class PromptCachePolicy(BaseModel):
@@ -117,6 +177,23 @@ def _validate_thinking_constraints(
         raise ValueError("thinking_budget_tokens must be >= 1024 for Anthropic models")
 
 
+def _validate_structured_output_mode(
+    transport: ModelTransport, structured_output_mode: StructuredOutputMode | None
+) -> None:
+    """Reject ``structured_output_mode`` on transports that ignore it.
+
+    Only the OpenAI backend honors this setting (it controls the json_schema vs
+    json_object structured-output path). On the anthropic/gemini transports it is
+    a silent no-op, so a value set there is a misconfiguration — fail fast at
+    startup rather than letting the operator wonder why it has no effect.
+    """
+    if structured_output_mode is not None and transport != "openai":
+        raise ValueError(
+            "structured_output_mode is only supported on the 'openai' transport; "
+            + f"remove it from the '{transport}' model config"
+        )
+
+
 class FallbackModelSettings(BaseModel):
     """Independent fallback model configuration. No inheritance from primary."""
 
@@ -135,6 +212,8 @@ class FallbackModelSettings(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+
+    structured_output_mode: StructuredOutputMode | None = None
 
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
@@ -155,6 +234,7 @@ class FallbackModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "FallbackModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
 
 
@@ -179,6 +259,8 @@ class ConfiguredModelSettings(BaseModel):
     )
     thinking_budget_tokens: int | None = None
 
+    structured_output_mode: StructuredOutputMode | None = None
+
     max_output_tokens: int | None = None
     stop_sequences: list[str] | None = None
 
@@ -199,6 +281,7 @@ class ConfiguredModelSettings(BaseModel):
     @model_validator(mode="after")
     def _validate_runtime_shape(self) -> "ConfiguredModelSettings":
         _validate_thinking_constraints(self.transport, self.thinking_budget_tokens)
+        _validate_structured_output_mode(self.transport, self.structured_output_mode)
         return self
 
 
@@ -223,6 +306,7 @@ class ResolvedFallbackConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+    structured_output_mode: StructuredOutputMode | None = None
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -258,6 +342,7 @@ class ModelConfig(BaseModel):
         validation_alias=AliasChoices("thinking_effort", "reasoning_effort"),
     )
     thinking_budget_tokens: int | None = None
+    structured_output_mode: StructuredOutputMode | None = None
     provider_params: dict[str, Any] = Field(default_factory=dict)
 
     max_output_tokens: int | None = None
@@ -301,6 +386,7 @@ class ConfiguredEmbeddingModelSettings(BaseModel):
     transport: EmbeddingTransport = "openai"
     overrides: ModelOverrideSettings = Field(default_factory=ModelOverrideSettings)
     dimensions_mode: EmbeddingDimensionsMode = "auto"
+    max_batch_size: Annotated[int, Field(gt=0)] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -337,6 +423,7 @@ class EmbeddingModelConfig(BaseModel):
     transport: EmbeddingTransport = "openai"
     api_key: str | None = None
     base_url: str | None = None
+    max_batch_size: Annotated[int, Field(gt=0)] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -394,6 +481,7 @@ def _resolve_fallback_config(
         seed=fallback.seed,
         thinking_effort=fallback.thinking_effort,
         thinking_budget_tokens=fallback.thinking_budget_tokens,
+        structured_output_mode=fallback.structured_output_mode,
         provider_params=fallback.overrides.provider_params,
         max_output_tokens=fallback.max_output_tokens,
         stop_sequences=fallback.stop_sequences,
@@ -427,6 +515,7 @@ def resolve_model_config(configured: ConfiguredModelSettings) -> ModelConfig:
         seed=configured.seed,
         thinking_effort=configured.thinking_effort,
         thinking_budget_tokens=configured.thinking_budget_tokens,
+        structured_output_mode=configured.structured_output_mode,
         provider_params=configured.overrides.provider_params,
         max_output_tokens=configured.max_output_tokens,
         stop_sequences=configured.stop_sequences,
@@ -459,6 +548,7 @@ def resolve_embedding_model_config(
         transport=configured.transport,
         api_key=api_key,
         base_url=configured.overrides.base_url,
+        max_batch_size=configured.max_batch_size,
     )
 
 
@@ -704,6 +794,13 @@ class EmbeddingSettings(HonchoSettings):
     VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
+    # Caps concurrent message-embedding fan-out on the API request path (the
+    # immediate-embed background task). The reconciler is unaffected.
+    MAX_CONCURRENT_EMBEDDINGS: Annotated[int, Field(default=10, gt=0, le=100)] = 10
+    # Caps in-flight immediate-embed background tasks per API process. When
+    # saturated, message creation skips the fast path entirely and the
+    # reconciler embeds on its next cycle. 0 disables the fast path.
+    MAX_PENDING_EMBED_TASKS: Annotated[int, Field(default=50, ge=0)] = 50
 
     @model_validator(mode="before")
     @classmethod
@@ -769,6 +866,10 @@ class DeriverSettings(HonchoSettings):
     # to 0.0 to disable.
     POLLING_JITTER_RATIO: Annotated[float, Field(default=0.5, ge=0.0, le=1.0)] = 0.5
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
+    # Minimum (jittered) spacing between stale-work-unit cleanup runs
+    STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS: Annotated[
+        float, Field(default=60.0, ge=0.0, le=3600.0)
+    ] = 60.0
 
     # Retention window (seconds) for keeping errored items in the queue
     QUEUE_ERROR_RETENTION_SECONDS: Annotated[
@@ -803,10 +904,28 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=100, gt=0, le=1000)
     ] = 100
 
-    REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
+    # Minimum tokens a representation work unit must accumulate (summed over
+    # its own unprocessed messages) before it becomes claimable. Bypassed by
+    # FLUSH_ENABLED and by REPRESENTATION_BATCH_MAX_AGE_SECONDS age-flushing.
+    # 0 disables the accumulation gate entirely (equivalent to FLUSH_ENABLED
+    # for claiming): work units are claimable as soon as anything is pending.
+    REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS: Annotated[
+        int,
+        Field(default=512, ge=0, le=16_384),
+    ] = 512
+    # Cumulative-token cap on the conversation window (queued messages plus
+    # interleaved context) fed to a single deriver LLM call when draining a
+    # claimed work unit. The first unprocessed message is always included,
+    # even if it alone exceeds the cap.
+    REPRESENTATION_BATCH_TARGET_INPUT_TOKENS: Annotated[
         int,
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
+    # Sub-threshold work units become eligible once their oldest unprocessed
+    # item exceeds this age. 0 disables age-based flushing.
+    REPRESENTATION_BATCH_MAX_AGE_SECONDS: Annotated[int, Field(default=1800, ge=0)] = (
+        1800
+    )
 
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
@@ -824,9 +943,9 @@ class DeriverSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
-        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
+        if self.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
-                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+                f"REPRESENTATION_BATCH_TARGET_INPUT_TOKENS ({self.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
 
@@ -1117,12 +1236,29 @@ class TelemetrySettings(HonchoSettings):
     # that join high-volume events to aggregate envelopes first.
     HIGH_VOLUME_SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
 
+    # --- Full-fidelity payload tracing (llm.call.traced / trace.content) ---
+    # Master toggle for replay-grade content capture. Default-off.
+    TRACE_PAYLOADS_ENABLED: bool = False
+
+    # Per-message cap (bytes) for captured content; oversized string content is
+    # clipped (with a marker) and the call is flagged was_truncated.
+    TRACE_MAX_BYTES: Annotated[int, Field(default=262144, gt=0)] = 262144
+
+    # Allowlist of CallPurpose values to capture; empty = all. Typed as str to
+    # keep the enum out of config (validated against CallPurpose at the producer,
+    # same pattern as LLMTelemetryContext.call_purpose).
+    TRACE_PURPOSES: list[str] = Field(default_factory=list)
+
 
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
     URL: str = "redis://localhost:6379/0?suppress=true"
+    # URL points at a Redis Cluster (OSS cluster protocol, e.g. GCP Memorystore
+    # for Redis Cluster). A standalone client cannot follow the MOVED redirects
+    # such deployments return for keys hashed to another shard.
+    CLUSTER: bool = False
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache
@@ -1131,6 +1267,12 @@ class CacheSettings(HonchoSettings):
     DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
         5  # how long to hold a lock on a resource when fetching DB after cache miss
     )
+
+    # Polling interval while waiting for another worker's fetch lock. cashews
+    # defaults to 0, which busy-spins the event loop for the whole wait.
+    LOCK_WAIT_CHECK_INTERVAL_SECONDS: Annotated[
+        float, Field(default=0.1, gt=0, le=5)
+    ] = 0.1
 
 
 class SurprisalSettings(BaseModel):
@@ -1286,6 +1428,17 @@ class VectorStoreSettings(HonchoSettings):
         return self
 
 
+class TraceViewerSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="TRACE_VIEWER_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    HOST: str = "127.0.0.1"
+    PORT: int = 8002
+    STORAGE_DIR: str = "./traces"
+    MAX_REQUEST_BYTES: int = 10 * 1024 * 1024  # 10 MB
+    VENDOR_CDN_BASE: str = "https://cdn.jsdelivr.net/npm"
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -1294,6 +1447,7 @@ class AppSettings(HonchoSettings):
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
+    PERFORMANCE_LOG_FORMAT: str = "compact"
     SESSION_OBSERVERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
     GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
@@ -1304,6 +1458,36 @@ class AppSettings(HonchoSettings):
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
+    # How Langfuse traces are produced:
+    #   "exporter" (default) — Langfuse is a projection over the captured
+    #     CapturedLLMCall stream (LangfuseExporter), the same source of truth as
+    #     the CloudEvents trace stream.
+    #   "inline" — legacy live instrumentation (@observe + propagate_attributes
+    #     spans during execution). Kept one release for side-by-side validation.
+    LANGFUSE_EXPORTER_MODE: Literal["inline", "exporter"] = "exporter"
+
+    @property
+    def langfuse_inline_enabled(self) -> bool:
+        """True when the legacy inline Langfuse instrumentation is active
+        (keys configured + ``LANGFUSE_EXPORTER_MODE == "inline"``)."""
+        return (
+            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "inline"
+        )
+
+    @property
+    def langfuse_exporter_enabled(self) -> bool:
+        """True when the Langfuse exporter (a projection over the captured call
+        stream) is active (keys configured + ``LANGFUSE_EXPORTER_MODE == "exporter"``)."""
+        return (
+            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "exporter"
+        )
+
+    # Origins allowed by the FastAPI CORSMiddleware
+    CORS_ORIGINS: list[str] = [
+        "http://localhost",
+        "http://127.0.0.1:8000",
+        "https://api.honcho.dev",
+    ]
 
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
@@ -1327,6 +1511,7 @@ class AppSettings(HonchoSettings):
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
+    TRACE_VIEWER: TraceViewerSettings = Field(default_factory=TraceViewerSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
@@ -1334,6 +1519,13 @@ class AppSettings(HonchoSettings):
         if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
             raise ValueError(f"Invalid log level: {v}")
         return log_level
+
+    @field_validator("PERFORMANCE_LOG_FORMAT")
+    def validate_performance_log_format(cls, v: str) -> str:
+        log_format = v.lower()
+        if log_format not in ["compact", "rich"]:
+            raise ValueError(f"Invalid performance log format: {v}")
+        return log_format
 
     @model_validator(mode="after")
     def propagate_namespace(self) -> "AppSettings":

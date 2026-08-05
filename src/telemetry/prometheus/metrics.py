@@ -12,6 +12,7 @@ from prometheus_client import (
     REGISTRY,
     Counter,
     Gauge,
+    Histogram,
     disable_created_metrics,
     generate_latest,
 )
@@ -34,6 +35,12 @@ class NamespacedCounter(Counter):
 
 class NamespacedGauge(Gauge):
     def labels(self, **kwargs: str) -> NamespacedGauge:
+        kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
+        return super().labels(**kwargs)  # type: ignore[return-value]
+
+
+class NamespacedHistogram(Histogram):
+    def labels(self, **kwargs: str) -> NamespacedHistogram:
         kwargs["namespace"] = cast(str, settings.METRICS.NAMESPACE)
         return super().labels(**kwargs)  # type: ignore[return-value]
 
@@ -65,10 +72,31 @@ api_requests_counter = NamespacedCounter(
     ["namespace", "method", "endpoint", "status_code"],
 )
 
+# Per-route latency. Buckets are a geometric ladder spanning
+# the full range of API classes
+api_request_duration_seconds = NamespacedHistogram(
+    "api_request_duration_seconds",
+    "API request latency in seconds",
+    ["namespace", "method", "endpoint"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 0.75, 1, 2, 5, 10, 20, 30, 60, 120),
+)
+
 messages_created_counter = NamespacedCounter(
     "messages_created",
     "Total messages created",
     ["namespace", "workspace_name"],
+)
+
+embed_now_tasks_shed_counter = NamespacedCounter(
+    "embed_now_tasks_shed",
+    "Immediate-embed background tasks skipped because MAX_PENDING_EMBED_TASKS was reached",
+    ["namespace"],
+)
+
+embed_now_tasks_in_flight_gauge = NamespacedGauge(
+    "embed_now_tasks_in_flight",
+    "Immediate-embed background tasks currently in flight for this process",
+    ["namespace"],
 )
 
 dialectic_calls_counter = NamespacedCounter(
@@ -160,6 +188,7 @@ class PrometheusMetrics:
         method: str,
         endpoint: str,
         status_code: str,
+        duration_seconds: float,
     ) -> None:
         try:
             api_requests_counter.labels(
@@ -167,6 +196,10 @@ class PrometheusMetrics:
                 endpoint=endpoint,
                 status_code=status_code,
             ).inc()
+            api_request_duration_seconds.labels(
+                method=method,
+                endpoint=endpoint,
+            ).observe(duration_seconds)
         except Exception as e:
             self._handle_metric_error("record_api_request", e)
 
@@ -182,6 +215,18 @@ class PrometheusMetrics:
             ).inc(count)
         except Exception as e:
             self._handle_metric_error("record_messages_created", e)
+
+    def record_embed_now_task_shed(self) -> None:
+        try:
+            embed_now_tasks_shed_counter.labels().inc()
+        except Exception as e:
+            self._handle_metric_error("record_embed_now_task_shed", e)
+
+    def set_embed_now_tasks_in_flight(self, count: int) -> None:
+        try:
+            embed_now_tasks_in_flight_gauge.labels().set(count)
+        except Exception as e:
+            self._handle_metric_error("set_embed_now_tasks_in_flight", e)
 
     def record_dialectic_call(
         self,

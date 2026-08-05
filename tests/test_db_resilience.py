@@ -50,6 +50,11 @@ class _FakeCursor:
 class _FakeDBAPIConn:
     def __init__(self, recorder: list[Any], raise_exc: Exception | None = None) -> None:
         self._cursor: _FakeCursor = _FakeCursor(recorder, raise_exc)
+        # Real pooled connections are checked out in non-autocommit mode; the
+        # hook flips this to True for its statement then restores it so it never
+        # leaves an open transaction that would block the read engine's
+        # AUTOCOMMIT switch.
+        self.autocommit: bool = False
 
     def cursor(self) -> _FakeCursor:
         return self._cursor
@@ -69,6 +74,8 @@ def test_checkout_hook_sets_application_name_from_request_context() -> None:
     assert "set_config" in sql and "application_name" in sql
     assert params == ("request:trace-ctx",)
     assert conn._cursor.closed is True  # pyright: ignore[reportPrivateUsage]
+    # The hook restored the original (non-autocommit) mode after its statement.
+    assert conn.autocommit is False
 
 
 def test_checkout_hook_defaults_to_unknown_without_context() -> None:
@@ -198,3 +205,106 @@ def test_inflight_gauge_no_drift(monkeypatch: pytest.MonkeyPatch) -> None:
     # gauge negative.
     tracker.on_error(SimpleNamespace(connection=SimpleNamespace(info={})))
     assert value() == start
+
+
+@pytest.mark.asyncio
+async def test_stale_cleanup_time_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """cleanup_stale_work_units runs at most once per gate interval per
+    instance (staleness is a minutes-timescale condition; per-poll cleanup
+    multiplies into needless fleet-wide write transactions). First poll always
+    runs it so a crashed predecessor's stale rows are recovered immediately."""
+    monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
+    monkeypatch.setattr(
+        settings.DERIVER, "STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS", 60.0
+    )
+
+    from src.deriver import queue_manager as qm_mod
+
+    qm = qm_mod.QueueManager()
+    runs = {"n": 0}
+
+    async def fake_cleanup() -> None:
+        runs["n"] += 1
+
+    monkeypatch.setattr(qm, "cleanup_stale_work_units", fake_cleanup)
+
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(
+        "src.deriver.queue_manager.time.monotonic", lambda: clock["now"]
+    )
+
+    # First call runs (no prior attempt recorded).
+    await qm._maybe_cleanup_stale_work_units()  # pyright: ignore[reportPrivateUsage]
+    assert runs["n"] == 1
+
+    # Inside the gate window: skipped.
+    clock["now"] += 10.0
+    await qm._maybe_cleanup_stale_work_units()  # pyright: ignore[reportPrivateUsage]
+    assert runs["n"] == 1
+
+    # Past the gate window: runs again.
+    clock["now"] += 60.0
+    await qm._maybe_cleanup_stale_work_units()  # pyright: ignore[reportPrivateUsage]
+    assert runs["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_stale_cleanup_gate_failed_attempt_waits_full_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate records the ATTEMPT before running, so a failing cleanup is not
+    retried on every poll against a DB that is already struggling."""
+    monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
+    monkeypatch.setattr(
+        settings.DERIVER, "STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS", 60.0
+    )
+
+    from src.deriver import queue_manager as qm_mod
+
+    qm = qm_mod.QueueManager()
+    attempts = {"n": 0}
+
+    async def failing_cleanup() -> None:
+        attempts["n"] += 1
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(qm, "cleanup_stale_work_units", failing_cleanup)
+
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(
+        "src.deriver.queue_manager.time.monotonic", lambda: clock["now"]
+    )
+
+    with pytest.raises(RuntimeError):
+        await qm._maybe_cleanup_stale_work_units()  # pyright: ignore[reportPrivateUsage]
+    assert attempts["n"] == 1
+
+    # Immediately after the failure: still gated, no hammering.
+    clock["now"] += 1.0
+    await qm._maybe_cleanup_stale_work_units()  # pyright: ignore[reportPrivateUsage]
+    assert attempts["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_cleanup_gate_zero_interval_runs_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interval 0.0 preserves legacy run-on-every-poll behavior."""
+    monkeypatch.setattr(settings.DERIVER, "POLLING_JITTER_RATIO", 0.0)
+    monkeypatch.setattr(
+        settings.DERIVER, "STALE_WORK_UNIT_CLEANUP_INTERVAL_SECONDS", 0.0
+    )
+
+    from src.deriver import queue_manager as qm_mod
+
+    qm = qm_mod.QueueManager()
+    runs = {"n": 0}
+
+    async def fake_cleanup() -> None:
+        runs["n"] += 1
+
+    monkeypatch.setattr(qm, "cleanup_stale_work_units", fake_cleanup)
+
+    await qm._maybe_cleanup_stale_work_units()  # pyright: ignore[reportPrivateUsage]
+    await qm._maybe_cleanup_stale_work_units()  # pyright: ignore[reportPrivateUsage]
+    assert runs["n"] == 2

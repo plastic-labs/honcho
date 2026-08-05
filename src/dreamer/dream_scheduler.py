@@ -218,7 +218,7 @@ class DreamScheduler:
             configuration = get_configuration(None, session, workspace)
 
             if not configuration.dream.enabled:
-                logger.info(
+                logger.debug(
                     f"Dreams disabled for {workspace_name}/{session_name}, skipping dream"
                 )
                 return
@@ -319,7 +319,7 @@ async def check_and_schedule_dream(
                 ).total_seconds() / 3600
 
                 if hours_since_last_dream < settings.DREAM.MIN_HOURS_BETWEEN_DREAMS:
-                    logger.info(
+                    logger.debug(
                         f"Skipping dream for {collection.observer}/{collection.observed}: only {hours_since_last_dream:.1f} hours "
                         + f"since last dream (minimum: {settings.DREAM.MIN_HOURS_BETWEEN_DREAMS})"
                     )
@@ -359,7 +359,7 @@ async def check_and_schedule_dream(
             )
         )
         if pending_exists:
-            logger.info(
+            logger.debug(
                 "Skipping dream schedule for %s/%s: pending dream already in queue",
                 collection.observer,
                 collection.observed,

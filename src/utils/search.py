@@ -448,7 +448,7 @@ async def search(
             return search_results[0][:limit]
         return []
 
-    async with tracked_db("search.messages") as managed_db:
+    async with tracked_db("search.messages", read_only=True) as managed_db:
         combined_results = await _run_search(managed_db)
         for message in combined_results:
             managed_db.expunge(message)

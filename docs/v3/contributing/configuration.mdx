@@ -60,6 +60,12 @@ You can mix providers freely — for example, use Gemini for the deriver and Cla
 
 For OpenAI-compatible proxies (OpenRouter, vLLM, Ollama, etc.), use `transport = "openai"` and set `MODEL_CONFIG__OVERRIDES__BASE_URL` on each feature to point at your endpoint.
 
+<Note>
+Some OpenAI-compatible providers don't support OpenAI Structured Outputs (`json_schema`). Set `DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object` to request loose JSON mode and inject the schema into the prompt instead.
+
+This setting only applies to the **deriver** on the **`openai`** transport — it is the only feature that uses structured output. The dialectic, summarizer, and dreamer don't request structured output, so the setting has no effect there, and the anthropic/gemini transports reject it.
+</Note>
+
 ### Tiered Model Setup
 
 Once you're past initial setup, you can assign different models per feature for better cost/quality tradeoffs. This example uses OpenRouter with light/medium/heavy tiers:
@@ -183,6 +189,54 @@ Each model config supports an `overrides.provider_params` dict for passing arbit
 [deriver.model_config.overrides.provider_params]
 # These are passed directly to the provider SDK
 verbosity = "low"
+# Per-request timeout in seconds; useful for queued workers that can wait longer
+timeout = 3600.0
+```
+
+Because provider params live on each model config, background workers such as
+the Deriver and Dreamer can use longer request timeouts while synchronous
+chat paths keep tighter defaults.
+
+`timeout` gotchas:
+
+- The value is validated **at config load**: it must coerce to a positive,
+  finite number of seconds (numbers or numeric strings like `"3600"`), or the
+  process refuses to start with an error naming the offending config path.
+  This applies to both the primary model config and its `fallback.overrides`.
+- The unit is always **seconds**, regardless of transport. OpenAI and
+  Anthropic receive it as the SDK's `timeout` kwarg; Gemini has no such
+  kwarg, so Honcho converts it to milliseconds on `http_options.timeout`.
+- When unset, nothing is forwarded and each SDK's default applies — adding
+  this key is opt-in and changes no existing behavior.
+- A too-tight timeout doesn't fail once: the aborted request goes through the
+  normal retry/fallback chain before the caller sees an error, so the
+  observed latency is several multiples of the timeout.
+
+#### Transport passthrough keys
+
+Three keys inside `provider_params` are recognized as request-level escape hatches and forwarded to the underlying transport. Where a transport actually validates and merges one of these keys, its value must be a mapping — a non-mapping value raises a configuration error (see the per-transport behavior below; a key a transport ignores is not validated):
+
+- **`extra_body`** — merged into the request body
+- **`extra_headers`** — extra HTTP headers
+- **`extra_query`** — extra URL query parameters
+
+How each transport forwards them differs:
+
+- **OpenAI and Anthropic** forward all three as identically-named SDK kwargs (`extra_body`, `extra_headers`, `extra_query`).
+- **Gemini** has no SDK kwargs for these. It merges `extra_body` into the `GenerateContentConfig` dict and folds `extra_headers` into `http_options.headers`; `extra_query` is **unsupported and silently ignored**.
+
+The merge is shallow and **operator-wins**: if Honcho and your config both set the same top-level key inside `extra_body`, your value replaces Honcho's. You are responsible for choosing a coherent combination — e.g. unset `thinking_budget_tokens` when supplying an `extra_body.thinking` for Anthropic-via-proxy, since Honcho will not translate between the two shapes.
+
+Because Gemini merges `extra_body` directly into `GenerateContentConfig` (rather than a nested request body), an `extra_body` written for OpenAI/Anthropic generally will not transfer to Gemini unchanged — and a key collision there can overwrite a field Honcho manages (`thinking_config`, `response_schema`, `tools`, …).
+
+```toml
+# Example: route an OpenAI-compatible proxy and tag requests for tracing
+[deriver.model_config.overrides.provider_params.extra_headers]
+X-Proxy-Route = "vertex"
+
+[deriver.model_config.overrides.provider_params.extra_body]
+# Provider-native body fields the standard config doesn't expose
+anthropic_beta = ["context-1m-2025-01-15"]
 ```
 
 ### Changing Transport
@@ -212,11 +266,18 @@ EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 # Embedding transport/model selection
 EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
 EMBEDDING_MODEL_CONFIG__MODEL=text-embedding-3-small
+EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE=10  # optional per-request input cap
 
 # Optional endpoint overrides
 EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 ```
+
+`EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE` defaults to 2048 for OpenAI. For
+Gemini the client applies a conservative default of 100 — Gemini does not
+document a per-request limit. Set it when an OpenAI-compatible embedding
+provider accepts fewer inputs per request, such as DashScope
+`text-embedding-v4` with a limit of 10.
 
 Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
 
@@ -346,6 +407,7 @@ DERIVER_MAX_CUSTOM_INSTRUCTIONS_TOKENS=2000
 # DERIVER_MODEL_CONFIG__THINKING_EFFORT=minimal
 # DERIVER_MODEL_CONFIG__THINKING_BUDGET_TOKENS=1024
 # DERIVER_MODEL_CONFIG__TEMPERATURE=0.7  # Optional temperature override
+# DERIVER_MODEL_CONFIG__STRUCTURED_OUTPUT_MODE=json_object  # for providers without json_schema support
 
 # Backup model (optional)
 # DERIVER_MODEL_CONFIG__FALLBACK__MODEL=claude-haiku-4-5
@@ -374,7 +436,9 @@ DERIVER_QUEUE_ERROR_RETENTION_SECONDS=2592000  # 30 days
 DERIVER_DEDUPLICATE=true
 DERIVER_LOG_OBSERVATIONS=false
 DERIVER_WORKING_REPRESENTATION_MAX_OBSERVATIONS=100
-DERIVER_REPRESENTATION_BATCH_MAX_TOKENS=1024
+DERIVER_REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=512
+DERIVER_REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=1024
+DERIVER_REPRESENTATION_BATCH_MAX_AGE_SECONDS=1800
 ```
 
 **Peer Card:**

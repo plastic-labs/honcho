@@ -394,6 +394,26 @@ the `AUTH_JWT_SECRET` environment variable. This is required for `AUTH_USE_AUTH`
 AUTH_JWT_SECRET=<generated_secret>
 ```
 
+Once auth is enabled, use `scripts/generate_jwt.py` to mint tokens for local
+development and scripting:
+
+```bash
+# Admin token (full access, no expiry)
+uv run python scripts/generate_jwt.py --admin
+
+# Admin token expiring in 24 hours
+uv run python scripts/generate_jwt.py --admin --expires 24h
+
+# Workspace-scoped token
+uv run python scripts/generate_jwt.py --workspace my-workspace --expires 30d
+
+# Capture a token for use in curl/scripts
+TOKEN=$(uv run python scripts/generate_jwt.py --admin --print-only)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/v3/workspaces
+```
+
+Duration units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days), `w` (weeks), `y` (years).
+
 5. **Run database migrations**
 
 With the database set up and environment variables configured, run the migrations

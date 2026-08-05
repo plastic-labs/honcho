@@ -4,19 +4,18 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text, update
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
-from src.exceptions import VectorStoreError
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.utils.types import embedding_call_purpose
-from src.vector_store import VectorRecord, get_external_vector_store
+from src.vector_store import get_external_vector_store
 
 from .session import get_or_create_session
 
@@ -56,11 +55,28 @@ async def get_peer_session_names(
     db: AsyncSession,
     workspace_name: str,
     peer_name: str,
+    *,
+    active_only: bool = False,
 ) -> list[str]:
-    """Get all session names where a peer has any membership record.
+    """Get all session names where a peer has a membership record.
 
-    Any membership record (regardless of joined_at/left_at) grants visibility
-    to all messages in that session.
+    By default any membership record (regardless of joined_at/left_at) grants
+    visibility to all messages in that session — this is the loose definition
+    recall scoping uses.
+
+    Pass ``active_only=True`` for the strict definition (``left_at IS NULL``),
+    matching :func:`src.crud.session.is_peer_in_session`. The auth layer must
+    use the strict one so that a single peer-scoped key gets the same answer
+    whether it names a session directly or via a filter allowlist.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        active_only: Restrict to sessions the peer has not left
+
+    Returns:
+        Distinct session names the peer has a matching membership record in.
     """
     stmt = (
         select(models.session_peers_table.c.session_name)
@@ -68,8 +84,78 @@ async def get_peer_session_names(
         .where(models.session_peers_table.c.peer_name == peer_name)
         .distinct()
     )
+    if active_only:
+        stmt = stmt.where(models.session_peers_table.c.left_at.is_(None))
     result = await db.execute(stmt)
     return [row[0] for row in result.all()]
+
+
+async def resolve_session_scope(
+    db: AsyncSession | None,
+    workspace_name: str,
+    session_name: str | None,
+    session_allowlist: list[str] | None,
+    observer: str | None,
+    *,
+    operation_name: str = "resolve_session_scope",
+) -> tuple[list[str] | None, bool]:
+    """Resolve the effective session scope for a message query.
+
+    Returns ``(allowed_session_names, deny)``:
+
+    - ``allowed_session_names is None`` — apply no allowlist filter. Either the
+      query is unrestricted, or ``session_name`` already pins it to one session.
+    - a populated list — restrict the query to exactly these sessions.
+    - ``deny=True`` — the caller must return an empty result *without* querying.
+
+    The distinction between ``None`` and an empty list is load-bearing: the
+    external vector stores drop an empty ``IN`` clause rather than matching
+    nothing, so collapsing the two would fail open. This function therefore
+    never returns an empty list — it returns ``deny=True`` instead.
+
+    Touches the database only when an observer lookup is actually required, so
+    callers on the external-vector-store path don't check out a connection
+    before their network call.
+
+    Args:
+        db: Database session to reuse. Pass None to let this function open its
+            own short-lived read-only session if (and only if) it needs one.
+        workspace_name: Name of the workspace
+        session_name: A single pinned session, if the caller named one
+        session_allowlist: Optional session allowlist. ``None`` is unrestricted;
+            an empty list fails closed.
+        observer: When set, scope is limited to this peer's sessions and then
+            intersected with ``session_allowlist``
+        operation_name: Label for the self-managed DB session, when one is opened
+
+    Returns:
+        Tuple of (allowlist to filter on or None, whether to deny outright).
+    """
+    if session_name:
+        # A specific session was requested. Fail closed when the allowlist
+        # forbids it — routes guard this too, but other CRUD callers (the
+        # dialectic tools) don't, so enforce it at the boundary.
+        if session_allowlist is not None and session_name not in session_allowlist:
+            return None, True
+        return None, False
+
+    if observer is None:
+        if session_allowlist is None:
+            return None, False
+        allowed = list(session_allowlist)
+        return (allowed, False) if allowed else (None, True)
+
+    if db is not None:
+        allowed = await get_peer_session_names(db, workspace_name, observer)
+    else:
+        async with tracked_db(f"{operation_name}.peer_scope", read_only=True) as own_db:
+            allowed = await get_peer_session_names(own_db, workspace_name, observer)
+
+    if session_allowlist is not None:
+        scope = set(session_allowlist)
+        allowed = [s for s in allowed if s in scope]
+
+    return (allowed, False) if allowed else (None, True)
 
 
 def _apply_token_limit(
@@ -276,158 +362,37 @@ async def create_messages(
 
     db.add_all(message_objects)
 
-    # Commit here to release the advisory lock before generating embeddings
-    await db.commit()
-    try:
-        if settings.EMBED_MESSAGES:
-            id_resource_dict = {
-                message.public_id: message.content
-                for message in message_objects
-                if message.content and message.content.strip()
-            }
-            if id_resource_dict:
-                with embedding_call_purpose(
-                    EmbeddingCallPurpose.MESSAGE_CREATE.value,
-                    workspace_name=workspace_name,
-                    parent_category="api",
-                ):
-                    embedding_dict = await embedding_client.batch_embed(
-                        id_resource_dict
-                    )
-            else:
-                embedding_dict = {}
-
-            external_vector_store = get_external_vector_store()
-
-            # Determine if we need to persist embeddings to postgres
-            # True when: TYPE=pgvector OR still migrating (dual-write to both stores)
-            store_embeddings_in_postgres = (
-                settings.VECTOR_STORE.TYPE == "pgvector"
-                or not settings.VECTOR_STORE.MIGRATED
-            )
-
-            # Create MessageEmbedding entries
-            embedding_objects: list[models.MessageEmbedding] = []
-            # Maps emb index -> (chunk_position, embedding vector)
-            pending_embedding_data: dict[int, tuple[int, list[float]]] = {}
+    # If embedding is enabled, locally chunk the content and insert
+    # one pending MessageEmbedding row per chunk in chunk order. The actual
+    # embedding work is deferred to the reconciler
+    if settings.EMBED_MESSAGES:
+        id_resource_dict = {
+            message_obj.public_id: message_obj.content
+            for message_obj in message_objects
+            if message_obj.content and message_obj.content.strip()
+        }
+        if id_resource_dict:
+            chunks_by_id = embedding_client.prepare_chunks(id_resource_dict)
+            peer_by_id = {m.public_id: m.peer_name for m in message_objects}
+            pending_rows: list[models.MessageEmbedding] = []
             for message_obj in message_objects:
-                embeddings = embedding_dict.get(message_obj.public_id, [])
-                for chunk_position, embedding in enumerate(embeddings):
-                    embedding_obj = models.MessageEmbedding(
-                        content=message_obj.content,
-                        message_id=message_obj.public_id,
-                        workspace_name=workspace_name,
-                        session_name=session_name,
-                        peer_name=message_obj.peer_name,
-                        sync_state="pending",
-                        embedding=embedding if store_embeddings_in_postgres else None,
-                    )
-                    emb_idx = len(embedding_objects)
-                    pending_embedding_data[emb_idx] = (chunk_position, embedding)
-                    embedding_objects.append(embedding_obj)
-
-            # Always create MessageEmbedding rows so reconciliation can track sync state
-            # even when embeddings aren't stored in postgres
-            embedding_ids: list[int] = []
-            if embedding_objects:
-                db.add_all(embedding_objects)
-                await db.flush()
-                embedding_ids = [emb.id for emb in embedding_objects]
-
-            await db.commit()
-
-            # If no external vector store (pgvector-only mode), mark as synced immediately
-            if external_vector_store is None:
-                if embedding_ids:
-                    await db.execute(
-                        update(models.MessageEmbedding)
-                        .where(models.MessageEmbedding.id.in_(embedding_ids))
-                        .values(
-                            sync_state="synced",
-                            last_sync_at=func.now(),
-                            sync_attempts=0,
+                chunks = chunks_by_id.get(message_obj.public_id, [])
+                for chunk_text in chunks:
+                    pending_rows.append(
+                        models.MessageEmbedding(
+                            content=chunk_text,
+                            message_id=message_obj.public_id,
+                            workspace_name=workspace_name,
+                            session_name=session_name,
+                            peer_name=peer_by_id[message_obj.public_id],
+                            sync_state="pending",
+                            embedding=None,
                         )
                     )
-                    await db.commit()
-            else:
-                # External vector store - build and upsert vector records
-                namespace = external_vector_store.get_vector_namespace(
-                    "message", workspace_name
-                )
+            if pending_rows:
+                db.add_all(pending_rows)
 
-                # Build vector records with {message_id}_{chunk_position} as vector ID
-                vector_records: list[VectorRecord] = []
-                for emb_idx, emb in enumerate(embedding_objects):
-                    chunk_position, embedding = pending_embedding_data[emb_idx]
-                    vector_id = f"{emb.message_id}_{chunk_position}"
-                    vector_records.append(
-                        VectorRecord(
-                            id=vector_id,
-                            embedding=list(embedding),
-                            metadata={
-                                "message_id": emb.message_id,
-                                "session_name": emb.session_name,
-                                "peer_name": emb.peer_name,
-                            },
-                        )
-                    )
-
-                # Upsert to external vector store and update sync state
-                if vector_records:
-                    try:
-                        await external_vector_store.upsert_many(
-                            namespace, vector_records
-                        )
-                        # Success: mark as synced if we have DB rows
-                        if embedding_ids:
-                            await db.execute(
-                                update(models.MessageEmbedding)
-                                .where(models.MessageEmbedding.id.in_(embedding_ids))
-                                .values(
-                                    sync_state="synced",
-                                    last_sync_at=func.now(),
-                                    sync_attempts=0,
-                                )
-                            )
-                            await db.commit()
-
-                    except VectorStoreError:
-                        logger.warning(
-                            "Vector store unavailable; leaving message vectors unsynced"
-                        )
-                        if embedding_ids:
-                            await db.execute(
-                                update(models.MessageEmbedding)
-                                .where(models.MessageEmbedding.id.in_(embedding_ids))
-                                .values(
-                                    sync_attempts=models.MessageEmbedding.sync_attempts
-                                    + 1,
-                                    last_sync_at=func.now(),
-                                )
-                            )
-                            await db.commit()
-
-                    except Exception:
-                        logger.exception("Unexpected error upserting message vectors")
-                        if embedding_ids:
-                            await db.execute(
-                                update(models.MessageEmbedding)
-                                .where(models.MessageEmbedding.id.in_(embedding_ids))
-                                .values(
-                                    sync_attempts=models.MessageEmbedding.sync_attempts
-                                    + 1,
-                                    last_sync_at=func.now(),
-                                )
-                            )
-                            await db.commit()
-
-    except Exception:
-        logger.exception(
-            "Failed to generate message embeddings for %s messages in workspace %s and session %s.",
-            len(message_objects),
-            workspace_name,
-            session_name,
-        )
+    await db.commit()
 
     return message_objects
 
@@ -770,6 +735,9 @@ async def _search_messages_pgvector(
             models.MessageEmbedding,
             models.Message.public_id == models.MessageEmbedding.message_id,
         )
+        # Exclude pending rows that haven't been embedded yet: their NULL
+        # distance sorts last and would pad the window with unranked messages.
+        .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
         .order_by(models.MessageEmbedding.embedding.cosine_distance(query_embedding))
         .limit(limit * 2)
@@ -808,21 +776,29 @@ async def _semantic_search_messages(
     after_date: datetime | None = None,
     before_date: datetime | None = None,
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """Run semantic message search with optional temporal filters.
 
     When observer is provided and session_name is None, results are
-    scoped to sessions the observer has any membership record in.
+    scoped to sessions the observer has any membership record in. When
+    session_allowlist is provided, that membership scope is further
+    intersected with the allowlist (fail-closed: empty result on empty
+    intersection).
     """
-    # Pre-fetch peer session scope if needed (short-lived DB session)
-    allowed_session_names: list[str] | None = None
-    if observer and not session_name:
-        async with tracked_db(f"{operation_name}.peer_scope") as db:
-            allowed_session_names = await get_peer_session_names(
-                db, workspace_name, observer
-            )
-        if not allowed_session_names:
-            return []
+    # db=None: the helper opens its own short-lived session only if it needs
+    # an observer lookup, so the external-store path below stays the first
+    # thing that happens when no observer scoping applies.
+    allowed_session_names, deny = await resolve_session_scope(
+        None,
+        workspace_name,
+        session_name,
+        session_allowlist,
+        observer,
+        operation_name=operation_name,
+    )
+    if deny:
+        return []
 
     if settings.VECTOR_STORE.TYPE != "pgvector" and settings.VECTOR_STORE.MIGRATED:
         message_ids = await _search_messages_external(
@@ -837,7 +813,7 @@ async def _semantic_search_messages(
         if not message_ids:
             return []
 
-        async with tracked_db(operation_name) as db:
+        async with tracked_db(operation_name, read_only=True) as db:
             matched_messages = (
                 await _fetch_messages_by_ids(
                     db,
@@ -853,7 +829,7 @@ async def _semantic_search_messages(
             _expunge_snippets(db, snippets)
             return snippets
 
-    async with tracked_db(operation_name) as db:
+    async with tracked_db(operation_name, read_only=True) as db:
         snippets = await _search_messages_pgvector(
             db,
             workspace_name,
@@ -877,6 +853,7 @@ async def search_messages(
     context_window: int = 2,
     embedding: list[float] | None = None,
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity and return conversation snippets.
@@ -887,12 +864,19 @@ async def search_messages(
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session (optional)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         query: Search query text
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
         embedding: Optional pre-computed embedding
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of tuples: (matched_messages, context_messages)
@@ -918,6 +902,7 @@ async def search_messages(
         context_window=context_window,
         operation_name="message.search_messages",
         observer=observer,
+        session_allowlist=session_allowlist,
     )
 
 
@@ -965,6 +950,7 @@ async def grep_messages(
     limit: int = 10,
     context_window: int = 2,
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages containing specific text (case-insensitive substring match).
@@ -975,25 +961,29 @@ async def grep_messages(
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session (optional - searches all sessions if None)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         text: Text to search for (case-insensitive)
         limit: Maximum number of matching messages to return
         context_window: Number of messages before/after each match to include
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of tuples: (matched_messages, context_messages)
         Each snippet may contain multiple matches if they were close together.
     """
-    async with tracked_db("message.grep_messages") as db:
-        # Pre-fetch peer session scope if needed
-        allowed_session_names = None
-        if observer and not session_name:
-            allowed_session_names = await get_peer_session_names(
-                db, workspace_name, observer
-            )
-            if not allowed_session_names:
-                return []
+    async with tracked_db("message.grep_messages", read_only=True) as db:
+        allowed_session_names, deny = await resolve_session_scope(
+            db, workspace_name, session_name, session_allowlist, observer
+        )
+        if deny:
+            return []
 
         snippets = await _grep_messages_internal(
             db,
@@ -1017,6 +1007,7 @@ async def get_messages_by_date_range(
     limit: int = 20,
     order: str = "desc",
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[models.Message]:
     """
     Get messages within a date range.
@@ -1025,24 +1016,28 @@ async def get_messages_by_date_range(
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session (optional - searches all sessions if None)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         after_date: Return messages after this datetime
         before_date: Return messages before this datetime
         limit: Maximum messages to return
         order: Sort order - 'asc' for oldest first, 'desc' for newest first
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of messages within the date range
     """
-    # Pre-fetch peer session scope if needed
-    allowed_session_names = None
-    if observer and not session_name:
-        allowed_session_names = await get_peer_session_names(
-            db, workspace_name, observer
-        )
-        if not allowed_session_names:
-            return []
+    allowed_session_names, deny = await resolve_session_scope(
+        db, workspace_name, session_name, session_allowlist, observer
+    )
+    if deny:
+        return []
 
     stmt = select(models.Message).where(models.Message.workspace_name == workspace_name)
 
@@ -1076,6 +1071,7 @@ async def search_messages_temporal(
     context_window: int = 2,
     embedding: list[float] | None = None,
     observer: str | None = None,
+    session_allowlist: list[str] | None = None,
 ) -> list[tuple[list[models.Message], list[models.Message]]]:
     """
     Search for messages using semantic similarity with optional date filtering.
@@ -1086,6 +1082,10 @@ async def search_messages_temporal(
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session (optional)
+            Deprecated for *scoping*: prefer session_allowlist, which
+            intersects with observer membership. This parameter also pins
+            the query to one session and bypasses observer scoping, so it
+            is not a drop-in equivalent and is not removed.
         query: Search query text
         after_date: Only return messages after this datetime
         before_date: Only return messages before this datetime
@@ -1094,6 +1094,9 @@ async def search_messages_temporal(
         embedding: Optional pre-computed embedding for the query
         observer: When provided and session_name is None, scope results
             to sessions this peer belongs to
+        session_allowlist: Optional session allowlist. None is unrestricted; an
+            empty list fails closed (empty result); a populated list is
+            intersected with the observer's session scope when observer is set
 
     Returns:
         List of tuples: (matched_messages, context_messages)
@@ -1120,4 +1123,5 @@ async def search_messages_temporal(
         context_window=context_window,
         operation_name="message.search_messages_temporal",
         observer=observer,
+        session_allowlist=session_allowlist,
     )

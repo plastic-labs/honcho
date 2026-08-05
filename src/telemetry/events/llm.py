@@ -34,6 +34,7 @@ class CallPurpose(str, Enum):
     DIALECTIC_ANSWER = "dialectic.answer"
     DREAM_DEDUCTION = "dream.deduction"
     DREAM_INDUCTION = "dream.induction"
+    DREAM_CARD_REFRESH = "dream.card_refresh"
     SUMMARY_SHORT = "summary.short"
     SUMMARY_LONG = "summary.long"
 
@@ -164,6 +165,9 @@ class EmbeddingCallPurpose(str, Enum):
     CREATE_OBSERVATIONS = "create_observations"
     VECTOR_SYNC = "vector_sync"
     SUMMARY = "summary"
+    # Pending MessageEmbedding rows from create_messages; embedding runs in the
+    # reconciler (not inline on the API path). Distinct from VECTOR_SYNC, which
+    # covers document re-embeds and other vector-store healing work.
     MESSAGE_CREATE = "message_create"
     # Added so previously-unattributed call sites land on a distinct slug
     # instead of None. Closed taxonomy — coordinate with analytics before

@@ -9,6 +9,7 @@ from src.security import (
     JWTParams,
     create_jwt,
     require_auth,
+    scope_requires_workspace,
 )
 from src.utils.formatting import format_datetime_utc
 
@@ -40,6 +41,17 @@ async def create_key(
     if not any([workspace_id, peer_id, session_id]):
         raise ValidationException(
             "At least one of workspace_id, peer_id, or session_id must be provided"
+        )
+
+    # A peer- or session-scoped key must carry its parent workspace, otherwise
+    # verify_jwt rejects it on every request (the workspace is required to rule
+    # out cross-workspace use). Shares the predicate with verify_jwt so the
+    # creation-time guard and the verification-time invariant cannot drift.
+    if scope_requires_workspace(
+        peer=peer_id, session=session_id, workspace=workspace_id
+    ):
+        raise ValidationException(
+            "workspace_id is required when scoping a key to a peer or session"
         )
 
     key_str = create_jwt(
