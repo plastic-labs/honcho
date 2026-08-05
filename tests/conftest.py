@@ -825,7 +825,7 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
 
     from src.utils.representation import (
         # DeductiveObservationBase,
-        ExplicitObservationBase,
+        PromptExplicitObservation,
         PromptRepresentation,
     )
 
@@ -845,7 +845,10 @@ def mock_honcho_llm_call(request: pytest.FixtureRequest):
             if getattr(response_model, "__name__", "") == "ReasoningResponse":
                 _rep = PromptRepresentation(
                     explicit=[
-                        ExplicitObservationBase(content="Test explicit observation")
+                        PromptExplicitObservation(
+                            content="Test explicit observation",
+                            is_durable_target_fact=True,
+                        )
                     ],
                     # deductive=[
                     #     DeductiveObservationBase(

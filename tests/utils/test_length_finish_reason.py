@@ -36,8 +36,8 @@ class SimpleModel(BaseModel):
 
 VALID_REPR_JSON = {
     "explicit": [
-        {"content": "hermes is 25 years old"},
-        {"content": "hermes has a dog"},
+        {"content": "hermes is 25 years old", "is_durable_target_fact": True},
+        {"content": "hermes has a dog", "is_durable_target_fact": True},
     ]
 }
 
@@ -235,7 +235,9 @@ class TestOpenAILengthFinishReasonRepair:
 
     async def test_token_counts_preserved(self) -> None:
         """Token counts from the truncated completion should be preserved."""
-        truncated_json = '{"explicit": [{"content": "fact one"}'
+        truncated_json = (
+            '{"explicit": [{"content": "fact one", "is_durable_target_fact": true}'
+        )
 
         mock_client = AsyncMock(spec=AsyncOpenAI)
         mock_client.chat.completions.parse = _raise_length_error(truncated_json)

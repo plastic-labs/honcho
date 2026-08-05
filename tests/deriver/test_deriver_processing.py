@@ -10,7 +10,7 @@ from src.config import settings
 from src.deriver.deriver import process_representation_tasks_batch
 from src.llm import HonchoLLMCallResponse
 from src.utils.representation import (
-    ExplicitObservationBase,
+    PromptExplicitObservation,
     PromptRepresentation,
     Representation,
 )
@@ -338,7 +338,12 @@ class TestDeriverProcessing:
 
         mock_response = HonchoLLMCallResponse(
             content=PromptRepresentation(
-                explicit=[ExplicitObservationBase(content="alice says hello")]
+                explicit=[
+                    PromptExplicitObservation(
+                        content="alice says hello",
+                        is_durable_target_fact=True,
+                    )
+                ]
             ),
             input_tokens=10,
             output_tokens=5,
