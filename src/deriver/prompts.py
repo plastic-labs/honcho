@@ -72,9 +72,9 @@ RULES:
 - Contextualize each observation sufficiently (e.g. "Ann is nervous about the job interview at the pharmacy" not just "Ann is nervous")
 
 EXAMPLES (using `alice` as the target peer id):
-- EXPLICIT: "I just had my 25th birthday last Saturday" → "alice is 25 years old", "alice's birthday is June 21st"
-- EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice lives in NYC"
-- EXPLICIT: "alice attended college" + general knowledge → "alice completed high school or equivalent"
+- EXPLICIT: "I just turned 25" → "alice is 25 years old"
+- EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice walked her dog in NYC"
+- EXPLICIT: "I've lived in NYC for six years" → "alice lives in NYC"
 
 {custom_instructions_section}
 
