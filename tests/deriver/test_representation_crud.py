@@ -1,5 +1,12 @@
 import datetime
+import logging
 
+import pytest
+
+from src import models
+from src.deriver.deriver import (
+    _format_messages_for_prompt,  # pyright: ignore[reportPrivateUsage]
+)
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -7,6 +14,13 @@ from src.utils.representation import (
     PromptRepresentation,
     Representation,
 )
+
+
+def test_prompt_representation_schema_orders_citations_before_content() -> None:
+    schema = PromptRepresentation.model_json_schema()
+    explicit_properties = schema["$defs"]["ExplicitObservationBase"]["properties"]
+
+    assert list(explicit_properties) == ["source_indices", "content"]
 
 
 def test_representation_is_empty_and_diff():
@@ -97,6 +111,7 @@ def test_prompt_representation_conversion():
     rep = Representation.from_prompt_representation(
         pr,
         message_ids=[1],
+        prompt_message_ids=[1],
         session_name="s",
         created_at=timestamp,
     )
@@ -106,3 +121,50 @@ def test_prompt_representation_conversion():
     # (they would be created directly by the Dreamer via the create_observations tool)
     assert len(rep.deductive) == 0
     assert rep.explicit[0].created_at == timestamp
+
+
+def test_mixed_peer_source_indices_resolve_against_prompt_order(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    created_at = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    messages = [
+        models.Message(id=10, peer_name="bob", content="Which option?"),
+        models.Message(id=20, peer_name="alice", content="The first one"),
+        models.Message(id=30, peer_name="bob", content="Got it"),
+    ]
+    for message in messages:
+        message.created_at = created_at
+
+    formatted_messages, prompt_message_ids = _format_messages_for_prompt(messages)
+    prompt_representation = PromptRepresentation(
+        explicit=[
+            ExplicitObservationBase(
+                content="Alice chose the first option",
+                source_indices=[0, 1, 3],
+            )
+        ]
+    )
+
+    with caplog.at_level(logging.WARNING, logger="src.utils.representation"):
+        representation = Representation.from_prompt_representation(
+            prompt_representation,
+            message_ids=[20],
+            prompt_message_ids=prompt_message_ids,
+            session_name="s",
+            created_at=created_at,
+        )
+
+    observation = representation.explicit[0]
+    assert observation.source_indices == [0, 1]
+    assert observation.source_message_ids == [10, 20]
+    assert [
+        (line[:3], message_id, line.split(": ", 1)[1])
+        for message_id, line in zip(
+            prompt_message_ids, formatted_messages.splitlines(), strict=True
+        )
+    ] == [
+        ("[0]", 10, "Which option?"),
+        ("[1]", 20, "The first one"),
+        ("[2]", 30, "Got it"),
+    ]
+    assert "Dropping out-of-range source_indices [3]" in caplog.text

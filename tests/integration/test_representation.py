@@ -321,6 +321,8 @@ class TestDocumentCreationWorkflow:
             level="explicit",
             internal_metadata={
                 "message_ids": [1],
+                "source_message_ids": [2, 1],
+                "source_indices": [1, 0],
             },
             session_name="test_session",
             created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
@@ -350,6 +352,8 @@ class TestDocumentCreationWorkflow:
         explicit_obs = representation.explicit[0]
         assert explicit_obs.content == "User said they like programming"
         assert explicit_obs.message_ids == [1]
+        assert explicit_obs.source_message_ids == [2, 1]
+        assert explicit_obs.source_indices == [1, 0]
         assert explicit_obs.session_name == "test_session"
 
         deductive_obs = representation.deductive[0]
@@ -357,6 +361,24 @@ class TestDocumentCreationWorkflow:
         assert deductive_obs.premises == ["User said they like programming"]
         assert deductive_obs.message_ids == [1]
         assert deductive_obs.session_name == "test_session"
+
+    async def test_representation_from_old_document_defaults_source_message_ids(self):
+        """Old documents without resolved citations remain readable."""
+        explicit_doc = models.Document(
+            id="old_explicit_doc_id",
+            workspace_name="test_workspace",
+            observer="test_peer",
+            observed="test_peer",
+            content="An older observation",
+            level="explicit",
+            internal_metadata={"message_ids": [1]},
+            session_name="test_session",
+            created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        )
+
+        representation = Representation.from_documents([explicit_doc])
+
+        assert representation.explicit[0].source_message_ids == []
 
     async def create_test_workspace_and_peer(
         self, db_session: AsyncSession, workspace_name: str | None = None
@@ -412,7 +434,10 @@ class TestPromptRepresentationConversion:
         """
         prompt_rep = PromptRepresentation(
             explicit=[
-                ExplicitObservationBase(content="User likes coffee"),
+                ExplicitObservationBase(
+                    source_indices=[0],
+                    content="User likes coffee",
+                ),
                 ExplicitObservationBase(content="User works remotely"),
             ],
         )
@@ -422,6 +447,7 @@ class TestPromptRepresentationConversion:
         representation = Representation.from_prompt_representation(
             prompt_rep,
             message_ids=[123],
+            prompt_message_ids=[123],
             session_name="test_session",
             created_at=timestamp,
         )
@@ -434,8 +460,10 @@ class TestPromptRepresentationConversion:
         # Check explicit observations
         assert representation.explicit[0].content == "User likes coffee"
         assert representation.explicit[0].message_ids == [123]
+        assert representation.explicit[0].source_message_ids == [123]
         assert representation.explicit[0].session_name == "test_session"
         assert representation.explicit[1].content == "User works remotely"
+        assert representation.explicit[1].source_message_ids == []
         assert representation.explicit[0].created_at == timestamp
 
     async def test_empty_prompt_representation_conversion(self):
@@ -444,6 +472,7 @@ class TestPromptRepresentationConversion:
         representation = Representation.from_prompt_representation(
             empty_prompt_rep,
             message_ids=[1],
+            prompt_message_ids=[1],
             session_name="test",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         )

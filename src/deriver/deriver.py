@@ -35,6 +35,20 @@ def _get_deriver_model_config() -> ConfiguredModelSettings:
     return settings.DERIVER.MODEL_CONFIG
 
 
+def _format_messages_for_prompt(messages: list[Message]) -> tuple[str, list[int]]:
+    """Format one ordered message batch and retain its index-to-ID mapping."""
+    formatted_messages: list[str] = []
+    prompt_message_ids: list[int] = []
+    for index, message in enumerate(messages):
+        formatted_message = format_new_turn_with_timestamp(
+            message.content, message.created_at, message.peer_name
+        )
+        formatted_messages.append(f"[{index}] {formatted_message}")
+        prompt_message_ids.append(message.id)
+
+    return "\n".join(formatted_messages), prompt_message_ids
+
+
 @with_sentry_transaction("minimal_deriver_batch", op="deriver")
 async def process_representation_tasks_batch(
     messages: list[Message],
@@ -103,11 +117,9 @@ async def process_representation_tasks_batch(
         "id",
     )
 
-    # Format messages with timestamps
-    formatted_messages = "\n".join(
-        format_new_turn_with_timestamp(msg.content, msg.created_at, msg.peer_name)
-        for msg in messages
-    )
+    # Build the prompt text and its index-to-ID mapping in one pass so they
+    # cannot disagree about ordering.
+    formatted_messages, prompt_message_ids = _format_messages_for_prompt(messages)
 
     # Track token usage - count only tokens from messages being processed
     prompt_tokens = estimate_deriver_prompt_tokens(custom_instructions)
@@ -190,6 +202,7 @@ async def process_representation_tasks_batch(
     observations = Representation.from_prompt_representation(
         response.content,
         message_ids,
+        prompt_message_ids,
         latest_message.session_name,
         latest_message.created_at,
     )

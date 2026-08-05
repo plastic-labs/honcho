@@ -472,6 +472,55 @@ class TestRepresentationManagerSessionScoping:
 
 class TestRepresentationManagerSave:
     @pytest.mark.asyncio
+    async def test_save_representation_threads_source_trace_metadata(self):
+        manager = RepresentationManager(
+            "workspace",
+            observer="observer",
+            observed="alice",
+        )
+        observation = ExplicitObservation(
+            content="Alice chose the first option",
+            source_indices=[0, 1],
+            created_at=datetime.now(timezone.utc),
+            message_ids=[20],
+            source_message_ids=[10, 20],
+            session_name="session",
+        )
+
+        with (
+            patch(
+                "src.crud.representation.crud.get_or_create_collection",
+                new=AsyncMock(return_value=MagicMock()),
+            ),
+            patch(
+                "src.crud.representation.crud.create_documents",
+                new=AsyncMock(return_value=CreateDocumentsResult()),
+            ) as mock_create_documents,
+        ):
+            await manager._save_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                MagicMock(spec=AsyncSession),
+                [observation],
+                [[0.1]],
+                message_ids=[20],
+                session_name="session",
+                message_created_at=datetime.now(timezone.utc),
+                message_level_configuration=_resolved_config(),
+            )
+
+        create_call = mock_create_documents.await_args
+        assert create_call is not None
+        document = create_call.args[1][0]
+        assert document.metadata.message_ids == [20]
+        assert document.metadata.source_message_ids == [10, 20]
+        assert document.metadata.source_indices == [0, 1]
+        assert document.metadata.model_dump(exclude_none=True)[
+            "source_message_ids"
+        ] == [
+            10,
+            20,
+        ]
+
+    @pytest.mark.asyncio
     async def test_save_representation_filters_blank_observations_before_embedding(
         self,
     ):

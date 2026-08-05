@@ -33,6 +33,10 @@ class DocumentMetadata(BaseModel):
     message_ids: list[int] = Field(
         description="The ID range(s) of the messages that this document was derived from. Acts as a link to the primary source of the document. Note that as a document gets deduplicated, additional ranges will be added, because the same document could be derived from completely separate message ranges."
     )
+    source_message_ids: list[int] = Field(
+        default_factory=list,
+        description="Canonical citation message IDs resolved from source_indices",
+    )
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
     )
@@ -55,6 +59,10 @@ class DocumentMetadata(BaseModel):
     confidence: str | None = Field(
         default=None,
         description="Confidence level (high, medium, low) -- only applicable for inductive documents",
+    )
+    source_indices: list[int] = Field(
+        default_factory=list,
+        description="Per-derivation debugging provenance only: 0-based positions in the deriver batch that lose meaning across deduplication merges; source_message_ids is the canonical citation",
     )
 
 
