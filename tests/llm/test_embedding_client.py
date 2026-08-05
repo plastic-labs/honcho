@@ -273,6 +273,7 @@ async def test_openai_simple_batch_embed_defaults_to_2048_when_unset(
         send_dimensions=False,
         vector_dimensions=1536,
     )
+    assert client.max_batch_size == 2048
 
     await client.simple_batch_embed(["a", "b", "c"])
 
@@ -362,6 +363,7 @@ async def test_gemini_simple_batch_embed_defaults_to_100_when_unset(
         max_tokens_per_request=300_000,
         send_dimensions=False,
     )
+    assert client.max_batch_size == 100
 
     await client.simple_batch_embed(["a", "b", "c"])
 
