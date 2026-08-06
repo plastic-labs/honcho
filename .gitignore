@@ -3,8 +3,12 @@ api/**/*.db
 api/data
 api/docker-compose.yml
 
+# Unified test runner artifacts (per-run output dir; not source-controlled)
+tests/unified/artifacts/
+
 *.db
 data
+!tests/unified/test_cases/data/
 redis-data
 docker-compose.yml
 compose.yml
