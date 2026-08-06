@@ -133,6 +133,19 @@ class VectorStoreError(HonchoException):
     detail = "Vector store operation failed"
 
 
+@final
+class RepresentationSaveError(HonchoException):
+    """Exception raised when every observer's representation save fails in a batch.
+
+    Surfaced from the deriver to the queue manager so the work unit is marked
+    errored instead of silently processed with zero documents saved. The
+    underlying save exception is preserved as the cause via ``raise ... from``.
+    """
+
+    status_code = 500
+    detail = "Representation save failed for all observers"
+
+
 class LLMError(Exception):
     """Exception raised when an LLM call fails.
 
