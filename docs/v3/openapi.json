@@ -2423,6 +2423,45 @@
       }
     },
     "/v3/workspaces/{workspace_id}/conclusions/{conclusion_id}": {
+      "get": {
+        "tags": ["conclusions"],
+        "summary": "Get Conclusion",
+        "description": "Get a single Conclusion by ID.",
+        "operationId": "get_conclusion_v3_workspaces__workspace_id__conclusions__conclusion_id__get",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "conclusion_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Conclusion Id" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Conclusion" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": ["conclusions"],
         "summary": "Delete Conclusion",
@@ -2445,6 +2484,86 @@
         ],
         "responses": {
           "204": { "description": "Successful Response" },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v3/workspaces/{workspace_id}/conclusions/{conclusion_id}/derived": {
+      "get": {
+        "tags": ["conclusions"],
+        "summary": "Get Derived Conclusions",
+        "description": "Get the Conclusions derived from the given Conclusion — i.e. those that list it\nin their `source_ids`. Traverses the reasoning tree upward (source -> derived).\nResults are ordered by recency unless `reverse` is true, and paginated.",
+        "operationId": "get_derived_conclusions_v3_workspaces__workspace_id__conclusions__conclusion_id__derived_get",
+        "security": [{ "HTTPBearer": [] }],
+        "parameters": [
+          {
+            "name": "workspace_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Workspace Id" }
+          },
+          {
+            "name": "conclusion_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "title": "Conclusion Id" }
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Page_Conclusion_" }
+              }
+            }
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -2789,6 +2908,20 @@
             "title": "Level",
             "description": "Reasoning level of the conclusion: 'explicit' (directly extracted from messages) or 'deductive'/'inductive'/'contradiction' (derived during dreaming).",
             "default": "explicit"
+          },
+          "source_ids": {
+            "anyOf": [
+              { "items": { "type": "string" }, "type": "array" },
+              { "type": "null" }
+            ],
+            "title": "Source Ids",
+            "description": "IDs of the conclusions this one was derived from: premises for 'deductive', supporting sources for 'inductive', conflicting conclusions for 'contradiction'. None for 'explicit' conclusions."
+          },
+          "times_derived": {
+            "type": "integer",
+            "title": "Times Derived",
+            "description": "Number of times this conclusion has been independently derived.",
+            "default": 1
           },
           "created_at": {
             "type": "string",

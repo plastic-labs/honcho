@@ -76,6 +76,14 @@ export class Conclusion {
    * dreaming.
    */
   readonly level: ConclusionLevel
+  /**
+   * IDs of the conclusions this one was derived from (premises for
+   * 'deductive', supporting sources for 'inductive', conflicting conclusions
+   * for 'contradiction'). Null for 'explicit' conclusions.
+   */
+  readonly sourceIds: string[] | null
+  /** Number of times this conclusion has been independently derived. */
+  readonly timesDerived: number
   readonly createdAt: string
 
   constructor(
@@ -85,7 +93,9 @@ export class Conclusion {
     observedId: string,
     sessionId: string | null,
     createdAt: string,
-    level: ConclusionLevel = 'explicit'
+    level: ConclusionLevel = 'explicit',
+    sourceIds: string[] | null = null,
+    timesDerived: number = 1
   ) {
     this.id = id
     this.content = content
@@ -93,6 +103,8 @@ export class Conclusion {
     this.observedId = observedId
     this.sessionId = sessionId
     this.level = level
+    this.sourceIds = sourceIds
+    this.timesDerived = timesDerived
     this.createdAt = createdAt
   }
 
@@ -104,7 +116,9 @@ export class Conclusion {
       data.observed_id,
       data.session_id,
       data.created_at,
-      data.level
+      data.level,
+      data.source_ids ?? null,
+      data.times_derived ?? 1
     )
   }
 
@@ -193,6 +207,34 @@ export class ConclusionScope {
     )
   }
 
+  private async _get(conclusionId: string): Promise<ConclusionResponse> {
+    await this._ensureWorkspace()
+    return this._http.get<ConclusionResponse>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}`
+    )
+  }
+
+  private async _derived(
+    conclusionId: string,
+    params: {
+      page?: number
+      size?: number
+      reverse?: boolean
+    }
+  ): Promise<PageResponse<ConclusionResponse>> {
+    await this._ensureWorkspace()
+    return this._http.get<PageResponse<ConclusionResponse>>(
+      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}/derived`,
+      {
+        query: {
+          page: params.page,
+          size: params.size,
+          reverse: params.reverse ? 'true' : undefined,
+        },
+      }
+    )
+  }
+
   private async _delete(conclusionId: string): Promise<void> {
     await this._ensureWorkspace()
     await this._http.delete(
@@ -233,7 +275,8 @@ export class ConclusionScope {
    *   this scope's observer/observed (and session, if given). Supports the same
    *   operators as other list endpoints — e.g. `{ level: 'explicit' }` to get
    *   only conclusions extracted directly from messages (i.e. not derived during
-   *   dreaming). See
+   *   dreaming), or `{ source_ids: { contains: '<id>' } }` to get conclusions
+   *   derived from a given conclusion (see also `derived()`). See
    *   https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
    * @returns Promise resolving to a Page of Conclusion objects
    */
@@ -314,6 +357,90 @@ export class ConclusionScope {
     })
 
     return (response ?? []).map((item) => Conclusion.fromApiResponse(item))
+  }
+
+  /**
+   * Get a single conclusion by ID.
+   *
+   * @param conclusionId - The ID of the conclusion to retrieve
+   * @returns Promise resolving to the Conclusion object, including its
+   *   attribution fields (`sourceIds`, `timesDerived`)
+   */
+  async get(conclusionId: string): Promise<Conclusion> {
+    const response = await this._get(conclusionId)
+    return Conclusion.fromApiResponse(response)
+  }
+
+  /**
+   * Get multiple conclusions by ID in a single call.
+   *
+   * Useful for resolving a derived conclusion's premises: pass its
+   * `sourceIds` to fetch all of them at once instead of one `get()` per ID.
+   *
+   * @param conclusionIds - The IDs of the conclusions to retrieve
+   * @returns Promise resolving to the matching Conclusion objects. IDs that
+   *   don't exist are omitted, so the result may be shorter than the input
+   *   (order is not guaranteed to match the input either).
+   */
+  async getMany(conclusionIds: string[]): Promise<Conclusion[]> {
+    if (conclusionIds.length === 0) return []
+    const conclusions: Conclusion[] = []
+    // The list endpoint caps page size at 100
+    for (let start = 0; start < conclusionIds.length; start += 100) {
+      const chunk = conclusionIds.slice(start, start + 100)
+      const response = await this._list({
+        filters: { id: { in: chunk } },
+        page: 1,
+        size: chunk.length,
+      })
+      conclusions.push(
+        ...(response.items ?? []).map((item) =>
+          Conclusion.fromApiResponse(item)
+        )
+      )
+    }
+    return conclusions
+  }
+
+  /**
+   * Get the conclusions derived from the given conclusion — i.e. those that
+   * list it in their `sourceIds`. Traverses the reasoning tree upward
+   * (source -> derived).
+   *
+   * @param conclusionId - The ID of the source conclusion
+   * @param options - Optional configuration for the request
+   * @param options.page - Page number (1-indexed, default: 1)
+   * @param options.size - Number of items per page (default: 50)
+   * @param options.reverse - If true, reverses the default newest-first ordering
+   * @returns Promise resolving to a Page of Conclusion objects
+   */
+  async derived(
+    conclusionId: string,
+    options?: {
+      page?: number
+      size?: number
+      reverse?: boolean
+    }
+  ): Promise<Page<Conclusion, ConclusionResponse>> {
+    const reverse = options?.reverse
+    const response = await this._derived(conclusionId, {
+      page: options?.page ?? 1,
+      size: options?.size ?? 50,
+      reverse,
+    })
+
+    const fetchNextPage = async (
+      page: number,
+      size: number
+    ): Promise<PageResponse<ConclusionResponse>> => {
+      return this._derived(conclusionId, { page, size, reverse })
+    }
+
+    return new Page(
+      response,
+      (item) => Conclusion.fromApiResponse(item),
+      fetchNextPage
+    )
   }
 
   /**

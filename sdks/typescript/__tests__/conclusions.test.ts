@@ -334,6 +334,91 @@ describe('Conclusions', () => {
   })
 
   // ===========================================================================
+  // Single Conclusion Retrieval (GET /conclusions/:id)
+  // ===========================================================================
+
+  describe('GET /conclusions/:id (get)', () => {
+    test('get returns conclusion with attribution fields', async () => {
+      const peer = await client.peer('get-conclusion-peer', { metadata: {} })
+      const session = await client.session('get-conclusion-session', { metadata: {} })
+
+      const [created] = await peer.conclusions.create({
+        content: 'Conclusion to fetch',
+        sessionId: session,
+      })
+
+      const fetched = await peer.conclusions.get(created.id)
+
+      expect(fetched).toBeInstanceOf(Conclusion)
+      expect(fetched.id).toBe(created.id)
+      expect(fetched.content).toBe('Conclusion to fetch')
+      expect(fetched.observerId).toBe(peer.id)
+      expect(fetched.observedId).toBe(peer.id)
+      expect(fetched.level).toBe('explicit')
+      // User-created conclusions are explicit: no premises, derived once
+      expect(fetched.sourceIds).toBeNull()
+      expect(fetched.timesDerived).toBe(1)
+    })
+  })
+
+  // ===========================================================================
+  // Batch Retrieval (getMany)
+  // ===========================================================================
+
+  describe('getMany', () => {
+    test('fetches multiple conclusions by ID', async () => {
+      const peer = await client.peer('get-many-conclusion-peer', { metadata: {} })
+      const session = await client.session('get-many-conclusion-session', { metadata: {} })
+
+      const created = await peer.conclusions.create([
+        { content: 'First batch conclusion', sessionId: session },
+        { content: 'Second batch conclusion', sessionId: session },
+        { content: 'Third batch conclusion', sessionId: session },
+      ])
+
+      const fetched = await peer.conclusions.getMany(created.map((c) => c.id))
+
+      expect(fetched.length).toBe(3)
+      for (const conclusion of fetched) {
+        expect(conclusion).toBeInstanceOf(Conclusion)
+      }
+      expect(new Set(fetched.map((c) => c.id))).toEqual(
+        new Set(created.map((c) => c.id))
+      )
+    })
+
+    test('empty input returns empty array', async () => {
+      const peer = await client.peer('get-many-empty-peer', { metadata: {} })
+
+      const fetched = await peer.conclusions.getMany([])
+
+      expect(fetched).toEqual([])
+    })
+  })
+
+  // ===========================================================================
+  // Derived Conclusions (GET /conclusions/:id/derived)
+  // ===========================================================================
+
+  describe('GET /conclusions/:id/derived', () => {
+    test('leaf conclusion has no derived conclusions', async () => {
+      const peer = await client.peer('derived-conclusion-peer', { metadata: {} })
+      const session = await client.session('derived-conclusion-session', { metadata: {} })
+
+      // User-created (explicit) conclusions have nothing derived from them
+      const [created] = await peer.conclusions.create({
+        content: 'Leaf conclusion',
+        sessionId: session,
+      })
+
+      const page = await peer.conclusions.derived(created.id)
+
+      expect(page.items).toEqual([])
+      expect(page.total).toBe(0)
+    })
+  })
+
+  // ===========================================================================
   // Conclusion Deletion (DELETE /conclusions/:id)
   // ===========================================================================
 
@@ -429,6 +514,29 @@ describe('Conclusions', () => {
       expect(conclusion.observedId).toBe('observed')
       expect(conclusion.sessionId).toBe('session')
       expect(conclusion.createdAt).toBe('2024-01-15T10:00:00Z')
+      // Attribution fields default when absent from the response
+      expect(conclusion.sourceIds).toBeNull()
+      expect(conclusion.timesDerived).toBe(1)
+    })
+
+    test('fromApiResponse carries attribution fields', () => {
+      const response = {
+        id: 'derived-id',
+        content: 'Derived conclusion',
+        observer_id: 'observer',
+        observed_id: 'observed',
+        session_id: null,
+        level: 'deductive' as const,
+        source_ids: ['premise-1', 'premise-2'],
+        times_derived: 3,
+        created_at: '2024-01-15T10:00:00Z',
+      }
+
+      const conclusion = Conclusion.fromApiResponse(response)
+
+      expect(conclusion.level).toBe('deductive')
+      expect(conclusion.sourceIds).toEqual(['premise-1', 'premise-2'])
+      expect(conclusion.timesDerived).toBe(3)
     })
 
     test('toString returns readable format', async () => {

@@ -74,6 +74,11 @@ class Conclusion:
         level: Reasoning level ("explicit", "deductive", "inductive",
             "contradiction"). "explicit" conclusions are extracted directly
             from messages; the others are derived during dreaming.
+        source_ids: IDs of the conclusions this one was derived from (premises
+            for "deductive", supporting sources for "inductive", conflicting
+            conclusions for "contradiction"). None for "explicit" conclusions.
+        times_derived: Number of times this conclusion has been independently
+            derived.
         created_at: Timestamp for when the conclusion was created
     """
 
@@ -83,6 +88,8 @@ class Conclusion:
     observed_id: str
     session_id: str | None = None
     level: ConclusionLevel = "explicit"
+    source_ids: list[str] | None = None
+    times_derived: int = 1
     created_at: datetime.datetime
 
     def __init__(
@@ -94,6 +101,8 @@ class Conclusion:
         session_id: str | None,
         created_at: datetime.datetime,
         level: ConclusionLevel = "explicit",
+        source_ids: list[str] | None = None,
+        times_derived: int = 1,
     ) -> None:
         self.id = id
         self.content = content
@@ -101,6 +110,8 @@ class Conclusion:
         self.observed_id = observed_id
         self.session_id = session_id
         self.level = level
+        self.source_ids = source_ids
+        self.times_derived = times_derived
         self.created_at = created_at
 
     @classmethod
@@ -113,6 +124,8 @@ class Conclusion:
             observed_id=data.observed_id,
             session_id=data.session_id,
             level=data.level,
+            source_ids=data.source_ids,
+            times_derived=data.times_derived,
             created_at=data.created_at,
         )
 
@@ -218,7 +231,9 @@ class ConclusionScope:
                 with this scope's observer/observed (and session, if given).
                 Supports the same operators as other list endpoints — e.g.
                 ``{"level": "explicit"}`` to get only conclusions extracted
-                directly from messages (i.e. not derived during dreaming). See
+                directly from messages (i.e. not derived during dreaming), or
+                ``{"source_ids": {"contains": "<id>"}}`` to get conclusions
+                derived from a given conclusion (see also ``derived()``). See
                 https://honcho.dev/docs/v3/documentation/features/advanced/using-filters
             reverse: If True, reverses the default ordering. Default: False.
 
@@ -312,6 +327,105 @@ class ConclusionScope:
             Conclusion.from_api_response(ConclusionResponse.model_validate(item))
             for item in data
         ]
+
+    def get(self, conclusion_id: str) -> Conclusion:
+        """
+        Get a single conclusion by ID.
+
+        Args:
+            conclusion_id: The ID of the conclusion to retrieve
+
+        Returns:
+            The Conclusion object, including its attribution fields
+            (`source_ids`, `times_derived`)
+        """
+        self._honcho._ensure_workspace()
+        data = self._honcho._http.get(
+            routes.conclusion(self.workspace_id, conclusion_id)
+        )
+        return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
+
+    def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
+        """
+        Get multiple conclusions by ID in a single call.
+
+        Useful for resolving a derived conclusion's premises: pass its
+        ``source_ids`` to fetch all of them at once instead of one
+        ``get()`` per ID.
+
+        Args:
+            conclusion_ids: The IDs of the conclusions to retrieve
+
+        Returns:
+            The matching Conclusion objects. IDs that don't exist are
+            omitted, so the result may be shorter than the input (order
+            is not guaranteed to match the input either).
+        """
+        if not conclusion_ids:
+            return []
+        self._honcho._ensure_workspace()
+        conclusions: list[Conclusion] = []
+        for start in range(0, len(conclusion_ids), 100):
+            chunk = conclusion_ids[start : start + 100]
+            data = self._honcho._http.post(
+                routes.conclusions_list(self.workspace_id),
+                body={"filters": {"id": {"in": chunk}}},
+                query={"page": 1, "size": len(chunk)},
+            )
+            conclusions.extend(
+                Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+                for item in data.get("items", [])
+            )
+        return conclusions
+
+    def derived(
+        self,
+        conclusion_id: str,
+        page: int = 1,
+        size: int = 50,
+        *,
+        reverse: bool = False,
+    ) -> SyncPage[ConclusionResponse, Conclusion]:
+        """
+        Get the conclusions derived from the given conclusion — i.e. those
+        that list it in their ``source_ids``. Traverses the reasoning tree
+        upward (source -> derived).
+
+        Args:
+            conclusion_id: The ID of the source conclusion
+            page: Page number to fetch. Default: 1.
+            size: Number of results per page. Default: 50.
+            reverse: If True, reverses the default newest-first ordering.
+
+        Returns:
+            Paginated response containing Conclusion objects
+        """
+        self._honcho._ensure_workspace()
+
+        def build_query(page_num: int) -> dict[str, Any]:
+            query: dict[str, Any] = {"page": page_num, "size": size}
+            if reverse:
+                query["reverse"] = "true"
+            return query
+
+        data = self._honcho._http.get(
+            routes.conclusion_derived(self.workspace_id, conclusion_id),
+            query=build_query(page),
+        )
+
+        def transform(response: ConclusionResponse) -> Conclusion:
+            return Conclusion.from_api_response(response)
+
+        def fetch_next(
+            next_page: int,
+        ) -> SyncPage[ConclusionResponse, Conclusion]:
+            next_data = self._honcho._http.get(
+                routes.conclusion_derived(self.workspace_id, conclusion_id),
+                query=build_query(next_page),
+            )
+            return SyncPage(next_data, ConclusionResponse, transform, fetch_next)
+
+        return SyncPage(data, ConclusionResponse, transform, fetch_next)
 
     def delete(self, conclusion_id: str) -> None:
         """

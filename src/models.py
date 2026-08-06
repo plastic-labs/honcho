@@ -420,6 +420,11 @@ class Document(Base):
 
     collection = relationship("Collection", back_populates="documents")
 
+    @property
+    def resolved_source_ids(self) -> list[str] | None:
+        """Source IDs, falling back to legacy internal_metadata storage."""
+        return self.source_ids or (self.internal_metadata or {}).get("source_ids")
+
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),

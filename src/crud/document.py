@@ -1354,34 +1354,39 @@ async def get_documents_by_ids(
     return result.scalars().all()
 
 
-async def get_child_observations(
-    db: AsyncSession,
+def get_child_observations(
     workspace_name: str,
     parent_id: str,
     *,
     observer: str | None = None,
     observed: str | None = None,
-) -> Sequence[models.Document]:
+    reverse: bool = False,
+) -> Select[tuple[models.Document]]:
     """
     Get all observations that have this document as a source/premise.
 
     Useful for traversing the reasoning tree upward (source -> derived observations).
-    Uses GIN index on source_ids for efficient lookups.
+    Uses GIN index on source_ids for efficient lookups. Only matches linkage
+    stored in the source_ids column; legacy documents whose source_ids live in
+    internal_metadata are not found.
 
     Args:
-        db: Database session
         workspace_name: Workspace identifier
         parent_id: Document ID to find children of
         observer: Optional filter by observer
         observed: Optional filter by observed
+        reverse: Whether to reverse the order (oldest first)
 
     Returns:
-        Sequence of documents that reference this document as a source
+        Select query for documents that reference this document as a source,
+        for pagination support via apaginate()
     """
-    # Find documents where source_ids contains the parent_id
+    # Find documents where source_ids contains the parent_id. The explicit
+    # jsonb_build_array keeps the bind typed as JSONB — SQLAlchemy would
+    # otherwise coerce the value to VARCHAR, which the @> operator rejects.
     stmt = select(models.Document).where(
         models.Document.workspace_name == workspace_name,
-        models.Document.source_ids.contains([parent_id]),
+        models.Document.source_ids.contains(func.jsonb_build_array(parent_id)),
         models.Document.deleted_at.is_(None),
     )
     if observer:
@@ -1389,5 +1394,13 @@ async def get_child_observations(
     if observed:
         stmt = stmt.where(models.Document.observed == observed)
 
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    # created_at is the transaction timestamp, so documents created in the
+    # same batch share it -- id keeps pagination deterministic.
+    if reverse:
+        stmt = stmt.order_by(models.Document.created_at.asc(), models.Document.id.asc())
+    else:
+        stmt = stmt.order_by(
+            models.Document.created_at.desc(), models.Document.id.desc()
+        )
+
+    return stmt

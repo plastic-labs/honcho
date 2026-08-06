@@ -1600,6 +1600,98 @@ class ConclusionScopeAio:
             for item in data
         ]
 
+    async def get(self, conclusion_id: str) -> Conclusion:
+        """Get a single conclusion by ID asynchronously.
+
+        Returns:
+            The Conclusion object, including its attribution fields
+            (`source_ids`, `times_derived`)
+        """
+        await self._scope._honcho._ensure_workspace_async()
+        data = await self._scope._honcho._async_http_client.get(
+            routes.conclusion(self._scope.workspace_id, conclusion_id)
+        )
+        return Conclusion.from_api_response(ConclusionResponse.model_validate(data))
+
+    async def get_many(self, conclusion_ids: list[str]) -> list[Conclusion]:
+        """Get multiple conclusions by ID in a single call asynchronously.
+
+        Useful for resolving a derived conclusion's premises: pass its
+        ``source_ids`` to fetch all of them at once instead of one
+        ``get()`` per ID.
+
+        Returns:
+            The matching Conclusion objects. IDs that don't exist are
+            omitted, so the result may be shorter than the input (order
+            is not guaranteed to match the input either).
+        """
+        if not conclusion_ids:
+            return []
+        await self._scope._honcho._ensure_workspace_async()
+        conclusions: list[Conclusion] = []
+        for start in range(0, len(conclusion_ids), 100):
+            chunk = conclusion_ids[start : start + 100]
+            data = await self._scope._honcho._async_http_client.post(
+                routes.conclusions_list(self._scope.workspace_id),
+                body={"filters": {"id": {"in": chunk}}},
+                query={"page": 1, "size": len(chunk)},
+            )
+            conclusions.extend(
+                Conclusion.from_api_response(ConclusionResponse.model_validate(item))
+                for item in data.get("items", [])
+            )
+        return conclusions
+
+    async def derived(
+        self,
+        conclusion_id: str,
+        page: int = 1,
+        size: int = 50,
+        *,
+        reverse: bool = False,
+    ) -> AsyncPage[ConclusionResponse, Conclusion]:
+        """Get the conclusions derived from the given conclusion asynchronously.
+
+        Returns the conclusions that list ``conclusion_id`` in their
+        ``source_ids``, traversing the reasoning tree upward
+        (source -> derived).
+
+        Args:
+            conclusion_id: The ID of the source conclusion
+            page: Page number to fetch. Default: 1.
+            size: Number of results per page. Default: 50.
+            reverse: If True, reverses the default newest-first ordering.
+
+        Returns:
+            Paginated response containing Conclusion objects
+        """
+        await self._scope._honcho._ensure_workspace_async()
+
+        def build_query(page_num: int) -> dict[str, Any]:
+            query: dict[str, Any] = {"page": page_num, "size": size}
+            if reverse:
+                query["reverse"] = "true"
+            return query
+
+        data = await self._scope._honcho._async_http_client.get(
+            routes.conclusion_derived(self._scope.workspace_id, conclusion_id),
+            query=build_query(page),
+        )
+
+        def transform(response: ConclusionResponse) -> Conclusion:
+            return Conclusion.from_api_response(response)
+
+        async def fetch_next(
+            next_page: int,
+        ) -> AsyncPage[ConclusionResponse, Conclusion]:
+            next_data = await self._scope._honcho._async_http_client.get(
+                routes.conclusion_derived(self._scope.workspace_id, conclusion_id),
+                query=build_query(next_page),
+            )
+            return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
+
+        return AsyncPage(data, ConclusionResponse, transform, fetch_next)
+
     async def delete(self, conclusion_id: str) -> None:
         """Delete a conclusion by ID asynchronously."""
         await self._scope._honcho._ensure_workspace_async()

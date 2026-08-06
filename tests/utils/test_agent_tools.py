@@ -26,6 +26,7 @@ from src.utils.agent_tools import (
     _handle_get_messages_by_date_range,  # pyright: ignore[reportPrivateUsage]
     _handle_get_observation_context,  # pyright: ignore[reportPrivateUsage]
     _handle_get_peer_card,  # pyright: ignore[reportPrivateUsage]
+    _handle_get_reasoning_chain,  # pyright: ignore[reportPrivateUsage]
     _handle_get_recent_history,  # pyright: ignore[reportPrivateUsage]
     _handle_get_recent_observations,  # pyright: ignore[reportPrivateUsage]
     _handle_get_session_summary,  # pyright: ignore[reportPrivateUsage]
@@ -1037,6 +1038,94 @@ class TestGetObservationContext:
         )
 
         assert "Retrieved" in result or "No messages found" in result
+
+
+@pytest.mark.asyncio
+class TestGetReasoningChain:
+    """Tests for _handle_get_reasoning_chain."""
+
+    async def _create_tree(
+        self,
+        db_session: AsyncSession,
+        workspace: models.Workspace,
+        observer: models.Peer,
+        observed: models.Peer,
+    ) -> tuple[models.Document, models.Document]:
+        """Create a premise and a deductive conclusion derived from it."""
+        premise = models.Document(
+            workspace_name=workspace.name,
+            observer=observer.name,
+            observed=observed.name,
+            content="User works late at night",
+        )
+        db_session.add(premise)
+        await db_session.flush()
+
+        derived = models.Document(
+            workspace_name=workspace.name,
+            observer=observer.name,
+            observed=observed.name,
+            content="User is likely a night owl",
+            level="deductive",
+            source_ids=[premise.id],
+        )
+        db_session.add(derived)
+        # Commit so the handler's own tracked_db session can see the data.
+        await db_session.commit()
+        return premise, derived
+
+    async def test_traverses_derived_conclusions(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Walking upward from a premise finds the conclusions derived from it."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        premise, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": premise.id, "direction": "conclusions"}
+        )
+
+        assert f"[id:{derived.id}]" in result
+        assert "User is likely a night owl" in result
+
+    async def test_traverses_premises(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """Walking downward from a derived conclusion finds its premises."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        premise, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": derived.id, "direction": "premises"}
+        )
+
+        assert f"[id:{premise.id}]" in result
+        assert "User works late at night" in result
+
+    async def test_leaf_has_no_derived_conclusions(
+        self,
+        db_session: AsyncSession,
+        tool_test_data: Any,
+        make_tool_context: Callable[..., ToolContext],
+    ):
+        """A conclusion nothing was derived from reports none found."""
+        workspace, peer1, peer2, _, _, _ = tool_test_data
+        _, derived = await self._create_tree(db_session, workspace, peer1, peer2)
+        ctx = make_tool_context()
+
+        result = await _handle_get_reasoning_chain(
+            ctx, {"observation_id": derived.id, "direction": "conclusions"}
+        )
+
+        assert "None found" in result
 
 
 @pytest.mark.asyncio

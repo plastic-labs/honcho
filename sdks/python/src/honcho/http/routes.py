@@ -136,3 +136,9 @@ def conclusions_query(workspace_id: str) -> str:
 
 def conclusion(workspace_id: str, conclusion_id: str) -> str:
     return f"/{API_VERSION}/workspaces/{workspace_id}/conclusions/{conclusion_id}"
+
+
+def conclusion_derived(workspace_id: str, conclusion_id: str) -> str:
+    return (
+        f"/{API_VERSION}/workspaces/{workspace_id}/conclusions/{conclusion_id}/derived"
+    )
