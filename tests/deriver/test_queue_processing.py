@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
@@ -18,6 +18,21 @@ from src.utils.work_unit import construct_work_unit_key
 @pytest.mark.asyncio
 class TestQueueProcessing:
     """Test suite for queue processing functionality"""
+
+    async def test_invalid_work_unit_is_quarantined_before_processing(self) -> None:
+        qm = QueueManager()
+        work_unit_key = "hermes:invalid-test-session"
+        worker_id = "test_worker"
+
+        with patch.object(
+            qm, "_quarantine_invalid_work_unit", new_callable=AsyncMock
+        ) as quarantine:
+            await qm.process_work_unit(work_unit_key, worker_id)
+
+        quarantine.assert_awaited_once()
+        args = quarantine.await_args.args
+        assert args[:2] == (work_unit_key, worker_id)
+        assert isinstance(args[2], ValueError)
 
     async def _add_representation_work_unit(
         self,
