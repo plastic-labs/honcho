@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BadRequestError, UnprocessableEntityError } from "@honcho-ai/sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../types.js";
 import { textResult, errorResult, formatMessages } from "../types.js";
@@ -74,11 +75,13 @@ export function register(server: McpServer, ctx: ToolContext) {
     "search",
     {
       description: [
-        "Semantic search across messages. Scope is determined by which optional params are provided:",
+        "Semantic search across messages and, when peer_id is given, that peer's saved conclusions.",
+        "Message scope is determined by which optional params are provided:",
         "- No scope params: search all messages in the workspace.",
         "- peer_id only: search messages authored by that peer across all sessions.",
         "- session_id only: search messages within that session.",
-        "Returns an array of matching messages with their content, peer, and session info.",
+        "Conclusions require peer_id (self-conclusions are searched; conclusion IDs are usable with delete_conclusion).",
+        "Returns {messages, conclusions}.",
       ].join("\n"),
       inputSchema: {
         query: z.string().describe("Search query."),
@@ -90,21 +93,93 @@ export function register(server: McpServer, ctx: ToolContext) {
           .string()
           .optional()
           .describe("Optional: scope search to messages in this session."),
+        message_limit: z
+          .number()
+          .optional()
+          .describe("Optional: max message results (1-100, default 10)."),
+        message_filters: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'Optional: filters for the message search, e.g. {"created_at": {"gte": "2026-01-01"}}. See https://honcho.dev/docs/v3/documentation/features/advanced/using-filters',
+          ),
+        conclusion_top_k: z
+          .number()
+          .optional()
+          .describe("Optional: max conclusion results (default 10)."),
+        conclusion_filters: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'Optional: filters for the conclusion search, e.g. {"level": ["deductive", "inductive"]} to only return conclusions derived during dreaming. Levels: explicit (extracted directly from messages), deductive, inductive, contradiction. The session_id param does not scope conclusions; use {"session_id": ...} here for that.',
+          ),
       },
     },
-    async ({ query, peer_id, session_id }) => {
+    async ({
+      query,
+      peer_id,
+      session_id,
+      message_limit,
+      message_filters,
+      conclusion_top_k,
+      conclusion_filters,
+    }) => {
       try {
-        let messages;
-        if (session_id) {
-          const session = await ctx.honcho.session(session_id);
-          messages = await session.search(query);
-        } else if (peer_id) {
-          const peer = await ctx.honcho.peer(peer_id);
-          messages = await peer.search(query);
-        } else {
-          messages = await ctx.honcho.search(query);
-        }
-        return textResult(formatMessages(messages));
+        const peer = peer_id ? await ctx.honcho.peer(peer_id) : null;
+        const messageOptions = {
+          filters: message_filters,
+          limit: message_limit,
+        };
+
+        const searchMessages = async () => {
+          if (session_id) {
+            const session = await ctx.honcho.session(session_id);
+            return session.search(query, messageOptions);
+          }
+          if (peer) {
+            return peer.search(query, messageOptions);
+          }
+          return ctx.honcho.search(query, messageOptions);
+        };
+
+        // Conclusion search needs an (observer, observed) pair, so it only
+        // runs when peer_id is given.
+        const searchConclusions = async () => {
+          if (!peer) {
+            return [];
+          }
+          try {
+            return await peer.conclusions.query(
+              query,
+              conclusion_top_k,
+              undefined,
+              conclusion_filters,
+            );
+          } catch (e) {
+            if (
+              conclusion_filters &&
+              (e instanceof BadRequestError ||
+                e instanceof UnprocessableEntityError)
+            ) {
+              throw e;
+            }
+            return [];
+          }
+        };
+
+        const [messages, conclusions] = await Promise.all([
+          searchMessages(),
+          searchConclusions(),
+        ]);
+        return textResult({
+          messages: formatMessages(messages),
+          conclusions: conclusions.map((c) => ({
+            id: c.id,
+            content: c.content,
+            level: c.level,
+            created_at: c.createdAt,
+          })),
+        });
       } catch (e) {
         return errorResult(
           `Search failed: ${e instanceof Error ? e.message : String(e)}`,
