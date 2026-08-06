@@ -4,11 +4,11 @@ import random
 import signal
 import time
 from asyncio import Task
-from collections.abc import Sequence
+from collections.abc import Coroutine, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple, TypeVar, cast
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -52,6 +52,12 @@ from src.webhooks.events import (
 logger = getLogger(__name__)
 
 load_dotenv(override=True)
+
+T = TypeVar("T")
+
+
+class WorkUnitOwnershipError(RuntimeError):
+    """Raised when a worker can no longer prove ownership of its work unit."""
 
 
 class WorkerOwnership(NamedTuple):
@@ -578,6 +584,7 @@ class QueueManager:
         error: Exception,
         items: list[QueueItem],
         work_unit_key: str,
+        aqs_id: str,
         context: str,
     ) -> None:
         """
@@ -589,14 +596,17 @@ class QueueManager:
             error: The exception that occurred
             items: The queue items that were being processed
             work_unit_key: The work unit key for the queue items
+            aqs_id: The exact active-queue-session claim owned by this worker
             context: Context string describing what was being processed (e.g., "processing representation batch")
         """
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
             if items:
                 await self.mark_queue_item_as_errored(
-                    items[0], work_unit_key, error_msg
+                    items[0], work_unit_key, aqs_id, error_msg
                 )
+        except WorkUnitOwnershipError:
+            raise
         except Exception as mark_error:
             logger.error(
                 f"Failed to mark queue items as errored for work unit {work_unit_key}: {mark_error}",
@@ -610,12 +620,103 @@ class QueueManager:
         if settings.SENTRY.ENABLED:
             sentry_sdk.capture_exception(error)
 
+    def _work_unit_heartbeat_interval_seconds(self) -> float:
+        """Return a heartbeat cadence safely inside the stale-claim window."""
+        stale_timeout_seconds = (
+            float(settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES) * 60
+        )
+        return max(stale_timeout_seconds, 0.001) / 3
+
+    async def _touch_work_unit_claim(self, work_unit_key: str, aqs_id: str) -> bool:
+        """Refresh an exact claim using a short, write-only DB transaction."""
+        async with tracked_db("heartbeat_work_unit_claim") as db:
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(models.ActiveQueueSession)
+                    .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                    .where(models.ActiveQueueSession.id == aqs_id)
+                    .values(last_updated=func.now())
+                ),
+            )
+            await db.commit()
+            return result.rowcount == 1
+
+    async def _maintain_work_unit_claim(self, work_unit_key: str, aqs_id: str) -> None:
+        """Heartbeat a claim, failing closed before its stale timeout expires."""
+        interval = self._work_unit_heartbeat_interval_seconds()
+        # interval = stale_timeout / 3, so the worst failure path is
+        # 1 interval + 2 attempt timeouts + 1 retry delay = 5/6 of the timeout.
+        retry_delay = interval / 2
+        attempt_timeout = interval / 2
+        while True:
+            await asyncio.sleep(interval)
+            for attempt in range(2):
+                try:
+                    async with asyncio.timeout(attempt_timeout):
+                        still_owned = await self._touch_work_unit_claim(
+                            work_unit_key, aqs_id
+                        )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    if attempt == 0:
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    raise WorkUnitOwnershipError(
+                        f"Heartbeat failed for work unit {work_unit_key}"
+                    ) from error
+
+                if not still_owned:
+                    raise WorkUnitOwnershipError(
+                        f"Lost ownership of work unit {work_unit_key}"
+                    )
+                break
+
+    async def _run_with_claim_heartbeat(
+        self,
+        operation: Coroutine[Any, Any, T],
+        work_unit_key: str,
+        aqs_id: str,
+    ) -> T:
+        """Supervise external work and cancel it if claim liveness is lost."""
+        processing_task = asyncio.create_task(operation)
+        heartbeat_task = asyncio.create_task(
+            self._maintain_work_unit_claim(work_unit_key, aqs_id)
+        )
+        try:
+            done, _pending = await asyncio.wait(
+                {processing_task, heartbeat_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if heartbeat_task in done:
+                heartbeat_error = heartbeat_task.exception()
+                if heartbeat_error is None:
+                    heartbeat_error = WorkUnitOwnershipError(
+                        f"Heartbeat stopped for work unit {work_unit_key}"
+                    )
+                processing_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await processing_task
+                raise heartbeat_error
+
+            return await processing_task
+        finally:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
+            if not processing_task.done():
+                processing_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await processing_task
+
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all queue items for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
         work_unit = parse_work_unit_key(work_unit_key)
         async with self.semaphore:
             queue_item_count = 0
+            drained_cleanly = False
             try:
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
@@ -640,6 +741,7 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
+                                drained_cleanly = True
                                 break
 
                             try:
@@ -659,25 +761,34 @@ class QueueManager:
                                     for item in items_to_process
                                     if item.message_id is not None
                                 ]
-                                await process_representation_batch(
-                                    messages_context,
-                                    message_level_configuration,
-                                    observers=observers,
-                                    observed=work_unit.observed,
-                                    queue_item_message_ids=queue_item_message_ids,
-                                    hit_batch_token_cap=batch_result.hit_batch_token_cap,
-                                    was_flush_enabled=batch_result.was_flush_enabled,
-                                    batch_max_tokens=batch_result.batch_max_tokens,
+                                await self._run_with_claim_heartbeat(
+                                    process_representation_batch(
+                                        messages_context,
+                                        message_level_configuration,
+                                        observers=observers,
+                                        observed=work_unit.observed,
+                                        queue_item_message_ids=queue_item_message_ids,
+                                        hit_batch_token_cap=batch_result.hit_batch_token_cap,
+                                        was_flush_enabled=batch_result.was_flush_enabled,
+                                        batch_max_tokens=batch_result.batch_max_tokens,
+                                    ),
+                                    work_unit_key,
+                                    ownership.aqs_id,
                                 )
                                 await self.mark_queue_items_as_processed(
-                                    items_to_process, work_unit_key
+                                    items_to_process,
+                                    work_unit_key,
+                                    ownership.aqs_id,
                                 )
                                 queue_item_count += len(items_to_process)
+                            except WorkUnitOwnershipError:
+                                raise
                             except Exception as e:
                                 await self._handle_processing_error(
                                     e,
                                     items_to_process,
                                     work_unit_key,
+                                    ownership.aqs_id,
                                     f"processing {work_unit.task_type} batch",
                                 )
 
@@ -689,22 +800,34 @@ class QueueManager:
                                 logger.debug(
                                     f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
+                                drained_cleanly = True
                                 break
 
                             try:
-                                await process_item(queue_item)
+                                await self._run_with_claim_heartbeat(
+                                    process_item(queue_item),
+                                    work_unit_key,
+                                    ownership.aqs_id,
+                                )
                                 await self.mark_queue_items_as_processed(
-                                    [queue_item], work_unit_key
+                                    [queue_item],
+                                    work_unit_key,
+                                    ownership.aqs_id,
                                 )
                                 queue_item_count += 1
+                            except WorkUnitOwnershipError:
+                                raise
                             except Exception as e:
                                 await self._handle_processing_error(
                                     e,
                                     [queue_item],
                                     work_unit_key,
+                                    ownership.aqs_id,
                                     "processing queue item",
                                 )
 
+                    except WorkUnitOwnershipError:
+                        raise
                     except Exception as e:
                         logger.error(
                             f"Error in processing loop for work unit {work_unit_key}: {e}",
@@ -732,7 +855,7 @@ class QueueManager:
                     removed = False
 
                 self.untrack_worker_work_unit(worker_id, work_unit_key)
-                if removed and queue_item_count > 0:
+                if removed and drained_cleanly and queue_item_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
                         if (
@@ -753,6 +876,11 @@ class QueueManager:
                             )
                     except Exception:
                         logger.exception("Error triggering queue_empty webhook")
+                elif removed:
+                    logger.debug(
+                        "Work unit %s ended without a clean drain; skipping webhook",
+                        work_unit_key,
+                    )
                 else:
                     logger.debug(
                         f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
@@ -1057,23 +1185,31 @@ class QueueManager:
         )
 
     async def mark_queue_items_as_processed(
-        self, items: list[QueueItem], work_unit_key: str
+        self, items: list[QueueItem], work_unit_key: str, aqs_id: str
     ) -> None:
         if not items:
             return
         async with tracked_db("process_queue_item_batch") as db:
             work_unit = parse_work_unit_key(work_unit_key)
             item_ids = [item.id for item in items]
+            ownership_result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(models.ActiveQueueSession)
+                    .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                    .where(models.ActiveQueueSession.id == aqs_id)
+                    .values(last_updated=func.now())
+                ),
+            )
+            if ownership_result.rowcount != 1:
+                raise WorkUnitOwnershipError(
+                    f"Lost ownership of work unit {work_unit_key}"
+                )
             await db.execute(
                 update(models.QueueItem)
                 .where(models.QueueItem.id.in_(item_ids))
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .values(processed=True)
-            )
-            await db.execute(
-                update(models.ActiveQueueSession)
-                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
-                .values(last_updated=func.now())
             )
             await db.commit()
 
@@ -1089,22 +1225,30 @@ class QueueManager:
                 )
 
     async def mark_queue_item_as_errored(
-        self, item: QueueItem, work_unit_key: str, error: str
+        self, item: QueueItem, work_unit_key: str, aqs_id: str, error: str
     ) -> None:
         """Mark queue item as processed with an error"""
         if not item:
             return
         async with tracked_db("mark_queue_item_as_errored") as db:
+            ownership_result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(models.ActiveQueueSession)
+                    .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                    .where(models.ActiveQueueSession.id == aqs_id)
+                    .values(last_updated=func.now())
+                ),
+            )
+            if ownership_result.rowcount != 1:
+                raise WorkUnitOwnershipError(
+                    f"Lost ownership of work unit {work_unit_key}"
+                )
             await db.execute(
                 update(models.QueueItem)
                 .where(models.QueueItem.id == item.id)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
-            )
-            await db.execute(
-                update(models.ActiveQueueSession)
-                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
-                .values(last_updated=func.now())
             )
             await db.commit()
 
