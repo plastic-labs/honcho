@@ -2,7 +2,9 @@
 
 import pytest
 
-from src.cache.client import _redact_cache_url  # pyright: ignore[reportPrivateUsage]
+from src.cache.client import (
+    _redact_cache_url,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 class TestRedactCacheUrl:

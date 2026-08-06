@@ -6,7 +6,8 @@ API contract.
 
 import datetime
 import ipaddress
-from typing import Annotated, Any, Self, cast
+import re
+from typing import Annotated, Any, Literal, Self, cast
 from urllib.parse import urlparse
 
 import tiktoken
@@ -28,6 +29,11 @@ from src.schemas.configuration import (
     SessionConfiguration,
     SessionPeerConfig,
     WorkspaceConfiguration,
+)
+from src.utils.scopes import (
+    SCOPE_PEER_PREFIX,
+    is_scope_peer_name,
+    scope_name_from_peer,
 )
 from src.utils.types import DocumentLevel
 
@@ -86,6 +92,31 @@ def _validate_metadata(v: Any) -> Any:
 
 _SanitizedMetadata = Annotated[dict[str, Any], BeforeValidator(_validate_metadata)]
 
+# Scope names are stored as peer names with the reserved prefix prepended, so
+# they must leave room for the prefix within the 512-character peer name limit.
+_SCOPE_NAME_MAX_LENGTH = 512 - len(SCOPE_PEER_PREFIX)
+
+
+def _validate_scope_name(name: str) -> str:
+    """Validate an unprefixed scope name."""
+    if not 1 <= len(name) <= _SCOPE_NAME_MAX_LENGTH:
+        raise ValueError(
+            f"Scope name must be between 1 and {_SCOPE_NAME_MAX_LENGTH} characters"
+        )
+    # Checked before the charset pattern: the reserved prefix is itself outside
+    # RESOURCE_NAME_PATTERN, so the pattern would otherwise reject a
+    # double-prefixed name first and report the charset instead of the real
+    # mistake.
+    if name.startswith(SCOPE_PEER_PREFIX):
+        raise ValueError(
+            "Scope name must not start with the reserved prefix "
+            + f"'{SCOPE_PEER_PREFIX}' (scope names are unprefixed)"
+        )
+    if not re.fullmatch(RESOURCE_NAME_PATTERN, name):
+        raise ValueError(f"Scope name must match pattern {RESOURCE_NAME_PATTERN}")
+    return name
+
+
 # ---------------------------------------------------------------------------
 # Workspace schemas
 # ---------------------------------------------------------------------------
@@ -139,19 +170,47 @@ class PeerBase(BaseModel):
     pass
 
 
-class PeerCreate(PeerBase):
+class PeerSpec(PeerBase):
+    """Peer identity plus optional updates, for callers that already have a name.
+
+    ``PeerCreate`` narrows ``name`` with ``pattern=RESOURCE_NAME_PATTERN`` because it
+    validates a *new, user-supplied* peer id at the API boundary. crud paths reach
+    ``get_or_create_peers`` with names that already exist — a path param, a message
+    author, an existing row — including pre-``d429de0e5338`` legacy names containing
+    '.' and every ``scope.``-prefixed peer name. Re-validating those turns a lookup
+    into a raw pydantic ValidationError, i.e. an HTTP 500.
+
+    Carries **no** constraints at all, deliberately. Length limits here were the
+    same trap as the charset pattern: request-bound peer names (message authors,
+    session peer-map keys) have no length bound of their own, so an empty or
+    over-long name reached ``PeerSpec(...)`` and raised internally — again a 500.
+    Every rule for a *new* name lives in ``crud.peer._validate_new_peer_names``,
+    which runs on the insert path only.
+    """
+
+    name: str
+    metadata: _SanitizedMetadata | None = None
+    configuration: dict[str, Any] | None = None
+
+
+class PeerCreate(PeerSpec):
     name: Annotated[
         str,
         Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: _SanitizedMetadata | None = None
-    configuration: dict[str, Any] | None = None
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
 
 class PeerGet(PeerBase):
     filters: dict[str, Any] | None = None
+    kind: Literal["scope", "all"] | None = Field(
+        default=None,
+        description=(
+            "Which kinds of peers to list. Omitted (default): regular peers only "
+            "(scope peers are excluded). 'scope': scope peers only. 'all': every peer."
+        ),
+    )
 
 
 class PeerUpdate(PeerBase):
@@ -337,6 +396,26 @@ class SessionCreate(SessionBase):
     metadata: _SanitizedMetadata | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
     configuration: SessionConfiguration | None = None
+    scopes: list[str] | None = Field(
+        default=None,
+        max_length=100,
+        description=(
+            "Optional list of (unprefixed) scope names to add this session to. "
+            "Each scope is created if it does not exist yet. Note: scope "
+            "membership only affects messages ingested after the session is "
+            "added to the scope; backfill of pre-existing documents lands in a "
+            "follow-up (DEV-1999)."
+        ),
+    )
+
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        for scope_name in v:
+            _validate_scope_name(scope_name)
+        return v
 
     model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
@@ -429,6 +508,67 @@ class SessionSummaries(SessionBase):
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
     )
+
+
+# ---------------------------------------------------------------------------
+# Scope schemas
+# ---------------------------------------------------------------------------
+
+
+class ScopeCreate(BaseModel):
+    """Schema for creating (or getting) a scope by its unprefixed name."""
+
+    name: Annotated[str, Field(alias="id", min_length=1)]
+    metadata: _SanitizedMetadata | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        return _validate_scope_name(v)
+
+    model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
+
+
+class Scope(BaseModel):
+    """Scope response — external view of the peer backing a scope.
+
+    The ``id`` is the unprefixed scope name; the reserved peer-name prefix is
+    an internal implementation detail and never surfaces here.
+    """
+
+    name: str = Field(serialization_alias="id")
+    h_metadata: dict[str, Any] = Field(
+        default_factory=dict, serialization_alias="metadata"
+    )
+    created_at: datetime.datetime
+
+    @field_validator("name", mode="after")
+    @classmethod
+    def strip_scope_prefix(cls, v: str) -> str:
+        # Constructed from Peer ORM rows whose names carry the prefix; accept
+        # already-unprefixed names too so manual construction works.
+        return scope_name_from_peer(v) if is_scope_peer_name(v) else v
+
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
+
+
+class ScopeSessionsAdd(BaseModel):
+    """Schema for adding sessions to a scope."""
+
+    session_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description="IDs of existing sessions to add to the scope",
+    )
+
+
+class ScopeSessions(BaseModel):
+    """IDs of the sessions that are currently members of a scope."""
+
+    session_ids: list[str]
 
 
 # ---------------------------------------------------------------------------
