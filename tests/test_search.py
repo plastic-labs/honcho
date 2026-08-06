@@ -4,9 +4,10 @@ import datetime
 
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import crud, models, schemas
 from src.utils.search import search
 
 
@@ -704,3 +705,88 @@ async def test_grep_messages_observer_scoping_left_session_still_visible(
     matched_ids = [m.public_id for matches, _ in results for m in matches]
     assert msg_during.public_id in matched_ids
     assert msg_after.public_id in matched_ids
+
+
+@pytest.mark.asyncio
+async def test_peer_perspective_search_after_active_readd(
+    db_session: AsyncSession,
+):
+    """Re-adding an ACTIVE peer must not hide pre-existing messages; a genuine
+    rejoin starts a new visibility window (issue #940 regression)."""
+    workspace = models.Workspace(name=generate_nanoid())
+    db_session.add(workspace)
+    await db_session.flush()
+
+    peer1 = models.Peer(name="peer1", workspace_name=workspace.name)
+    peer2 = models.Peer(name="peer2", workspace_name=workspace.name)
+    db_session.add_all([peer1, peer2])
+    await db_session.flush()
+
+    session = models.Session(name="session1", workspace_name=workspace.name)
+    db_session.add(session)
+    await db_session.flush()
+
+    # peer1 joined 1 hour ago — a long-lived membership with an established
+    # window start, well before any timestamp minted during this test.
+    past_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+        hours=1
+    )
+    await db_session.execute(
+        models.session_peers_table.insert().values(
+            workspace_name=workspace.name,
+            session_name=session.name,
+            peer_name=peer1.name,
+            joined_at=past_time,
+            left_at=None,
+        )
+    )
+
+    # Message created while peer1 is an active member (inside the old window)
+    msg_old = models.Message(
+        content="old persistent message",
+        session_name=session.name,
+        peer_name=peer2.name,
+        workspace_name=workspace.name,
+        seq_in_session=1,
+        created_at=past_time + datetime.timedelta(minutes=1),
+    )
+    db_session.add(msg_old)
+    await db_session.commit()
+
+    session_create = schemas.SessionCreate(
+        name=session.name,
+        peers={peer1.name: schemas.SessionPeerConfig()},
+    )
+
+    # Re-add while STILL ACTIVE via the CRUD path: the membership window must
+    # not move, so the pre-existing message stays visible. On the pre-fix
+    # code this re-add reset joined_at to now(), hiding the message.
+    await crud.get_or_create_session(db_session, session_create, workspace.name)
+    results = await search(
+        "persistent",
+        filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
+        limit=10,
+    )
+    assert msg_old.public_id in [m.public_id for m in results]
+
+    # Peer leaves...
+    await db_session.execute(
+        update(models.SessionPeer)
+        .where(
+            models.SessionPeer.session_name == session.name,
+            models.SessionPeer.peer_name == peer1.name,
+            models.SessionPeer.workspace_name == workspace.name,
+        )
+        .values(left_at=datetime.datetime.now(datetime.timezone.utc))
+    )
+    await db_session.commit()
+
+    # ...and rejoins: a NEW window starts (now() is guaranteed to be after
+    # past_time + 1min), so the old message is hidden.
+    await crud.get_or_create_session(db_session, session_create, workspace.name)
+    results = await search(
+        "persistent",
+        filters={"peer_perspective": peer1.name, "workspace_id": workspace.name},
+        limit=10,
+    )
+    assert msg_old.public_id not in [m.public_id for m in results]

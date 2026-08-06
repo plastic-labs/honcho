@@ -1060,13 +1060,16 @@ async def _get_or_add_peers_to_session(
         ]
     )
 
-    # On conflict, update joined_at and clear left_at (rejoin scenario)
-    # If left_at is not None (peer has left the session): Use the new configuration (stmt.excluded.configuration)
-    # If left_at is None (peer is still active): Keep the existing configuration (models.SessionPeer.configuration)
+    # On conflict, clear left_at and reset joined_at only when rejoining
+    # If left_at is not None (peer has left the session): Start a fresh membership window
+    # If left_at is None (peer is still active): Preserve joined_at and the existing configuration
     stmt = stmt.on_conflict_do_update(
         index_elements=["session_name", "peer_name", "workspace_name"],
         set_={
-            "joined_at": func.now(),
+            "joined_at": case(
+                (models.SessionPeer.left_at.is_not(None), func.now()),
+                else_=models.SessionPeer.joined_at,
+            ),
             "left_at": None,
             "configuration": case(
                 (models.SessionPeer.left_at.is_not(None), stmt.excluded.configuration),
