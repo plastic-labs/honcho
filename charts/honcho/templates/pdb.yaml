@@ -1,0 +1,14 @@
+{{- if .Values.api.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "honcho.fullname" . }}-api
+  labels:
+    {{- include "honcho.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: {{ .Values.api.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "honcho.componentLabels" (dict "Chart" .Chart "Values" .Values "Release" .Release "component" "api") | nindent 6 }}
+{{- end }}
