@@ -1,0 +1,88 @@
+{
+  "description": "Test that workspace-level chat can synthesize information across multiple peers in a single response. Three peers have distinct attributes; workspace chat should be able to compare or list them.",
+  "workspace_config": {},
+  "steps": [
+    {
+      "step_type": "create_session",
+      "session_id": "ws_cross_session",
+      "peer_configs": {
+        "dan": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "emma": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "frank": {
+          "observe_me": true,
+          "observe_others": false
+        },
+        "agent": {
+          "observe_me": false,
+          "observe_others": false
+        }
+      }
+    },
+    {
+      "step_type": "add_messages",
+      "session_id": "ws_cross_session",
+      "messages": [
+        {
+          "peer_id": "dan",
+          "content": "I'm a software engineer specializing in Rust and systems programming. I work at a startup building distributed databases."
+        },
+        {
+          "peer_id": "agent",
+          "content": "Interesting! What kind of databases?"
+        },
+        {
+          "peer_id": "dan",
+          "content": "We're building a distributed time-series database optimized for IoT sensor data."
+        },
+        {
+          "peer_id": "emma",
+          "content": "I'm a marine biologist studying coral reef ecosystems in the Great Barrier Reef. I've been doing field research there for 3 years."
+        },
+        {
+          "peer_id": "agent",
+          "content": "That must be fascinating work. What's your focus?"
+        },
+        {
+          "peer_id": "emma",
+          "content": "I'm specifically studying the impact of ocean temperature changes on coral bleaching patterns."
+        },
+        {
+          "peer_id": "frank",
+          "content": "I'm a pastry chef at a Michelin-starred restaurant in Lyon, France. My specialty is chocolate souffles."
+        },
+        {
+          "peer_id": "agent",
+          "content": "That's impressive! How did you get into pastry?"
+        },
+        {
+          "peer_id": "frank",
+          "content": "I trained at Le Cordon Bleu in Paris and then apprenticed under Chef Pierre Herme for two years."
+        }
+      ]
+    },
+    {
+      "step_type": "wait",
+      "target": "queue_empty",
+      "flush": true
+    },
+    {
+      "step_type": "query",
+      "target": "workspace_chat",
+      "input": "What professions do the people in this workspace have? List each person and what they do.",
+      "reasoning_level": "low",
+      "assertions": [
+        {
+          "assertion_type": "llm_judge",
+          "prompt": "Does the response mention at least 2 of the 3 peers (Dan, Emma, Frank) along with their professions? Dan is a software engineer, Emma is a marine biologist, and Frank is a pastry chef. The response should identify at least 2 of these 3 profession/person pairs correctly.",
+          "pass_if": true
+        }
+      ]
+    }
+  ]
+}
