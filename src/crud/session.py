@@ -945,13 +945,17 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Soft delete specified session peers by setting left_at timestamp
+    # Soft delete session peers by setting left_at timestamp. Peers being
+    # (re)set in this call are excluded so active members keep their original
+    # joined_at (perspective search window not truncated); only peers actually
+    # removed/replaced leave.
     update_stmt = (
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only update active peers
+            models.SessionPeer.peer_name.notin_(peer_names.keys()),
         )
         .values(left_at=func.now())
     )
@@ -1062,10 +1066,16 @@ async def _get_or_add_peers_to_session(
     # On conflict, update joined_at and clear left_at (rejoin scenario)
     # If left_at is not None (peer has left the session): Use the new configuration (stmt.excluded.configuration)
     # If left_at is None (peer is still active): Keep the existing configuration (models.SessionPeer.configuration)
+    # Keep the original joined_at for peers that are still active
+    # (left_at IS NULL) so perspective search still covers older messages;
+    # a genuine rejoin (left_at IS NOT NULL) gets the new timestamp.
     stmt = stmt.on_conflict_do_update(
         index_elements=["session_name", "peer_name", "workspace_name"],
         set_={
-            "joined_at": func.now(),
+            "joined_at": case(
+                (models.SessionPeer.left_at.is_not(None), stmt.excluded.joined_at),
+                else_=models.SessionPeer.joined_at,
+            ),
             "left_at": None,
             "configuration": case(
                 (models.SessionPeer.left_at.is_not(None), stmt.excluded.configuration),
