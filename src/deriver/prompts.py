@@ -74,7 +74,7 @@ RULES:
 EXAMPLES (using `alice` as the target peer id):
 - EXPLICIT: "I just turned 25" → "alice is 25 years old"
 - EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice walked her dog in NYC"
-- EXPLICIT: "I've lived in NYC for six years" → "alice lives in NYC"
+- EXPLICIT: "I've lived in NYC for six years" → "alice lives in NYC", "alice has lived in NYC for six years"
 
 {custom_instructions_section}
 
