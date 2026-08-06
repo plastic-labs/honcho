@@ -7,6 +7,10 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
+from src.crud.session import (
+    _get_or_add_peers_to_session,  # pyright: ignore[reportPrivateUsage]
+)
+from src.schemas import SessionPeerConfig
 from src.utils.search import search
 
 
@@ -75,6 +79,58 @@ async def test_peer_perspective_search_single_session(
     assert len(results) == 2
     assert msg1.public_id in [m.public_id for m in results]
     assert msg2.public_id in [m.public_id for m in results]
+
+
+@pytest.mark.asyncio
+async def test_peer_perspective_search_preserves_active_membership_window_on_readd(
+    db_session: AsyncSession,
+):
+    """Re-adding an active peer does not hide messages from its original window."""
+    workspace = models.Workspace(name=generate_nanoid())
+    peer = models.Peer(name="perspective-peer", workspace_name=workspace.name)
+    sender = models.Peer(name="sender-peer", workspace_name=workspace.name)
+    session = models.Session(name="session", workspace_name=workspace.name)
+    db_session.add_all([workspace, peer, sender, session])
+    await db_session.flush()
+
+    joined_at = datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC)
+    original_config = SessionPeerConfig(observe_others=False, observe_me=True)
+    await db_session.execute(
+        models.session_peers_table.insert().values(
+            workspace_name=workspace.name,
+            session_name=session.name,
+            peer_name=peer.name,
+            joined_at=joined_at,
+            left_at=None,
+            configuration=original_config.model_dump(),
+        )
+    )
+    message = models.Message(
+        content="Message from the original membership window",
+        session_name=session.name,
+        peer_name=sender.name,
+        workspace_name=workspace.name,
+        seq_in_session=1,
+        created_at=joined_at + datetime.timedelta(minutes=1),
+    )
+    db_session.add(message)
+    await db_session.commit()
+
+    await _get_or_add_peers_to_session(
+        db_session,
+        workspace.name,
+        session.name,
+        {peer.name: SessionPeerConfig(observe_others=True, observe_me=False)},
+    )
+    await db_session.commit()
+
+    results = await search(
+        "original membership window",
+        filters={"peer_perspective": peer.name, "workspace_id": workspace.name},
+        limit=10,
+    )
+
+    assert [result.public_id for result in results] == [message.public_id]
 
 
 @pytest.mark.asyncio
