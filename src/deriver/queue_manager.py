@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, case, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -391,6 +391,16 @@ class QueueManager:
                     .exists()
                 )
                 .order_by(
+                    case(
+                        (
+                            work_units_subq.c.work_unit_key.like(
+                                "deletion:%:workspace:%"
+                            ),
+                            0,
+                        ),
+                        (work_units_subq.c.work_unit_key.startswith("deletion:"), 1),
+                        else_=2,
+                    ).asc(),
                     work_units_subq.c.oldest_created_at.asc(),
                     work_units_subq.c.work_unit_key.asc(),
                 )
