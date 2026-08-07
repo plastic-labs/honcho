@@ -37,6 +37,7 @@ from src.telemetry import (
     shutdown_telemetry,
 )
 from src.telemetry.logging import get_route_template
+from src.telemetry.otel import instrument_app, setup_otel, shutdown_otel
 from src.telemetry.sentry import initialize_sentry
 
 
@@ -101,7 +102,15 @@ if SENTRY_ENABLED:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
+    # NOTE: OpenTelemetry setup + FastAPI instrumentation happen at MODULE IMPORT
+    # time (see below, right after the app is constructed), NOT here. Attaching the
+    # OTel ASGI middleware inside the lifespan is too late: by the time the startup
+    # handler runs, Starlette has already frozen the middleware stack, so the
+    # server-span middleware would never execute — no request SERVER spans, no
+    # inbound W3C traceparent extraction, and memory.* / outbound LLM spans would
+    # be orphaned into single-span traces instead of one end-to-end trace.
+
     # Initialize CloudEvents telemetry
     await initialize_telemetry_async()
 
@@ -133,6 +142,9 @@ async def lifespan(_: FastAPI):
         await engine.dispose()
         # Shutdown telemetry (flush CloudEvents buffer)
         await shutdown_telemetry()
+        # Flush + shut down OpenTelemetry providers so buffered spans/logs are
+        # not lost on exit (no-op when OTel disabled).
+        shutdown_otel()
 
 
 app = FastAPI(
@@ -178,6 +190,21 @@ app.include_router(webhooks.router, prefix="/v3")
 
 # Prometheus metrics endpoint
 app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+
+
+# Initialize OpenTelemetry and attach the FastAPI instrumentor at IMPORT time —
+# before Starlette builds (and freezes) the ASGI middleware stack on the first
+# request. This must run after every app.add_middleware() call above so the OTel
+# server-span middleware wraps them, and before the app serves traffic. Doing this
+# in the lifespan startup handler is too late (the stack is already built), which
+# silently yields zero SERVER spans, no inbound traceparent extraction, and
+# orphaned single-span memory.* traces. Both calls no-op when OTEL is disabled.
+setup_otel(
+    enabled=settings.OTEL.ENABLED,
+    service_name=settings.OTEL.SERVICE_NAME,
+    otlp_endpoint=settings.OTEL.EXPORTER_OTLP_ENDPOINT,
+)
+instrument_app(app)
 
 
 @app.get("/health")

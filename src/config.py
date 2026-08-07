@@ -1189,6 +1189,28 @@ class MetricsSettings(HonchoSettings):
     NAMESPACE: str | None = None
 
 
+class OTelSettings(HonchoSettings):
+    """OpenTelemetry settings (memory-semconv v0.1.0).
+
+    Set OTEL_ENABLED=true to activate. When disabled all instrumentation calls
+    are no-ops through the OTel API's default no-op providers.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="OTEL_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    SERVICE_NAME: str = "honcho"
+    # OTLP gRPC endpoint, e.g. "http://localhost:4317". Falls back to the
+    # OTEL_EXPORTER_OTLP_ENDPOINT standard env var when unset.
+    EXPORTER_OTLP_ENDPOINT: str | None = None
+    # Capture the raw search query as the ``memory.query`` span attribute.
+    # OFF by default: queries can contain user PII and are high-cardinality.
+    # Enable only in trusted/debug environments; when on, the value is truncated.
+    CAPTURE_QUERY: bool = False
+    # Max characters of the query to record when CAPTURE_QUERY is enabled.
+    QUERY_MAX_LENGTH: int = 200
+
+
 class TelemetrySettings(HonchoSettings):
     """CloudEvents telemetry settings for analytics.
 
@@ -1508,6 +1530,7 @@ class AppSettings(HonchoSettings):
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     TELEMETRY: TelemetrySettings = Field(default_factory=TelemetrySettings)
+    OTEL: OTelSettings = Field(default_factory=OTelSettings)
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
