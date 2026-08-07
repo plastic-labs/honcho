@@ -76,6 +76,10 @@ EXAMPLES (using `alice` as the target peer id):
 - EXPLICIT: "I took my dog for a walk in NYC" → "alice has a dog", "alice walked her dog in NYC"
 - EXPLICIT: "I've lived in NYC for six years" → "alice lives in NYC", "alice has lived in NYC for six years"
 
+Respond with a json object in the following format:
+{{"explicit": [{{"content": "fact 1"}}, {{"content": "fact 2"}}]}}
+Each item in "explicit" must be an object with a "content" field, not a bare string.
+
 {custom_instructions_section}
 
 Target peer:
