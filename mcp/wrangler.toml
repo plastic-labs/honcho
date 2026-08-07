@@ -3,6 +3,10 @@ main = "src/index.ts"
 compatibility_date = "2024-12-09"
 compatibility_flags = ["nodejs_compat"]
 
+# Executes the scheduled() handler
+[triggers]
+crons = ["*/5 * * * *"]
+
 [env.production]
 name = "honcho-mcp"
 

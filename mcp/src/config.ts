@@ -8,6 +8,7 @@ export interface HonchoConfig {
 
 export interface Env {
   HONCHO_API_URL?: string;
+  ALERT_WEBHOOK_URL?: string;
 }
 
 /**
