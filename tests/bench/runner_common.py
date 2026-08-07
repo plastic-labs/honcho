@@ -17,20 +17,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-from typing import Any, Generic, Literal, TypeVar, cast
+from typing import Any, Generic, TypeVar, cast
 
 from anthropic import AsyncAnthropic
 from honcho import Honcho
 from honcho.api_types import SessionConfiguration, SummaryConfiguration
 from openai import AsyncOpenAI
 
+from src.config import REASONING_LEVELS, ReasoningLevel
 from src.telemetry.metrics_collector import MetricsCollector
 
 _logger = logging.getLogger(__name__)
-
-# Valid reasoning levels for dialectic chat
-ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
-REASONING_LEVELS: list[str] = ["minimal", "low", "medium", "high", "max"]
 
 # Type variable for result types
 ResultT = TypeVar("ResultT")

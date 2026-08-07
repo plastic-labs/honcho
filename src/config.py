@@ -2,7 +2,7 @@ import logging
 import math
 import os
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, cast, get_args
 
 import tomllib
 from dotenv import load_dotenv
@@ -956,15 +956,12 @@ class PeerCardSettings(HonchoSettings):
     ENABLED: bool = True
 
 
-# Reasoning levels for dialectic - defined here to avoid circular imports with schemas
+# Reasoning levels for dialectic - defined here to avoid circular imports with schemas.
+# REASONING_LEVELS is derived from the Literal rather than hand-listed: the
+# annotation alone would reject an invalid member but not a MISSING one, so a
+# hand-written copy can silently drop a level and still typecheck.
 ReasoningLevel = Literal["minimal", "low", "medium", "high", "max"]
-REASONING_LEVELS: list[ReasoningLevel] = [
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "max",
-]
+REASONING_LEVELS: list[ReasoningLevel] = list(get_args(ReasoningLevel))
 
 
 class DialecticLevelSettings(BaseModel):
