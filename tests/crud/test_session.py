@@ -123,7 +123,7 @@ class TestSessionCRUD:
             peer_names={test_peer.name: original_config},
         )
         first_result = await db_session.execute(session_peer_stmt)
-        first_joined_at, first_left_at, first_config = first_result.one()
+        _, first_left_at, first_config = first_result.one()
         assert first_left_at is None
         assert first_config == original_config.model_dump()
 
