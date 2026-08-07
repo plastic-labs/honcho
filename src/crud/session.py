@@ -946,13 +946,15 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Soft delete specified session peers by setting left_at timestamp
+    # Soft delete active peers that are absent from the replacement set.
+    # Peers being re-set stay active so their membership window is preserved.
     update_stmt = (
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.left_at.is_(None),  # Only update active peers
+            models.SessionPeer.peer_name.notin_(peer_names.keys()),
         )
         .values(left_at=func.now())
     )

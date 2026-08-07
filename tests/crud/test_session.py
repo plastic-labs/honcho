@@ -85,6 +85,92 @@ class TestSessionCRUD:
         assert rejoined_config == updated_config.model_dump()
 
     @pytest.mark.asyncio
+    async def test_set_peers_preserves_active_joined_at_and_rejoins_departed_peer(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """Set-peers keeps active membership windows and refreshes real rejoins."""
+        test_workspace, test_peer = sample_data
+        session_name = str(generate_nanoid())
+        original_config = schemas.SessionPeerConfig(
+            observe_others=True, observe_me=False
+        )
+        updated_config = schemas.SessionPeerConfig(
+            observe_others=False, observe_me=True
+        )
+
+        session = models.Session(
+            name=session_name, workspace_name=test_workspace.name
+        )
+        db_session.add(session)
+        await db_session.flush()
+
+        session_peer_stmt = select(
+            models.SessionPeer.joined_at,
+            models.SessionPeer.left_at,
+            models.SessionPeer.configuration,
+        ).where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.peer_name == test_peer.name,
+            models.SessionPeer.workspace_name == test_workspace.name,
+        )
+
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=session_name,
+            peer_names={test_peer.name: original_config},
+        )
+        first_result = await db_session.execute(session_peer_stmt)
+        first_joined_at, first_left_at, first_config = first_result.one()
+        assert first_left_at is None
+        assert first_config == original_config.model_dump()
+
+        # Make the timestamp deterministic and re-set the still-active peer.
+        peer_result = await db_session.execute(
+            select(models.SessionPeer).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.peer_name == test_peer.name,
+                models.SessionPeer.workspace_name == test_workspace.name,
+            )
+        )
+        session_peer = peer_result.scalar_one()
+        session_peer.joined_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        await db_session.commit()
+
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=session_name,
+            peer_names={test_peer.name: updated_config},
+        )
+        active_result = await db_session.execute(session_peer_stmt)
+        active_joined_at, active_left_at, active_config = active_result.one()
+        assert active_joined_at == datetime(2020, 1, 1, tzinfo=timezone.utc)
+        assert active_left_at is None
+        assert active_config == original_config.model_dump()
+
+        # Removing the peer and adding it again is a genuine rejoin.
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=session_name,
+            peer_names={},
+        )
+        await crud.set_peers_for_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=session_name,
+            peer_names={test_peer.name: updated_config},
+        )
+        rejoined_result = await db_session.execute(session_peer_stmt)
+        rejoined_joined_at, rejoined_left_at, rejoined_config = rejoined_result.one()
+        assert rejoined_joined_at > active_joined_at
+        assert rejoined_left_at is None
+        assert rejoined_config == updated_config.model_dump()
+
+    @pytest.mark.asyncio
     async def test_get_session_peer_configuration(
         self,
         db_session: AsyncSession,
