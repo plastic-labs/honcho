@@ -7,13 +7,24 @@ from typing import cast as typing_cast
 
 from cashews import NOT_NONE
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, and_, case, cast, delete, func, insert, select, update
+from sqlalchemy import (
+    Select,
+    and_,
+    case,
+    cast,
+    delete,
+    func,
+    insert,
+    literal,
+    select,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
-from sqlalchemy.types import BigInteger, Boolean
+from sqlalchemy.types import BigInteger, Boolean, Text
 
 from src import models, schemas
 from src.cache.client import (
@@ -505,6 +516,29 @@ async def delete_session(
         await db.execute(
             delete(models.QueueItem).where(
                 models.QueueItem.session_id == honcho_session.id
+            )
+        )
+
+        # Pending dreams referencing this session: a dream consolidates the whole
+        # (observer, observed) collection rather than one session — its
+        # payload.session_name is only a config/context hint (the session of the
+        # most recent explicit document, see DreamScheduler._execute_dream). Those
+        # dreams carry session_id=None and a work_unit_key without the session, so
+        # the deletes above miss them and run_dream would then fail resolving the
+        # gone session. Drop the dangling hint instead of the dream, leaving it in
+        # the workspace-scoped state the orchestrator already supports.
+        await db.execute(
+            update(models.QueueItem)
+            .where(
+                and_(
+                    models.QueueItem.task_type == "dream",
+                    models.QueueItem.workspace_name == workspace_name,
+                    models.QueueItem.processed.is_(False),
+                    models.QueueItem.payload["session_name"].astext == session_name,
+                )
+            )
+            .values(
+                payload=models.QueueItem.payload.op("-")(literal("session_name", Text))
             )
         )
 

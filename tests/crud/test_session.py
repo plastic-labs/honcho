@@ -1,8 +1,10 @@
 import pytest
 from nanoid import generate as generate_nanoid
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.deriver.enqueue import create_dream_record
 from src.exceptions import ResourceNotFoundException
 
 
@@ -132,3 +134,76 @@ class TestSessionCRUD:
             await crud.clone_session(
                 db_session, test_workspace.name, test_session.name, "invalid_message_id"
             )
+
+    @pytest.mark.asyncio
+    async def test_delete_session_clears_dangling_dream_session_hint(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
+        """delete_session drops payload.session_name from dreams referencing it.
+
+        Dream queue items carry session_id=None and a work_unit_key without the
+        session name, so they survive the deletes above and would fail resolving
+        the gone session. Other dreams must be left untouched.
+        """
+        test_workspace, test_peer = sample_data
+
+        test_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        other_session = models.Session(
+            name=str(generate_nanoid()), workspace_name=test_workspace.name
+        )
+        db_session.add_all([test_session, other_session])
+        await db_session.flush()
+
+        def dream(observed: str, session_name: str | None) -> models.QueueItem:
+            # Distinct observed peers: the dream work_unit_key omits session_name,
+            # so same-peer dreams would collide on the pending-dream unique index.
+            return models.QueueItem(
+                **create_dream_record(
+                    test_workspace.name,
+                    observer=test_peer.name,
+                    observed=observed,
+                    dream_type=schemas.DreamType.OMNI,
+                    session_name=session_name,
+                )
+            )
+
+        db_session.add_all(
+            [
+                dream("observed-deleted", test_session.name),
+                dream("observed-other", other_session.name),
+                dream("observed-global", None),
+            ]
+        )
+        await db_session.flush()
+
+        await crud.delete_session(
+            db_session,
+            workspace_name=test_workspace.name,
+            session_name=test_session.name,
+        )
+
+        dreams = (
+            (
+                await db_session.execute(
+                    select(models.QueueItem).where(
+                        models.QueueItem.workspace_name == test_workspace.name
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # All three dreams survive; only the one pointing at the deleted session
+        # loses its hint, leaving it workspace-scoped.
+        assert {
+            item.payload["observed"]: item.payload.get("session_name")
+            for item in dreams
+        } == {
+            "observed-deleted": None,
+            "observed-other": other_session.name,
+            "observed-global": None,
+        }
