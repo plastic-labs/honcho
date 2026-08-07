@@ -192,6 +192,83 @@ sessions = honcho.sessions(filters={
 ```
 </CodeGroup>
 
+### Negation and Unset Fields
+
+Some fields can be unset. A conclusion drawn across a whole workspace has no
+session, so its `session_id` is null.
+
+`NOT` and `ne` include those rows. A conclusion with no session is not part of
+some particular session, so excluding that session keeps it in the result:
+
+<CodeGroup>
+```python Python
+# Every conclusion except the ones in this session — including
+# workspace-level conclusions, which belong to no session at all
+conclusions = peer.conclusions.list(filters={
+    "NOT": [
+        {"session_id": "session-123"}
+    ]
+})
+
+# Equivalent
+conclusions = peer.conclusions.list(filters={
+    "session_id": {"ne": "session-123"}
+})
+```
+
+```typescript TypeScript
+(async () => {
+    // Every conclusion except the ones in this session — including
+    // workspace-level conclusions, which belong to no session at all
+    const conclusions = await peer.conclusions.list({
+      filters: { NOT: [{ session_id: "session-123" }] }
+    });
+
+    // Equivalent
+    const same = await peer.conclusions.list({
+      filters: { session_id: { ne: "session-123" } }
+    });
+})();
+```
+</CodeGroup>
+
+To exclude a value **and** require the field to be set, add a null check.
+`{"ne": null}` matches rows where the field has any value:
+
+<CodeGroup>
+```python Python
+# In some session, just not this one — excludes conclusions with no session
+conclusions = peer.conclusions.list(filters={
+    "AND": [
+        {"session_id": {"ne": "session-123"}},
+        {"session_id": {"ne": None}}
+    ]
+})
+```
+
+```typescript TypeScript
+(async () => {
+    // In some session, just not this one — excludes conclusions with no session
+    const conclusions = await peer.conclusions.list({
+      filters: {
+        AND: [
+          { session_id: { ne: "session-123" } },
+          { session_id: { ne: null } }
+        ]
+      }
+    });
+})();
+```
+</CodeGroup>
+
+Positive conditions work the other way around: an unset field matches nothing,
+so `{"session_id": "session-123"}` and `{"session_id": {"contains": "abc"}}`
+never return rows whose `session_id` is null. Use `{"session_id": None}` to
+match those rows specifically.
+
+Fields that are always populated — `metadata`, which defaults to `{}`, and
+`created_at` — are unaffected by any of this.
+
 ### Combining Logical Operators
 
 Create sophisticated queries by combining different logical operators:
@@ -669,6 +746,50 @@ bob_explicit = peer.conclusions_of("bob").list(filters={"level": "explicit"})
     const bobExplicit = await peer.conclusionsOf("bob").list({
       filters: { level: "explicit" }
     });
+})();
+```
+</CodeGroup>
+
+## Value Types
+
+A filter value has to be usable against the field it targets. Honcho validates
+this before running the query and returns a `422` with an explanation when it
+doesn't hold, rather than failing mid-query or quietly returning nothing.
+
+| Field | Accepts |
+| --- | --- |
+| Text — `peer_id`, `session_id`, `id`, `content` | Strings |
+| Numeric — `token_count` | Numbers, or numeric strings like `"5"`. Exact for integers of any size |
+| Timestamps — `created_at` | ISO 8601 strings such as `"2026-01-01"` or `"2026-01-01T12:00:00Z"` |
+| Boolean — `is_active` | `true` / `false` |
+| `metadata` | An object, matched by containment |
+| Fields with fixed values — `level` | One of the documented values |
+
+Two consequences worth knowing:
+
+- **Booleans must be real booleans.** `{"is_active": True}` filters; the string
+  `{"is_active": "true"}` is rejected.
+- **Fixed-value fields are checked.** `{"level": "explicit"}` filters;
+  `{"level": "typo"}` is rejected instead of returning an empty list, so a
+  misspelling doesn't look like "no results".
+
+The same rules apply however the value is wrapped — bare, under an operator, or
+inside an `in` list — so `{"level": "explicit"}`,
+`{"level": {"ne": "explicit"}}` and `{"level": {"in": ["explicit"]}}` all
+validate identically.
+
+An empty `in` list matches nothing:
+
+<CodeGroup>
+```python Python
+# Returns no results — an empty allowlist excludes everything
+messages = session.messages(filters={"peer_id": {"in": []}})
+```
+
+```typescript TypeScript
+(async () => {
+    // Returns no results — an empty allowlist excludes everything
+    const messages = await session.messages({ filters: { peer_id: { in: [] } } });
 })();
 ```
 </CodeGroup>

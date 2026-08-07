@@ -1,14 +1,19 @@
 import datetime
+import re
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 from logging import getLogger
-from typing import Any, TypeVar
+from typing import Any, TypeVar, get_args
 from typing import cast as typing_cast
 
-from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, or_
+from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
 
 from ..exceptions import FilterError
+from ..schemas.api import RESOURCE_NAME_PATTERN
 from .formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern, parse_datetime_iso
+from .types import DocumentLevel, VectorSyncState
 
 logger = getLogger(__name__)
 
@@ -63,6 +68,160 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
 
 MAX_SESSION_ALLOWLIST_ENTRIES = 1000
 
+# Values that can be bound to a non-JSONB column. Anything else (dict, list,
+# bytes, arbitrary objects) compiles into a valid statement and then fails in
+# psycopg at execute time as an unhandled 500, so it is rejected up front.
+# Columns whose values come from a closed set. Derived from the Literal types
+# themselves, so adding a level (e.g. "abduction") or a sync state updates
+# filter validation with no change here — an unlisted value is a 422 rather
+# than a filter that silently matches nothing.
+ENUM_COLUMN_VALUES: dict[str, frozenset[str]] = {
+    "level": frozenset(get_args(DocumentLevel)),
+    "sync_state": frozenset(get_args(VectorSyncState)),
+}
+
+
+def _coerce_numeric(op_value: Any) -> float | Decimal:
+    """Validate a numeric operand without losing precision or overflowing.
+
+    Integers become Decimal rather than staying int. SQLAlchemy types the bind
+    from the operand, so a plain int renders an ``::INTEGER`` cast and anything
+    past int4 fails at execute time with "integer out of range" — even when the
+    comparison itself is meaningful. Decimal renders no cast, matching what
+    float() used to do, but keeps the value exact: float() rounds any int past
+    2**53 and would silently compare against a different number.
+
+    bool is narrowed first because it subclasses int; binding it as a boolean
+    against a numeric column produces SQL Postgres has no operator for.
+
+    Args:
+        op_value: The operand to validate.
+
+    Returns:
+        The operand as an exact numeric value that binds without a cast.
+
+    Raises:
+        ValueError, TypeError: If the operand is not numeric. Callers convert
+            these to FilterError.
+    """
+    if isinstance(op_value, bool):
+        return Decimal(int(op_value))
+    if isinstance(op_value, float):
+        return op_value
+    if isinstance(op_value, int | Decimal):
+        return Decimal(op_value)
+    try:
+        return Decimal(str(op_value))
+    except ArithmeticError:
+        raise ValueError(f"not a number: {op_value!r}") from None
+
+
+def _column_python_type(column: Any) -> type | None:
+    """Return a column's Python type, or None when it doesn't declare one.
+
+    pgvector's Vector raises NotImplementedError rather than returning a type,
+    so this must not be called bare.
+    """
+    try:
+        return typing_cast("type | None", column.type.python_type)
+    except (AttributeError, NotImplementedError):
+        return None
+
+
+def _coerce_operand(
+    column: Any, column_name: str, value: Any, operator: str = ""
+) -> Any:
+    """Return ``value`` ready to bind against ``column``, or raise FilterError.
+
+    SQLAlchemy types a bind from the *operand*, not the column, and the psycopg
+    dialect renders that type as an explicit cast. So an operand whose type
+    doesn't match its column compiles into valid-looking SQL and then fails at
+    execute time — ``operator does not exist: text = integer``. Postgres will
+    not implicitly bridge these, so the mismatch has to be caught here.
+
+    Every operand passes through this one function, whatever the operator, so
+    ``eq``/``ne``/``gt``/``in`` cannot drift apart by construction. Callers
+    handle None (a null check) and ``*`` (a wildcard) before calling.
+
+    Args:
+        column: SQLAlchemy column object.
+        column_name: Internal column name, for error messages.
+        value: The operand to coerce.
+        operator: The comparison operator, or "" for bare equality.
+
+    Returns:
+        The operand, coerced where a lossless coercion exists.
+
+    Raises:
+        FilterError: If the operand cannot be bound to this column.
+    """
+    # JSONB keeps containment semantics: the operand is a JSON document, not a
+    # scalar to compare. `jsonb >= 5` and `jsonb @> 'text'` have no operator.
+    if isinstance(column.type, JSONB):
+        if operator in ("", "contains") and isinstance(value, dict | list):
+            return typing_cast("Any", value)
+        raise FilterError(
+            f"Invalid filter for column '{column_name}': a JSONB column takes an object, optionally under 'contains'"
+        )
+
+    python_type = _column_python_type(column)
+    if python_type is None:
+        raise FilterError(f"Column '{column_name}' cannot be filtered on")
+
+    # contains/icontains build an ILIKE pattern, so the operand is stringified
+    # and its own type doesn't matter — but the column must be text, or
+    # Postgres has no `~~` operator for it.
+    if operator in ("contains", "icontains"):
+        if python_type is not str:
+            raise FilterError(
+                f"Operator '{operator}' requires a text column, but '{column_name}' is {python_type.__name__}"
+            )
+        return value
+
+    # bool is checked before the numeric branch: it subclasses int, so a boolean
+    # column would otherwise have `true` coerced to 1, which Postgres rejects
+    # against a boolean column ("operator does not exist: boolean <> integer").
+    if python_type is bool:
+        if isinstance(value, bool):
+            return value
+        raise FilterError(
+            f"Invalid value for column '{column_name}': expected true or false, got {type(value).__name__}"
+        )
+
+    if issubclass(python_type, datetime.datetime | datetime.date):
+        if isinstance(value, datetime.datetime | datetime.date):
+            return value
+        if isinstance(value, str):
+            validated = _validate_datetime_string(value)
+            if validated is None:
+                raise FilterError(f"Invalid datetime value: {value}")
+            return validated
+        raise FilterError(
+            f"Invalid value for column '{column_name}': expected a datetime, got {type(value).__name__}"
+        )
+
+    if issubclass(python_type, int | float | Decimal):
+        try:
+            return _coerce_numeric(value)
+        except (TypeError, ValueError):
+            raise FilterError(
+                f"Invalid numeric value: {value}. Expected a number, got {type(value).__name__}"
+            ) from None
+
+    if python_type is str:
+        if not isinstance(value, str):
+            raise FilterError(
+                f"Invalid value for column '{column_name}': expected a string, got {type(value).__name__}"
+            )
+        allowed = ENUM_COLUMN_VALUES.get(column_name)
+        if allowed is not None and value not in allowed:
+            raise FilterError(
+                f"Invalid value for column '{column_name}': {value!r}. Expected one of {sorted(allowed)}"
+            )
+        return value
+
+    raise FilterError(f"Column '{column_name}' cannot be filtered on")
+
 
 def extract_session_allowlist(
     filters: dict[str, Any] | None,
@@ -75,6 +234,11 @@ def extract_session_allowlist(
     list of ids, or ``{"in": [...]}``. Unsupported keys or shapes raise
     FilterError (422) rather than being silently ignored — a dropped filter
     on these endpoints would widen recall scope.
+
+    Entries must be well-formed session ids. Wildcards are not part of this
+    subset: the DSL treats ``*`` as "match everything" while the non-DSL
+    consumers of the allowlist treat it as a literal name, so it is rejected
+    rather than meaning two things at once.
 
     Args:
         filters: The raw ``filters`` body, or None.
@@ -128,6 +292,17 @@ def extract_session_allowlist(
     for entry in entries:
         if not isinstance(entry, str) or not entry:
             raise FilterError("filters.session_id entries must be non-empty strings")
+        # Only names a session could actually have. The allowlist reaches
+        # queries three ways — direct `IN`, the filter DSL, and a Python
+        # membership test — and they don't agree on a value like "*", which the
+        # DSL reads as "drop the condition" while the others treat as a literal.
+        # Rejecting it here keeps the divergent value away from all three, and
+        # matches this endpoint's documented contract (an id, a list of ids, or
+        # {"in": [...]}) which never included wildcards.
+        if not re.fullmatch(RESOURCE_NAME_PATTERN, entry):
+            raise FilterError(
+                f"Invalid session id in filters.session_id: {entry!r}. Session ids match {RESOURCE_NAME_PATTERN}"
+            )
         if entry not in seen:
             seen.add(entry)
             allowlist.append(entry)
@@ -181,9 +356,21 @@ def apply_filter(
     if filters is None:
         return stmt
 
-    conditions = _build_filter_conditions(filters, model_class)
-    if conditions is not None:
-        stmt = stmt.where(conditions)
+    # Fail closed. The filter body is arbitrary client JSON, so any shape the
+    # DSL doesn't recognize must become a 422, not an unhandled 500 from
+    # somewhere deep in SQLAlchemy. The exception is still logged in full so a
+    # genuine bug in the builder stays visible rather than being swallowed.
+    try:
+        conditions = _build_filter_conditions(filters, model_class)
+        if conditions is not None:
+            stmt = stmt.where(conditions)
+    except FilterError:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error building filter for %s: %r", model_class.__name__, filters
+        )
+        raise FilterError("Invalid filter configuration") from None
 
     return stmt
 
@@ -256,8 +443,15 @@ def _build_filter_conditions(
                 _depth=_depth + 1,
             )
             if sub_condition is not None:
+                # `IS NOT TRUE` rather than `NOT`: under SQL's three-valued
+                # logic a comparison against a NULL column is NULL, and `NOT
+                # NULL` is NULL, so plain negation drops rows whose column is
+                # unset — even though an unset column does not match what is
+                # being excluded. NOT [{"session_id": "abc"}] must include
+                # documents that have no session, since those are not "abc".
+                # Composes over compound sub-conditions: (a AND b) IS NOT TRUE.
                 not_conditions.append(
-                    not_(sub_condition)
+                    sub_condition.is_not(True)
                 )  # Apply NOT to each condition individually
         if not_conditions:
             conditions.append(and_(*not_conditions))  # Then AND them together
@@ -345,13 +539,21 @@ def _build_field_condition(
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
             if column_name in JSONB_COLUMNS:
                 return _build_nested_metadata_conditions(column, value)  # pyright: ignore
+            elif not isinstance(column.type, JSONB):
+                # A dict against a scalar column compiles fine but fails in
+                # psycopg at execute time ("cannot adapt type 'dict'") as a 500.
+                # Reject unknown operator dicts here as a 422 instead.
+                keys = sorted(typing_cast("dict[str, Any]", value))
+                raise FilterError(
+                    f"Invalid filter for column '{key}': unsupported operator(s) {keys}. Expected one of {sorted(COMPARISON_OPERATORS)} or a scalar value."
+                )
             else:
                 return column == value
     else:
         if column_name in JSONB_COLUMNS:
-            return column.contains(value)
+            return column.contains(_coerce_operand(column, column_name, value))
         else:
-            return column == value
+            return column == _coerce_operand(column, column_name, value)
 
 
 def _safe_numeric_cast(
@@ -552,11 +754,6 @@ def _build_comparison_conditions(
     """
     conditions: list[ColumnElement[bool]] = []
 
-    # Check if this is a datetime column
-    is_datetime_column = hasattr(column.type, "python_type") and issubclass(
-        column.type.python_type, datetime.datetime
-    )
-
     for operator, op_value in comparisons.items():
         # Validate that the operator is supported
         if operator not in COMPARISON_OPERATORS:
@@ -566,29 +763,25 @@ def _build_comparison_conditions(
         if op_value == "*":
             continue
 
+        # A null operand is a null check, not a value comparison, on every
+        # column type. Only `ne` is meaningful: {"col": None} already covers
+        # IS NULL via the equality path in _build_field_condition.
+        if op_value is None:
+            if operator != "ne":
+                raise FilterError(
+                    f"Operator '{operator}' does not accept null. Use {{\"ne\": null}} for a not-null check, or null on its own for a null check."
+                )
+            conditions.append(column.is_not(None))
+            continue
+
         condition = None
 
-        # For datetime columns, cast string values to timestamp
-        if is_datetime_column and isinstance(op_value, str):
-            # Validate datetime string to prevent SQL injection
-            validated_datetime = _validate_datetime_string(op_value)
-            if validated_datetime is None:
-                # Raise error if datetime validation fails
-                raise FilterError(f"Invalid datetime value: {op_value}")
-
-            # Use the validated datetime object directly instead of string interpolation
-            casted_value = validated_datetime
-        else:
-            # if the operator is a numeric operator, the value must cast to a number
-            if operator in NUMERIC_OPERATORS:
-                try:
-                    casted_value = float(op_value)
-                except ValueError:
-                    raise FilterError(
-                        f"Invalid numeric value: {op_value}. Expected a number, got {type(op_value).__name__}"
-                    ) from None
-            else:
-                casted_value = op_value
+        # `in` coerces element-wise below; every other operator has one operand.
+        casted_value = (
+            op_value
+            if operator == "in"
+            else _coerce_operand(column, column_name, op_value, operator)
+        )
 
         if operator == "gte":
             condition = column >= casted_value
@@ -599,38 +792,39 @@ def _build_comparison_conditions(
         elif operator == "lt":
             condition = column < casted_value
         elif operator == "ne":
-            condition = column != casted_value
+            # IS DISTINCT FROM, not <>: `NULL <> 'abc'` is NULL, so plain
+            # inequality drops rows whose column is unset. Identical to <>
+            # whenever no NULL is involved, and keeps `ne` agreeing with the
+            # NOT operator instead of quietly returning a different row set.
+            condition = column.is_distinct_from(casted_value)
         elif operator == "in":
             if hasattr(op_value, "__iter__") and not isinstance(op_value, str | bytes):
                 # Handle wildcard in iterable - if present, matches everything, so no condition needed
                 if "*" in op_value:
                     continue
                 else:
-                    if is_datetime_column:
-                        # Validate and cast each datetime string value
-                        casted_values: list[str | datetime.datetime] = []
-                        for val in op_value:
-                            if isinstance(val, str):
-                                validated_datetime = _validate_datetime_string(val)
-                                if validated_datetime is None:
-                                    raise FilterError(
-                                        f"Invalid datetime value in list: {val}"
-                                    )
-                                casted_values.append(validated_datetime)
-                            else:
-                                casted_values.append(val)
-                        if casted_values:
-                            condition = column.in_(casted_values)
-                    else:
-                        condition = column.in_(list(op_value))
+                    # Element-wise: one bad element poisons the whole IN, since
+                    # its type decides the cast rendered for that parameter.
+                    # An empty list is applied, not skipped: `in: []` must match
+                    # nothing. Dropping the condition would widen the query to
+                    # every row, and session scoping relies on an empty
+                    # allowlist failing closed (see extract_session_allowlist).
+                    condition = column.in_(
+                        [
+                            _coerce_operand(column, column_name, val, operator)
+                            for val in op_value
+                        ]
+                    )
             else:
                 raise FilterError(
                     f"Invalid value for 'in' operator: {op_value}. Expected an iterable (list, tuple, set), got {type(op_value).__name__}"
                 )
         elif operator == "contains":
-            if column_name == "h_metadata":
-                # For JSONB columns, use JSONB contains
-                condition = column.contains(op_value)
+            if isinstance(column.type, JSONB):
+                # Keyed on the column type, not the name: internal_metadata is
+                # equally JSONB and was falling through to ILIKE, which
+                # Postgres rejects as `jsonb ~~* text`.
+                condition = column.contains(casted_value)
             else:
                 # For text columns, use ILIKE with escaped pattern
                 escaped_value = escape_ilike_pattern(str(op_value))
