@@ -45,6 +45,7 @@ class SummaryConfiguration(BaseModel):
     enabled: bool | None = None
     messages_per_short_summary: int | None = None
     messages_per_long_summary: int | None = None
+    custom_instructions: str | None = None
 
 
 class DreamConfiguration(BaseModel):

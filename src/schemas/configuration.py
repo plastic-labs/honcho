@@ -65,6 +65,15 @@ class SummaryConfiguration(BaseModel):
         ge=20,
         description="Number of messages per long summary. Must be positive, greater than or equal to 20, and greater than messages_per_short_summary.",
     )
+    custom_instructions: str | None = Field(
+        default=None,
+        description="Optional custom instructions for session summaries. Validated against DERIVER.MAX_CUSTOM_INSTRUCTIONS_TOKENS.",
+    )
+
+    @field_validator("custom_instructions")
+    @classmethod
+    def validate_custom_instructions(cls, value: str | None) -> str | None:
+        return _validate_custom_instructions_budget(value)
 
     @model_validator(mode="after")
     def validate_summary_thresholds(self) -> Self:
@@ -130,7 +139,7 @@ class WorkspaceConfiguration(BaseModel):
     )
     dream: DreamConfiguration | None = Field(
         default=None,
-        description="Configuration for dream functionality. If reasoning is disabled, dreams will also be disabled and these settings will be ignored.",
+        description="Configuration for dream functionality. If reasoning is disabled, dreams will also be disabled and this setting will be ignored.",
     )
 
 
@@ -155,6 +164,10 @@ class MessageConfiguration(BaseModel):
         default=None,
         description="Configuration for reasoning functionality.",
     )
+    summary: SummaryConfiguration | None = Field(
+        default=None,
+        description="Configuration for summary functionality.",
+    )
 
 
 class ResolvedReasoningConfiguration(BaseModel):
@@ -176,6 +189,12 @@ class ResolvedSummaryConfiguration(BaseModel):
     enabled: bool
     messages_per_short_summary: int
     messages_per_long_summary: int
+    custom_instructions: str | None = None
+
+    @field_validator("custom_instructions")
+    @classmethod
+    def validate_custom_instructions(cls, value: str | None) -> str | None:
+        return _validate_custom_instructions_budget(value)
 
 
 class ResolvedDreamConfiguration(BaseModel):
