@@ -423,6 +423,10 @@ async def _sync_message_embeddings(
         emb for emb in embeddings if emb.embedding is None
     ]
     freshly_embedded: dict[int, list[float]] = {}
+    # Rows rejected with a permanent validation error (ValueError) — not
+    # retryable, so mark them failed immediately instead of burning
+    # MAX_SYNC_ATTEMPTS retries.
+    permanently_failed: set[int] = set()
 
     if embs_needing_embed:
         # Embed each text individually so a single oversized text (rejected by
@@ -444,9 +448,19 @@ async def _sync_message_embeddings(
                     freshly_embedded[emb.id] = new_emb[0]
                     if store_in_postgres:
                         emb.embedding = new_emb[0]
-                except Exception:
+                except ValueError as e:
+                    # Expected validation failure (oversized input, dimension
+                    # mismatch). Not retryable — mark failed immediately.
                     logger.warning(
-                        "Failed to embed message %s chunk %s; will retry",
+                        "Message %s chunk %s rejected by embedding provider: %s",
+                        emb.message_id,
+                        emb.id,
+                        e,
+                    )
+                    permanently_failed.add(emb.id)
+                except Exception:
+                    logger.exception(
+                        "Unexpected error embedding message %s chunk %s; will retry",
                         emb.message_id,
                         emb.id,
                     )
@@ -456,8 +470,20 @@ async def _sync_message_embeddings(
         emb for emb in embs_needing_embed if emb.id not in freshly_embedded
     ]
     if failed_to_embed:
-        await _bump_message_embedding_sync_attempts(db, failed_to_embed)
-        failed_count += len(failed_to_embed)
+        # Expected validation failures are permanent — mark them failed
+        # directly instead of retrying MAX_SYNC_ATTEMPTS times.
+        permanent = [emb for emb in failed_to_embed if emb.id in permanently_failed]
+        if permanent:
+            await db.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id.in_([emb.id for emb in permanent]))
+                .values(sync_state="failed", last_sync_at=func.now())
+            )
+            failed_count += len(permanent)
+        retryable = [emb for emb in failed_to_embed if emb.id not in permanently_failed]
+        if retryable:
+            await _bump_message_embedding_sync_attempts(db, retryable)
+            failed_count += len(retryable)
 
     # pgvector-only mode: no external store to upsert to. Any row that now
     # has an embedding (either pre-existing or freshly embedded) is fully
