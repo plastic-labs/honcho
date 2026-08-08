@@ -425,33 +425,31 @@ async def _sync_message_embeddings(
     freshly_embedded: dict[int, list[float]] = {}
 
     if embs_needing_embed:
-        try:
-            contents = [emb.content for emb in embs_needing_embed]
-            # MESSAGE_CREATE (not VECTOR_SYNC): these rows come from create_messages
-            # as pending chunks; document re-embeds stay on VECTOR_SYNC below.
-            workspaces = {emb.workspace_name for emb in embs_needing_embed}
-            with embedding_call_purpose(
-                EmbeddingCallPurpose.MESSAGE_CREATE.value,
-                workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
-                parent_category="reconciliation",
-            ):
-                new_embeddings = await embedding_client.simple_batch_embed(contents)
-
-            if len(new_embeddings) != len(embs_needing_embed):
-                logger.warning(
-                    "Re-embedded %s/%s message embeddings; remaining will be retried",
-                    len(new_embeddings),
-                    len(embs_needing_embed),
-                )
-
-            for emb, new_emb in zip(embs_needing_embed, new_embeddings, strict=False):
-                freshly_embedded[emb.id] = new_emb
-                if store_in_postgres:
-                    emb.embedding = new_emb
-        except Exception:
-            logger.exception(
-                "Failed to re-embed %s message embeddings", len(embs_needing_embed)
-            )
+        # Embed each text individually so a single oversized text (rejected by
+        # the provider) can't poison the whole batch. The chunking tokenizer
+        # can undercount a provider's real token count (e.g. tiktoken o200k vs
+        # nomic-embed-text), so oversized texts can still slip through the chunk
+        # cap and get rejected by the provider. Isolating per-text keeps the
+        # rest of the batch embeddable and lets genuinely-oversized rows fail
+        # on their own instead of taking the whole batch down with them.
+        workspaces = {emb.workspace_name for emb in embs_needing_embed}
+        with embedding_call_purpose(
+            EmbeddingCallPurpose.MESSAGE_CREATE.value,
+            workspace_name=workspaces.pop() if len(workspaces) == 1 else None,
+            parent_category="reconciliation",
+        ):
+            for emb in embs_needing_embed:
+                try:
+                    new_emb = await embedding_client.simple_batch_embed([emb.content])
+                    freshly_embedded[emb.id] = new_emb[0]
+                    if store_in_postgres:
+                        emb.embedding = new_emb[0]
+                except Exception:
+                    logger.warning(
+                        "Failed to embed message %s chunk %s; will retry",
+                        emb.message_id,
+                        emb.id,
+                    )
 
     # Mark embeddings that failed to get a vector
     failed_to_embed: list[models.MessageEmbedding] = [
