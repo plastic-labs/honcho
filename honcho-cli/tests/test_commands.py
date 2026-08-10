@@ -387,6 +387,45 @@ class TestJsonContract:
         opts = {"reverse": False, "show_ids": False, "workspace": None, "peer": None, **kwargs}
         assert _next_page_command("s1", 2, 50, **opts) == expected
 
+    @pytest.mark.parametrize(
+        ("session_id", "workspace", "expected_fragment"),
+        [
+            ("has space", None, "'has space'"),
+            ("a;rm -rf x", None, "'a;rm -rf x'"),
+            ("s1", "ws$(id)", "'ws$(id)'"),
+            ("s1", "ws|tee", "'ws|tee'"),
+        ],
+    )
+    def test_next_page_command_shell_quotes_identifiers(
+        self, session_id, workspace, expected_fragment
+    ):
+        """IDs only reject ?#%/\\ and control chars, so spaces and metacharacters reach here."""
+        hint = _next_page_command(
+            session_id,
+            2,
+            50,
+            reverse=False,
+            show_ids=False,
+            workspace=workspace,
+            peer=None,
+        )
+        assert expected_fragment in hint
+
+    def test_session_view_hint_carries_group_level_scope(self, cfg, runner):
+        """-w/-p also parse at group level, where the command-level params are None."""
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        session = _fake_session(_fake_page([_view_msg(1)], total=10, page=1, pages=5))
+
+        with _patch_view(session), patch("honcho_cli.output.use_json", return_value=False):
+            result = runner.invoke(
+                app,
+                ["session", "-w", "ws2", "-p", "alice", "view", "sess1", "--page", "1"],
+            )
+
+        assert result.exit_code == 0, result.stderr
+        assert "-w ws2" in result.stderr
+        assert "-p alice" in result.stderr
+
     def test_session_view_last_walks_pages_past_the_page_cap(self, cfg, runner):
         """`--last N` above the 100-item server cap keeps walking instead of truncating."""
         cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))

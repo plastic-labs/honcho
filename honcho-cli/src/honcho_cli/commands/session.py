@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from typing import List, Optional
 
 import typer
@@ -14,7 +15,13 @@ from honcho_cli.output import print_error, print_result, print_transcript, statu
 from honcho_cli.validation import validate_resource_id
 
 from honcho_cli._help import HonchoTyperGroup
-from honcho_cli.common import add_common_options, get_client, get_resolved_config, handle_cmd_flags
+from honcho_cli.common import (
+    add_common_options,
+    get_client,
+    get_flag_overrides,
+    get_resolved_config,
+    handle_cmd_flags,
+)
 
 app = typer.Typer(cls=HonchoTyperGroup, help="List, inspect, view, create, delete, and manage conversation sessions and their peers.")
 add_common_options(app)
@@ -174,19 +181,30 @@ def _next_page_command(
 ) -> str:
     """Continuation command for the next page, carrying this invocation's scope.
 
-    Scoping flags are echoed only when passed explicitly; anything resolved from
-    the environment or config file resolves the same way on the next run.
+    Scoping flags are echoed only when passed as flags; anything resolved from
+    the environment or config file resolves the same way on the next run. IDs
+    are shell-quoted — they may contain spaces and metacharacters, and this
+    string is meant to be pasted into a shell.
     """
-    parts = [f"honcho session view {session_id}", f"--page {next_page}", f"--size {size}"]
+    parts = [
+        "honcho",
+        "session",
+        "view",
+        session_id,
+        "--page",
+        str(next_page),
+        "--size",
+        str(size),
+    ]
     if reverse:
         parts.append("--reverse")
     if show_ids:
         parts.append("--ids")
     if workspace:
-        parts.append(f"-w {workspace}")
+        parts += ["-w", workspace]
     if peer:
-        parts.append(f"-p {peer}")
-    return " ".join(parts)
+        parts += ["-p", peer]
+    return shlex.join(parts)
 
 
 def _fetch_all_messages(sess, filters: dict | None) -> tuple[list, int | None]:
@@ -333,14 +351,17 @@ def view(
 
     next_page_hint = None
     if page_meta is not None and pages_meta is not None and page_meta < pages_meta:
+        # Effective overrides, not the command-level params: -w/-p also parse at
+        # group and top level.
+        overrides = get_flag_overrides()
         next_page_hint = _next_page_command(
             sid,
             page_meta + 1,
             page_size,
             reverse=reverse,
             show_ids=show_ids,
-            workspace=workspace,
-            peer=peer,
+            workspace=overrides["workspace"],
+            peer=overrides["peer"],
         )
 
     # Rendered outside the try: output failures aren't session API errors.
