@@ -42,6 +42,7 @@ export default {
           resource: resourceUrl(request),
           authorization_servers: [authorizationServer(env)],
           bearer_methods_supported: ["header"],
+          scopes_supported: ["read", "write"],
         },
         { headers: CORS_HEADERS },
       );
