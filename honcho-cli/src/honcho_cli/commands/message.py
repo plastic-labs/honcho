@@ -42,9 +42,8 @@ def list_messages(
 
     try:
         filters = {"peer_id": config.peer_id} if config.peer_id else None
-        # Fetch newest-first so we always get the most recent N messages — the
-        # shared helper walks pages, so --last above one page isn't truncated —
-        # then flip to oldest-at-top / newest-at-bottom for readable display.
+        # Fetch newest-first so we always get the most recent N messages, then
+        # flip to oldest-at-top / newest-at-bottom for readable display.
         # --reverse keeps the raw server order (oldest first, descending in table).
         msgs, _ = _fetch_recent_messages(sess, filters, last)
         if not reverse:

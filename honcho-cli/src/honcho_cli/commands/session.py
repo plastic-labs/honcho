@@ -136,8 +136,7 @@ def inspect(
 
 
 # Server-side ceiling on page size (fastapi-pagination's default ``Params``
-# declares ``size`` as ``Query(50, ge=1, le=100)``), enforced locally so an
-# out-of-range --size is a CLI error rather than an opaque 422.
+# declares ``size`` as ``Query(50, ge=1, le=100)``).
 MAX_PAGE_SIZE = 100
 DEFAULT_PAGE_SIZE = 50
 
@@ -145,8 +144,7 @@ DEFAULT_PAGE_SIZE = 50
 def _fetch_recent_messages(sess, filters: dict | None, last: int) -> tuple[list, int | None]:
     """Fetch the ``last`` most recent messages, newest first.
 
-    Walks as many newest-first server pages as it takes to fill the window, so
-    ``last`` above the page cap is honored instead of silently truncated.
+    Walks as many newest-first server pages as it takes to fill the window.
     Returns the messages plus the session's total message count (if reported).
     """
     page = sess.messages(
@@ -211,21 +209,20 @@ def view(
 
     Modes (pick one):
 
-    - default / ``--last N`` — tail of the conversation (most recent N)
-    - ``--page N [--size M]`` — page through the full transcript
-    - ``--all`` — every message
+    - default / --last N: tail of the conversation (most recent N)
+    - --page N [--size M]: page through the full transcript
+    - --all: every message
 
-    Paging follows the requested order: ``--page 1`` starts at the oldest
-    message, or the newest with ``--reverse``.
+    Paging follows the requested order: --page 1 starts at the oldest message,
+    or the newest with --reverse.
 
     Human mode prints a row-delimited table. JSON mode emits the message list
-    (same shape as ``message list``).
+    (same shape as message list).
     """
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
     sid = _get_session_id(session_id)
 
-    # Validate every flag before touching the network, so a bad invocation never
-    # reaches the API.
+    # Validate every flag before touching the network.
     modes = sum([
         last is not None,
         page_number is not None,
@@ -256,14 +253,13 @@ def view(
         print_error("INVALID_FLAGS", "--last must be >= 1", {"last": last})
         raise typer.Exit(1)
 
-    # Default: tail of conversation (most recent 50), matching prior behavior.
+    # Default: tail of conversation (most recent 50).
     mode = "page" if page_number is not None else ("all" if all_messages else "last")
     tail = last if last is not None else DEFAULT_PAGE_SIZE
     page_size = size if size is not None else DEFAULT_PAGE_SIZE
 
     client, config = get_client()
-    # Read-only: build the Session directly rather than via client.session(),
-    # which is a get-or-create POST and would create a session on a typo.
+    # Read-only: client.session() is a get-or-create POST, so build the Session directly.
     sess = Session(sid, client)
 
     try:
@@ -272,8 +268,7 @@ def view(
         pages_meta: int | None = None
 
         if mode == "page":
-            # Page in the order the caller asked for, so --reverse --page 1 is
-            # the newest page rather than the oldest one displayed backwards.
+            # Page in the order the caller asked for.
             result_page = sess.messages(
                 filters=filters,
                 page=page_number,
@@ -309,8 +304,7 @@ def view(
         _handle_error(e, "session", sid)
         raise  # unreachable: _handle_error always exits
 
-    # Rendered outside the try so an output-side failure (e.g. a broken pipe
-    # from `| head`) isn't reported as a session API error.
+    # Rendered outside the try: output failures aren't session API errors.
     print_transcript(
         items,
         session_id=sid,

@@ -126,11 +126,8 @@ TIMESTAMP_WIDTH = len("2026-01-01T00:00:00.000Z")
 def _format_timestamp(value: Any) -> str:
     """Compact UTC timestamp: ``YYYY-MM-DDTHH:MM:SS.mmmZ``.
 
-    Offsets are *converted* to UTC rather than dropped, so a non-UTC
-    ``created_at`` isn't relabelled as UTC. Naive values are assumed UTC, which
-    is what the API returns. Millisecond precision is kept so messages within
-    the same second stay distinguishable. Unparseable values pass through
-    verbatim.
+    Offsets are converted to UTC; naive values are assumed UTC. Unparseable
+    values pass through verbatim.
     """
     if value is None:
         return ""
@@ -161,8 +158,7 @@ def print_transcript(
 
     Each message dict must have ``peer_id``, ``content``, ``created_at``;
     ``id`` is optional and only shown when ``show_ids`` is set. ``size`` and
-    ``reverse`` are echoed back in the next-page hint so following it lands on
-    the adjacent window rather than a differently-sized one.
+    ``reverse`` are echoed back in the next-page hint.
     """
     if use_json():
         print_json(messages)
@@ -193,8 +189,8 @@ def print_transcript(
         expand=True,
         pad_edge=False,
     )
-    # time is fixed-width ISO-UTC; ids and peers wrap rather than truncate so a
-    # displayed ID is always a usable one; content takes the rest.
+    # time is fixed-width ISO-UTC; ids and peers wrap rather than truncate;
+    # content takes the rest.
     table.add_column("time", style="dim", no_wrap=True, width=TIMESTAMP_WIDTH)
     if show_ids:
         table.add_column("id", style="dim", no_wrap=True)
@@ -207,10 +203,7 @@ def print_transcript(
         if peer not in peer_color:
             peer_color[peer] = _PEER_COLORS[len(peer_color) % len(_PEER_COLORS)]
 
-        # Content and IDs go through Text, not Markdown or console markup: this is
-        # a debugging view, so it must show exactly what was stored — Markdown
-        # would reflow newlines and swallow the `<thinking>`-style tags that fill
-        # agent transcripts, and markup would eat bracketed text.
+        # Text, not Markdown or console markup: content renders verbatim.
         row: list[Any] = [_format_timestamp(msg.get("created_at"))]
         if show_ids:
             row.append(Text(str(msg.get("id") or "")))

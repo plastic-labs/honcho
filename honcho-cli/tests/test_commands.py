@@ -320,7 +320,7 @@ class TestJsonContract:
     @pytest.mark.parametrize(
         "args",
         [
-            ["--size", "10"],  # --size without --page would be silently ignored
+            ["--size", "10"],  # --size requires --page
             ["--page", "1", "--size", "500"],  # over the server's 100 ceiling
             ["--page", "0"],
             ["--last", "0"],
