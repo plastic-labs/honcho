@@ -162,6 +162,33 @@ def _fetch_recent_messages(sess, filters: dict | None, last: int) -> tuple[list,
     return msgs[:last], total
 
 
+def _next_page_command(
+    session_id: str,
+    next_page: int,
+    size: int,
+    *,
+    reverse: bool,
+    show_ids: bool,
+    workspace: str | None,
+    peer: str | None,
+) -> str:
+    """Continuation command for the next page, carrying this invocation's scope.
+
+    Scoping flags are echoed only when passed explicitly; anything resolved from
+    the environment or config file resolves the same way on the next run.
+    """
+    parts = [f"honcho session view {session_id}", f"--page {next_page}", f"--size {size}"]
+    if reverse:
+        parts.append("--reverse")
+    if show_ids:
+        parts.append("--ids")
+    if workspace:
+        parts.append(f"-w {workspace}")
+    if peer:
+        parts.append(f"-p {peer}")
+    return " ".join(parts)
+
+
 def _fetch_all_messages(sess, filters: dict | None) -> tuple[list, int | None]:
     """Fetch every message in the session, oldest first."""
     page = sess.messages(filters=filters, reverse=False, size=MAX_PAGE_SIZE)
@@ -304,6 +331,18 @@ def view(
         _handle_error(e, "session", sid)
         raise  # unreachable: _handle_error always exits
 
+    next_page_hint = None
+    if page_meta is not None and pages_meta is not None and page_meta < pages_meta:
+        next_page_hint = _next_page_command(
+            sid,
+            page_meta + 1,
+            page_size,
+            reverse=reverse,
+            show_ids=show_ids,
+            workspace=workspace,
+            peer=peer,
+        )
+
     # Rendered outside the try: output failures aren't session API errors.
     print_transcript(
         items,
@@ -311,9 +350,8 @@ def view(
         total=total,
         page=page_meta,
         pages=pages_meta,
-        size=page_size if mode == "page" else None,
-        reverse=reverse,
         show_ids=show_ids,
+        next_page_hint=next_page_hint,
     )
 
 

@@ -126,14 +126,14 @@ class TestTranscriptFidelity:
 
 
 class TestNextPageHint:
-    def test_hint_echoes_size_and_reverse(self, render, capsys, monkeypatch):
+    def test_given_hint_is_printed(self, render, monkeypatch):
         printed: list[str] = []
         monkeypatch.setattr(output, "status", printed.append)
-        render([_msg()], session_id="s1", page=1, pages=3, size=10, reverse=True)
-        assert printed == ["more: honcho session view s1 --page 2 --size 10 --reverse"]
+        render([_msg()], session_id="s1", page=1, pages=3, next_page_hint="honcho ... --page 2")
+        assert printed == ["more: honcho ... --page 2"]
 
-    def test_hint_omitted_on_the_last_page(self, render, monkeypatch):
+    def test_no_hint_when_none_given(self, render, monkeypatch):
         printed: list[str] = []
         monkeypatch.setattr(output, "status", printed.append)
-        render([_msg()], session_id="s1", page=3, pages=3, size=10)
+        render([_msg()], session_id="s1", page=3, pages=3)
         assert printed == []

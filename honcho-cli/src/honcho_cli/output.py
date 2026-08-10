@@ -150,15 +150,14 @@ def print_transcript(
     total: int | None = None,
     page: int | None = None,
     pages: int | None = None,
-    size: int | None = None,
-    reverse: bool = False,
     show_ids: bool = False,
+    next_page_hint: str | None = None,
 ) -> None:
     """Render a session transcript as a row-delimited table, or JSON.
 
     Each message dict must have ``peer_id``, ``content``, ``created_at``;
-    ``id`` is optional and only shown when ``show_ids`` is set. ``size`` and
-    ``reverse`` are echoed back in the next-page hint.
+    ``id`` is optional and only shown when ``show_ids`` is set.
+    ``next_page_hint`` is printed below the table when given.
     """
     if use_json():
         print_json(messages)
@@ -212,10 +211,5 @@ def print_transcript(
         table.add_row(*row)
 
     stdout_console.print(table)
-    if page is not None and pages is not None and page < pages:
-        hint = f"more: honcho session view {session_id} --page {page + 1}"
-        if size is not None:
-            hint += f" --size {size}"
-        if reverse:
-            hint += " --reverse"
-        status(hint)
+    if next_page_hint:
+        status(f"more: {next_page_hint}")

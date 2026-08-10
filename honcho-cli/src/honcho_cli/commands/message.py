@@ -37,6 +37,9 @@ def list_messages(
 
     handle_cmd_flags(json_output=json_output, workspace=workspace, peer=peer, session=session)
     sid = _get_session_id(session_id)
+    if last < 1:
+        print_error("INVALID_FLAGS", "--last must be >= 1", {"last": last})
+        raise typer.Exit(1)
     client, config = get_client()
     sess = client.session(sid)
 

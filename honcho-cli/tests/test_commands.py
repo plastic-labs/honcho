@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
+from honcho_cli.commands.session import _next_page_command
 from honcho_cli.main import app
 
 
@@ -226,6 +227,20 @@ class TestJsonContract:
             "created_at": "2026-01-01T00:00:00Z",
         }
 
+    @pytest.mark.parametrize("last", ["0", "-5"])
+    def test_message_list_rejects_non_positive_last(self, cfg, runner, last):
+        """Non-positive --last silently returned an empty list via slice semantics."""
+        cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
+        config = MagicMock(session_id="sess1", workspace_id="ws1", peer_id="")
+        with patch("honcho_cli.commands.message.get_client", return_value=(MagicMock(), config)) as get_client:
+            result = runner.invoke(
+                app,
+                ["message", "list", "sess1", "--last", last, "-w", "ws1"],
+            )
+        assert result.exit_code == 1
+        assert json.loads(result.stderr)["error"]["code"] == "INVALID_FLAGS"
+        get_client.assert_not_called()
+
     def test_session_view_json_is_chronological_window(self, cfg, runner):
         """`session view` returns the most recent N messages oldest→newest by default."""
         cfg.write_text(json.dumps({"apiKey": "k", "environmentUrl": "http://localhost:8000"}))
@@ -349,6 +364,28 @@ class TestJsonContract:
         assert result.exit_code == 0, result.stderr
         client.session.assert_not_called()
         session_cls.assert_called_once_with("sess1", client)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            (
+                {},
+                "honcho session view s1 --page 2 --size 50",
+            ),
+            (
+                {"reverse": True, "show_ids": True},
+                "honcho session view s1 --page 2 --size 50 --reverse --ids",
+            ),
+            (
+                {"workspace": "ws2", "peer": "alice"},
+                "honcho session view s1 --page 2 --size 50 -w ws2 -p alice",
+            ),
+        ],
+    )
+    def test_next_page_command_carries_the_invocation_scope(self, kwargs, expected):
+        """A copied hint must land on the same workspace, peer, and ordering."""
+        opts = {"reverse": False, "show_ids": False, "workspace": None, "peer": None, **kwargs}
+        assert _next_page_command("s1", 2, 50, **opts) == expected
 
     def test_session_view_last_walks_pages_past_the_page_cap(self, cfg, runner):
         """`--last N` above the 100-item server cap keeps walking instead of truncating."""
