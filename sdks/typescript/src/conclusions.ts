@@ -222,17 +222,14 @@ export class ConclusionScope {
       reverse?: boolean
     }
   ): Promise<PageResponse<ConclusionResponse>> {
-    await this._ensureWorkspace()
-    return this._http.get<PageResponse<ConclusionResponse>>(
-      `/${API_VERSION}/workspaces/${this.workspaceId}/conclusions/${conclusionId}/derived`,
-      {
-        query: {
-          page: params.page,
-          size: params.size,
-          reverse: params.reverse ? 'true' : undefined,
-        },
-      }
-    )
+    // Sugar for list with a parent_id filter; an unknown conclusionId
+    // yields an empty page rather than an error.
+    return this._list({
+      filters: { parent_id: conclusionId },
+      page: params.page,
+      size: params.size,
+      reverse: params.reverse,
+    })
   }
 
   private async _delete(conclusionId: string): Promise<void> {

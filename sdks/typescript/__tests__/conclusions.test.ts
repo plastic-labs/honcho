@@ -397,10 +397,10 @@ describe('Conclusions', () => {
   })
 
   // ===========================================================================
-  // Derived Conclusions (GET /conclusions/:id/derived)
+  // Derived Conclusions (list + parent_id filter)
   // ===========================================================================
 
-  describe('GET /conclusions/:id/derived', () => {
+  describe('derived() via parent_id filter', () => {
     test('leaf conclusion has no derived conclusions', async () => {
       const peer = await client.peer('derived-conclusion-peer', { metadata: {} })
       const session = await client.session('derived-conclusion-session', { metadata: {} })

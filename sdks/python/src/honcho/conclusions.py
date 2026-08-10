@@ -397,10 +397,14 @@ class ConclusionScope:
             size: Number of results per page. Default: 50.
             reverse: If True, reverses the default newest-first ordering.
 
+        Sugar for ``list`` with a ``parent_id`` filter; an unknown
+        ``conclusion_id`` yields an empty page rather than an error.
+
         Returns:
             Paginated response containing Conclusion objects
         """
         self._honcho._ensure_workspace()
+        body: dict[str, Any] = {"filters": {"parent_id": conclusion_id}}
 
         def build_query(page_num: int) -> dict[str, Any]:
             query: dict[str, Any] = {"page": page_num, "size": size}
@@ -408,8 +412,9 @@ class ConclusionScope:
                 query["reverse"] = "true"
             return query
 
-        data = self._honcho._http.get(
-            routes.conclusion_derived(self.workspace_id, conclusion_id),
+        data = self._honcho._http.post(
+            routes.conclusions_list(self.workspace_id),
+            body=body,
             query=build_query(page),
         )
 
@@ -419,8 +424,9 @@ class ConclusionScope:
         def fetch_next(
             next_page: int,
         ) -> SyncPage[ConclusionResponse, Conclusion]:
-            next_data = self._honcho._http.get(
-                routes.conclusion_derived(self.workspace_id, conclusion_id),
+            next_data = self._honcho._http.post(
+                routes.conclusions_list(self.workspace_id),
+                body=body,
                 query=build_query(next_page),
             )
             return SyncPage(next_data, ConclusionResponse, transform, fetch_next)

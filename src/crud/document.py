@@ -132,11 +132,14 @@ def get_documents_with_filters(
     # Apply additional filters if provided
     stmt = apply_filter(stmt, models.Document, filters)
 
-    # Order by created_at (newest first by default)
+    # created_at is the transaction timestamp, so documents created in the
+    # same batch share it -- id keeps pagination deterministic.
     if reverse:
-        stmt = stmt.order_by(models.Document.created_at.asc())
+        stmt = stmt.order_by(models.Document.created_at.asc(), models.Document.id.asc())
     else:
-        stmt = stmt.order_by(models.Document.created_at.desc())
+        stmt = stmt.order_by(
+            models.Document.created_at.desc(), models.Document.id.desc()
+        )
 
     return stmt
 

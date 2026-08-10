@@ -225,7 +225,9 @@ class TestConclusionRoutes:
             db_session, test_workspace.name, test_peer.name, test_peer2.name
         )
 
-        # Create conclusions
+        # Create conclusions with distinct timestamps — docs committed in one
+        # transaction share created_at, which would make ordering arbitrary
+        base = datetime.datetime.now(datetime.timezone.utc)
         doc1 = models.Document(
             workspace_name=test_workspace.name,
             observer=test_peer.name,
@@ -233,6 +235,7 @@ class TestConclusionRoutes:
             content="First conclusion",
             embedding=[0.1] * 1536,
             session_name=test_session.name,
+            created_at=base,
         )
         db_session.add(doc1)
         await db_session.flush()
@@ -244,6 +247,7 @@ class TestConclusionRoutes:
             content="Second conclusion",
             embedding=[0.2] * 1536,
             session_name=test_session.name,
+            created_at=base + datetime.timedelta(seconds=1),
         )
         db_session.add(doc2)
         await db_session.commit()
@@ -1675,7 +1679,7 @@ class TestConclusionRoutes:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test traversing the reasoning tree upward via /derived"""
+        """Test traversing the reasoning tree upward via the parent_id filter"""
         test_workspace, test_peer = sample_data
 
         test_peer2 = models.Peer(
@@ -1692,8 +1696,9 @@ class TestConclusionRoutes:
             db_session, test_workspace.name, test_peer.name, test_peer2.name
         )
 
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{premise.id}/derived"
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"parent_id": premise.id}},
         )
 
         assert response.status_code == 200
@@ -1710,8 +1715,9 @@ class TestConclusionRoutes:
         assert child["times_derived"] == 2
 
         # derived1 is itself a source of derived2
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{derived1.id}/derived"
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"parent_id": derived1.id}},
         )
         assert response.status_code == 200
         data = response.json()
@@ -1741,9 +1747,10 @@ class TestConclusionRoutes:
             db_session, test_workspace.name, test_peer.name, test_peer2.name
         )
 
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{premise.id}/derived",
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
             params={"reverse": "true"},
+            json={"filters": {"parent_id": premise.id}},
         )
 
         assert response.status_code == 200
@@ -1774,8 +1781,9 @@ class TestConclusionRoutes:
             db_session, test_workspace.name, test_peer.name, test_peer2.name
         )
 
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{derived2.id}/derived"
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"parent_id": derived2.id}},
         )
 
         assert response.status_code == 200
@@ -1789,15 +1797,16 @@ class TestConclusionRoutes:
         client: TestClient,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test 404 when the source conclusion doesn't exist"""
+        """A nonexistent parent yields an empty page, not an error"""
         test_workspace, _test_peer = sample_data
 
-        response = client.get(
-            f"/v3/workspaces/{test_workspace.name}/conclusions/{generate_nanoid()}/derived"
+        response = client.post(
+            f"/v3/workspaces/{test_workspace.name}/conclusions/list",
+            json={"filters": {"parent_id": str(generate_nanoid())}},
         )
 
-        assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert response.status_code == 200
+        assert response.json()["items"] == []
 
     @pytest.mark.asyncio
     async def test_list_conclusions_filter_by_source_ids_contains(

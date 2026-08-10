@@ -1662,10 +1662,14 @@ class ConclusionScopeAio:
             size: Number of results per page. Default: 50.
             reverse: If True, reverses the default newest-first ordering.
 
+        Sugar for ``list`` with a ``parent_id`` filter; an unknown
+        ``conclusion_id`` yields an empty page rather than an error.
+
         Returns:
             Paginated response containing Conclusion objects
         """
         await self._scope._honcho._ensure_workspace_async()
+        body: dict[str, Any] = {"filters": {"parent_id": conclusion_id}}
 
         def build_query(page_num: int) -> dict[str, Any]:
             query: dict[str, Any] = {"page": page_num, "size": size}
@@ -1673,8 +1677,9 @@ class ConclusionScopeAio:
                 query["reverse"] = "true"
             return query
 
-        data = await self._scope._honcho._async_http_client.get(
-            routes.conclusion_derived(self._scope.workspace_id, conclusion_id),
+        data = await self._scope._honcho._async_http_client.post(
+            routes.conclusions_list(self._scope.workspace_id),
+            body=body,
             query=build_query(page),
         )
 
@@ -1684,8 +1689,9 @@ class ConclusionScopeAio:
         async def fetch_next(
             next_page: int,
         ) -> AsyncPage[ConclusionResponse, Conclusion]:
-            next_data = await self._scope._honcho._async_http_client.get(
-                routes.conclusion_derived(self._scope.workspace_id, conclusion_id),
+            next_data = await self._scope._honcho._async_http_client.post(
+                routes.conclusions_list(self._scope.workspace_id),
+                body=body,
                 query=build_query(next_page),
             )
             return AsyncPage(next_data, ConclusionResponse, transform, fetch_next)
