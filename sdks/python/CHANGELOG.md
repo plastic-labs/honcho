@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.3.0] - 2026-08-10
+
+### Added
+
+- `response_format` on `Peer.chat()` / `PeerAio.chat()` and `Peer.chat_stream()` / `PeerAio.chat_stream()`, for constraining a dialectic answer to a schema. Pass a Pydantic model class to get a validated instance back (parsed via `model_validate_json`), or a raw JSON Schema dict to get the JSON string as-is. Overloads type the return precisely, so a model class narrows to that model and a dict narrows to `str`. On the streaming variants, chunks stay raw text that accumulates to a JSON string — parse it after the stream completes. Requires a Honcho server with the matching API support (Honcho v3.0.12+).
+- `response_format` field on `DialecticParams`.
+
 ## [2.2.0] - 2026-07-02
 
 ### Added

@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - Device-code OAuth login for managed Honcho servers. `honcho init` now offers browser-based login (RFC 8628 device authorization grant) when the host advertises the device grant in its OAuth authorization-server metadata; tokens are persisted to `~/.honcho/config.json` and auto-refreshed (#891)
+- `HONCHO_CONFIG_DIR` environment variable for pointing the CLI at an alternate config directory (#891)
+
+### Changed
+
+- An OAuth grant now records the host it was minted against and is ignored — neither used nor refreshed — when `base_url` points elsewhere, so a staging grant is never sent to production. A live OAuth token takes precedence over a stored `apiKey`, and a dead grant degrades to the saved key with a warning instead of aborting. Device login no longer deletes the shared `apiKey`, which sibling tools read from the same config file (#891)
 
 ## [0.1.1] - 2026-06-15
 
