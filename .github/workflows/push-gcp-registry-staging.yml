@@ -7,13 +7,6 @@ on:
   push:
     tags:
       - v*
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Version to deploy (without v prefix)"
-        required: true
-        type: string
-        default: "manual"
 
 env:
   GCP_PROJECT_ID: ${{ secrets.STAGING_GCP_PROJECT_ID }}
@@ -30,22 +23,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Resolve and verify version
         id: version
-        env:
-          VERSION_INPUT: ${{ github.event.inputs.version }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            VERSION="$VERSION_INPUT"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
+          VERSION="${GITHUB_REF_NAME#v}"
           # A running instance serves this version at /openapi.json, so it must
           # match the version being deployed.
           PYPROJECT_VERSION="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
           if [[ "$VERSION" != "$PYPROJECT_VERSION" ]]; then
-            echo "::error::pyproject.toml version '$PYPROJECT_VERSION' does not match deploy version '$VERSION'. Bump pyproject.toml before tagging."
+            echo "::error::pyproject.toml version '$PYPROJECT_VERSION' does not match tag '$GITHUB_REF_NAME'. Bump pyproject.toml before tagging."
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -82,7 +71,7 @@ jobs:
           # Name and tag only; the registry path is supplied downstream.
           IMAGE_LABEL="${{ env.IMAGE_NAME }}:deployment-v${VERSION}"
 
-          curl --fail -X POST \
+          curl --fail --connect-timeout 10 --max-time 60 -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.TEST_ENV_WEBHOOK_SECRET }}" \
             -d "{\"version\":\"$VERSION\",\"image_label\":\"$IMAGE_LABEL\"}" \
