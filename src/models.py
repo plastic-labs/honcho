@@ -390,9 +390,6 @@ class Document(Base):
         Integer, nullable=False, server_default=text("1")
     )
     embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
-    source_ids: Mapped[list[str] | None] = mapped_column(
-        JSONB, nullable=True, server_default=text("NULL")
-    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -420,10 +417,38 @@ class Document(Base):
 
     collection = relationship("Collection", back_populates="documents")
 
+    # selectin (not lazy) is required: async lazy-loads raise MissingGreenlet.
+    source_links: Mapped[list["DocumentSource"]] = relationship(
+        "DocumentSource",
+        order_by="DocumentSource.position",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
+
+    @property
+    def source_ids(self) -> list[str] | None:
+        """Parent conclusion IDs in original order; None when unlinked."""
+        return [link.source_id for link in self.source_links] or None
+
+    @source_ids.setter
+    def source_ids(self, value: list[str] | None) -> None:
+        # Constructor convenience: kwargs apply in order, so workspace_name
+        # must be passed before source_ids. Dedupes (PK is (derived_id,
+        # source_id)); crud.build_source_links additionally drops malformed
+        # IDs from LLM output before they reach this point.
+        self.source_links = [
+            DocumentSource(
+                source_id=sid, position=i, workspace_name=self.workspace_name
+            )
+            for i, sid in enumerate(dict.fromkeys(value or []))
+        ]
+
     @property
     def resolved_source_ids(self) -> list[str] | None:
-        """Source IDs, falling back to legacy internal_metadata storage."""
-        return self.source_ids or (self.internal_metadata or {}).get("source_ids")
+        """Kept for API schema compatibility; legacy internal_metadata
+        storage is retired by the document_sources backfill migration."""
+        return self.source_ids
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -463,18 +488,39 @@ class Document(Base):
                 "embedding": "vector_cosine_ops"
             },  # Cosine distance operator
         ),
-        # GIN index for efficient tree traversal (finding children by source IDs)
-        Index(
-            "ix_documents_source_ids_gin",
-            "source_ids",
-            postgresql_using="gin",
-        ),
         # Composite index for efficient reconciliation queries
         Index(
             "ix_documents_sync_state_last_sync_at",
             "sync_state",
             "last_sync_at",
         ),
+    )
+
+
+@final
+class DocumentSource(Base):
+    """One reasoning-tree edge: derived_id was concluded from source_id."""
+
+    __tablename__: str = "document_sources"
+
+    derived_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Deliberately not an FK: the dreamer can emit IDs that never resolve,
+    # and sources may be deleted independently of their children.
+    source_id: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    position: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), nullable=False
+    )
+
+    __table_args__ = (
+        # Reverse traversal ("who derived from me?") — replaces the old GIN index
+        Index("ix_document_sources_source_id", "source_id", "workspace_name"),
+        CheckConstraint("length(source_id) = 21", name="source_id_length"),
+        CheckConstraint("source_id ~ '^[A-Za-z0-9_-]+$'", name="source_id_format"),
     )
 
 

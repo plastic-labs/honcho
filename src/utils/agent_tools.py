@@ -971,12 +971,11 @@ async def create_observations(
                 continue
 
         # Build metadata with level-specific fields
+        # source_ids intentionally omitted from metadata: linkage lives in
+        # the document_sources table (via DocumentCreate.source_ids below).
         metadata = schemas.DocumentMetadata(
             message_ids=message_ids,
             message_created_at=message_created_at,
-            source_ids=obs.source_ids
-            if obs.level in ("deductive", "inductive", "contradiction")
-            else None,
             premises=obs.premises if obs.level == "deductive" else None,
             sources=obs.sources
             if obs.level in ("inductive", "contradiction")

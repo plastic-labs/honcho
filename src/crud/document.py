@@ -1,4 +1,5 @@
 import datetime
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -32,6 +33,26 @@ from src.vector_store import (
 )
 
 logger = getLogger(__name__)
+
+_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{21}$")
+
+
+def build_source_links(
+    source_ids: list[str] | None, workspace_name: str
+) -> list[models.DocumentSource]:
+    """Convert an LLM-provided source_ids list to DocumentSource rows.
+
+    Dedupes (the PK is (derived_id, source_id)) and drops entries that are
+    not shaped like document IDs — the model occasionally emits timestamps
+    or numeric refs under schema pressure.
+    """
+    if not source_ids:
+        return []
+    return [
+        models.DocumentSource(source_id=sid, position=i, workspace_name=workspace_name)
+        for i, sid in enumerate(dict.fromkeys(source_ids))
+        if _SOURCE_ID_RE.match(sid)
+    ]
 
 
 def get_all_documents(
@@ -644,8 +665,7 @@ async def create_documents(
                     internal_metadata=metadata_dict,
                     session_name=doc.session_name,
                     embedding=doc.embedding,
-                    # Tree linkage column
-                    source_ids=doc.source_ids,
+                    source_links=build_source_links(doc.source_ids, workspace_name),
                 )
             else:
                 new_doc = models.Document(
@@ -657,8 +677,7 @@ async def create_documents(
                     times_derived=doc.times_derived,
                     internal_metadata=metadata_dict,
                     session_name=doc.session_name,
-                    # Tree linkage column
-                    source_ids=doc.source_ids,
+                    source_links=build_source_links(doc.source_ids, workspace_name),
                 )
 
             if doc.embedding:
@@ -1365,10 +1384,9 @@ def get_child_observations(
     """
     Get all observations that have this document as a source/premise.
 
-    Useful for traversing the reasoning tree upward (source -> derived observations).
-    Uses GIN index on source_ids for efficient lookups. Only matches linkage
-    stored in the source_ids column; legacy documents whose source_ids live in
-    internal_metadata are not found.
+    Useful for traversing the reasoning tree upward (source -> derived
+    observations). Joins through document_sources, which the backfill
+    migration populated from both current and legacy linkage storage.
 
     Args:
         workspace_name: Workspace identifier
@@ -1381,13 +1399,17 @@ def get_child_observations(
         Select query for documents that reference this document as a source,
         for pagination support via apaginate()
     """
-    # Find documents where source_ids contains the parent_id. The explicit
-    # jsonb_build_array keeps the bind typed as JSONB — SQLAlchemy would
-    # otherwise coerce the value to VARCHAR, which the @> operator rejects.
-    stmt = select(models.Document).where(
-        models.Document.workspace_name == workspace_name,
-        models.Document.source_ids.contains(func.jsonb_build_array(parent_id)),
-        models.Document.deleted_at.is_(None),
+    stmt = (
+        select(models.Document)
+        .join(
+            models.DocumentSource,
+            models.DocumentSource.derived_id == models.Document.id,
+        )
+        .where(
+            models.Document.workspace_name == workspace_name,
+            models.DocumentSource.source_id == parent_id,
+            models.Document.deleted_at.is_(None),
+        )
     )
     if observer:
         stmt = stmt.where(models.Document.observer == observer)

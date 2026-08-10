@@ -5,7 +5,17 @@ from logging import getLogger
 from typing import Any, TypeVar
 from typing import cast as typing_cast
 
-from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, or_
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    and_,
+    case,
+    cast,
+    literal,
+    not_,
+    or_,
+    select,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
 
@@ -33,7 +43,7 @@ NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
 
 # JSONB columns keep containment semantics: bare lists are not membership
 # sugar, and dict values map to nested-metadata conditions rather than IN/Eq.
-JSONB_COLUMNS = ("h_metadata", "configuration", "internal_metadata", "source_ids")
+JSONB_COLUMNS = ("h_metadata", "configuration", "internal_metadata")
 
 ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING = {
     "id": "name",
@@ -62,6 +72,7 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_DOCUMENTS = {
     "observed_id": "observed",
     "level": "level",
     "source_ids": "source_ids",
+    "parent_id": "source_ids",
     "times_derived": "times_derived",
     "metadata": "internal_metadata",
 }
@@ -300,6 +311,64 @@ def _build_filter_conditions(
         return and_(*conditions)
 
 
+def _build_source_ids_condition(
+    value: Any, model_class: type[Any]
+) -> ColumnElement[bool] | None:
+    """Filter documents by reasoning-tree linkage via document_sources.
+
+    Preserves the old JSONB containment semantics: a scalar matches
+    membership, a bare list requires ALL entries present, {"contains": x}
+    matches membership, {"in": [...]} matches any entry present.
+    """
+    from ..models import DocumentSource
+
+    def _member(sid: Any) -> ColumnElement[bool]:
+        if not isinstance(sid, str) or not sid:
+            raise FilterError("source_ids filter entries must be non-empty strings")
+        return (
+            select(literal(1))
+            .where(
+                DocumentSource.derived_id == model_class.id,
+                DocumentSource.source_id == sid,
+            )
+            .exists()
+        )
+
+    if value == "*":
+        return None
+    if isinstance(value, str):
+        return _member(value)
+    if isinstance(value, list | tuple | set):
+        entries = list(typing_cast(Sequence[Any], value))
+        if "*" in entries:
+            return None
+        return _combine_conditions_with_and([_member(v) for v in entries])
+    if isinstance(value, dict):
+        conditions: list[ColumnElement[bool]] = []
+        for operator, op_value in typing_cast("dict[str, Any]", value).items():
+            if op_value == "*":
+                continue
+            if operator == "contains":
+                conditions.append(_member(op_value))
+            elif operator == "in":
+                if not isinstance(op_value, list | tuple | set):
+                    raise FilterError(
+                        f"Invalid value for 'in' operator: {op_value}. Expected an iterable"
+                    )
+                in_entries = list(typing_cast(Sequence[Any], op_value))
+                if "*" in in_entries:
+                    continue
+                members = [_member(v) for v in in_entries]
+                if members:
+                    conditions.append(or_(*members))
+            else:
+                raise FilterError(
+                    f"Operator '{operator}' is not supported on source_ids"
+                )
+        return _combine_conditions_with_and(conditions)
+    raise FilterError(f"Invalid source_ids filter value: {value}")
+
+
 def _build_field_condition(
     key: str, value: Any, model_class: type[Any]
 ) -> ColumnElement[bool] | None:
@@ -335,6 +404,11 @@ def _build_field_condition(
         raise FilterError(
             f"Column '{key}' is not allowed to be filtered on or does not exist on {model_class.__name__}"
         )
+
+    # Reasoning-tree linkage lives in the document_sources table, not a
+    # column; translate to EXISTS subqueries before column resolution.
+    if model_class.__name__ == "Document" and column_name == "source_ids":
+        return _build_source_ids_condition(value, model_class)
 
     # Check if the column exists on the model
     if not hasattr(model_class, column_name):

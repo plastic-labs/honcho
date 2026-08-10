@@ -741,7 +741,9 @@ class TestConclusionRoutes:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test that legacy internal_metadata.source_ids is coalesced into source_ids"""
+        """Legacy internal_metadata.source_ids is NOT read at runtime anymore:
+        the document_sources backfill migration (a7c3e9f1b2d4) moves it into
+        the edge table instead. A metadata-only doc therefore surfaces None."""
         test_workspace, test_peer = sample_data
 
         # Create another peer
@@ -775,7 +777,7 @@ class TestConclusionRoutes:
 
         assert response.status_code == 200
         conclusion = response.json()
-        assert conclusion["source_ids"] == ["legacy_id_1", "legacy_id_2"]
+        assert conclusion["source_ids"] is None
 
     @pytest.mark.asyncio
     async def test_get_conclusion_not_found(
@@ -858,6 +860,8 @@ class TestConclusionRoutes:
             db_session, test_workspace.name, test_peer.name, test_peer2.name
         )
 
+        # document_sources check-constrains source_id to nanoid shape
+        source_ids = [str(generate_nanoid()), str(generate_nanoid())]
         doc = models.Document(
             workspace_name=test_workspace.name,
             observer=test_peer.name,
@@ -865,7 +869,7 @@ class TestConclusionRoutes:
             content="Derived conclusion",
             embedding=[0.1] * 1536,
             level="inductive",
-            source_ids=["src_1", "src_2"],
+            source_ids=source_ids,
             times_derived=2,
         )
         db_session.add(doc)
@@ -884,7 +888,7 @@ class TestConclusionRoutes:
         assert response.status_code == 200
         items = response.json()["items"]
         assert len(items) == 1
-        assert items[0]["source_ids"] == ["src_1", "src_2"]
+        assert items[0]["source_ids"] == source_ids
         assert items[0]["times_derived"] == 2
 
     @pytest.mark.asyncio

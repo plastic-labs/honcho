@@ -223,13 +223,15 @@ class TestCreateObservations:
         """Dialectic context (no current_messages) forces observations to be deductive."""
         ctx = make_tool_context(current_messages=None)
 
+        # source links are check-constrained to nanoid shape
+        premise_ids = [str(generate_nanoid()), str(generate_nanoid())]
         result = await _handle_create_observations(
             ctx,
             {
                 "observations": [
                     {
                         "content": "Inferred preference for quiet spaces",
-                        "source_ids": ["premise1", "premise2"],
+                        "source_ids": premise_ids,
                         "premises": [
                             "User mentioned working in libraries",
                             "User avoids noisy cafes",
@@ -249,7 +251,7 @@ class TestCreateObservations:
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
         assert doc.level == "deductive"
-        assert doc.source_ids == ["premise1", "premise2"]
+        assert doc.source_ids == premise_ids
 
     async def test_non_deriver_context_rejects_explicit(
         self,
@@ -290,13 +292,14 @@ class TestCreateObservations:
         the prefix must be stripped so provenance links reference real IDs."""
         ctx = make_tool_context(current_messages=None)
 
+        premise_ids = [str(generate_nanoid()), str(generate_nanoid())]
         result = await _handle_create_observations(
             ctx,
             {
                 "observations": [
                     {
                         "content": "Inferred preference for early mornings",
-                        "source_ids": ["id:premise1", "ID:premise2"],
+                        "source_ids": [f"id:{premise_ids[0]}", f"ID:{premise_ids[1]}"],
                         "premises": [
                             "User schedules meetings before 9am",
                             "User mentions waking at 5:30",
@@ -313,7 +316,7 @@ class TestCreateObservations:
         )
         doc = (await db_session.execute(stmt)).scalar_one_or_none()
         assert doc is not None
-        assert doc.source_ids == ["premise1", "premise2"]
+        assert doc.source_ids == premise_ids
 
     async def test_empty_observations_list_returns_error(
         self, make_tool_context: Callable[..., ToolContext]
