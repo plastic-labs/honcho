@@ -28,6 +28,12 @@ Embedding-model env vars:
 
 - `LIVE_EMBEDDING_GEMINI_MODELS` (default: `gemini-embedding-001,gemini-embedding-2`; add `gemini-embedding-2-preview` to cover the preview twin)
 - `LIVE_EMBEDDING_OPENAI_MODELS` (default: `text-embedding-3-small`)
+- `LIVE_EMBEDDING_OPENAI_COMPATIBLE_MODELS` (no default → skipped) — OpenAI transport pointed at a third-party OpenAI-compatible provider. Also reads `OPENROUTER_API_KEY`, `LIVE_EMBEDDING_OPENAI_COMPATIBLE_BASE_URL` (default `https://openrouter.ai/api/v1`) and `LIVE_EMBEDDING_OPENAI_COMPATIBLE_DIMENSIONS` (default `2048`)
+
+```bash
+export OPENROUTER_API_KEY="sk-or-v1-..."
+export LIVE_EMBEDDING_OPENAI_COMPATIBLE_MODELS="nvidia/nemotron-3-embed-1b:free"
+```
 
 Each model env var accepts a comma-separated list of bare model ids or provider-qualified ids.
 
@@ -63,3 +69,4 @@ Coverage by provider:
 - Gemini 2.5/3.0 classes: structured outputs, cached-content reuse, thought signatures, multi-turn tool replay
 - Gemini 3.1 class: thinking and tool replay coverage by default; structured-output/caching coverage should only be added once Google documents support for that path
 - Embeddings (`test_live_embeddings.py`): single embed, batched embed, batch-vs-single alignment, and chunk-to-id mapping for every configured embedding model. `gemini-embedding-2*` is the reason this exists — those models collapse a list of bare strings into one document (#745), and only a live call catches it
+- OpenAI-compatible embedding providers (e.g. OpenRouter's `nvidia/nemotron-3-embed-1b:free`): the #932 surface. Those providers answer a base64 embedding request with HTTP 200 and empty data, so the whole matrix fails without `encoding_format="float"`. Real OpenAI accepts base64 happily, so only a third-party provider catches it. `test_live_openai_float_encoding_matches_base64` covers the other side: the float switch must not move vectors on real OpenAI
