@@ -344,9 +344,6 @@ class RepresentationManager:
             # no derived observations requested
             top_observations = 0
 
-        # remaining observations are recent
-        recent_observations = total - semantic_observations - top_observations
-
         representation = Representation()
 
         # Get semantic observations if requested
@@ -363,16 +360,25 @@ class RepresentationManager:
                 Representation.from_documents(semantic_docs)
             )
 
-        # Get most derived observations if requested
+        # Get most derived observations if requested. The semantic query may
+        # return fewer documents than requested, so cap this query by the
+        # actual remaining representation capacity rather than the configured
+        # budget alone.
         if include_most_derived:
+            remaining_observations = max(0, total - representation.len())
             derived_docs = await self._query_documents_most_derived(
-                db, top_k=top_observations, session_allowlist=session_allowlist
+                db,
+                top_k=min(top_observations, remaining_observations),
+                session_allowlist=session_allowlist,
             )
             representation.merge_representation(
                 Representation.from_documents(derived_docs)
             )
 
-        # Get recent observations
+        # Reclaim any capacity left by queries that returned fewer unique
+        # documents than requested. This keeps the final representation from
+        # shrinking when semantic or most-derived search underfills its slice.
+        recent_observations = max(0, total - representation.len())
         recent_docs = await self._query_documents_recent(
             db, top_k=recent_observations, session_allowlist=session_allowlist
         )
