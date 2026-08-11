@@ -708,8 +708,9 @@ bob_explicit = peer.conclusions_of("bob").list(filters={"level": "explicit"})
 
 The [chat endpoint](/v3/documentation/features/chat) and the representation
 endpoint accept a `filters` body too, but a deliberately narrow one: it defines
-a **session allowlist**, restricting everything the request can recall
-(conclusions *and* messages) to the sessions you name.
+a **session allowlist**, restricting what the request can recall to the sessions
+you name — conclusions on both endpoints, and on chat the messages the agent
+reads as well.
 
 This is how you scope recall to more than one session. The `session_id`
 parameter pins a request to exactly one session; an allowlist accepts a set.
@@ -765,15 +766,11 @@ dropped filter here would widen recall instead of narrowing it.
 | A peer-scoped key naming a session its peer isn't an active member of | `401` on chat — see below |
 
 <Note>
-On the chat endpoint, a peer-scoped key must be an active member of every session
-it names, and the request is rejected with `401` otherwise — the allowlist reaches
-message recall and session history there, so it could otherwise read a session the
-peer never joined.
-
-The representation endpoint does not run that membership check. It doesn't need
-to: key scope already confines the caller to its own peer's representation, and an
-allowlist can only narrow what that representation already contains. Workspace and
-admin keys take the allowlist as given on both endpoints.
+On chat, a peer-scoped key must be an active member of every session it names —
+the allowlist reaches message recall there — and the request is rejected with
+`401` otherwise. The representation endpoint runs no membership check: key scope
+already confines the caller to its own peer's representation, which an allowlist
+can only narrow.
 </Note>
 
 ### What Changes Under an Allowlist
