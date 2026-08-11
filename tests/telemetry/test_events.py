@@ -239,6 +239,7 @@ class TestLLMCallCompletedEvent:
         assert CallPurpose.DIALECTIC_ANSWER.value == "dialectic.answer"
         assert CallPurpose.DREAM_DEDUCTION.value == "dream.deduction"
         assert CallPurpose.DREAM_INDUCTION.value == "dream.induction"
+        assert CallPurpose.DREAM_CARD_REFRESH.value == "dream.card_refresh"
         assert CallPurpose.SUMMARY_SHORT.value == "summary.short"
         assert CallPurpose.SUMMARY_LONG.value == "summary.long"
 

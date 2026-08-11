@@ -189,7 +189,28 @@ Each model config supports an `overrides.provider_params` dict for passing arbit
 [deriver.model_config.overrides.provider_params]
 # These are passed directly to the provider SDK
 verbosity = "low"
+# Per-request timeout in seconds; useful for queued workers that can wait longer
+timeout = 3600.0
 ```
+
+Because provider params live on each model config, background workers such as
+the Deriver and Dreamer can use longer request timeouts while synchronous
+chat paths keep tighter defaults.
+
+`timeout` gotchas:
+
+- The value is validated **at config load**: it must coerce to a positive,
+  finite number of seconds (numbers or numeric strings like `"3600"`), or the
+  process refuses to start with an error naming the offending config path.
+  This applies to both the primary model config and its `fallback.overrides`.
+- The unit is always **seconds**, regardless of transport. OpenAI and
+  Anthropic receive it as the SDK's `timeout` kwarg; Gemini has no such
+  kwarg, so Honcho converts it to milliseconds on `http_options.timeout`.
+- When unset, nothing is forwarded and each SDK's default applies — adding
+  this key is opt-in and changes no existing behavior.
+- A too-tight timeout doesn't fail once: the aborted request goes through the
+  normal retry/fallback chain before the caller sees an error, so the
+  observed latency is several multiples of the timeout.
 
 #### Transport passthrough keys
 
@@ -245,11 +266,18 @@ EMBEDDING_MAX_TOKENS_PER_REQUEST=300000
 # Embedding transport/model selection
 EMBEDDING_MODEL_CONFIG__TRANSPORT=openai  # openai, gemini
 EMBEDDING_MODEL_CONFIG__MODEL=text-embedding-3-small
+EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE=10  # optional per-request input cap
 
 # Optional endpoint overrides
 EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://localhost:8000/v1
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 ```
+
+`EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE` defaults to 2048 for OpenAI. For
+Gemini the client applies a conservative default of 100 — Gemini does not
+document a per-request limit. Set it when an OpenAI-compatible embedding
+provider accepts fewer inputs per request, such as DashScope
+`text-embedding-v4` with a limit of 10.
 
 Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE`:
 

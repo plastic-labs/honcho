@@ -1,10 +1,19 @@
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from google.genai import types as genai_types
 
-from src.config import EmbeddingModelConfig
-from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
+from src.config import EmbeddingModelConfig, resolve_embedding_model_config
+from src.embedding_client import (
+    BatchItem,
+    _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
+)
+
+
+def gemini_call_texts(contents: Any) -> list[str]:
+    """Unwrap a recorded Gemini `contents` argument back to plain texts."""
+    return [content.parts[0].text for content in contents]
 
 
 class FakeOpenAIEmbeddingsAPI:
@@ -103,7 +112,7 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
             self,
             *,
             model: str,
-            contents: str | list[str],
+            contents: Any,
             config: dict[str, Any],
         ) -> SimpleNamespace:
             calls.append(
@@ -141,6 +150,12 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
     embedding = await client.embed("hello world")
 
     assert embedding == [0.2] * 12
+    # 10-minute HTTP timeout, in lockstep with the LLM registry's Gemini client
+    # (see #785). Without this, a stalled Gemini embedding socket wedges the
+    # deriver worker — the same failure mode the LLM fix addresses.
+    gemini_client = cast(Any, client.client)
+    assert gemini_client.http_options.base_url == "https://gemini-proxy.example/v1beta"
+    assert gemini_client.http_options.timeout == 600_000
     assert calls == [
         {
             "model": "gemini-embedding-001",
@@ -150,6 +165,37 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
     ]
 
 
+@pytest.mark.asyncio
+async def test_gemini_embedding_client_keeps_timeout_without_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No-base-url Gemini embedding client must still carry an HTTP timeout."""
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.api_key: str | None = api_key
+            self.http_options: Any = http_options
+            self.aio: Any = SimpleNamespace(models=SimpleNamespace())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+        ),
+        vector_dimensions=8,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    gemini_client = cast(Any, client.client)
+    assert gemini_client.http_options.base_url is None
+    assert gemini_client.http_options.timeout == 600_000
+
+
 def _build_openai_client(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -157,6 +203,7 @@ def _build_openai_client(
     model: str,
     send_dimensions: bool,
     vector_dimensions: int,
+    max_batch_size: int | None = None,
 ) -> tuple[_EmbeddingClient, FakeOpenAIEmbeddingsAPI]:
     fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding)
 
@@ -173,6 +220,7 @@ def _build_openai_client(
             transport="openai",
             model=model,
             api_key="test-key",
+            max_batch_size=max_batch_size,
         ),
         vector_dimensions=vector_dimensions,
         max_input_tokens=8192,
@@ -242,6 +290,136 @@ async def test_openai_simple_batch_embed_forwards_dimensions(
 
 
 @pytest.mark.asyncio
+async def test_openai_simple_batch_embed_respects_configured_max_batch_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 1536,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=1536,
+        max_batch_size=2,
+    )
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["input"] for call in fake.calls] == [["a", "b"], ["c"]]
+
+
+@pytest.mark.asyncio
+async def test_openai_simple_batch_embed_defaults_to_2048_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset max_batch_size must keep the OpenAI default: one request."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 1536,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=1536,
+    )
+    assert client.max_batch_size == 2048
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [call["input"] for call in fake.calls] == [["a", "b", "c"]]
+
+
+@pytest.mark.asyncio
+async def test_gemini_simple_batch_embed_respects_configured_max_batch_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini transport must split batches at the configured limit too."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: Any,
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            calls.append({"model": model, "contents": contents, "config": config})
+            n = len(contents)
+            return SimpleNamespace(
+                embeddings=[SimpleNamespace(values=[0.2] * 12) for _ in range(n)]
+            )
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+            max_batch_size=2,
+        ),
+        vector_dimensions=12,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [gemini_call_texts(call["contents"]) for call in calls] == [
+        ["a", "b"],
+        ["c"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_gemini_simple_batch_embed_defaults_to_100_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unset max_batch_size must keep the Gemini conservative default."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: Any,
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            calls.append({"model": model, "contents": contents, "config": config})
+            n = len(contents)
+            return SimpleNamespace(
+                embeddings=[SimpleNamespace(values=[0.2] * 12) for _ in range(n)]
+            )
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-001",
+            api_key="gemini-key",
+        ),
+        vector_dimensions=12,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+    assert client.max_batch_size == 100
+
+    await client.simple_batch_embed(["a", "b", "c"])
+
+    assert [gemini_call_texts(call["contents"]) for call in calls] == [["a", "b", "c"]]
+
+
+@pytest.mark.asyncio
 async def test_openai_batch_embed_forwards_dimensions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -271,6 +449,7 @@ def _build_embedding_settings(
         "EMBEDDING_MODEL_CONFIG__MODEL",
         "EMBEDDING_MODEL_CONFIG__TRANSPORT",
         "EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE",
+        "EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE",
     ):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
@@ -446,15 +625,26 @@ def test_prepare_chunks_returns_ordered_chunks(
     assert isinstance(out["long"][0], str)
 
 
+def test_embedding_model_config_parses_max_batch_size_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s = _build_embedding_settings(
+        {"EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE": "10"},
+        monkeypatch,
+    )
+
+    assert s.MODEL_CONFIG.max_batch_size == 10
+
+    resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
+    assert resolved.max_batch_size == 10
+
+
 @pytest.mark.asyncio
 async def test_gemini_process_batch_wraps_contents_as_content_part(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """_process_batch must wrap each text in Content(parts=[Part(text=...)])
-    so gemini-embedding-2* models treat them as separate items, not a single
-    multi-part document."""
-    from google.genai import types as genai_types
-
+    """Each batch item must be its own Content so gemini-embedding-2* returns
+    one embedding per item instead of merging them into one document."""
     calls: list[dict[str, Any]] = []
 
     class FakeGeminiModels:
@@ -466,10 +656,7 @@ async def test_gemini_process_batch_wraps_contents_as_content_part(
             config: dict[str, Any],
         ) -> SimpleNamespace:
             calls.append({"model": model, "contents": contents, "config": config})
-            # Return one embedding per input content item
-            embeddings = [
-                SimpleNamespace(values=[0.3] * 8) for _ in contents
-            ]
+            embeddings = [SimpleNamespace(values=[0.3] * 8) for _ in contents]
             return SimpleNamespace(embeddings=embeddings)
 
     class FakeGeminiClient:
@@ -493,15 +680,12 @@ async def test_gemini_process_batch_wraps_contents_as_content_part(
         send_dimensions=False,
     )
 
-    from src.embedding_client import BatchItem
-
     batch = [
         BatchItem("hello", "id1", 0, 1),
         BatchItem("world", "id2", 0, 1),
     ]
-    result = await client._process_batch(batch)
+    result = await client._process_batch(batch)  # pyright: ignore[reportPrivateUsage]
 
-    assert len(result) == 2
     assert result["id1"][0] == [0.3] * 8
     assert result["id2"][0] == [0.3] * 8
 

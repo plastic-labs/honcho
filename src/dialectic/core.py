@@ -70,6 +70,7 @@ class DialecticAgent:
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
         session_id: str | None = None,
+        session_allowlist: list[str] | None = None,
     ):
         """
         Initialize the dialectic agent.
@@ -84,9 +85,13 @@ class DialecticAgent:
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
             reasoning_level: Level of reasoning to apply
             session_id: ID used for grouping traces (not session_name)
+            session_allowlist: Optional session allowlist restricting all recall
+                (conclusions and messages) to these sessions; empty list
+                fails closed
         """
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
+        self.session_allowlist: list[str] | None = session_allowlist
         self.session_id: str | None = session_id
         self.observer: str = observer
         self.observed: str = observed
@@ -107,6 +112,24 @@ class DialecticAgent:
         self._session_history_initialized: bool = False
         self._prefetched_conclusion_count: int = 0
         self._run_id: str = generate_nanoid()  # Always generate for event correlation
+
+    def _select_tools(self) -> list[dict[str, Any]]:
+        """Pick the toolset for this query.
+
+        Minimal reasoning uses a reduced set to reduce cost. Under a session
+        allowlist `get_reasoning_chain` is dropped entirely rather than left in
+        to fail at call time: chains traverse provenance across sessions, so it
+        can't be scoped, and offering it costs both the schema in context and a
+        wasted turn when the model tries it.
+        """
+        tools = (
+            DIALECTIC_TOOLS_MINIMAL
+            if self.reasoning_level == "minimal"
+            else DIALECTIC_TOOLS
+        )
+        if self.session_allowlist is not None:
+            tools = [t for t in tools if t.get("name") != "get_reasoning_chain"]
+        return tools
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -197,6 +220,7 @@ class DialecticAgent:
                 limit=prefetch_limit,
                 levels=["explicit"],
                 embedding=query_embedding,
+                session_allowlist=self.session_allowlist,
             )
 
             derived_repr = await search_memory(
@@ -207,6 +231,7 @@ class DialecticAgent:
                 limit=prefetch_limit,
                 levels=["deductive", "inductive", "contradiction"],
                 embedding=query_embedding,
+                session_allowlist=self.session_allowlist,
             )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
@@ -296,6 +321,7 @@ class DialecticAgent:
         ] = await create_tool_executor(
             workspace_name=self.workspace_name,
             session_name=self.session_name,
+            session_allowlist=self.session_allowlist,
             observer=self.observer,
             observed=self.observed,
             history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
@@ -438,12 +464,7 @@ class DialecticAgent:
         # Get level-specific settings
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
 
-        # Use minimal tools for minimal reasoning to reduce cost
-        tools = (
-            DIALECTIC_TOOLS_MINIMAL
-            if self.reasoning_level == "minimal"
-            else DIALECTIC_TOOLS
-        )
+        tools = self._select_tools()
         # Use level-specific max_output_tokens if set, otherwise global default
         max_tokens = (
             level_settings.MAX_OUTPUT_TOKENS
@@ -520,12 +541,7 @@ class DialecticAgent:
         # Get level-specific settings
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
 
-        # Use minimal tools for minimal reasoning to reduce cost
-        tools = (
-            DIALECTIC_TOOLS_MINIMAL
-            if self.reasoning_level == "minimal"
-            else DIALECTIC_TOOLS
-        )
+        tools = self._select_tools()
         # Use level-specific max_output_tokens if set, otherwise global default
         max_tokens = (
             level_settings.MAX_OUTPUT_TOKENS

@@ -76,7 +76,7 @@ def print_welcome(console: Console) -> None:
         ("workspace",  "list · create · search · delete · inspect · queue-status"),
         ("peer",       "list · create · search · inspect · card · chat"),
         ("",           "get-metadata · set-metadata · representation"),
-        ("session",    "list · create · search · delete · inspect · add-peers"),
+        ("session",    "list · create · search · delete · inspect · view · add-peers"),
         ("",           "context · get-metadata · set-metadata · peers"),
         ("",           "remove-peers · representation · summaries"),
         ("message",    "list · create · get"),

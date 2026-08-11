@@ -182,10 +182,13 @@ class _EmbeddingClient:
         if self.transport == "gemini":
             if not config.api_key:
                 raise ValueError("Gemini API key is required")
-            http_options = (
-                genai_types.HttpOptions(base_url=config.base_url)
-                if config.base_url
-                else None
+            # 10-minute HTTP timeout, in lockstep with the LLM registry's Gemini
+            # client (`src/llm/registry.py:_build_gemini_http_options`). Without
+            # this, a stalled Gemini embedding socket wedges the deriver worker
+            # exactly the way #785 describes for the LLM client.
+            http_options = genai_types.HttpOptions(
+                base_url=config.base_url,
+                timeout=600_000,
             )
             self.client: genai.Client | AsyncOpenAI = genai.Client(
                 api_key=config.api_key,
@@ -194,7 +197,7 @@ class _EmbeddingClient:
             # Gemini has a 2048 token limit
             self.max_embedding_tokens: int = min(max_input_tokens, 2048)
             # Gemini batch size is not documented, using conservative estimate
-            self.max_batch_size: int = 100
+            self.max_batch_size: int = config.max_batch_size or 100
         else:  # openai
             if not config.api_key:
                 raise ValueError("OpenAI API key is required")
@@ -203,7 +206,7 @@ class _EmbeddingClient:
                 base_url=config.base_url,
             )
             self.max_embedding_tokens = max_input_tokens
-            self.max_batch_size = 2048  # OpenAI batch limit
+            self.max_batch_size = config.max_batch_size or 2048
 
         try:
             self.encoding: tiktoken.Encoding = tiktoken.encoding_for_model(self.model)
@@ -448,15 +451,15 @@ class _EmbeddingClient:
             item in analytics."""
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
             if isinstance(self.client, genai.Client):
-                # Wrap each string in Content+Part so gemini-embedding-2*
-                # treats them as separate items, not a single document.
-                gemini_contents = [
-                    genai_types.Content(parts=[genai_types.Part(text=item.text)])
-                    for item in batch
-                ]
                 response = await self.client.aio.models.embed_content(
                     model=self.model,
-                    contents=gemini_contents,
+                    # One Content per item: a list of bare strings is folded
+                    # into a single document by gemini-embedding-2*, which
+                    # returns one embedding for the whole batch (#745).
+                    contents=[
+                        genai_types.Content(parts=[genai_types.Part(text=item.text)])
+                        for item in batch
+                    ],
                     config={"output_dimensionality": self.vector_dimensions},
                 )
                 if response.embeddings:
@@ -629,6 +632,7 @@ class EmbeddingClient:
             runtime_config.model,
             runtime_config.api_key,
             runtime_config.base_url,
+            runtime_config.max_batch_size,
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
@@ -680,8 +684,19 @@ class EmbeddingClient:
 
     @property
     def encoding(self) -> tiktoken.Encoding:
-        """Get the tiktoken encoding."""
-        return self._get_client().encoding
+        """Get the tiktoken encoding.
+
+        Resolved without constructing the underlying client: tiktoken needs no
+        API key, and token-counting callers (e.g. the document dedup tie-break)
+        must work in environments with no embedding credentials, such as CI for
+        pull requests from forks.
+        """
+        if self._instance is not None:
+            return self._instance.encoding
+        try:
+            return tiktoken.encoding_for_model(self._resolve_runtime_config().model)
+        except KeyError:
+            return tiktoken.get_encoding("cl100k_base")
 
 
 # Shared singleton embedding client instance
