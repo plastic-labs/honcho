@@ -698,3 +698,113 @@ class TestVectorQueryTopKFloor:
             top_k = mock_query.await_args.kwargs["top_k"]
             assert top_k >= 1, f"max_observations={max_observations} gave top_k={top_k}"
             assert top_k <= max_observations
+
+    @pytest.mark.asyncio
+    async def test_reclaims_unused_semantic_budget_for_recent_observations(
+        self,
+    ):
+        """A short semantic result must leave its unused capacity to recency."""
+        db_session = MagicMock(spec=AsyncSession)
+        manager = RepresentationManager("workspace", observer="peer", observed="peer")
+        semantic_doc = models.Document(
+            id=generate_nanoid(),
+            workspace_name="workspace",
+            observer="peer",
+            observed="peer",
+            content="semantic result",
+            level="explicit",
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            internal_metadata={},
+        )
+        recent_doc = models.Document(
+            id=generate_nanoid(),
+            workspace_name="workspace",
+            observer="peer",
+            observed="peer",
+            content="recent result",
+            level="explicit",
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            internal_metadata={},
+        )
+
+        with (
+            patch.object(
+                manager,
+                "_query_documents_semantic",
+                new=AsyncMock(return_value=[semantic_doc]),
+            ),
+            patch.object(
+                manager,
+                "_query_documents_recent",
+                new=AsyncMock(return_value=[recent_doc]),
+            ) as mock_recent,
+        ):
+            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                include_semantic_query="what do they like?",
+                embedding=[0.1],
+                semantic_search_top_k=5,
+                max_observations=5,
+            )
+
+        assert mock_recent.await_args is not None
+        assert mock_recent.await_args.kwargs["top_k"] == 4
+        assert [obs.content for obs in representation.explicit] == [
+            "semantic result",
+            "recent result",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_reclaims_unused_derived_budget_for_recent_observations(
+        self,
+    ):
+        """A short most-derived result must also leave capacity to recency."""
+        db_session = MagicMock(spec=AsyncSession)
+        manager = RepresentationManager("workspace", observer="peer", observed="peer")
+        derived_doc = models.Document(
+            id=generate_nanoid(),
+            workspace_name="workspace",
+            observer="peer",
+            observed="peer",
+            content="derived result",
+            level="explicit",
+            created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            internal_metadata={},
+        )
+        recent_doc = models.Document(
+            id=generate_nanoid(),
+            workspace_name="workspace",
+            observer="peer",
+            observed="peer",
+            content="recent result",
+            level="explicit",
+            created_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            internal_metadata={},
+        )
+
+        with (
+            patch.object(
+                manager,
+                "_query_documents_most_derived",
+                new=AsyncMock(return_value=[derived_doc]),
+            ) as mock_derived,
+            patch.object(
+                manager,
+                "_query_documents_recent",
+                new=AsyncMock(return_value=[recent_doc]),
+            ) as mock_recent,
+        ):
+            representation = await manager._get_working_representation_internal(  # pyright: ignore[reportPrivateUsage]
+                db_session,
+                include_most_derived=True,
+                max_observations=6,
+            )
+
+        assert mock_derived.await_args is not None
+        assert mock_derived.await_args.kwargs["top_k"] == 3
+        assert mock_recent.await_args is not None
+        assert mock_recent.await_args.kwargs["top_k"] == 5
+        assert [obs.content for obs in representation.explicit] == [
+            "derived result",
+            "recent result",
+        ]
