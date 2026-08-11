@@ -20,6 +20,9 @@ class FakeOpenAIEmbeddingsAPI:
     def __init__(self, embedding: list[float]) -> None:
         self.embedding: list[float] = embedding
         self.calls: list[dict[str, Any]] = []
+        # Simulate a provider answering 200 with missing embeddings.
+        self.returns_no_data: bool = False
+        self.truncate_data_to: int | None = None
 
     async def create(
         self,
@@ -35,6 +38,10 @@ class FakeOpenAIEmbeddingsAPI:
             data = [SimpleNamespace(embedding=self.embedding) for _ in input]
         else:
             data = [SimpleNamespace(embedding=self.embedding)]
+        if self.returns_no_data:
+            data = []
+        elif self.truncate_data_to is not None:
+            data = data[: self.truncate_data_to]
         return SimpleNamespace(data=data)
 
 
@@ -488,6 +495,44 @@ async def test_openai_batch_embed_requests_float_encoding_format(
 
     assert len(fake.calls) == 1
     assert fake.calls[0]["encoding_format"] == "float"
+
+
+@pytest.mark.asyncio
+async def test_openai_embed_reports_missing_embedding_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit encoding_format turns off the SDK's own empty-data check, so
+    a provider answering 200 with no embeddings must still fail legibly."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+    )
+    fake.returns_no_data = True
+
+    with pytest.raises(ValueError, match="Embedding count mismatch"):
+        await client.embed("hello")
+
+
+@pytest.mark.asyncio
+async def test_openai_batch_embed_reports_short_embedding_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch answered with fewer embeddings than inputs must name the counts
+    rather than surface a bare zip() error."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+    )
+    fake.truncate_data_to = 1
+
+    with pytest.raises(ValueError, match="Expected 2, got 1"):
+        await client.batch_embed({"a": "hello", "b": "world"})
 
 
 def _build_embedding_settings(

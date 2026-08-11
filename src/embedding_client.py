@@ -226,6 +226,18 @@ class _EmbeddingClient:
             )
         return embedding
 
+    def _validate_embedding_count(self, expected: int, received: int) -> None:
+        """Guard against a 200 response carrying fewer embeddings than inputs.
+
+        Passing an explicit `encoding_format` disables the openai SDK's own
+        empty-data check, so this has to live here.
+        """
+        if received != expected:
+            raise ValueError(
+                f"Embedding count mismatch for {self.transport}:{self.model}. "
+                + f"Expected {expected}, got {received}."
+            )
+
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
 
@@ -274,6 +286,7 @@ class _EmbeddingClient:
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
             response = await openai_client.embeddings.create(**openai_kwargs)
+            self._validate_embedding_count(1, len(response.data))
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
         return await _emit_embedding_call(
@@ -485,6 +498,7 @@ class _EmbeddingClient:
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
                 response = await self.client.embeddings.create(**openai_kwargs)
+                self._validate_embedding_count(len(batch), len(response.data))
                 for item, embedding_data in zip(batch, response.data, strict=True):
                     result[item.text_id][item.chunk_index] = (
                         self._validate_embedding_dimensions(embedding_data.embedding)
