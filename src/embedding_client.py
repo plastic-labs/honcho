@@ -453,7 +453,13 @@ class _EmbeddingClient:
             if isinstance(self.client, genai.Client):
                 response = await self.client.aio.models.embed_content(
                     model=self.model,
-                    contents=[item.text for item in batch],
+                    # One Content per item: a list of bare strings is folded
+                    # into a single document by gemini-embedding-2*, which
+                    # returns one embedding for the whole batch (#745).
+                    contents=[
+                        genai_types.Content(parts=[genai_types.Part(text=item.text)])
+                        for item in batch
+                    ],
                     config={"output_dimensionality": self.vector_dimensions},
                 )
                 if response.embeddings:

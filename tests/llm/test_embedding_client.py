@@ -2,9 +2,18 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from google.genai import types as genai_types
 
 from src.config import EmbeddingModelConfig, resolve_embedding_model_config
-from src.embedding_client import _EmbeddingClient  # pyright: ignore[reportPrivateUsage]
+from src.embedding_client import (
+    BatchItem,
+    _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
+)
+
+
+def gemini_call_texts(contents: Any) -> list[str]:
+    """Unwrap a recorded Gemini `contents` argument back to plain texts."""
+    return [content.parts[0].text for content in contents]
 
 
 class FakeOpenAIEmbeddingsAPI:
@@ -103,7 +112,7 @@ async def test_gemini_embedding_client_uses_output_dimensionality(
             self,
             *,
             model: str,
-            contents: str | list[str],
+            contents: Any,
             config: dict[str, Any],
         ) -> SimpleNamespace:
             calls.append(
@@ -329,11 +338,11 @@ async def test_gemini_simple_batch_embed_respects_configured_max_batch_size(
             self,
             *,
             model: str,
-            contents: str | list[str],
+            contents: Any,
             config: dict[str, Any],
         ) -> SimpleNamespace:
             calls.append({"model": model, "contents": contents, "config": config})
-            n = len(contents) if isinstance(contents, list) else 1
+            n = len(contents)
             return SimpleNamespace(
                 embeddings=[SimpleNamespace(values=[0.2] * 12) for _ in range(n)]
             )
@@ -359,7 +368,10 @@ async def test_gemini_simple_batch_embed_respects_configured_max_batch_size(
 
     await client.simple_batch_embed(["a", "b", "c"])
 
-    assert [call["contents"] for call in calls] == [["a", "b"], ["c"]]
+    assert [gemini_call_texts(call["contents"]) for call in calls] == [
+        ["a", "b"],
+        ["c"],
+    ]
 
 
 @pytest.mark.asyncio
@@ -374,11 +386,11 @@ async def test_gemini_simple_batch_embed_defaults_to_100_when_unset(
             self,
             *,
             model: str,
-            contents: str | list[str],
+            contents: Any,
             config: dict[str, Any],
         ) -> SimpleNamespace:
             calls.append({"model": model, "contents": contents, "config": config})
-            n = len(contents) if isinstance(contents, list) else 1
+            n = len(contents)
             return SimpleNamespace(
                 embeddings=[SimpleNamespace(values=[0.2] * 12) for _ in range(n)]
             )
@@ -404,7 +416,7 @@ async def test_gemini_simple_batch_embed_defaults_to_100_when_unset(
 
     await client.simple_batch_embed(["a", "b", "c"])
 
-    assert [call["contents"] for call in calls] == [["a", "b", "c"]]
+    assert [gemini_call_texts(call["contents"]) for call in calls] == [["a", "b", "c"]]
 
 
 @pytest.mark.asyncio
@@ -625,3 +637,61 @@ def test_embedding_model_config_parses_max_batch_size_from_env(
 
     resolved = resolve_embedding_model_config(s.MODEL_CONFIG)
     assert resolved.max_batch_size == 10
+
+
+@pytest.mark.asyncio
+async def test_gemini_process_batch_wraps_contents_as_content_part(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each batch item must be its own Content so gemini-embedding-2* returns
+    one embedding per item instead of merging them into one document."""
+    calls: list[dict[str, Any]] = []
+
+    class FakeGeminiModels:
+        async def embed_content(
+            self,
+            *,
+            model: str,
+            contents: Any,
+            config: dict[str, Any],
+        ) -> SimpleNamespace:
+            calls.append({"model": model, "contents": contents, "config": config})
+            embeddings = [SimpleNamespace(values=[0.3] * 8) for _ in contents]
+            return SimpleNamespace(embeddings=embeddings)
+
+    class FakeGeminiClient:
+        def __init__(self, *, api_key: str | None, http_options: Any) -> None:
+            self.api_key: str | None = api_key
+            self.http_options: Any = http_options
+            self.aio: Any = SimpleNamespace(models=FakeGeminiModels())
+
+    monkeypatch.setattr("src.embedding_client.genai.Client", FakeGeminiClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="gemini",
+            model="gemini-embedding-2",
+            api_key="gemini-key",
+            base_url=None,
+        ),
+        vector_dimensions=8,
+        max_input_tokens=4096,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    batch = [
+        BatchItem("hello", "id1", 0, 1),
+        BatchItem("world", "id2", 0, 1),
+    ]
+    result = await client._process_batch(batch)  # pyright: ignore[reportPrivateUsage]
+
+    assert result["id1"][0] == [0.3] * 8
+    assert result["id2"][0] == [0.3] * 8
+
+    assert len(calls) == 1
+    contents = calls[0]["contents"]
+    assert len(contents) == 2
+    assert all(isinstance(c, genai_types.Content) for c in contents)
+    assert contents[0].parts[0].text == "hello"
+    assert contents[1].parts[0].text == "world"
