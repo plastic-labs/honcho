@@ -117,6 +117,12 @@ deriver_tokens_processed_counter = NamespacedCounter(
     ["namespace", "task_type", "token_type", "component"],
 )
 
+summary_rejections_counter = NamespacedCounter(
+    "summary_rejections",
+    "Total summaries rejected by validation before persistence",
+    ["namespace", "summary_type", "reason"],
+)
+
 dialectic_tokens_processed_counter = NamespacedCounter(
     "dialectic_tokens_processed",
     "Total tokens processed by the dialectic",
@@ -273,6 +279,14 @@ class PrometheusMetrics:
             ).inc(count)
         except Exception as e:
             self._handle_metric_error("record_deriver_tokens", e)
+
+    def record_summary_rejection(self, *, summary_type: str, reason: str) -> None:
+        try:
+            summary_rejections_counter.labels(
+                summary_type=summary_type, reason=reason
+            ).inc()
+        except Exception as e:
+            self._handle_metric_error("record_summary_rejection", e)
 
     def record_dialectic_tokens(
         self,
