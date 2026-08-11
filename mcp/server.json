@@ -1,0 +1,31 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.plastic-labs/honcho",
+  "title": "Honcho",
+  "description": "Memory that reasons: continual learning for stateful agents. Better context, fewer tokens.",
+  "version": "3.0.0",
+  "repository": {
+    "url": "https://github.com/plastic-labs/honcho",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.honcho.dev",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Honcho API key as a Bearer token. Create one at https://app.honcho.dev (starts with hch-). Send as: Bearer hch-...",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "X-Honcho-Workspace-ID",
+          "description": "Optional. Target Honcho workspace; defaults to 'default' when omitted.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
