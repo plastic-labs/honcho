@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `honcho session view` — session transcript table (`--last N`, `--page N --size M`, `--all`, `--reverse`, `--ids`, peer filter via `-p`). Content is shown verbatim, timestamps are normalized to UTC, and the command is read-only: unlike the other session commands it never get-or-creates the session
+
+### Fixed
+
+- `honcho message list --last N` no longer stops at the first page of 50 — it walks pages to fill the requested window
+
 ## [0.1.2] - 2026-07-20
 
 ### Added

@@ -20,7 +20,7 @@ allowed-tools: Bash(honcho:*), Bash(jq:*), Read, Grep
 - `honcho config` — CLI configuration
 - `honcho workspace` — inspect, delete, search
 - `honcho peer` — inspect, card, chat, search
-- `honcho session` — inspect, messages, context, summaries
+- `honcho session` — inspect, view (transcript), context, summaries
 - `honcho message` — list and get
 - `honcho conclusion` — list, search, create, delete
 
@@ -61,6 +61,8 @@ honcho conclusion search "topic" --observer <peer_id> --json
 
 ```bash
 honcho session inspect <session_id> --json
+honcho session view <session_id> --last 20 --json
+honcho session view <session_id> --page 2 --size 50 --json
 honcho message list <session_id> --last 20 --json
 honcho session context <session_id> --json
 honcho session summaries <session_id> --json
