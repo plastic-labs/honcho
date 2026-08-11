@@ -12,12 +12,13 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
-from anthropic import AsyncAnthropic
-from google import genai
-from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from anthropic import AsyncAnthropic
+    from google import genai
+    from openai import AsyncOpenAI
+
     from src.llm.capture import CapturedMessage
 
 logger = logging.getLogger(__name__)
@@ -30,8 +31,13 @@ ReasoningEffortType = (
 )
 VerbosityType = Literal["low", "medium", "high"] | None
 
-# Raw SDK client union used by the provider-selection layer.
-ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client
+# Raw SDK client union used by the provider-selection layer. The SDK types are
+# only imported for type checking; at runtime this stays Any so importing this
+# module doesn't load any provider SDK.
+if TYPE_CHECKING:
+    ProviderClient = AsyncAnthropic | AsyncOpenAI | genai.Client
+else:
+    ProviderClient = Any
 
 
 @dataclass
