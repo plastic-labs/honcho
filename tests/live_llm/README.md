@@ -26,7 +26,7 @@ Model-family env vars:
 
 Embedding-model env vars:
 
-- `LIVE_EMBEDDING_GEMINI_MODELS` (default: `gemini-embedding-001,gemini-embedding-2-preview,gemini-embedding-2`)
+- `LIVE_EMBEDDING_GEMINI_MODELS` (default: `gemini-embedding-001,gemini-embedding-2`; add `gemini-embedding-2-preview` to cover the preview twin)
 - `LIVE_EMBEDDING_OPENAI_MODELS` (default: `text-embedding-3-small`)
 
 Each model env var accepts a comma-separated list of bare model ids or provider-qualified ids.

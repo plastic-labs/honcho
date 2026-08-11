@@ -31,9 +31,10 @@ class LiveEmbeddingSpec:
 
 
 EMBEDDING_FAMILIES: tuple[LiveEmbeddingFamily, ...] = (
-    # Every Gemini model that advertises embedContent. The -2* models are the
-    # regression surface for #745: the SDK folds a list of bare strings into a
-    # single document and returns one embedding for the whole batch.
+    # gemini-embedding-2 is the regression surface for #745: the SDK folds a
+    # list of bare strings into a single document and returns one embedding for
+    # the whole batch. Its preview twin behaves identically and is reachable
+    # through the env var when it needs checking.
     LiveEmbeddingFamily(
         transport="gemini",
         family="gemini_embedding",
@@ -42,7 +43,6 @@ EMBEDDING_FAMILIES: tuple[LiveEmbeddingFamily, ...] = (
         dimensions=768,
         default_models=(
             "gemini-embedding-001",
-            "gemini-embedding-2-preview",
             "gemini-embedding-2",
         ),
         docs_url="https://ai.google.dev/gemini-api/docs/embeddings",
