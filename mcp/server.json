@@ -15,7 +15,7 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Honcho API key as a Bearer token. Create one at https://app.honcho.dev (starts with hch-). Send as: Bearer hch-...",
+          "description": "Authorization header for Honcho. Use either an OAuth access token or a Honcho API key from https://app.honcho.dev (API keys start with hch-). Send as: Bearer <token>.",
           "isRequired": true,
           "isSecret": true
         },
