@@ -35,6 +35,15 @@ router = APIRouter(
     tags=["sessions"],
 )
 
+# Guidance appended to guardrail errors when a scope peer is passed to the
+# generic session-peer surface. Scope membership is managed only through the
+# scopes facade so the observer mechanics stay internal.
+_SCOPES_ROUTE_GUIDANCE = (
+    "Scope membership is managed via the scopes routes "
+    "(/v3/workspaces/{workspace_id}/scopes/{scope_id}/sessions) or the `scopes` "
+    "field at session creation."
+)
+
 
 async def _get_working_representation_task(
     db: AsyncSession,
@@ -309,6 +318,23 @@ async def get_or_create_session(
             )
         session.name = jwt_params.s
 
+    # The `scopes` field does what the scopes routes do — create scope peers and
+    # attach memberships — so it needs their authorization: workspace-level or
+    # admin only. Checked here rather than through `require_auth(...)` because
+    # that closure only resolves path and query params, never the body, so a
+    # declarative gate cannot see this field.
+    if session.scopes and not (
+        jwt_params.ad or (jwt_params.p is None and jwt_params.s is None)
+    ):
+        raise AuthenticationException("Scope membership requires a workspace-level key")
+
+    # Scope peers may not be added through the generic peers mapping; use the
+    # `scopes` field (which handles scope-peer creation and observer config).
+    if session.peer_names:
+        await crud.reject_scope_peers(
+            db, workspace_id, session.peer_names.keys(), action=_SCOPES_ROUTE_GUIDANCE
+        )
+
     # Handle session creation with proper error handling
     try:
         result = await crud.get_or_create_session(
@@ -440,7 +466,13 @@ async def add_peers_to_session(
     ),
     db: AsyncSession = db,
 ):
-    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically."""
+    """Add Peers to a Session. If a Peer does not yet exist, it will be created automatically.
+
+    Scope peers cannot be added here; scope membership is managed via the scopes routes.
+    """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         result = await crud.get_or_create_session(
             db,
@@ -476,7 +508,12 @@ async def set_session_peers(
     Set the Peers in a Session. If a Peer does not yet exist, it will be created automatically.
 
     This will fully replace the current set of Peers in the Session.
+
+    Scope peers cannot be set here; scope membership is managed via the scopes routes.
     """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers.keys(), action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.set_peers_for_session(
             db,
@@ -512,7 +549,13 @@ async def remove_peers_from_session(
     ),
     db: AsyncSession = db,
 ):
-    """Remove Peers by ID from a Session."""
+    """Remove Peers by ID from a Session.
+
+    Scope peers cannot be removed here; scope membership is managed via the scopes routes.
+    """
+    await crud.reject_scope_peers(
+        db, workspace_id, peers, action=_SCOPES_ROUTE_GUIDANCE
+    )
     try:
         await crud.remove_peers_from_session(
             db,
@@ -710,6 +753,22 @@ async def get_session_context(
     if peer_perspective and not peer_target:
         raise ValidationException(
             "peer_target must be provided if peer_perspective is provided"
+        )
+
+    # peer_target is the *observed* peer, and no representation or card is ever
+    # formed of a scope. peer_perspective (the observer) is left alone: a scope is
+    # a legitimate perspective, and the read-side scope surface will build on that.
+    if peer_target is not None:
+        # Strict variant: an observed position that creates nothing, so a reserved
+        # name which does not exist yet must be refused too.
+        await crud.reject_scope_observed(
+            db,
+            workspace_id,
+            [peer_target],
+            action=(
+                "No representation is formed of a scope, so a scope cannot be a"
+                " context target."
+            ),
         )
 
     if not peer_target:
