@@ -1,11 +1,10 @@
-# syntax=docker/dockerfile:1
-
 # https://pythonspeed.com/articles/base-image-python-docker-images/
 # https://testdriven.io/blog/docker-best-practices/
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.13-slim-bookworm
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.24 /uv /bin/uv
 
+# Set Working directory
 WORKDIR /app
 
 # Enable bytecode compilation
@@ -21,38 +20,21 @@ ENV PYTHONUNBUFFERED=1
 # Copy only requirements to cache them in docker layer
 COPY uv.lock pyproject.toml /app/
 
-# Optionall include lancedb with:
-#   docker build --build-arg INSTALL_LANCEDB=true .
-ARG INSTALL_LANCEDB=false
+# Install the project's dependencies using the lockfile and settings
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ "$INSTALL_LANCEDB" = "true" ]; then \
-        uv sync --frozen --no-install-project --no-group dev --extra lancedb; \
-    elif [ "$INSTALL_LANCEDB" = "false" ]; then \
-        uv sync --frozen --no-install-project --no-group dev; \
-    else \
-        echo "INSTALL_LANCEDB must be 'true' or 'false'" >&2; \
-        exit 2; \
-    fi
+    uv sync --frozen --no-install-project --no-group dev
 
-FROM python:3.13-slim-bookworm AS runtime
-
-WORKDIR /app
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Create the runtime user before copying dependencies with their final owner.
-# A recursive chown in a later layer would copy the whole virtualenv and nearly
-# double the image size.
-RUN addgroup --system app \
-    && adduser --system --group app \
-    && chown app:app /app
-
-COPY --from=builder --chown=app:app /app/.venv /app/.venv
+# Sync the project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-group dev
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 ENV HOME=/app
+ENV UV_CACHE_DIR=/tmp/uv-cache
+
+# Create non-root user and set ownership
+RUN addgroup --system app && adduser --system --group app && mkdir -p /tmp/uv-cache && chown -R app:app /app /tmp/uv-cache
 
 COPY --chown=app:app src/ /app/src/
 COPY --chown=app:app migrations/ /app/migrations/
