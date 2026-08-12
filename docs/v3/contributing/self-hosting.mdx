@@ -95,6 +95,8 @@ docker compose up -d --build
 
 The first build takes a few minutes (compiling from source). Subsequent starts are fast.
 
+The default image does not include LanceDB. To use `VECTOR_STORE_TYPE=lancedb`, build with `INSTALL_LANCEDB=true docker compose up -d --build`.
+
 This starts four services: **api** (port 8000), **deriver** (background worker), **database** (PostgreSQL with pgvector, port 5432), and **redis** (port 6379). All ports are bound to `127.0.0.1`. Redis caching is enabled by default.
 
 For development, uncomment the source mount and monitoring sections inside `docker-compose.yml` to enable live reload, Prometheus, and Grafana.
