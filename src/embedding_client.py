@@ -226,6 +226,53 @@ class _EmbeddingClient:
             )
         return embedding
 
+    async def probe_model_dimensions(self) -> int:
+        """Return the configured embedding model's raw output dimension.
+
+        Startup validation needs the actual length returned by the provider,
+        before runtime dimension validation would reject it.
+        """
+        probe = "Honcho embedding dimension validation probe"
+        token_count = len(self.encoding.encode(probe))
+
+        if isinstance(self.client, genai.Client):
+            gemini_client = self.client
+
+            async def _call_gemini() -> int:
+                response = await gemini_client.aio.models.embed_content(
+                    model=self.model,
+                    contents=probe,
+                    config={"output_dimensionality": self.vector_dimensions},
+                )
+                if not response.embeddings or not response.embeddings[0].values:
+                    raise ValueError("No embedding returned from Gemini API")
+                return len(response.embeddings[0].values)
+
+            return await _emit_embedding_call(
+                provider=self.transport,
+                model=self.model,
+                texts=[probe],
+                input_tokens_estimate=token_count,
+                fn=_call_gemini,
+            )
+
+        openai_client = self.client
+
+        async def _call_openai() -> int:
+            openai_kwargs: dict[str, Any] = {"model": self.model, "input": [probe]}
+            if self.send_dimensions:
+                openai_kwargs["dimensions"] = self.vector_dimensions
+            response = await openai_client.embeddings.create(**openai_kwargs)
+            return len(response.data[0].embedding)
+
+        return await _emit_embedding_call(
+            provider=self.transport,
+            model=self.model,
+            texts=[probe],
+            input_tokens_estimate=token_count,
+            fn=_call_openai,
+        )
+
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
 
@@ -642,6 +689,16 @@ class EmbeddingClient:
     async def embed(self, query: str) -> list[float]:
         """Embed a single query string."""
         return await self._get_client().embed(query)
+
+    async def validate_model_dimensions(self) -> int:
+        """Probe the configured embedding model and return its output dimension.
+
+        Startup uses this as a fail-fast configuration check. The probe goes
+        through the same embedding path as runtime callers, so provider/client
+        quirks and dimensions-mode handling are validated before traffic is
+        served.
+        """
+        return await self._get_client().probe_model_dimensions()
 
     async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
         """Batch embed a list of text strings (each must fit token limit)."""

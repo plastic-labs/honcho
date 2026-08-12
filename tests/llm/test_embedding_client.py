@@ -102,6 +102,36 @@ async def test_openai_embedding_client_rejects_dimension_mismatch(
 
 
 @pytest.mark.asyncio
+async def test_probe_model_dimensions_returns_raw_mismatched_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup can diagnose model-vs-config drift before runtime validation fails."""
+    fake_embeddings = FakeOpenAIEmbeddingsAPI([0.1] * 7)
+
+    class FakeOpenAIClient:
+        def __init__(self, *, api_key: str | None, base_url: str | None) -> None:
+            self.embeddings: FakeOpenAIEmbeddingsAPI = fake_embeddings
+
+    monkeypatch.setattr("src.embedding_client.AsyncOpenAI", FakeOpenAIClient)
+
+    client = _EmbeddingClient(
+        EmbeddingModelConfig(
+            transport="openai",
+            model="text-embedding-nomic-embed-text-v1.5",
+            api_key="test-key",
+        ),
+        vector_dimensions=1536,
+        max_input_tokens=8192,
+        max_tokens_per_request=300_000,
+        send_dimensions=False,
+    )
+
+    assert await client.probe_model_dimensions() == 7
+    with pytest.raises(ValueError, match="Expected 1536, got 7"):
+        await client.embed("hello world")
+
+
+@pytest.mark.asyncio
 async def test_gemini_embedding_client_uses_output_dimensionality(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
