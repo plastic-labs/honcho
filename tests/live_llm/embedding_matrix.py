@@ -14,6 +14,13 @@ class LiveEmbeddingFamily:
     dimensions: int
     default_models: tuple[str, ...] = ()
     docs_url: str | None = None
+    base_url: str | None = None
+    # Falls back to the transport's own key when unset.
+    api_key_env: str | None = None
+    dimensions_env: str | None = None
+    base_url_env: str | None = None
+    send_dimensions: bool = True
+    send_dimensions_env: str | None = None
 
 
 @dataclass(frozen=True)
@@ -24,6 +31,9 @@ class LiveEmbeddingSpec:
     env_var: str
     dimensions: int
     docs_url: str | None = None
+    base_url: str | None = None
+    api_key_env: str | None = None
+    send_dimensions: bool = True
 
     @property
     def id(self) -> str:
@@ -55,6 +65,25 @@ EMBEDDING_FAMILIES: tuple[LiveEmbeddingFamily, ...] = (
         default_models=("text-embedding-3-small",),
         docs_url="https://platform.openai.com/docs/guides/embeddings",
     ),
+    # OpenAI transport pointed at an OpenAI-compatible provider. This is the
+    # regression surface for #932: the openai SDK asks for base64 embeddings
+    # unless told otherwise, and third-party providers reject or empty out that
+    # request. Empty default_models → skipped unless set.
+    LiveEmbeddingFamily(
+        transport="openai",
+        family="openai_compatible_embedding",
+        env_var="LIVE_EMBEDDING_OPENAI_COMPATIBLE_MODELS",
+        dimensions=3072,
+        dimensions_env="LIVE_EMBEDDING_OPENAI_COMPATIBLE_DIMENSIONS",
+        base_url="https://openrouter.ai/api/v1",
+        base_url_env="LIVE_EMBEDDING_OPENAI_COMPATIBLE_BASE_URL",
+        api_key_env="OPENROUTER_API_KEY",
+        # Mirrors honcho's own behaviour once VECTOR_DIMENSIONS is set; turn off
+        # for a provider that rejects the param.
+        send_dimensions=True,
+        send_dimensions_env="LIVE_EMBEDDING_OPENAI_COMPATIBLE_SEND_DIMENSIONS",
+        docs_url="https://openrouter.ai/docs/api-reference/embeddings",
+    ),
 )
 
 
@@ -72,6 +101,17 @@ def get_live_embedding_specs(
         if transport is not None and family.transport != transport:
             continue
         models = _parse_env_models(os.getenv(family.env_var)) or family.default_models
+        dimensions = family.dimensions
+        if family.dimensions_env:
+            dimensions = int(os.getenv(family.dimensions_env) or family.dimensions)
+        base_url = family.base_url
+        if family.base_url_env:
+            base_url = os.getenv(family.base_url_env) or family.base_url
+        send_dimensions = family.send_dimensions
+        if family.send_dimensions_env:
+            raw = os.getenv(family.send_dimensions_env)
+            if raw is not None:
+                send_dimensions = raw.strip().lower() in {"1", "true", "yes"}
         for model in models:
             specs.append(
                 LiveEmbeddingSpec(
@@ -79,8 +119,11 @@ def get_live_embedding_specs(
                     family=family.family,
                     model=model,
                     env_var=family.env_var,
-                    dimensions=family.dimensions,
+                    dimensions=dimensions,
                     docs_url=family.docs_url,
+                    base_url=base_url,
+                    api_key_env=family.api_key_env,
+                    send_dimensions=send_dimensions,
                 )
             )
     return tuple(specs)
