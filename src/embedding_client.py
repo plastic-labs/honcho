@@ -11,7 +11,12 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
 import tiktoken
 from nanoid import generate as generate_nanoid
 
-from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
+from .config import (
+    EmbeddingEncodingFormat,
+    EmbeddingModelConfig,
+    resolve_embedding_model_config,
+    settings,
+)
 
 if TYPE_CHECKING:
     from google import genai
@@ -176,11 +181,13 @@ class _EmbeddingClient:
         max_input_tokens: int,
         max_tokens_per_request: int,
         send_dimensions: bool,
+        encoding_format: EmbeddingEncodingFormat = "float",
     ):
         self.transport: str = config.transport
         self.model: str = config.model
         self.vector_dimensions: int = vector_dimensions
         self.send_dimensions: bool = send_dimensions
+        self.encoding_format: EmbeddingEncodingFormat = encoding_format
 
         if self.transport == "gemini":
             if not config.api_key:
@@ -234,6 +241,29 @@ class _EmbeddingClient:
             )
         return embedding
 
+    def _apply_encoding_format(self, openai_kwargs: dict[str, Any]) -> None:
+        """Set the embedding wire format on an openai request.
+
+        Base64 is requested by omission, not by name: the SDK injects
+        `encoding_format=base64` when the caller passes nothing and decodes the
+        response, but skips that decode for any format the caller names, handing
+        back the raw base64 string.
+        """
+        if self.encoding_format != "base64":
+            openai_kwargs["encoding_format"] = self.encoding_format
+
+    def _validate_embedding_count(self, expected: int, received: int) -> None:
+        """Guard against a 200 response whose embedding count differs from inputs.
+
+        An explicit `encoding_format` disables the openai SDK's own empty-data
+        check, so this has to live here.
+        """
+        if received != expected:
+            raise ValueError(
+                f"Embedding count mismatch for {self.transport}:{self.model}. "
+                + f"Expected {expected}, got {received}."
+            )
+
     async def embed(self, query: str) -> list[float]:
         token_count = len(self.encoding.encode(query))
 
@@ -272,9 +302,11 @@ class _EmbeddingClient:
 
         async def _call_openai() -> list[float]:
             openai_kwargs: dict[str, Any] = {"model": self.model, "input": [query]}
+            self._apply_encoding_format(openai_kwargs)
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
             response = await openai_client.embeddings.create(**openai_kwargs)
+            self._validate_embedding_count(1, len(response.data))
             return self._validate_embedding_dimensions(response.data[0].embedding)
 
         return await _emit_embedding_call(
@@ -459,10 +491,18 @@ class _EmbeddingClient:
             item in analytics."""
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
             if self.transport == "gemini":
+                from google.genai import types as genai_types
+
                 gemini_client = cast("genai.Client", self.client)
                 response = await gemini_client.aio.models.embed_content(
                     model=self.model,
-                    contents=[item.text for item in batch],
+                    # One Content per item: a list of bare strings is folded
+                    # into a single document by gemini-embedding-2*, which
+                    # returns one embedding for the whole batch (#745).
+                    contents=[
+                        genai_types.Content(parts=[genai_types.Part(text=item.text)])
+                        for item in batch
+                    ],
                     config={"output_dimensionality": self.vector_dimensions},
                 )
                 if response.embeddings:
@@ -476,10 +516,12 @@ class _EmbeddingClient:
                     "model": self.model,
                     "input": [item.text for item in batch],
                 }
+                self._apply_encoding_format(openai_kwargs)
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
                 openai_client = cast("AsyncOpenAI", self.client)
                 response = await openai_client.embeddings.create(**openai_kwargs)
+                self._validate_embedding_count(len(batch), len(response.data))
                 for item, embedding_data in zip(batch, response.data, strict=True):
                     result[item.text_id][item.chunk_index] = (
                         self._validate_embedding_dimensions(embedding_data.embedding)
@@ -616,6 +658,7 @@ class EmbeddingClient:
                         max_input_tokens=settings.EMBEDDING.MAX_INPUT_TOKENS,
                         max_tokens_per_request=settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
                         send_dimensions=settings.EMBEDDING.resolve_send_dimensions(),
+                        encoding_format=settings.EMBEDDING.resolve_encoding_format(),
                     )
                     self._instance_signature = signature
                     logger.debug(
@@ -641,6 +684,7 @@ class EmbeddingClient:
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
             settings.EMBEDDING.resolve_send_dimensions(),
+            settings.EMBEDDING.resolve_encoding_format(),
         )
 
     async def embed(self, query: str) -> list[float]:
