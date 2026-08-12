@@ -232,8 +232,16 @@ class UnifiedTestExecutor:
     async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         """Call a /v3 workspace-scoped path directly, raising on error status."""
         url = f"{str(self.client.base_url).rstrip('/')}/v3/workspaces/{self.workspace_id}{path}"
+        # Carry the same credential the SDK resolved (from `HONCHO_API_KEY`, unless
+        # passed explicitly). The harness sets no AUTH vars of its own, so auth is
+        # off by default — but it inherits `AUTH_USE_AUTH` from the environment,
+        # and these raw calls are the only ones here that would not be authorized.
+        headers: dict[str, str] = dict(kwargs.pop("headers", None) or {})
+        api_key = getattr(getattr(self.client, "_http", None), "api_key", None)
+        if api_key:
+            headers.setdefault("Authorization", f"Bearer {api_key}")
         async with httpx.AsyncClient(timeout=120.0) as raw:
-            response = await raw.request(method, url, **kwargs)
+            response = await raw.request(method, url, headers=headers, **kwargs)
         if response.is_error:
             raise AssertionError(
                 f"{method} {path} failed: {response.status_code} {response.text[:400]}"
