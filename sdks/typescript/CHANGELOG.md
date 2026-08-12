@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.3.0] - 2026-08-10
+
+### Added
+
+- `responseFormat` option on `peer.chat()` and `peer.chatStream()`, for constraining a dialectic answer to a schema. Pass a Zod schema to get a parsed, validated result back, or a raw JSON Schema object to get the JSON string as-is. Overloads type the return precisely, so a Zod schema narrows to its inferred type and a plain object narrows to `string`. On `chatStream()`, chunks stay raw text that accumulates to a JSON string — parse it after the stream completes. Requires a Honcho server with the matching API support (Honcho v3.0.12+).
+
 ## [2.2.0] - 2026-07-02
 
 ### Added

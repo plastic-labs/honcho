@@ -204,6 +204,20 @@ uv run alembic history
 uv run alembic upgrade head
 ```
 
+### "permission denied to create extension \"vector\""
+
+**Cause:** The role in `DB_CONNECTION_URI` is not a superuser and lacks privileges to create extensions. Honcho issues `CREATE EXTENSION IF NOT EXISTS vector` both before running migrations and again at server startup, so this fails in both places. `IF NOT EXISTS` does not help — Postgres checks the privilege before checking whether the extension exists.
+
+**Fix:** Preinstall pgvector once with a privileged role (superuser, or `rds_superuser` on RDS) in the Honcho database:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+The `IF NOT EXISTS` calls then short-circuit and the application role needs no extension privileges. This is the supported path for deployments where the platform, not the application, owns extension management.
+
+You won't hit this with `docker compose` — the bundled stack connects as `postgres`, a superuser, and its database service also creates the extension from `database/init.sql` on first boot. It comes up on managed Postgres, Kubernetes operators, and other setups where you bring your own database and its role is deliberately not a superuser.
+
 ## Cache & Redis
 
 ### Redis is optional

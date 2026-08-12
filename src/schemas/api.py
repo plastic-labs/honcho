@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 import tiktoken
 from pydantic import (
+    AfterValidator,
     AliasChoices,
     BaseModel,
     BeforeValidator,
@@ -115,6 +116,19 @@ def _validate_scope_name(name: str) -> str:
     if not re.fullmatch(RESOURCE_NAME_PATTERN, name):
         raise ValueError(f"Scope name must match pattern {RESOURCE_NAME_PATTERN}")
     return name
+
+
+_ScopeName = Annotated[str, AfterValidator(_validate_scope_name)]
+
+# The `scope` read option (chat / representation): one scope name, or a bounded
+# list of them. The length cap sits on the list member so it bounds the *list* —
+# a single name is already bounded by `_validate_scope_name`, and a union-level
+# `max_length` would cap that name's characters instead. The upper bound matches
+# `SessionCreate.scopes`; the lower one rejects `[]`, which would otherwise
+# resolve to an empty allowlist and silently recall nothing.
+_ScopeOption = (
+    _ScopeName | Annotated[list[_ScopeName], Field(min_length=1, max_length=100)]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +257,19 @@ class PeerRepresentationGet(BaseModel):
             "supports only the 'session_id' key: a session id, a list of "
             'session ids, or {"in": [...]}. When session_id is also set, it '
             "must be included in the allowlist."
+        ),
+    )
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) to confine the representation. "
+            "A single scope reads the scope's own representation of the target "
+            "peer, formed only from the scope's member sessions. A list of "
+            "scopes restricts the representation to conclusions from the union "
+            "of the scopes' member sessions (explicit allowlist, fail-closed: "
+            "an empty union yields an empty representation). Mutually "
+            "exclusive with `filters` and `session_id`. Requires a workspace- "
+            "or admin-level key."
         ),
     )
     target: str | None = Field(
@@ -707,6 +734,20 @@ class MessageSearchOptions(BaseModel):
         return v.replace("\x00", "")
 
 
+class WorkspaceMessageSearchOptions(MessageSearchOptions):
+    """Workspace-level message search options, extended with `scope`."""
+
+    scope: str | None = Field(
+        default=None,
+        description=(
+            "Optional (unprefixed) scope name restricting search to the "
+            "scope's member sessions. A scope with no member sessions returns "
+            "no results. Mutually exclusive with a 'session_id' key in "
+            "`filters`."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dialectic schemas
 # ---------------------------------------------------------------------------
@@ -724,6 +765,19 @@ class DialecticOptions(BaseModel):
             '{"in": [...]}. Recall (conclusions and messages) is restricted to '
             "the allowlist; unsupported keys are rejected. When session_id is "
             "also set, it must be included in the allowlist."
+        ),
+    )
+    scope: _ScopeOption | None = Field(
+        None,
+        description=(
+            "Optional (unprefixed) scope name(s) to confine recall. A single "
+            "scope answers from the scope's own representation of the target "
+            "peer: conclusion recall is confined to what the scope observed "
+            "and message recall to the scope's member sessions. A list of "
+            "scopes restricts recall to the union of the scopes' member "
+            "sessions (explicit allowlist, fail-closed: an empty union "
+            "recalls nothing). Mutually exclusive with `filters` and "
+            "`session_id`. Requires a workspace- or admin-level key."
         ),
     )
     target: str | None = Field(

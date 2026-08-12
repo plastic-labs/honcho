@@ -57,6 +57,7 @@ from .scope import (
     get_scopes,
     invalidate_scope_peer_cache,
     remove_session_from_scope,
+    resolve_scope_peers,
     update_scope_backfill_status,
 )
 from .session import (
@@ -148,6 +149,7 @@ __all__ = [
     "get_scopes",
     "invalidate_scope_peer_cache",
     "remove_session_from_scope",
+    "resolve_scope_peers",
     "update_scope_backfill_status",
     # Session
     "SessionDeletionResult",
