@@ -12,6 +12,7 @@ scope. Conclusions already derived are neither backfilled on add nor
 reconciled on removal.
 """
 
+from collections.abc import Sequence
 from logging import getLogger
 
 from sqlalchemy import Select, select
@@ -20,7 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.cache.client import safe_cache_delete
-from src.exceptions import ConflictException, ResourceNotFoundException
+from src.exceptions import (
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.utils.scopes import (
     SCOPE_KIND,
     is_scope_peer,
@@ -230,6 +235,69 @@ async def get_scope_or_raise(
             f"Scope {scope_name} not found in workspace {workspace_name}"
         )
     return peer
+
+
+async def resolve_scope_peers(
+    db: AsyncSession,
+    workspace_name: str,
+    scope_names: Sequence[str],
+) -> list[str]:
+    """
+    Resolve unprefixed scope names to their backing scope-peer names.
+
+    Used by the read routes that accept a ``scope`` option (chat,
+    representation, session context, workspace search) to turn user-facing
+    scope names into the observer peers that implement them.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        scope_names: Unprefixed scope names (duplicates are collapsed,
+            preserving first-seen order)
+
+    Returns:
+        The backing scope-peer names, in first-requested order
+
+    Raises:
+        ResourceNotFoundException: If any named scope does not exist
+        ValidationException: If a peer occupies a scope's reserved name
+            without the authoritative kind flag (a legacy collision)
+    """
+    requested: list[str] = []
+    seen: set[str] = set()
+    for name in scope_names:
+        if name not in seen:
+            seen.add(name)
+            requested.append(name)
+
+    peer_names = [scope_peer_name(name) for name in requested]
+    if not peer_names:
+        return []
+
+    result = await db.execute(
+        select(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name.in_(peer_names))
+    )
+    peers_by_name = {peer.name: peer for peer in result.scalars().all()}
+
+    resolved: list[str] = []
+    for name, peer_name in zip(requested, peer_names, strict=True):
+        peer = peers_by_name.get(peer_name)
+        if peer is None:
+            raise ResourceNotFoundException(
+                f"Scope {name} not found in workspace {workspace_name}"
+            )
+        # The kind flag is authoritative and lives in internal_metadata, so a
+        # legacy peer merely occupying the reserved name is refused rather than
+        # silently treated as a scope.
+        if not is_scope_peer(peer.name, peer.internal_metadata):
+            raise ValidationException(
+                f"'{name}' does not name a scope: a non-scope peer occupies "
+                + "its reserved name."
+            )
+        resolved.append(peer_name)
+    return resolved
 
 
 async def get_scope_sessions(

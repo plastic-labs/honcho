@@ -54,6 +54,7 @@ from .scope import (
     get_scope_sessions,
     get_scopes,
     remove_session_from_scope,
+    resolve_scope_peers,
 )
 from .session import (
     SessionDeletionResult,
@@ -141,6 +142,7 @@ __all__ = [
     "get_scope_sessions",
     "get_scopes",
     "remove_session_from_scope",
+    "resolve_scope_peers",
     # Session
     "SessionDeletionResult",
     "get_sessions",

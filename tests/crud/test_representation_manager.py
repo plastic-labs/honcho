@@ -236,7 +236,7 @@ class TestRepresentationManagerSoftDelete:
 class TestRepresentationManagerSessionScoping:
     """Tests that the session allowlist is applied uniformly to every query path.
 
-    Regression for DEV-1994: session_name used to be applied only to the
+    Regression: session_name used to be applied only to the
     recent-documents query; the semantic and most-derived paths ignored it,
     so limit_to_session leaked cross-session conclusions.
     """
@@ -368,7 +368,7 @@ class TestRepresentationManagerSessionScoping:
         assert mock_query.await_args.kwargs["filters"] == {
             "session_name": {"in": [session_a.name]},
             # Scoped recall serves only levels with a trustworthy session
-            # stamp (ALLOWLIST_SAFE_LEVELS / DEV-2201).
+            # stamp (ALLOWLIST_SAFE_LEVELS).
             "level": {"in": ["explicit"]},
         }
 
@@ -445,7 +445,7 @@ class TestRepresentationManagerSessionScoping:
         )
 
         # Scoping also narrows to levels whose session stamp is trustworthy
-        # (see ALLOWLIST_SAFE_LEVELS / DEV-2201).
+        # (see ALLOWLIST_SAFE_LEVELS).
         assert manager._build_filter_conditions(session_allowlist=[]) == {  # pyright: ignore[reportPrivateUsage]
             "session_name": {"in": []},
             "level": {"in": ["explicit"]},

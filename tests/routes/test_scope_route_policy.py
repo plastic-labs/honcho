@@ -14,6 +14,16 @@ persisted a conclusion about something that carries ``observe_me=false``. One
 route, two positions, opposite verdicts. The same split applies to
 `schedule_dream`, the peer-card routes, and session context.
 
+One refinement, added with the `scope` read option: on the *read* routes an
+observer position is refused too, even though a scope there is mechanically
+legitimate. Asking for a scope's perspective is what `scope` is for, and routing
+through it is what keeps the observer mechanics hidden — so `peer_perspective`,
+`GET /peers/{peer_id}/context`, chat and representation all refuse a raw scope
+peer name and point at `scope` instead. The invariant above still governs the
+storage side, where `observer_id` / `observer` remain ALLOW: a scope observing is
+the entire mechanism. Read "OBSERVER" as "may observe", not "may be named as one
+on any route".
+
 So classification here is keyed by ``(method, path, position)``, where position is
 the request parameter carrying the peer name. Every derived triple must appear in
 `POLICY` as either REFUSE or ALLOW-with-a-reason; a new one fails
@@ -253,6 +263,14 @@ def _b_card_observer_get(c: TestClient, ws: str, _s: str, p: str):
     return c.get(f"/v3/workspaces/{ws}/peers/{p}/card?target={_OTHER}")
 
 
+def _b_peer_context_observer(c: TestClient, ws: str, _s: str, p: str):
+    return c.get(f"/v3/workspaces/{ws}/peers/{p}/context")
+
+
+def _b_peer_context_target(c: TestClient, ws: str, _s: str, p: str):
+    return c.get(f"/v3/workspaces/{ws}/peers/{_OTHER}/context?target={p}")
+
+
 def _b_context_perspective(c: TestClient, ws: str, s: str, p: str):
     query = f"?peer_perspective={p}&peer_target={_OTHER}"
     return c.get(f"/v3/workspaces/{ws}/sessions/{s}/context{query}")
@@ -387,10 +405,15 @@ POLICY: tuple[Case, ...] = (
         "GET",
         f"{_W}/sessions/{{session_id}}/context",
         "peer_perspective",
-        False,
-        reason=_OBSERVER_OK,
+        True,
+        refuse_missing=False,
+        missing_reason=(
+            "The perspective peer is resolved before the flag-based guard runs, so a "
+            "reserved name that does not exist yet is a 404 — the same answer any "
+            "absent peer gets here — and nothing on this path creates it."
+        ),
+        missing_status=(404,),
         build=_b_context_perspective,
-        allow_status=(200,),
     ),
     Case(
         "GET",
@@ -552,21 +575,17 @@ POLICY: tuple[Case, ...] = (
         "GET",
         f"{_W}/peers/{{peer_id}}/context",
         "peer_id",
-        False,
-        reason=(
-            "Read-only. The read-side scope surface is not implemented yet; the "
-            "`scope` option on the context routes will own it when it lands."
-        ),
+        True,
+        refuse_missing=True,
+        build=_b_peer_context_observer,
     ),
     Case(
         "GET",
         f"{_W}/peers/{{peer_id}}/context",
         "target",
-        False,
-        reason=(
-            "Read-only, and empty for a scope now that nothing can write knowledge "
-            "about one. The read-side scope surface is not implemented yet."
-        ),
+        True,
+        refuse_missing=True,
+        build=_b_peer_context_target,
     ),
     Case(
         "GET",

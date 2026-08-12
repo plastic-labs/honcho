@@ -5,6 +5,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from time import perf_counter
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
@@ -28,7 +29,7 @@ from src.exceptions import (
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
-from src.utils.filter import extract_session_allowlist
+from src.utils.filter import MAX_SESSION_ALLOWLIST_ENTRIES, extract_session_allowlist
 from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.scopes import (
     is_scope_peer,
@@ -44,6 +45,73 @@ router = APIRouter(
     prefix="/workspaces/{workspace_id}/peers",
     tags=["peers"],
 )
+
+
+def _validate_scope_option(
+    *,
+    filters: dict[str, Any] | None,
+    session_id: str | None,
+    jwt_params: JWTParams,
+) -> None:
+    """Enforce the v1 `scope` exclusions and auth rule (chat/representation).
+
+    `scope` is mutually exclusive with `filters` and `session_id` (422), and a
+    scope's member sessions may exceed a peer's own membership, so scoped
+    reads require a workspace- or admin-level key.
+
+    401 rather than 403: every other scope surface refuses a narrow key with 401
+    — the `/scopes` router via `require_auth`, and the `scopes` field on session
+    create — so a peer key would otherwise get two different codes for the same
+    feature depending on which side of it was touched.
+    """
+    if filters is not None:
+        raise ValidationException("`scope` and `filters` are mutually exclusive")
+    if session_id:
+        raise ValidationException("`scope` and `session_id` are mutually exclusive")
+    if jwt_params.p is not None:
+        raise AuthenticationException(
+            "`scope` requires a workspace- or admin-level key"
+        )
+
+
+async def _resolve_scope_option(
+    workspace_id: str,
+    scope: str | list[str],
+    *,
+    db_action: str,
+) -> tuple[str | None, list[str] | None]:
+    """Map a validated `scope` option to (observer_override, session_allowlist).
+
+    A single scope swaps the observer to the scope peer: conclusion recall is
+    then confined to the (scope, observed) collection and message recall to
+    the scope's session membership by existing observer semantics. A list of
+    scopes keeps the path peer as observer and returns the union of the
+    scopes' member sessions as an explicit allowlist (fail-closed when empty).
+    """
+    async with tracked_db(db_action, read_only=True) as scope_db:
+        if isinstance(scope, str):
+            [scope_peer] = await crud.resolve_scope_peers(
+                scope_db, workspace_id, [scope]
+            )
+            return scope_peer, None
+
+        scope_peers = await crud.resolve_scope_peers(scope_db, workspace_id, scope)
+        union: list[str] = []
+        seen: set[str] = set()
+        for scope_peer in scope_peers:
+            for session_name in await get_peer_session_names(
+                scope_db, workspace_id, scope_peer
+            ):
+                if session_name not in seen:
+                    seen.add(session_name)
+                    union.append(session_name)
+
+    if len(union) > MAX_SESSION_ALLOWLIST_ENTRIES:
+        raise ValidationException(
+            "The scopes' combined membership exceeds the maximum of "
+            + f"{MAX_SESSION_ALLOWLIST_ENTRIES} sessions per request"
+        )
+    return None, union
 
 
 @router.post(
@@ -243,6 +311,22 @@ async def chat(
                 ),
             )
 
+    # Scoped reads: a single scope swaps the observer to the scope
+    # peer; a list of scopes becomes a session allowlist over their union.
+    observer = peer_id
+    scope_session_union: list[str] | None = None
+    if options.scope is not None:
+        _validate_scope_option(
+            filters=options.filters,
+            session_id=options.session_id,
+            jwt_params=jwt_params,
+        )
+        observer_override, scope_session_union = await _resolve_scope_option(
+            workspace_id, options.scope, db_action="peers.chat.resolve_scope"
+        )
+        if observer_override is not None:
+            observer = observer_override
+
     # The session id arrives in the body, so require_auth can't gate on it. A
     # peer-scoped key may only scope a chat to a session its peer belongs to;
     # without this check it could read any session's messages (the dialectic
@@ -274,6 +358,12 @@ async def chat(
         if not set(session_allowlist) <= member_sessions:
             raise AuthenticationException("JWT not permissioned for this resource")
 
+    # A list of scopes resolves to a session allowlist over their union, which
+    # replaces any filters-derived allowlist (the two are mutually exclusive, so
+    # only one can be set).
+    if scope_session_union is not None:
+        session_allowlist = scope_session_union
+
     # Convert the caller's JSON Schema so malformed schemas fail immediately with 422
     response_model: type[BaseModel] | None = None
     if options.response_format is not None:
@@ -291,9 +381,12 @@ async def chat(
         )
         # Re-check on the resolved row: the name-level check above ran before the
         # peer was resolved, so a scope created in between would be picked up here
-        # as existing and used as the chat observer.
-        observer = peers_result.resource[0]
-        if is_scope_peer(observer.name, observer.internal_metadata):
+        # as existing and used as the chat observer. Deliberately NOT named
+        # `observer` — that holds the effective observer, which a single `scope`
+        # has already swapped to the scope peer, and rebinding it here would
+        # silently undo the swap.
+        path_peer = peers_result.resource[0]
+        if is_scope_peer(path_peer.name, path_peer.internal_metadata):
             raise ValidationException(
                 "No representation is formed of a scope, so a scope cannot be a "
                 + "chat observer or target."
@@ -325,7 +418,7 @@ async def chat(
                     workspace_name=workspace_id,
                     session_name=options.session_id,
                     query=options.query,
-                    observer=peer_id,
+                    observer=observer,
                     observed=options.target if options.target is not None else peer_id,
                     reasoning_level=options.reasoning_level,
                     session_allowlist=session_allowlist,
@@ -339,7 +432,8 @@ async def chat(
         workspace_name=workspace_id,
         session_name=options.session_id,
         query=options.query,
-        observer=peer_id,
+        # a single `scope` swaps the observer to the scope peer
+        observer=observer,
         # if target is given, that's the observed peer. otherwise, observer==observed
         # and it's answered from the omniscient Honcho perspective
         observed=options.target if options.target is not None else peer_id,
@@ -361,15 +455,15 @@ async def chat(
 @router.post(
     "/{peer_id}/representation",
     response_model=schemas.RepresentationResponse,
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
-    ],
 )
 async def get_representation(
     workspace_id: str = Path(...),
     peer_id: str = Path(...),
     options: schemas.PeerRepresentationGet = Body(
         ..., description="Options for getting the peer representation"
+    ),
+    jwt_params: JWTParams = Depends(
+        require_auth(workspace_name="workspace_id", peer_name="peer_id")
     ),
 ):
     """Get a curated subset of a Peer's Representation. A Representation is always a subset of the total
@@ -406,6 +500,24 @@ async def get_representation(
     session_allowlist = extract_session_allowlist(
         options.filters, must_include=options.session_id
     )
+
+    # Scoped reads: a single scope swaps the observer to the scope
+    # peer; a list of scopes becomes a session allowlist over their union.
+    observer = peer_id
+    scope_session_union: list[str] | None = None
+    if options.scope is not None:
+        _validate_scope_option(
+            filters=options.filters,
+            session_id=options.session_id,
+            jwt_params=jwt_params,
+        )
+        observer_override, scope_session_union = await _resolve_scope_option(
+            workspace_id, options.scope, db_action="peers.representation.resolve_scope"
+        )
+        if observer_override is not None:
+            observer = observer_override
+    if scope_session_union is not None:
+        session_allowlist = scope_session_union
 
     try:
         embedding: list[float] | None = None
@@ -452,7 +564,8 @@ async def get_representation(
             representation = await crud.get_working_representation(
                 workspace_id,
                 db=read_session,
-                observer=peer_id,
+                # a single `scope` swaps the observer to the scope peer
+                observer=observer,
                 observed=observed,
                 session_allowlist=[options.session_id]
                 if options.session_id is not None
@@ -611,6 +724,25 @@ async def get_peer_context(
     This is useful for getting all the context needed about a peer without
     making multiple API calls.
     """
+    # Scope peers may not appear on the generic peer-context surface: no
+    # representation is formed of a scope, and scoped reads go through the
+    # `scope` option on chat/representation/session-context instead. Flag-based
+    # rather than prefix-based, so a legacy peer merely occupying the reserved
+    # name keeps working; strict on a reserved name that does not exist yet,
+    # since nothing here creates it. Costs no query when no reserved name is
+    # present, and runs before any embedding work.
+    scope_candidates = [
+        n for n in (peer_id, target) if n is not None and is_scope_peer_name(n)
+    ]
+    if scope_candidates:
+        async with tracked_db("peers.context.scope_check", read_only=True) as s_db:
+            await crud.reject_scope_observed(
+                s_db,
+                workspace_id,
+                scope_candidates,
+                action="Use the `scope` option on the read routes instead.",
+            )
+
     # If no target specified, get the peer's own context (self-observation)
     observed = target if target is not None else peer_id
     context_started = perf_counter()

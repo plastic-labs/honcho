@@ -21,24 +21,27 @@ from src.utils.scopes import is_scope_peer
 logger = logging.getLogger(__name__)
 
 
-def _reject_scope_participants(*peers: models.Peer) -> None:
-    """Refuse a dialectic run whose observer or observed is a scope peer.
+def _reject_scope_observed(peer: models.Peer) -> None:
+    """Refuse a dialectic run whose *observed* peer is a scope.
 
     A scope is a silent observer with ``observe_me=false``: no representation of
-    one exists to query. Querying *from* a scope's perspective is a read-side
-    surface that does not exist yet, and not something the raw peer routes expose.
+    one exists to query, so it can never be the subject.
+
+    The observer position is deliberately NOT checked here. A single `scope` on
+    chat swaps the observer to the scope peer — answering from a scope's
+    perspective is the entire point of that option — so a guard here would reject
+    every scoped chat. The raw path peer is still refused as an observer, by the
+    route (``routers/peers.py``), where the distinction between "the caller named
+    a scope" and "the `scope` option resolved to one" is still visible.
 
     Raises:
-        ValidationException: If any participant is a scope.
+        ValidationException: If the observed peer is a scope.
     """
-    offenders = sorted(
-        {p.name for p in peers if is_scope_peer(p.name, p.internal_metadata)}
-    )
-    if offenders:
+    if is_scope_peer(peer.name, peer.internal_metadata):
         raise ValidationException(
-            f"Peer name(s) {offenders} are scopes."
+            f"Peer name '{peer.name}' is a scope."
             + " No representation is formed of a scope, so a scope cannot be a"
-            + " dialectic observer or target."
+            + " dialectic target."
         )
 
 
@@ -76,13 +79,13 @@ async def agentic_chat(
         if observer != observed:
             observed_peer = await crud.get_peer(db, workspace_name, observed)
 
-        # Resolved-row scope check, not a name check. The routes reject scope
-        # names up front for a clear error, but that runs before resolution: a
-        # scope created in between would otherwise be used here as observer or
-        # target. Checking the rows we just resolved closes that window — an
-        # absent name already failed above, and an existing unflagged squatter
-        # cannot retroactively become a scope.
-        _reject_scope_participants(observer_peer, observed_peer)
+        # Resolved-row scope check, not a name check. The routes reject a scope
+        # target up front for a clear error, but that runs before resolution: a
+        # scope created in between would otherwise be answered about here.
+        # Checking the row we just resolved closes that window — an absent name
+        # already failed above, and an existing unflagged squatter cannot
+        # retroactively become a scope.
+        _reject_scope_observed(observed_peer)
 
         session = None
         if session_name:
@@ -157,13 +160,13 @@ async def agentic_chat_stream(
         if observer != observed:
             observed_peer = await crud.get_peer(db, workspace_name, observed)
 
-        # Resolved-row scope check, not a name check. The routes reject scope
-        # names up front for a clear error, but that runs before resolution: a
-        # scope created in between would otherwise be used here as observer or
-        # target. Checking the rows we just resolved closes that window — an
-        # absent name already failed above, and an existing unflagged squatter
-        # cannot retroactively become a scope.
-        _reject_scope_participants(observer_peer, observed_peer)
+        # Resolved-row scope check, not a name check. The routes reject a scope
+        # target up front for a clear error, but that runs before resolution: a
+        # scope created in between would otherwise be answered about here.
+        # Checking the row we just resolved closes that window — an absent name
+        # already failed above, and an existing unflagged squatter cannot
+        # retroactively become a scope.
+        _reject_scope_observed(observed_peer)
 
         session = None
         if session_name:
