@@ -12,7 +12,12 @@ from google.genai import types as genai_types
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 
-from .config import EmbeddingModelConfig, resolve_embedding_model_config, settings
+from .config import (
+    EmbeddingEncodingFormat,
+    EmbeddingModelConfig,
+    resolve_embedding_model_config,
+    settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -173,11 +178,13 @@ class _EmbeddingClient:
         max_input_tokens: int,
         max_tokens_per_request: int,
         send_dimensions: bool,
+        encoding_format: EmbeddingEncodingFormat = "float",
     ):
         self.transport: str = config.transport
         self.model: str = config.model
         self.vector_dimensions: int = vector_dimensions
         self.send_dimensions: bool = send_dimensions
+        self.encoding_format: EmbeddingEncodingFormat = encoding_format
 
         if self.transport == "gemini":
             if not config.api_key:
@@ -227,7 +234,7 @@ class _EmbeddingClient:
         return embedding
 
     def _validate_embedding_count(self, expected: int, received: int) -> None:
-        """Guard against a 200 response carrying fewer embeddings than inputs.
+        """Guard against a 200 response whose embedding count differs from inputs.
 
         Passing an explicit `encoding_format` disables the openai SDK's own
         empty-data check, so this has to live here.
@@ -275,13 +282,12 @@ class _EmbeddingClient:
         openai_client = self.client
 
         async def _call_openai() -> list[float]:
-            # Request float embeddings explicitly: the openai SDK defaults to
-            # base64, which OpenAI-compatible providers (e.g. OpenRouter) may
-            # answer with empty embedding data for models that don't support it.
+            # Always explicit: left unset, the SDK sends base64 regardless, which
+            # OpenAI-compatible providers may reject or answer with empty data.
             openai_kwargs: dict[str, Any] = {
                 "model": self.model,
                 "input": [query],
-                "encoding_format": "float",
+                "encoding_format": self.encoding_format,
             }
             if self.send_dimensions:
                 openai_kwargs["dimensions"] = self.vector_dimensions
@@ -489,11 +495,11 @@ class _EmbeddingClient:
                                 self._validate_embedding_dimensions(embedding.values)
                             )
             else:  # openai
-                # Explicit float format for the same reason as in embed().
+                # Explicit for the same reason as in embed().
                 openai_kwargs: dict[str, Any] = {
                     "model": self.model,
                     "input": [item.text for item in batch],
-                    "encoding_format": "float",
+                    "encoding_format": self.encoding_format,
                 }
                 if self.send_dimensions:
                     openai_kwargs["dimensions"] = self.vector_dimensions
@@ -635,6 +641,7 @@ class EmbeddingClient:
                         max_input_tokens=settings.EMBEDDING.MAX_INPUT_TOKENS,
                         max_tokens_per_request=settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
                         send_dimensions=settings.EMBEDDING.resolve_send_dimensions(),
+                        encoding_format=settings.EMBEDDING.resolve_encoding_format(),
                     )
                     self._instance_signature = signature
                     logger.debug(
@@ -660,6 +667,7 @@ class EmbeddingClient:
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
             settings.EMBEDDING.resolve_send_dimensions(),
+            settings.EMBEDDING.resolve_encoding_format(),
         )
 
     async def embed(self, query: str) -> list[float]:

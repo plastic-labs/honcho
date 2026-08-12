@@ -79,6 +79,9 @@ def make_embedding_client(
         "max_input_tokens": 2048,
         "max_tokens_per_request": 300_000,
         "send_dimensions": spec.send_dimensions,
+        # Pinned rather than resolved from settings: the matrix exists to exercise
+        # the float path that `auto` only picks for third-party providers.
+        "encoding_format": "float",
     }
     kwargs.update(overrides)
     return _EmbeddingClient(

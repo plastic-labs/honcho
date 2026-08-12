@@ -4,7 +4,11 @@ from typing import Any, cast
 import pytest
 from google.genai import types as genai_types
 
-from src.config import EmbeddingModelConfig, resolve_embedding_model_config
+from src.config import (
+    EmbeddingEncodingFormat,
+    EmbeddingModelConfig,
+    resolve_embedding_model_config,
+)
 from src.embedding_client import (
     BatchItem,
     _EmbeddingClient,  # pyright: ignore[reportPrivateUsage]
@@ -215,6 +219,7 @@ def _build_openai_client(
     send_dimensions: bool,
     vector_dimensions: int,
     max_batch_size: int | None = None,
+    encoding_format: EmbeddingEncodingFormat = "float",
 ) -> tuple[_EmbeddingClient, FakeOpenAIEmbeddingsAPI]:
     fake_embeddings = FakeOpenAIEmbeddingsAPI(embedding)
 
@@ -237,6 +242,7 @@ def _build_openai_client(
         max_input_tokens=8192,
         max_tokens_per_request=300_000,
         send_dimensions=send_dimensions,
+        encoding_format=encoding_format,
     )
     return client, fake_embeddings
 
@@ -547,12 +553,72 @@ def _build_embedding_settings(
         "EMBEDDING_MODEL_CONFIG__MODEL",
         "EMBEDDING_MODEL_CONFIG__TRANSPORT",
         "EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE",
+        "EMBEDDING_MODEL_CONFIG__ENCODING_FORMAT_MODE",
+        "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL",
         "EMBEDDING_MODEL_CONFIG__MAX_BATCH_SIZE",
     ):
         monkeypatch.delenv(key, raising=False)
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     return EmbeddingSettings()
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        # No base_url means real OpenAI, which serves base64 at ~1/3.6 the bytes.
+        ({}, "base64"),
+        (
+            {
+                "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL": "https://api.openai.com/v1"
+            },
+            "base64",
+        ),
+        (
+            {
+                "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL": "https://openrouter.ai/api/v1"
+            },
+            "float",
+        ),
+        (
+            {"EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL": "http://localhost:8000/v1"},
+            "float",
+        ),
+        ({"EMBEDDING_MODEL_CONFIG__ENCODING_FORMAT_MODE": "float"}, "float"),
+        (
+            {
+                "EMBEDDING_MODEL_CONFIG__ENCODING_FORMAT_MODE": "base64",
+                "EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL": "https://openrouter.ai/api/v1",
+            },
+            "base64",
+        ),
+    ],
+)
+def test_resolve_encoding_format(
+    env: dict[str, str], expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = _build_embedding_settings(env, monkeypatch)
+    assert s.resolve_encoding_format() == expected
+
+
+@pytest.mark.asyncio
+async def test_openai_embed_forwards_base64_encoding_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """base64 mode must reach both openai paths, not just be stored."""
+    client, fake = _build_openai_client(
+        monkeypatch,
+        embedding=[0.1] * 8,
+        model="text-embedding-3-small",
+        send_dimensions=False,
+        vector_dimensions=8,
+        encoding_format="base64",
+    )
+
+    await client.embed("hello")
+    await client.batch_embed({"a": "hello", "b": "world"})
+
+    assert [call["encoding_format"] for call in fake.calls] == ["base64", "base64"]
 
 
 def test_resolve_send_dimensions_auto_default_dim_returns_false(

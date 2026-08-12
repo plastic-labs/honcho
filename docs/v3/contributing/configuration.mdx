@@ -285,6 +285,14 @@ Forwarding `dimensions=` to OpenAI-compatible providers is controlled by `EMBEDD
 - `always`: always forward, regardless of whether `EMBEDDING_VECTOR_DIMENSIONS` was set. Use for OpenAI-compatible self-hosted providers that require it. Do not pick `always` *just* for same-as-default truncation — `auto` handles that case correctly as long as you set `EMBEDDING_VECTOR_DIMENSIONS=1536` explicitly in your environment. `always` is the right answer when your config layer might strip explicit "default-valued" envs, or when you want defense-in-depth.
 - `never`: never forward. Explicit opt-out for providers that reject the parameter (e.g. `text-embedding-ada-002` if it slips past the known-rejecting allowlist).
 
+The embedding wire format is controlled by `EMBEDDING_MODEL_CONFIG__ENCODING_FORMAT_MODE`. The `openai` SDK sends `encoding_format=base64` when the caller passes nothing, and some OpenAI-compatible providers answer that with an error or with empty data, so Honcho always sends the format explicitly:
+
+- `auto` (default): `base64` when no `EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL` is set or it points at `api.openai.com`, `float` otherwise. base64 is roughly 3.6x smaller on the wire than JSON floats, so this keeps the compact format for real OpenAI and only pays the larger payload where compatibility requires it.
+- `float`: always request floats. Use for a provider that rejects base64 but sits behind a host `auto` reads as OpenAI-compatible-but-capable.
+- `base64`: always request base64. Use for a proxy that fronts real OpenAI (Azure OpenAI, LiteLLM) where `auto` cannot tell from the host that base64 is safe, and you want the smaller payload.
+
+Both formats decode to identical vectors, so switching modes does not require re-embedding.
+
 #### Bootstrapping non-default dimensions
 
 `EMBEDDING_VECTOR_DIMENSIONS` is treated as immutable for the life of a deployment. The pgvector schema is dim-pinned by Alembic at `1536` by default; if you want a different dim, you must ALTER the empty columns once at bootstrap time.
