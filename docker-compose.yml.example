@@ -36,10 +36,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    # -- Development: mount source for live reload --
-    # volumes:
-    #   - .:/app
-    #   - venv:/app/.venv
+    volumes:
+      # Shared LanceDB data (used when VECTOR_STORE_TYPE=lancedb)
+      - lancedb-data:/app/lancedb_data
+      # -- Development: mount source for live reload --
+      # - .:/app
+      # - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
@@ -63,10 +65,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # -- Development: mount source for live reload --
-    # volumes:
-    #   - .:/app
-    #   - venv:/app/.venv
+    volumes:
+      # Shared LanceDB data (used when VECTOR_STORE_TYPE=lancedb)
+      - lancedb-data:/app/lancedb_data
+      # -- Development: mount source for live reload --
+      # - .:/app
+      # - venv:/app/.venv
     environment:
       - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
       - CACHE_URL=redis://redis:6379/0?suppress=true
@@ -142,6 +146,7 @@ services:
 volumes:
   pgdata:
   redis-data:
+  lancedb-data:
   # -- Development: uncomment if using source mounts --
   # venv:
   # prometheus-data:

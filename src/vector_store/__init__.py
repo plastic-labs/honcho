@@ -207,9 +207,9 @@ def _create_store_by_type(store_type: str) -> VectorStore:
         except ImportError as exc:
             raise RuntimeError(
                 "VECTOR_STORE.TYPE is set to 'lancedb', but the 'lancedb' package "
-                + "is not installed. Install Honcho's 'lancedb' extra "
-                + "(for example, `uv sync --extra lancedb`), or use TYPE "
-                + "'pgvector' or 'turbopuffer'. "
+                + "could not be imported. Install Honcho's 'lancedb' extra "
+                + "(for example, `uv sync --extra lancedb`; unavailable on Intel "
+                + "macOS), or use TYPE 'pgvector' or 'turbopuffer'. "
                 + f"Original import error: {exc}"
             ) from exc
 

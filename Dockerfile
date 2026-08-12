@@ -46,7 +46,11 @@ ENV PYTHONUNBUFFERED=1
 # double the image size.
 RUN addgroup --system app \
     && adduser --system --group app \
-    && chown app:app /app
+    && chown app:app /app \
+    # Pre-create the LanceDB dir so a named volume mounted here inherits app
+    # ownership instead of defaulting to root.
+    && mkdir /app/lancedb_data \
+    && chown app:app /app/lancedb_data
 
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
 
