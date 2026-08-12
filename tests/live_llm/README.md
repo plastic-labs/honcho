@@ -24,6 +24,11 @@ Model-family env vars:
 - `LIVE_LLM_GEMINI_30_MODELS`
 - `LIVE_LLM_GEMINI_31_MODELS`
 
+Embedding-model env vars:
+
+- `LIVE_EMBEDDING_GEMINI_MODELS` (default: `gemini-embedding-001,gemini-embedding-2`; add `gemini-embedding-2-preview` to cover the preview twin)
+- `LIVE_EMBEDDING_OPENAI_MODELS` (default: `text-embedding-3-small`)
+
 Each model env var accepts a comma-separated list of bare model ids or provider-qualified ids.
 
 Examples:
@@ -57,3 +62,4 @@ Coverage by provider:
 - OpenAI transport → OpenRouter non-reasoning models (e.g. `inception/mercury-2`): non-chat / diffusion architectures must stay on `max_tokens`, no `reasoning_effort`, tool-calling parameter-schema compatibility is the canary for exotic OR-served providers
 - Gemini 2.5/3.0 classes: structured outputs, cached-content reuse, thought signatures, multi-turn tool replay
 - Gemini 3.1 class: thinking and tool replay coverage by default; structured-output/caching coverage should only be added once Google documents support for that path
+- Embeddings (`test_live_embeddings.py`): single embed, batched embed, batch-vs-single alignment, and chunk-to-id mapping for every configured embedding model. `gemini-embedding-2*` is the reason this exists — those models collapse a list of bare strings into one document (#745), and only a live call catches it

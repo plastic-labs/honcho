@@ -122,7 +122,9 @@ npx skills add plastic-labs/honcho
 ```
 
 ```bash Install as Claude Skill Manually
-curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com/plastic-labs/honcho/main/docs/SKILL.md
+mkdir -p ~/.claude/skills/honcho-integration
+curl -o ~/.claude/skills/honcho-integration/SKILL.md \
+  https://raw.githubusercontent.com/plastic-labs/honcho/main/.claude/skills/honcho-integration/SKILL.md
 ```
 </CodeGroup>
 
@@ -139,23 +141,15 @@ curl -o ~/.claude/skills/honcho-integration.md https://raw.githubusercontent.com
 
 Invoke with `/honcho-integration` in your coding agent.
 
+#### honcho-memory
+
+**Concepts & strategy for using Honcho at runtime.** The hub skill: it teaches the recall → respond → record loop and session and peer design — the durable model behind using Honcho as memory, independent of how you're connected — plus how to connect via MCP and drive the [MCP tools](#mcp-server). Use this when your agent already has Honcho available and you want it to remember the user across conversations — as opposed to `honcho-integration`, which adds the SDK to a codebase. (An MCP-connected agent also receives usage guidance directly from the server on connect.)
+
 #### honcho-cli
 
 **For inspection & debugging.** Teaches your coding agent the right commands and flags for the [honcho CLI](#cli) — peer memory, session context, queue status, dialectic quality.
 
 Invoke implicitly when you ask your agent to inspect a Honcho deployment.
-
-#### migrate-honcho-py / migrate-honcho-ts
-
-**For SDK upgrades.** Migrates code from v1.6.0 to v2.0.0 (required for Honcho 3.0.0+). Use when upgrading the SDK or seeing errors about removed APIs like `observations`, `Representation`, `.core`, or `get_config`.
-
-Both skills handle: terminology changes (`Observation` → `Conclusion`), `Representation` class removal, method renames, and streaming API updates.
-
-| Python | TypeScript |
-|--------|------------|
-| `/migrate-honcho-py` | `/migrate-honcho-ts` |
-| `AsyncHoncho` → `.aio` accessor | `@honcho-ai/core` removal |
-| | `snake_case` → `camelCase` |
 
 ---
 

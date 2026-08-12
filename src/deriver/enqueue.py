@@ -403,6 +403,7 @@ def create_dream_record(
     delay_reason: str | None = None,
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
+    rebuild: bool = False,
 ) -> dict[str, Any]:
     """
     Create a queue record for a dream task.
@@ -417,6 +418,7 @@ def create_dream_record(
         delay_reason: what governed when it fires
         documents_since_last_dream_at_schedule: count snapshot at schedule time
         document_threshold: DOCUMENT_THRESHOLD snapshot at schedule time
+        rebuild: card_refresh only — rebuild the card without the prior card
 
     Returns:
         Queue record dictionary with workspace_name and other fields
@@ -430,6 +432,7 @@ def create_dream_record(
         delay_reason=delay_reason,
         documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
         document_threshold=document_threshold,
+        rebuild=rebuild,
     )
 
     return {
@@ -452,6 +455,7 @@ async def enqueue_dream(
     delay_reason: str | None = None,
     documents_since_last_dream_at_schedule: int | None = None,
     document_threshold: int | None = None,
+    rebuild: bool = False,
 ) -> None:
     """
     Enqueue a dream task for immediate processing by the deriver.
@@ -461,6 +465,8 @@ async def enqueue_dream(
 
     Deduplication: If a dream with the same work_unit_key is already in-progress
     (has an ActiveQueueSession) or pending in the queue, the enqueue is skipped.
+    The work unit key includes the dream type, so e.g. a card_refresh dream
+    never collides with a pending omni dream for the same collection.
 
     Args:
         workspace_name: Name of the workspace
@@ -468,6 +474,7 @@ async def enqueue_dream(
         observed: Name of the observed peer
         dream_type: Type of dream to execute
         session_name: Name of the session to scope the dream to if specified
+        rebuild: card_refresh only — rebuild the card without the prior card
     """
     async with tracked_db("dream_enqueue") as db_session:
         try:
@@ -481,6 +488,7 @@ async def enqueue_dream(
                 delay_reason=delay_reason,
                 documents_since_last_dream_at_schedule=documents_since_last_dream_at_schedule,
                 document_threshold=document_threshold,
+                rebuild=rebuild,
             )
 
             work_unit_key = dream_record["work_unit_key"]

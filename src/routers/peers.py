@@ -10,18 +10,26 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.config import settings
+from src.crud.message import get_peer_session_names
 from src.crud.session import is_peer_in_session
 from src.dependencies import db, read_db, tracked_db
 from src.dialectic.chat import agentic_chat, agentic_chat_stream
 from src.embedding_client import embedding_client
-from src.exceptions import AuthenticationException, ResourceNotFoundException
+from src.exceptions import (
+    AuthenticationException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.security import JWTParams, require_auth
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose, GetContextEvent, emit
+from src.utils.filter import extract_session_allowlist
+from src.utils.schema_conversion import json_response_schema_to_pydantic
 from src.utils.search import search
 from src.utils.types import embedding_call_purpose
 
@@ -193,6 +201,33 @@ async def chat(
             ):
                 raise AuthenticationException("JWT not permissioned for this resource")
 
+    # Parse the session allowlist from filters (422 on unsupported keys/shapes,
+    # and on a session_id the allowlist doesn't cover).
+    session_allowlist = extract_session_allowlist(
+        options.filters, must_include=options.session_id
+    )
+    # A peer-scoped key may only name sessions its peer belongs to — the
+    # allowlist reaches message recall the same way session_id does above.
+    # `active_only` matches the is_peer_in_session check above, so both gates
+    # answer the same question for a peer that has left a session.
+    if jwt_params.p is not None and session_allowlist is not None:
+        async with tracked_db("peers.chat.session_scope_auth", read_only=True) as s_db:
+            member_sessions = set(
+                await get_peer_session_names(
+                    s_db, workspace_id, jwt_params.p, active_only=True
+                )
+            )
+        if not set(session_allowlist) <= member_sessions:
+            raise AuthenticationException("JWT not permissioned for this resource")
+
+    # Convert the caller's JSON Schema so malformed schemas fail immediately with 422
+    response_model: type[BaseModel] | None = None
+    if options.response_format is not None:
+        try:
+            response_model = json_response_schema_to_pydantic(options.response_format)
+        except ValueError as e:
+            raise ValidationException(f"Invalid response_format: {e}") from None
+
     # Get or create the peer to ensure it exists
     async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
         peers_result = await crud.get_or_create_peers(
@@ -230,6 +265,8 @@ async def chat(
                     observer=peer_id,
                     observed=options.target if options.target is not None else peer_id,
                     reasoning_level=options.reasoning_level,
+                    session_allowlist=session_allowlist,
+                    response_model=response_model,
                 )
             ),
             media_type="text/event-stream",
@@ -244,6 +281,8 @@ async def chat(
         # and it's answered from the omniscient Honcho perspective
         observed=options.target if options.target is not None else peer_id,
         reasoning_level=options.reasoning_level,
+        session_allowlist=session_allowlist,
+        response_model=response_model,
     )
 
     # Prometheus metrics
@@ -278,6 +317,12 @@ async def get_representation(
     If a target is provided, we get the Representation of the target from the perspective of the Peer.
     If no target is provided, we get the omniscient Honcho Representation of the Peer.
     """
+    # Parse the session allowlist from filters (422 on unsupported keys/shapes,
+    # and on a session_id the allowlist doesn't cover).
+    session_allowlist = extract_session_allowlist(
+        options.filters, must_include=options.session_id
+    )
+
     try:
         embedding: list[float] | None = None
         if options.search_query:
@@ -296,7 +341,9 @@ async def get_representation(
             workspace_id,
             observer=peer_id,
             observed=options.target if options.target is not None else peer_id,
-            session_name=options.session_id,
+            session_allowlist=[options.session_id]
+            if options.session_id is not None
+            else session_allowlist,
             include_semantic_query=options.search_query,
             embedding=embedding,
             semantic_search_top_k=options.search_top_k,
@@ -459,7 +506,7 @@ async def get_peer_context(
             workspace_id,
             observer=peer_id,
             observed=observed,
-            session_name=None,  # Peer context is global, not session-scoped
+            session_allowlist=None,  # Peer context is global, not session-scoped
             include_semantic_query=search_query,
             embedding=embedding,
             semantic_search_top_k=search_top_k,

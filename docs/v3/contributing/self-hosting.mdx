@@ -178,6 +178,12 @@ CREATE EXTENSION IF NOT EXISTS vector;
 \q
 ```
 
+<Note>
+**Least-privilege database roles.** Honcho runs `CREATE EXTENSION IF NOT EXISTS vector` before migrations and again at startup, so if the role in `DB_CONNECTION_URI` can't create extensions, both fail with a privilege error — `IF NOT EXISTS` doesn't help, because Postgres checks the privilege first.
+
+Run the statement above once as a superuser (or `rds_superuser`) and the application role needs no extension privileges. See [Troubleshooting](/v3/contributing/troubleshooting) if you hit this.
+</Note>
+
 ### 4. Configure Environment
 
 Create a `.env` file with your settings:

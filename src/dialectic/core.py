@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any, cast
 
 from nanoid import generate as generate_nanoid
+from pydantic import BaseModel
 
 from src import crud
 from src.config import ConfiguredModelSettings, ReasoningLevel, settings
@@ -69,6 +70,7 @@ class DialecticAgent:
         metric_key: str | None = None,
         reasoning_level: ReasoningLevel = "low",
         session_id: str | None = None,
+        session_allowlist: list[str] | None = None,
     ):
         """
         Initialize the dialectic agent.
@@ -83,9 +85,13 @@ class DialecticAgent:
             metric_key: Optional key for logging metrics (if provided, agent won't log separately)
             reasoning_level: Level of reasoning to apply
             session_id: ID used for grouping traces (not session_name)
+            session_allowlist: Optional session allowlist restricting all recall
+                (conclusions and messages) to these sessions; empty list
+                fails closed
         """
         self.workspace_name: str = workspace_name
         self.session_name: str | None = session_name
+        self.session_allowlist: list[str] | None = session_allowlist
         self.session_id: str | None = session_id
         self.observer: str = observer
         self.observed: str = observed
@@ -106,6 +112,24 @@ class DialecticAgent:
         self._session_history_initialized: bool = False
         self._prefetched_conclusion_count: int = 0
         self._run_id: str = generate_nanoid()  # Always generate for event correlation
+
+    def _select_tools(self) -> list[dict[str, Any]]:
+        """Pick the toolset for this query.
+
+        Minimal reasoning uses a reduced set to reduce cost. Under a session
+        allowlist `get_reasoning_chain` is dropped entirely rather than left in
+        to fail at call time: chains traverse provenance across sessions, so it
+        can't be scoped, and offering it costs both the schema in context and a
+        wasted turn when the model tries it.
+        """
+        tools = (
+            DIALECTIC_TOOLS_MINIMAL
+            if self.reasoning_level == "minimal"
+            else DIALECTIC_TOOLS
+        )
+        if self.session_allowlist is not None:
+            tools = [t for t in tools if t.get("name") != "get_reasoning_chain"]
+        return tools
 
     async def _initialize_session_history(self) -> None:
         """Fetch and inject session history into the system prompt if configured."""
@@ -196,6 +220,7 @@ class DialecticAgent:
                 limit=prefetch_limit,
                 levels=["explicit"],
                 embedding=query_embedding,
+                session_allowlist=self.session_allowlist,
             )
 
             derived_repr = await search_memory(
@@ -206,6 +231,7 @@ class DialecticAgent:
                 limit=prefetch_limit,
                 levels=["deductive", "inductive", "contradiction"],
                 embedding=query_embedding,
+                session_allowlist=self.session_allowlist,
             )
 
             if explicit_repr.is_empty() and derived_repr.is_empty():
@@ -295,6 +321,7 @@ class DialecticAgent:
         ] = await create_tool_executor(
             workspace_name=self.workspace_name,
             session_name=self.session_name,
+            session_allowlist=self.session_allowlist,
             observer=self.observer,
             observed=self.observed,
             history_token_limit=settings.DIALECTIC.HISTORY_TOKEN_LIMIT,
@@ -413,7 +440,9 @@ class DialecticAgent:
             )
         )
 
-    async def answer(self, query: str) -> str:
+    async def answer(
+        self, query: str, response_model: type[BaseModel] | None = None
+    ) -> str:
         """
         Answer a query about the peer using agentic tool calling.
 
@@ -424,6 +453,8 @@ class DialecticAgent:
 
         Args:
             query: The question to answer about the peer
+            response_model: Optional Pydantic model the final synthesis must
+                conform to. When set, the returned string is JSON.
 
         Returns:
             The synthesized answer string
@@ -433,12 +464,7 @@ class DialecticAgent:
         # Get level-specific settings
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
 
-        # Use minimal tools for minimal reasoning to reduce cost
-        tools = (
-            DIALECTIC_TOOLS_MINIMAL
-            if self.reasoning_level == "minimal"
-            else DIALECTIC_TOOLS
-        )
+        tools = self._select_tools()
         # Use level-specific max_output_tokens if set, otherwise global default
         max_tokens = (
             level_settings.MAX_OUTPUT_TOKENS
@@ -446,25 +472,38 @@ class DialecticAgent:
             else settings.DIALECTIC.MAX_OUTPUT_TOKENS
         )
 
-        response: HonchoLLMCallResponse[str] = await honcho_llm_call(
-            model_config=_get_dialectic_level_model_config(self.reasoning_level),
-            prompt="",  # Ignored since we pass messages
-            max_tokens=max_tokens,
-            tools=tools,
-            tool_choice=level_settings.TOOL_CHOICE,
-            tool_executor=tool_executor,
-            max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
-            messages=self.messages,
-            max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
-            trace_name="dialectic_chat",
-            telemetry=self._telemetry_context(track_name="Dialectic Agent"),
+        # cast: `type[BaseModel] | None` matches neither the parsed nor the
+        # plain-text overload statically, so pyright resolves the stream
+        # overload — but without stream=True the call is non-streaming.
+        response = cast(  # pyright: ignore[reportInvalidCast]
+            HonchoLLMCallResponse[Any],
+            await honcho_llm_call(
+                model_config=_get_dialectic_level_model_config(self.reasoning_level),
+                prompt="",  # Ignored since we pass messages
+                max_tokens=max_tokens,
+                tools=tools,
+                tool_choice=level_settings.TOOL_CHOICE,
+                tool_executor=tool_executor,
+                max_tool_iterations=level_settings.MAX_TOOL_ITERATIONS,
+                messages=self.messages,
+                max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
+                trace_name="dialectic_chat",
+                telemetry=self._telemetry_context(track_name="Dialectic Agent"),
+                response_model=response_model,
+            ),
         )
+
+        # With response_model, the backend parses content into a model
+        # instance; the API contract is a JSON string.
+        content = response.content
+        if isinstance(content, BaseModel):
+            content = content.model_dump_json(by_alias=True)
 
         self._log_response_metrics(
             task_name=task_name,
             run_id=run_id,
             start_time=start_time,
-            response_content=response.content,
+            response_content=content,
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,
             cache_read_input_tokens=response.cache_read_input_tokens,
@@ -475,9 +514,11 @@ class DialecticAgent:
             hit_input_token_cap=response.hit_input_token_cap,
         )
 
-        return response.content
+        return content
 
-    async def answer_stream(self, query: str) -> AsyncIterator[str]:
+    async def answer_stream(
+        self, query: str, response_model: type[BaseModel] | None = None
+    ) -> AsyncIterator[str]:
         """
         Answer a query about the peer using agentic tool calling, streaming the response.
 
@@ -488,6 +529,9 @@ class DialecticAgent:
 
         Args:
             query: The question to answer about the peer
+            response_model: Optional Pydantic model the final synthesis must
+                conform to. When set, the streamed text accumulates to JSON
+                (chunks are raw text; no parsing happens on the stream path).
 
         Yields:
             Chunks of the response text as they are generated
@@ -497,12 +541,7 @@ class DialecticAgent:
         # Get level-specific settings
         level_settings = settings.DIALECTIC.LEVELS[self.reasoning_level]
 
-        # Use minimal tools for minimal reasoning to reduce cost
-        tools = (
-            DIALECTIC_TOOLS_MINIMAL
-            if self.reasoning_level == "minimal"
-            else DIALECTIC_TOOLS
-        )
+        tools = self._select_tools()
         # Use level-specific max_output_tokens if set, otherwise global default
         max_tokens = (
             level_settings.MAX_OUTPUT_TOKENS
@@ -526,6 +565,7 @@ class DialecticAgent:
                 max_input_tokens=settings.DIALECTIC.MAX_INPUT_TOKENS,
                 trace_name="dialectic_chat",
                 telemetry=self._telemetry_context(track_name="Dialectic Agent Stream"),
+                response_model=response_model,
             ),
         )
 

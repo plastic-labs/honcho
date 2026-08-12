@@ -8,6 +8,8 @@ using the DialecticAgent.
 import logging
 from collections.abc import AsyncIterator
 
+from pydantic import BaseModel
+
 from src import crud, schemas
 from src.config import ReasoningLevel
 from src.dependencies import tracked_db
@@ -24,6 +26,8 @@ async def agentic_chat(
     observer: str,
     observed: str,
     reasoning_level: ReasoningLevel = "low",
+    session_allowlist: list[str] | None = None,
+    response_model: type[BaseModel] | None = None,
 ) -> str:
     """
     Answer a query about a peer using the agentic dialectic.
@@ -35,6 +39,9 @@ async def agentic_chat(
         observer: The peer making the query
         observed: The peer being queried about
         reasoning_level: Level of reasoning to apply
+        session_allowlist: Optional session allowlist restricting all recall
+        response_model: Optional Pydantic model the answer must conform to.
+            When set, the returned string is JSON matching the model's schema.
 
     Returns:
         The synthesized answer string
@@ -77,9 +84,10 @@ async def agentic_chat(
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
+        session_allowlist=session_allowlist,
     )
 
-    return await agent.answer(query)
+    return await agent.answer(query, response_model=response_model)
 
 
 async def agentic_chat_stream(
@@ -89,6 +97,8 @@ async def agentic_chat_stream(
     observer: str,
     observed: str,
     reasoning_level: ReasoningLevel = "low",
+    session_allowlist: list[str] | None = None,
+    response_model: type[BaseModel] | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream an answer to a query about a peer using the agentic dialectic.
@@ -100,6 +110,10 @@ async def agentic_chat_stream(
         observer: The peer making the query
         observed: The peer being queried about
         reasoning_level: Level of reasoning to apply
+        session_allowlist: Optional session allowlist restricting all recall
+        response_model: Optional Pydantic model the answer must conform to.
+            When set, the streamed text accumulates to JSON matching the
+            model's schema.
 
     Yields:
         Chunks of the response text as they are generated
@@ -142,7 +156,8 @@ async def agentic_chat_stream(
         observer_peer_card=observer_peer_card,
         observed_peer_card=observed_peer_card,
         reasoning_level=reasoning_level,
+        session_allowlist=session_allowlist,
     )
 
-    async for chunk in agent.answer_stream(query):
+    async for chunk in agent.answer_stream(query, response_model=response_model):
         yield chunk

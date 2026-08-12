@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import weakref
 from collections.abc import AsyncIterator
-from functools import cache
 from typing import Any, cast
 
 from openai import BadRequestError, LengthFinishReasonError
@@ -11,7 +11,10 @@ from pydantic import BaseModel, ValidationError
 
 from src.exceptions import ValidationException
 from src.llm.backend import CompletionResult, StreamChunk, ToolCallResult
-from src.llm.request_builder import apply_sdk_passthroughs
+from src.llm.request_builder import (
+    apply_sdk_passthroughs,
+    request_timeout_from_extra_params,
+)
 from src.llm.structured_output import (
     StructuredOutputError,
     empty_structured_output,
@@ -22,22 +25,35 @@ from src.llm.structured_output import (
 logger = logging.getLogger(__name__)
 
 
-@cache
+# The point of this being a WeakKeyDictionary, as opposed to a regular dict, is that it
+# does not hold a reference to the keyed BaseModel so that when a dynamically created
+# type is no longer referenced it becomes eligible for garbage collection. This avoids a
+# memory leak.
+_json_object_instruction_cache: weakref.WeakKeyDictionary[type[BaseModel], str] = (
+    weakref.WeakKeyDictionary()
+)
+
+
 def _json_object_instruction(response_format: type[BaseModel]) -> str:
     """Schema-injection instruction for json_object mode.
 
     The JSON schema is static per response_format class, so cache the serialized
-    instruction — the deriver issues one structured call per batch on the worker
-    hot path and would otherwise re-walk the schema + re-serialize it every call.
+    instruction — the deriver would otherwise re-walk the schema + re-serialize
+    it every call.
     """
+    cached = _json_object_instruction_cache.get(response_format)
+    if cached is not None:
+        return cached
     # Some OpenAI-compatible providers enforce this JSON-object precondition with
     # a case-sensitive substring check, so include lowercase "json" explicitly.
-    return (
+    instruction = (
         "You must respond with a single JSON object (json) that conforms "
         "exactly to the following JSON schema. Do not include any text, "
         "markdown, or code fences outside the JSON object.\n\nJSON schema:\n"
         f"{json.dumps(response_format.model_json_schema())}"
     )
+    _json_object_instruction_cache[response_format] = instruction
+    return instruction
 
 
 def _uses_max_completion_tokens(model: str) -> bool:
@@ -384,6 +400,10 @@ class OpenAIBackend:
             # if the operator supplies `extra_body.reasoning`, it replaces any
             # value Honcho auto-injected above.
             apply_sdk_passthroughs(params, extra_params)
+
+        timeout = request_timeout_from_extra_params(extra_params)
+        if timeout is not None:
+            params["timeout"] = timeout
         return params
 
     def _normalize_response(
