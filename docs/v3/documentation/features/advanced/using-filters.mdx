@@ -326,11 +326,7 @@ messages = session.messages(filters={
 </CodeGroup>
 
 <Warning>
-The shorthand applies to regular columns only. Inside `metadata`, a bare list
-keeps JSONB containment semantics — `{"metadata": {"tags": ["a", "b"]}}` matches
-records whose `tags` array *contains* both values, it does not mean "`tags` is
-either `a` or `b`". Use the explicit `{"in": [...]}` form when you want
-membership on a metadata field.
+Bare lists behave differently inside metadata — use `{"in": [...]}` there for OR matching.
 </Warning>
 
 The explicit form, plus the other comparison operators:
