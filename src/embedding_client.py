@@ -313,17 +313,23 @@ class _EmbeddingClient:
         """Return a prefix of `text` whose re-encoded token count fits the cap.
 
         `decode(ids[:n])` can re-encode to more than `n` tokens at BPE /
-        pre-tokenizer boundaries, so we re-encode after each slice and trim
-        again until the verified count fits. If a slice does not shrink the
-        count we drop one extra token so the loop cannot spin.
+        pre-tokenizer boundaries (a slice landing mid-character decodes to
+        replacement chars that cost tokens of their own), so we re-encode
+        after each slice and trim again until the verified count fits. Each
+        retry keeps strictly fewer tokens than the last, so the loop always
+        terminates instead of oscillating around the cap.
         """
         token_ids = self.encoding.encode(text)
+        keep = self.max_embedding_tokens
         while len(token_ids) > self.max_embedding_tokens:
-            keep = min(self.max_embedding_tokens, len(token_ids) - 1)
+            keep = min(keep, len(token_ids) - 1)
             if keep < 1:
                 return "", 0
             text = self.encoding.decode(token_ids[:keep])
             token_ids = self.encoding.encode(text)
+            # Guarantee forward progress: if this slice still re-encodes over
+            # the cap, the next one must be strictly smaller.
+            keep -= 1
         return text, len(token_ids)
 
     async def simple_batch_embed(

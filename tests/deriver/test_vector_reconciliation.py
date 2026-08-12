@@ -551,7 +551,9 @@ class TestReEmbedding:
         # Mock embedding client to track batch calls
         batch_call_count = 0
 
-        async def track_batch_embed(contents: list[str]) -> list[list[float]]:
+        async def track_batch_embed(
+            contents: list[str], **_kwargs: object
+        ) -> list[list[float]]:
             nonlocal batch_call_count
             batch_call_count += 1
             return [[1.0] * 1536 for _ in contents]

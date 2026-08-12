@@ -301,7 +301,14 @@ async def _sync_documents(
                 EmbeddingCallPurpose.VECTOR_SYNC.value,
                 parent_category="reconciliation",
             ):
-                new_embeddings = await embedding_client.simple_batch_embed(contents)
+                # Document content is stored whole, so an observation can be
+                # over the per-item embedding cap (the write path truncates the
+                # embedded prefix, not the stored text). Truncate here too:
+                # raising would drop every other document in this batch on
+                # every reconciler pass.
+                new_embeddings = await embedding_client.simple_batch_embed(
+                    contents, on_oversize="truncate"
+                )
 
             if len(new_embeddings) != len(docs_needing_embed):
                 logger.warning(
