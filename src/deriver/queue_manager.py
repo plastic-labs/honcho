@@ -479,12 +479,6 @@ class QueueManager:
     @staticmethod
     def _is_tenant_work(work_unit_keys: Iterable[str]) -> bool:
         """True if any claimed work unit is real tenant work, not housekeeping.
-
-        The reconciler enqueues its own sweeps on a fixed timer, so treating them
-        as "the queue is busy" would reset the backoff every cycle and keep the
-        deriver polling often enough that the pooler never releases an idle
-        tenant's connection. Unparseable keys count as tenant work so an unknown
-        key can never strand the loop in a long sleep.
         """
         for key in work_unit_keys:
             try:
