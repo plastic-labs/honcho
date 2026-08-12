@@ -8,7 +8,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-08-05T17:35:29.589887Z"
 exclude-newer-span = "P5D"
 
 [manifest]
@@ -1159,7 +1159,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "3.0.11"
+version = "3.0.12"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -1270,7 +1270,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "2.2.0"
+version = "2.3.0"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "httpx" },
